@@ -550,6 +550,7 @@ enum CompareDependencyResult {
 fn compare_deps(
     inferred: &ManualMemoDependency,
     source: &ManualMemoDependency,
+    identifiers: &[Identifier],
 ) -> CompareDependencyResult {
     let roots_equal = match (&inferred.root, &source.root) {
         (
@@ -559,7 +560,21 @@ fn compare_deps(
         (
             ManualMemoDependencyRoot::NamedLocal { value: a, .. },
             ManualMemoDependencyRoot::NamedLocal { value: b, .. },
-        ) => a.identifier == b.identifier,
+        ) => {
+            // Upstream Babel compares `identifier.id`, which works because Babel
+            // shares a single Identifier object across all Places of a named
+            // local. Bun's arena-backed HIR can hold distinct IdentifierIds for
+            // the same source variable (e.g. the StartMemoize deps-array operand
+            // vs. the scope-dep root vs. the temporaries-recorded lvalue), all
+            // sharing one declaration_id. Comparing by IdentifierId here causes
+            // spurious RootDifference and bails the whole function (observed on
+            // KeybindingHints.tsx, ui/TreeSelect.tsx, useWellbeingNotifications.tsx
+            // — Babel compiles all three). declaration_id is the semantic
+            // equivalent of Babel's object-identity check.
+            a.identifier == b.identifier
+                || identifiers[a.identifier.0 as usize].declaration_id
+                    == identifiers[b.identifier.0 as usize].declaration_id
+        }
         _ => false,
     };
     if !roots_equal {
@@ -707,7 +722,7 @@ fn validate_inferred_dep(
     // Compare against each valid source dependency
     let mut error_diagnostic: Option<CompareDependencyResult> = None;
     for source_dep in valid_deps_in_memo_block {
-        let result = compare_deps(&normalized_dep, source_dep);
+        let result = compare_deps(&normalized_dep, source_dep, identifiers);
         if result == CompareDependencyResult::Ok {
             return;
         }

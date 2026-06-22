@@ -618,4 +618,38 @@ describe("bundler", () => {
       new Bun.Transpiler({ loader: "js" }).transformSync(out);
     },
   });
+
+  itBundled("react-compiler/HoistsMemoCacheSentinel", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function A() {
+          return <div>a</div>;
+        }
+        export function B() {
+          return <span>b</span>;
+        }
+        export function C() {
+          return <p>c</p>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Bun hoists `Symbol.for("react.memo_cache_sentinel")` to ONE
+      // module-scope const per RC-compiled module (Babel/upstream emits the
+      // call inline at every memo-slot comparison). Three components with
+      // no-dep scopes ⇒ three comparisons, but only one `Symbol.for` call.
+      const calls = [...out.matchAll(/Symbol\.for\("react\.memo_cache_sentinel"\)/g)];
+      expect(calls).toHaveLength(1);
+      // The hoisted const is referenced by name at each comparison.
+      const decl = out.match(/\b(?:var|const)\s+([A-Za-z_$][\w$]*)\s*=\s*Symbol\.for\("react\.memo_cache_sentinel"\)/);
+      expect(decl).not.toBeNull();
+      const sentinel = decl![1];
+      const refs = [...out.matchAll(new RegExp(String.raw`\$\[\d+\]\s*===\s*` + sentinel.replace(/\$/g, "\\$"), "g"))];
+      expect(refs).toHaveLength(3);
+    },
+  });
 });

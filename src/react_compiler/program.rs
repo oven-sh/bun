@@ -1441,6 +1441,39 @@ pub fn finish(
     }
 
     out_stmts.append(&mut state.outlined_decls);
+
+    // Prepend the hoisted `const $rc_sentinel = Symbol.for(...)` decls (if any
+    // memo-slot comparison referenced them) so they sit right after the runtime
+    // import in the RC `Part` and every compiled function in this module shares
+    // one `Symbol.for` call instead of repeating it inline per comparison.
+    if state.context.memo_cache_sentinel_ref.is_some()
+        || state.context.early_return_sentinel_ref.is_some()
+    {
+        // SAFETY: same as in `maybe_compile_node` — the arena is owned by the
+        // parser's `P` and outlives the `&mut dyn Host` borrow here.
+        let arena: &bun_alloc::Arena =
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(host.arena()) };
+        let mut prefix: Vec<Stmt> = Vec::with_capacity(2 + out_stmts.len());
+        if let Some(r) = state.context.memo_cache_sentinel_ref {
+            prefix.push(crate::codegen::build_hoisted_sentinel_decl(
+                host,
+                arena,
+                r,
+                crate::codegen::MEMO_CACHE_SENTINEL,
+            ));
+        }
+        if let Some(r) = state.context.early_return_sentinel_ref {
+            prefix.push(crate::codegen::build_hoisted_sentinel_decl(
+                host,
+                arena,
+                r,
+                crate::codegen::EARLY_RETURN_SENTINEL,
+            ));
+        }
+        prefix.append(out_stmts);
+        *out_stmts = prefix;
+    }
+
     add_imports_to_program(out_stmts, host, &state.context);
 
     CompileOutput::Changed {

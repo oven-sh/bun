@@ -101,14 +101,20 @@ pub struct OutlinedFunction {
 enum WellKnown {
     UseMemoCache,
     MemoCache,
-    Symbol,
     NaN,
     Infinity,
     Underscore,
+    /// Module-scope `const $rc_sentinel = Symbol.for("react.memo_cache_sentinel")`
+    /// hoisted by Bun so each memo-slot comparison is `$[i] === $rc_sentinel`
+    /// instead of re-calling `Symbol.for(...)` inline (Babel emits the inline
+    /// form; this is a Bun-side enhancement over upstream).
+    MemoCacheSentinel,
+    /// Same hoist for `Symbol.for("react.early_return_sentinel")`.
+    EarlyReturnSentinel,
 }
 
 impl WellKnown {
-    const COUNT: usize = 6;
+    const COUNT: usize = 7;
 }
 
 /// Host-side state shared across nested function-expression codegen so the
@@ -124,9 +130,17 @@ pub struct Codegen<'h> {
 }
 
 impl<'h> Codegen<'h> {
-    pub fn new(host: &'h mut dyn Host, arena: &'h Arena, memo_cache_import: Option<Ref>) -> Self {
+    pub fn new(
+        host: &'h mut dyn Host,
+        arena: &'h Arena,
+        memo_cache_import: Option<Ref>,
+        memo_cache_sentinel: Option<Ref>,
+        early_return_sentinel: Option<Ref>,
+    ) -> Self {
         let mut well_known = [None; WellKnown::COUNT];
         well_known[WellKnown::UseMemoCache as usize] = memo_cache_import;
+        well_known[WellKnown::MemoCacheSentinel as usize] = memo_cache_sentinel;
+        well_known[WellKnown::EarlyReturnSentinel as usize] = early_return_sentinel;
         Codegen {
             host,
             arena,
@@ -135,6 +149,17 @@ impl<'h> Codegen<'h> {
             name_to_ref: HashMap::new(),
             label_to_ref: IdMap::new(),
         }
+    }
+
+    /// Module-scope sentinel refs minted (or reused) during this function's
+    /// codegen, for write-back into `ProgramContext` so the next function in the
+    /// same module references the same `Ref` and `finish()` can emit the single
+    /// hoisted `const` decl.
+    pub fn sentinel_refs(&self) -> (Option<Ref>, Option<Ref>) {
+        (
+            self.well_known[WellKnown::MemoCacheSentinel as usize],
+            self.well_known[WellKnown::EarlyReturnSentinel as usize],
+        )
     }
 
     fn ref_for_name(&mut self, name: StoreStr) -> Ref {
@@ -651,8 +676,8 @@ fn codegen_reactive_scope(
     let scope_reassignments = cx.env.scopes[scope_id.0 as usize].reassignments.clone();
     let loc = Loc::EMPTY;
 
-    let mut cache_store_stmts: Vec<Stmt> = Vec::new();
-    let mut cache_load_stmts: Vec<Stmt> = Vec::new();
+    let mut cache_store_exprs: Vec<Expr> = Vec::new();
+    let mut cache_load_exprs: Vec<Expr> = Vec::new();
     let mut cache_loads: Vec<(Ref, u32, Expr)> = Vec::new();
     let mut change_exprs: Vec<Expr> = Vec::new();
 
@@ -688,15 +713,12 @@ fn codegen_reactive_scope(
         change_exprs.push(comparison);
 
         let dep_value = codegen_dependency(cx, dep)?;
-        cache_store_stmts.push(expr_stmt(
-            Expr::init(
-                E::Binary {
-                    op: OpCode::BinAssign,
-                    left: cache_slot(index),
-                    right: dep_value,
-                },
-                loc,
-            ),
+        cache_store_exprs.push(Expr::init(
+            E::Binary {
+                op: OpCode::BinAssign,
+                left: cache_slot(index),
+                right: dep_value,
+            },
             loc,
         ));
     }
@@ -762,7 +784,11 @@ fn codegen_reactive_scope(
             E::Binary {
                 op: OpCode::BinStrictEq,
                 left: cache_slot(first_idx),
-                right: symbol_for(cx, MEMO_CACHE_SENTINEL),
+                right: Expr::init_identifier(
+                    cx.cg
+                        .well_known(WellKnown::MemoCacheSentinel, b"$rc_sentinel"),
+                    loc,
+                ),
             },
             loc,
         )
@@ -785,37 +811,63 @@ fn codegen_reactive_scope(
     let mut computation_block = codegen_block(cx, block)?;
 
     for (name_ref, index, value) in &cache_loads {
-        cache_store_stmts.push(expr_stmt(
-            Expr::init(
-                E::Binary {
-                    op: OpCode::BinAssign,
-                    left: cache_slot(*index),
-                    right: *value,
-                },
-                loc,
-            ),
+        cache_store_exprs.push(Expr::init(
+            E::Binary {
+                op: OpCode::BinAssign,
+                left: cache_slot(*index),
+                right: *value,
+            },
             loc,
         ));
-        cache_load_stmts.push(expr_stmt(
-            Expr::init(
-                E::Binary {
-                    op: OpCode::BinAssign,
-                    left: Expr::init_identifier(*name_ref, loc),
-                    right: cache_slot(*index),
-                },
-                loc,
-            ),
+        cache_load_exprs.push(Expr::init(
+            E::Binary {
+                op: OpCode::BinAssign,
+                left: Expr::init_identifier(*name_ref, loc),
+                right: cache_slot(*index),
+            },
             loc,
         ));
     }
 
-    computation_block.extend(cache_store_stmts);
+    // Emit the run of `$[i] = dep` / `$[i] = name` stores as ONE comma-sequence
+    // statement (matching Babel) instead of N separate statements, so the
+    // printer can render the if/else brace-less when the branch is otherwise
+    // pure expression statements.
+    if !cache_store_exprs.is_empty() {
+        computation_block.push(expr_stmt(comma_seq(cache_store_exprs, loc), loc));
+    }
+
+    let yes = if computation_block
+        .iter()
+        .all(|s| matches!(s.data, StmtData::SExpr(_)))
+    {
+        let exprs: Vec<Expr> = computation_block
+            .into_iter()
+            .map(|s| match s.data {
+                StmtData::SExpr(es) => es.value,
+                _ => unreachable!(),
+            })
+            .collect();
+        if exprs.is_empty() {
+            empty_stmt()
+        } else {
+            expr_stmt(comma_seq(exprs, loc), loc)
+        }
+    } else {
+        block_stmt(computation_block, loc)
+    };
+
+    let no = if cache_load_exprs.is_empty() {
+        None
+    } else {
+        Some(expr_stmt(comma_seq(cache_load_exprs, loc), loc))
+    };
 
     let memo_stmt = Stmt::alloc(
         S::If {
             test_: test_condition,
-            yes: block_stmt(computation_block, loc),
-            no: Some(block_stmt(cache_load_stmts, loc)),
+            yes,
+            no,
         },
         loc,
     );
@@ -840,17 +892,18 @@ fn codegen_reactive_scope(
                     E::Binary {
                         op: OpCode::BinStrictNe,
                         left: name_expr,
-                        right: symbol_for(cx, EARLY_RETURN_SENTINEL),
+                        right: Expr::init_identifier(
+                            cx.cg
+                                .well_known(WellKnown::EarlyReturnSentinel, b"$rc_early"),
+                            loc,
+                        ),
                     },
                     loc,
                 ),
-                yes: block_stmt(
-                    vec![Stmt::alloc(
-                        S::Return {
-                            value: Some(name_expr),
-                        },
-                        loc,
-                    )],
+                yes: Stmt::alloc(
+                    S::Return {
+                        value: Some(name_expr),
+                    },
                     loc,
                 ),
                 no: None,
@@ -1500,9 +1553,14 @@ fn emit_store(
                 ));
             }
             let lval = codegen_lvalue(cx, lvalue)?;
+            // Emit SSA `Const` rebinds as `let` (not `const`) so the printer's
+            // adjacent-declarator merge can fold them with the next scope's
+            // `let tN` output temp into one `let x = tN, tN+1;`. These are
+            // compiler-generated SSA temps, so `const` carries no semantic
+            // benefit and only blocks the merge.
             Ok(Some(Stmt::alloc(
                 S::Local {
-                    kind: S::Kind::KConst,
+                    kind: S::Kind::KLet,
                     decls: decl_list([G::Decl {
                         binding: lval,
                         value,
@@ -1850,6 +1908,20 @@ fn codegen_base_instruction_value(
         InstructionValue::LoadGlobal { binding, .. } => {
             if let NonLocalKind::BunOpaque(e) = binding.kind {
                 return Ok(e);
+            }
+            // propagate_early_returns.rs synthesizes a ModuleLocal `$rc_early`
+            // load for the assignment side of the early-return sentinel; route
+            // it through the same well-known slot as the post-scope `!==`
+            // comparison so both sides share the single hoisted `const` decl
+            // emitted in program.rs (instead of inlining `Symbol.for(...)`).
+            if let NonLocalKind::ModuleLocal { name } = &binding.kind {
+                if name.slice() == b"$rc_early" {
+                    return Ok(Expr::init_identifier(
+                        cx.cg
+                            .well_known(WellKnown::EarlyReturnSentinel, b"$rc_early"),
+                        loc,
+                    ));
+                }
             }
             match binding.ref_() {
                 Some(r) => Ok(cx.cg.ident_expr_for_ref(r, loc)),
@@ -3103,6 +3175,26 @@ fn string_expr(s: &str, loc: Loc) -> Expr {
     Expr::init(estring_utf8(s), loc)
 }
 
+/// Fold a nonempty list of expressions into a left-associated comma sequence
+/// (`a, b, c`). Used to collapse runs of cache-slot assignment statements into
+/// a single `ExpressionStatement(SequenceExpression)` so the printer can drop
+/// braces around memo-block if/else branches (matches Babel output shape).
+#[inline]
+fn comma_seq(exprs: Vec<Expr>, loc: Loc) -> Expr {
+    let mut it = exprs.into_iter();
+    let first = it.next().expect("comma_seq: nonempty");
+    it.fold(first, |acc, next| {
+        Expr::init(
+            E::Binary {
+                op: OpCode::BinComma,
+                left: acc,
+                right: next,
+            },
+            loc,
+        )
+    })
+}
+
 #[inline]
 fn expr_stmt(value: Expr, loc: Loc) -> Stmt {
     Stmt::alloc(
@@ -3181,11 +3273,17 @@ fn property_access_expr(
     }
 }
 
-fn symbol_for(cx: &mut Context, name: &'static str) -> Expr {
-    let symbol = Expr::init_identifier(
-        cx.cg.well_known_global(WellKnown::Symbol, b"Symbol"),
-        Loc::EMPTY,
-    );
+/// Build the module-scope `const <sentinel_ref> = Symbol.for("<name>")` decl
+/// emitted once per RC-compiled module by `program::finish()`. Memo-slot
+/// comparisons reference `<sentinel_ref>` directly instead of repeating the
+/// `Symbol.for(...)` call inline (Babel's output) at every comparison site.
+pub fn build_hoisted_sentinel_decl(
+    host: &mut dyn Host,
+    arena: &Arena,
+    sentinel_ref: Ref,
+    name: &'static str,
+) -> Stmt {
+    let symbol = Expr::init_identifier(host.global_ref(b"Symbol"), Loc::EMPTY);
     let callee = Expr::init(
         E::Dot {
             target: symbol,
@@ -3196,10 +3294,27 @@ fn symbol_for(cx: &mut Context, name: &'static str) -> Expr {
         },
         Loc::EMPTY,
     );
-    Expr::init(
+    let call = Expr::init(
         E::Call {
             target: callee,
             args: AstAlloc::vec_from_iter([string_expr(name, Loc::EMPTY)]),
+            ..Default::default()
+        },
+        Loc::EMPTY,
+    );
+    Stmt::alloc(
+        S::Local {
+            kind: S::Kind::KConst,
+            decls: decl_list([G::Decl {
+                binding: Binding::alloc(
+                    arena,
+                    b::Identifier {
+                        r#ref: sentinel_ref,
+                    },
+                    Loc::EMPTY,
+                ),
+                value: Some(call),
+            }]),
             ..Default::default()
         },
         Loc::EMPTY,

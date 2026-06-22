@@ -55,6 +55,13 @@ pub struct ProgramContext {
     // Variable renames from lowering, to be applied back to the Babel AST
     pub renames: Vec<crate::hir::environment::BindingRename>,
 
+    /// Module-scope `Ref` for the hoisted `Symbol.for("react.memo_cache_sentinel")`
+    /// const, lazily minted on first use so every compiled function in the
+    /// module references the same local. `None` ⇒ no decl emitted.
+    pub memo_cache_sentinel_ref: Option<bun_ast::Ref>,
+    /// Same for `Symbol.for("react.early_return_sentinel")`.
+    pub early_return_sentinel_ref: Option<bun_ast::Ref>,
+
     // Internal state
     already_compiled: IndexSet<u32>,
     known_referenced_names: IndexSet<String>,
@@ -81,6 +88,8 @@ impl ProgramContext {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: Vec::new(),
+            memo_cache_sentinel_ref: None,
+            early_return_sentinel_ref: None,
             already_compiled: IndexSet::new(),
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),

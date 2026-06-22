@@ -182,11 +182,25 @@ pub fn compile_fn(
         let memo_cache = context.add_memo_cache_import(host);
         memo_cache.name_ref
     });
-    let mut cg = Codegen::new(host, arena, memo_seed);
+    let mut cg = Codegen::new(
+        host,
+        arena,
+        memo_seed,
+        context.memo_cache_sentinel_ref,
+        context.early_return_sentinel_ref,
+    );
     let codegen_result = timed!(
         "Codegen",
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)
-    )?;
+    );
+    // Write back any sentinel refs minted during this function's codegen so the
+    // next function in the module reuses the same module-scope local and
+    // `finish()` knows to emit the hoisted `const` decl.
+    (
+        context.memo_cache_sentinel_ref,
+        context.early_return_sentinel_ref,
+    ) = cg.sentinel_refs();
+    let codegen_result = codegen_result?;
 
     #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     if env.config.throw_unknown_exception_testonly {
@@ -331,9 +345,20 @@ pub fn compile_outlined_fn(
         let memo_cache = context.add_memo_cache_import(host);
         memo_cache.name_ref
     });
-    let mut cg = Codegen::new(host, arena, memo_seed);
+    let mut cg = Codegen::new(
+        host,
+        arena,
+        memo_seed,
+        context.memo_cache_sentinel_ref,
+        context.early_return_sentinel_ref,
+    );
     let codegen_result =
-        codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)?;
+        codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers);
+    (
+        context.memo_cache_sentinel_ref,
+        context.early_return_sentinel_ref,
+    ) = cg.sentinel_refs();
+    let codegen_result = codegen_result?;
 
     if env.has_errors() {
         return Err(env.take_errors());

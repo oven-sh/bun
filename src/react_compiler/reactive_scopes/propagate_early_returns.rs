@@ -12,20 +12,15 @@
 
 use crate::hir::{
     BlockId, Effect, EvaluationOrder, IdentifierId, IdentifierName, InstructionKind,
-    InstructionValue, LValue, NonLocalBinding, NonLocalKind, Place, PlaceOrSpread, PrimitiveValue,
-    PropertyLiteral, ReactiveFunction, ReactiveInstruction, ReactiveLabel, ReactiveScopeBlock,
-    ReactiveScopeDeclaration, ReactiveScopeEarlyReturn, ReactiveStatement, ReactiveTerminal,
-    ReactiveTerminalStatement, ReactiveTerminalTargetKind, ReactiveValue, StoreStr,
-    environment::Environment,
+    InstructionValue, LValue, NonLocalBinding, NonLocalKind, Place, ReactiveFunction,
+    ReactiveInstruction, ReactiveLabel, ReactiveScopeBlock, ReactiveScopeDeclaration,
+    ReactiveScopeEarlyReturn, ReactiveStatement, ReactiveTerminal, ReactiveTerminalStatement,
+    ReactiveTerminalTargetKind, ReactiveValue, StoreStr, environment::Environment,
 };
 
 use crate::reactive_scopes::visitors::{
     ReactiveFunctionTransform, Transformed, transform_reactive_function,
 };
-
-/// The sentinel string used to detect early returns.
-/// TS: `EARLY_RETURN_SENTINEL` from CodegenReactiveFunction.
-const EARLY_RETURN_SENTINEL: &str = "react.early_return_sentinel";
 
 // =============================================================================
 // Public entry point
@@ -208,75 +203,19 @@ fn apply_early_return_to_scope(
         },
     ));
 
-    // Create temporary places for the sentinel initialization
+    // Create temporary place for the sentinel initialization
     let sentinel_temp = create_temporary_place_id(env, loc);
-    let symbol_temp = create_temporary_place_id(env, loc);
-    let for_temp = create_temporary_place_id(env, loc);
-    let arg_temp = create_temporary_place_id(env, loc);
 
     let original_instructions = std::mem::take(&mut scope_block.instructions);
 
     scope_block.instructions = vec![
-        // LoadGlobal Symbol
-        ReactiveStatement::Instruction(ReactiveInstruction {
-            id: EvaluationOrder(0),
-            lvalue: Some(Place {
-                identifier: symbol_temp,
-                effect: Effect::Unknown,
-                reactive: false,
-                loc: None, // GeneratedSource
-            }),
-            value: ReactiveValue::Instruction(InstructionValue::LoadGlobal {
-                binding: NonLocalBinding {
-                    ref_: bun_ast::Ref::NONE,
-                    kind: NonLocalKind::Global {
-                        name: StoreStr::new(b"Symbol"),
-                    },
-                },
-                loc,
-            }),
-            effects: None,
-            loc,
-        }),
-        // PropertyLoad Symbol.for
-        ReactiveStatement::Instruction(ReactiveInstruction {
-            id: EvaluationOrder(0),
-            lvalue: Some(Place {
-                identifier: for_temp,
-                effect: Effect::Unknown,
-                reactive: false,
-                loc: None, // GeneratedSource
-            }),
-            value: ReactiveValue::Instruction(InstructionValue::PropertyLoad {
-                object: Place {
-                    identifier: symbol_temp,
-                    effect: Effect::Unknown,
-                    reactive: false,
-                    loc: None, // GeneratedSource
-                },
-                property: PropertyLiteral::String(StoreStr::new(b"for")),
-                loc,
-            }),
-            effects: None,
-            loc,
-        }),
-        // Primitive: the sentinel string
-        ReactiveStatement::Instruction(ReactiveInstruction {
-            id: EvaluationOrder(0),
-            lvalue: Some(Place {
-                identifier: arg_temp,
-                effect: Effect::Unknown,
-                reactive: false,
-                loc: None, // GeneratedSource
-            }),
-            value: ReactiveValue::Instruction(InstructionValue::Primitive {
-                value: PrimitiveValue::String(EARLY_RETURN_SENTINEL.into()),
-                loc,
-            }),
-            effects: None,
-            loc,
-        }),
-        // MethodCall: Symbol.for("react.early_return_sentinel")
+        // Load the module-hoisted `$rc_early` const. Upstream TS synthesizes a
+        // literal `Symbol.for("react.early_return_sentinel")` MethodCall here,
+        // but Bun already hoists that value to a single module-scope const for
+        // the post-scope `!==` comparison (codegen.rs WellKnown::EarlyReturnSentinel).
+        // Emitting a ModuleLocal load lets codegen route the *assignment* side
+        // through the same hoisted Ref so cache-miss paths in early-return
+        // scopes do `tN = $rc_early` instead of re-calling `Symbol.for(...)`.
         ReactiveStatement::Instruction(ReactiveInstruction {
             id: EvaluationOrder(0),
             lvalue: Some(Place {
@@ -285,25 +224,13 @@ fn apply_early_return_to_scope(
                 reactive: false,
                 loc: None, // GeneratedSource
             }),
-            value: ReactiveValue::Instruction(InstructionValue::MethodCall {
-                receiver: Place {
-                    identifier: symbol_temp,
-                    effect: Effect::Unknown,
-                    reactive: false,
-                    loc: None, // GeneratedSource
+            value: ReactiveValue::Instruction(InstructionValue::LoadGlobal {
+                binding: NonLocalBinding {
+                    ref_: bun_ast::Ref::NONE,
+                    kind: NonLocalKind::ModuleLocal {
+                        name: StoreStr::new(b"$rc_early"),
+                    },
                 },
-                property: Place {
-                    identifier: for_temp,
-                    effect: Effect::Unknown,
-                    reactive: false,
-                    loc: None, // GeneratedSource
-                },
-                args: crate::hir_vec![PlaceOrSpread::Place(Place {
-                    identifier: arg_temp,
-                    effect: Effect::Unknown,
-                    reactive: false,
-                    loc: None, // GeneratedSource
-                })],
                 loc,
             }),
             effects: None,

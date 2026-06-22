@@ -129,17 +129,18 @@ test("--inspect-brk breakpoint stops on the requested line, not the line before 
 });
 
 // The injected `debugger;` must not leave a stale "previous statement" behind.
-// An `export` statement prints a leading newline for readability when the
-// previous statement is not export-like, so without resetting the tag the
-// `export default` below would move to its own line and push every later
-// statement down one, re-introducing the skew. (A leading class declaration
-// hits the sibling `prev != SEmpty` path; it is not used here because a class
-// body prints across multiple transpiled lines, which is a separate
-// generated-vs-original line concern.)
+// An `export {}` clause prints a leading newline for readability when the
+// previous statement is not export-like (the printer's SExportClause arm gates
+// on `prev_stmt_tag.is_export_like()`). Without resetting the tag to SEmpty the
+// clause would move to its own line and push every later statement down one,
+// re-introducing the skew. (A leading class declaration hits the sibling
+// `prev != SEmpty` path; it is not used here because a class body prints across
+// multiple transpiled lines, which is a separate generated-vs-original line
+// concern.)
 test("--inspect-brk keeps line numbers when the first statement is an export (#32591)", async () => {
   using dir = tempDir("inspect-brk-first-stmt", {
     "target.ts": [
-      `export default 1;`, //             line 0: prints a leading readability newline
+      `export {};`, //                    line 0: prints a leading readability newline
       `const payload = { total: 10 };`, // line 1
       `console.log(payload.total);`, //    line 2: breakpoint target
       "",

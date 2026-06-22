@@ -273,12 +273,7 @@ describe("bundler", () => {
       "/index.tsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
     },
     onAfterBundle(api) {
-      expectMinifiedRuntimeImportsNotShadowed(api.readFile("out.js"), [
-        "jsx",
-        "jsxs",
-        "Fragment",
-        "createElement",
-      ]);
+      expectMinifiedRuntimeImportsNotShadowed(api.readFile("out.js"), ["jsx", "jsxs", "Fragment", "createElement"]);
     },
   });
   itBundled("jsx/AutomaticLocalShadowMinifyIdentifiersDev", {

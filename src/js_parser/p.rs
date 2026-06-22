@@ -4912,8 +4912,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
-                        self.symbols[symbol_idx]
-                            .set_remove_overwritten_function_declaration(true);
+                        self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -4922,8 +4921,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::BecomePrivateStaticGetSetPair => {
                     ref_ = existing.ref_;
-                    self.symbols[symbol_idx].kind =
-                        js_ast::symbol::Kind::PrivateStaticGetSetPair;
+                    self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateStaticGetSetPair;
                 }
                 MR::OverwriteWithNew => {}
             }

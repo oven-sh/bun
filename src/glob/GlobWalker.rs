@@ -2361,6 +2361,12 @@ fn find_first_brace_group(pattern: &[u8]) -> Option<(usize, usize, Vec<&[u8]>)> 
 fn expand_braces(pattern: &[u8]) -> Option<Vec<Box<[u8]>>> {
     let mut out: Vec<Box<[u8]>> = Vec::new();
     expand_braces_into(pattern, 0, &mut out)?;
+    // Empty pieces are kept through the recursion so an empty alternative's
+    // branch survives when an outer prefix/suffix would make the whole pattern
+    // non-empty (e.g. `{a/b,c}{d,}` must keep `a/b` and `c`). Patterns that
+    // still collapse to empty after expansion match nothing, so drop them once
+    // here rather than at every level.
+    out.retain(|p| !p.is_empty());
     Some(out)
 }
 
@@ -2370,34 +2376,29 @@ fn expand_braces_into(pattern: &[u8], depth: u32, out: &mut Vec<Box<[u8]>>) -> O
     }
 
     let Some((open, close, alts)) = find_first_brace_group(pattern) else {
-        // No brace group left: this is a concrete pattern. Drop patterns that
-        // collapse to empty (they match nothing on the filesystem).
-        if !pattern.is_empty() {
-            if out.len() >= BRACE_EXPANSION_LIMIT {
-                return None;
-            }
-            out.push(Box::from(pattern));
+        // No brace group left: this is a concrete pattern. Keep it even when
+        // empty so an empty brace branch is not lost mid-recursion; the
+        // top-level filter in `expand_braces` drops any that stay empty.
+        if out.len() >= BRACE_EXPANSION_LIMIT {
+            return None;
         }
+        out.push(Box::from(pattern));
         return Some(());
     };
 
     let prefix = &pattern[..open];
     let suffix = &pattern[close + 1..];
 
-    // The suffix is shared across every alternative, so expand it once.
+    // Expand the shared suffix once. A successful expansion always yields at
+    // least one entry (an empty input yields one empty string), so the inner
+    // loops below always run.
     let mut suffix_expansions: Vec<Box<[u8]>> = Vec::new();
     expand_braces_into(suffix, depth + 1, &mut suffix_expansions)?;
-    if suffix_expansions.is_empty() {
-        suffix_expansions.push(Box::from(&b""[..]));
-    }
 
     for alt in &alts {
         // An alternative may itself contain nested braces.
         let mut alt_expansions: Vec<Box<[u8]>> = Vec::new();
         expand_braces_into(alt, depth + 1, &mut alt_expansions)?;
-        if alt_expansions.is_empty() {
-            alt_expansions.push(Box::from(&b""[..]));
-        }
         for ae in &alt_expansions {
             for se in &suffix_expansions {
                 if out.len() >= BRACE_EXPANSION_LIMIT {
@@ -2407,9 +2408,7 @@ fn expand_braces_into(pattern: &[u8], depth: u32, out: &mut Vec<Box<[u8]>>) -> O
                 combined.extend_from_slice(prefix);
                 combined.extend_from_slice(ae);
                 combined.extend_from_slice(se);
-                if !combined.is_empty() {
-                    out.push(combined.into_boxed_slice());
-                }
+                out.push(combined.into_boxed_slice());
             }
         }
     }
@@ -2606,5 +2605,14 @@ mod brace_expansion_tests {
     fn empty_alternative_is_dropped_when_pattern_collapses() {
         // `{a/b,}` -> `a/b` and empty; the empty pattern matches nothing and is dropped.
         assert_eq!(expand("{a/b,}"), vec!["a/b"]);
+    }
+
+    #[test]
+    fn empty_alternative_survives_outer_prefix_and_suffix() {
+        // The empty branch of a trailing `{d,}` must be kept because the outer
+        // group makes it non-empty: `{a/b,c}{d,}` -> a/bd, a/b, cd, c.
+        assert_eq!(expand("{a/b,c}{d,}"), vec!["a/b", "a/bd", "c", "cd"]);
+        // Same for an empty branch in a nested alternative: `x{a/b,{c,}}` keeps x.
+        assert_eq!(expand("x{a/b,{c,}}"), vec!["x", "xa/b", "xc"]);
     }
 }

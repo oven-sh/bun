@@ -644,6 +644,10 @@ describe("brace patterns containing path separators", async () => {
     // the shape of `{*/*}` from https://github.com/oven-sh/bun/issues/24000.
     ["{src/*.ts}", ["src/cli.ts"]],
     ["pkg/{a/*/*.ts}", ["pkg/a/deep/x.ts"]],
+    // The empty branch of a trailing `{,x}` must be kept: the `{,x}` expands to
+    // "" and "x", and the "" branch yields the bare files (the "x" branch adds
+    // a suffix that matches nothing here).
+    ["{svc/env.ts,src/cli.ts}{,x}", ["svc/env.ts", "src/cli.ts"]],
   ];
 
   for (const [pattern, expected] of cases) {

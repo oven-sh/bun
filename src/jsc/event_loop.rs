@@ -738,42 +738,31 @@ impl EventLoop {
     }
 
     pub fn deinit(&mut self) {
-        unsafe extern "C" {
-            fn Bun__deleteEventLoopTask(task: *mut CppTask);
-        }
         // Free (don't run — running could re-enter the dying VM) queued
-        // ManagedTask boxes and CppTask payloads. Other tags are left in
-        // place: they were re-queued by `release_queued_tasks_for_shutdown`
-        // because their callback can't be no-op-dispatched safely (`AnyTask`
-        // callbacks call into JS) and their box may be aliased by the
-        // originator. On the main thread, keeping them in `self.tasks` (a
-        // field of the static-rooted `VirtualMachine` box that is never
-        // `dealloc`'d) leaves the chain reachable to LSan. Worker VMs ARE
-        // `dealloc`'d, so anything requeued there is a real leak — every
-        // worker now carries always-listening stdio/messaging-hub
-        // MessagePorts whose drain CppTask can be in `self.tasks` mid-tick
-        // when terminate() lands; reclaiming those here is what makes
-        // `requeue` empty for workers.
+        // ManagedTask boxes. Other tags are left in place: they were re-queued
+        // by `release_queued_tasks_for_shutdown` because their callback can't
+        // be no-op-dispatched safely (`AnyTask` callbacks call into JS) and
+        // their box may be aliased by the originator. Keeping them in
+        // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
+        // is never `dealloc`'d) leaves the chain reachable to LSan — the same
+        // visibility they had via `concurrent_tasks` before
+        // `drop_concurrent_cpp_tasks` drained it. CppTasks must NOT be deleted
+        // here: this runs after JSC VM teardown on both worker and main paths,
+        // and a Worker dispatchExit task's `~Ref<Worker>` would walk freed
+        // WeakBlock storage via `~JSEventListener`. They are reclaimed before
+        // teardown by `release_queued_tasks_for_shutdown`'s CppTask arm.
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
-            match task.tag {
-                bun_event_loop::task_tag::ManagedTask => {
-                    // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
-                    let managed = unsafe {
-                        bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>())
-                    };
-                    if let (Some(cleanup), Some(ctx)) = (managed.cleanup, managed.ctx) {
-                        cleanup(ctx.as_ptr());
-                    }
-                    drop(managed);
+            if task.tag == bun_event_loop::task_tag::ManagedTask {
+                // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
+                let managed =
+                    unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
+                if let (Some(cleanup), Some(ctx)) = (managed.cleanup, managed.ctx) {
+                    cleanup(ctx.as_ptr());
                 }
-                bun_event_loop::task_tag::CppTask => {
-                    // SAFETY: every `CppTask` payload is a heap
-                    // `WebCore::EventLoopTask*` (`ScriptExecutionContext::postTask*`
-                    // → `new EventLoopTask`); we own it once popped.
-                    unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
-                }
-                _ => requeue.push(task),
+                drop(managed);
+            } else {
+                requeue.push(task);
             }
         }
         // Reassigning a fresh value drops the old buffers in place.

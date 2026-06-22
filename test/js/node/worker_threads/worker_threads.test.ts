@@ -583,6 +583,33 @@ test("failed Worker construction restores transferred FileHandles", async () => 
   await fh.close();
 });
 
+test("transferred FileHandles are not neutered when name/filename validation rejects", async () => {
+  const dir = tmpdirSync("worker-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  // ERR_WORKER_PATH (bare specifier): node validates filename before processing
+  // the transferList, so the FileHandle is never touched.
+  {
+    const fh = await fs.promises.open(file, "r");
+    expect(() => {
+      new Worker("not/a/valid/worker/path", { workerData: { fh }, transferList: [fh as any] } as any);
+    }).toThrow(expect.objectContaining({ code: "ERR_WORKER_PATH" }));
+    expect(fh.fd).toBeGreaterThanOrEqual(0);
+    const { bytesRead } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+    expect(bytesRead).toBe(5);
+    await fh.close();
+  }
+  // ERR_INVALID_ARG_TYPE on options.name
+  {
+    const fh = await fs.promises.open(file, "r");
+    expect(() => {
+      new Worker(file, { name: 0 as any, workerData: { fh }, transferList: [fh as any] } as any);
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(fh.fd).toBeGreaterThanOrEqual(0);
+    await fh.close();
+  }
+});
+
 test("partially transferred FileHandles are restored when a later transfer throws", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");

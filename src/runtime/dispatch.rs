@@ -1177,6 +1177,20 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
             for_each_fs_async_op!(__fs_destroy);
             true
         }
+        // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
+        // that were already batch-moved into `self.tasks`. Must run before
+        // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks
+        // `~JSEventListener` Weak<> handles. Worker `shutdown()` calls
+        // `release_queued_tasks_for_shutdown` for the same reason.
+        task_tag::CppTask => {
+            unsafe extern "C" {
+                fn Bun__deleteEventLoopTask(task: *mut CppTask);
+            }
+            // SAFETY: every CppTask payload is a heap `WebCore::EventLoopTask*`;
+            // we own it once popped.
+            unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
+            true
+        }
         // Re-queued by the caller; the box stays reachable from the
         // static-rooted VM. Dispatching the type-erased `AnyTask` callback
         // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,

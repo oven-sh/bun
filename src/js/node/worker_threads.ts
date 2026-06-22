@@ -864,8 +864,6 @@ class Worker extends EventEmitter {
     // option accesses below don't throw on `new Worker(file, null)`.
     options ??= {};
 
-    options = packJSTransferables(options);
-
     this.#name = normalizeWorkerName(options.name);
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
@@ -888,6 +886,12 @@ class Worker extends EventEmitter {
       // is equivalent to omitting eval).
       filename = validateWorkerFilename(filename);
     }
+
+    // Neuter transferred FileHandles only AFTER name/filename validation so a
+    // validation throw above leaves them intact (matching node, which validates
+    // before processing the transferList). Past this point every throw goes
+    // through the catch below, which calls kRestoreJSTransferables.
+    options = packJSTransferables(options);
 
     // Captured stdio: one control MessageChannel per requested stream; the parent keeps
     // one end, the other rides in workerData and the worker rebinds its stdio to it.
@@ -949,10 +953,7 @@ class Worker extends EventEmitter {
       const userPreload = (options as any).preload;
       options = {
         ...options,
-        preload: [
-          "node:worker_threads",
-          ...(Array.isArray(userPreload) ? userPreload : userPreload ? [userPreload] : []),
-        ],
+        preload: ["node:worker_threads", ...($isArray(userPreload) ? userPreload : userPreload ? [userPreload] : [])],
       } as NodeWorkerOptions;
       this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
       // Uncaptured stdio forwards to the parent's stdio. Keep these ports unref'd:

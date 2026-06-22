@@ -1267,6 +1267,14 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Reclaim queued CppTasks (the per-worker stdio/messaging
+            // MessagePort drain tasks that can be in self.tasks mid-tick when
+            // terminate() lands, and any Worker dispatchExit close task from a
+            // sub-worker) while JSC is still live: ~Ref<Worker> walks
+            // ~JSEventListener Weak<> handles, and after teardownJSCVM the
+            // worker VM is dealloc'd-without-Drop so anything still in
+            // self.tasks leaks. Mirrors the global_exit() ordering.
+            vm.event_loop_mut().release_queued_tasks_for_shutdown();
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

@@ -476,7 +476,11 @@ describe("bundler", () => {
   });
   test("Bun.isStandaloneExecutable is false when not compiled", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `console.log(JSON.stringify({ value: Bun.isStandaloneExecutable, type: typeof Bun.isStandaloneExecutable }))`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify({ value: Bun.isStandaloneExecutable, type: typeof Bun.isStandaloneExecutable }))`,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

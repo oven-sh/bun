@@ -449,17 +449,19 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 //
                 // In that case we don't need to do any walking and can just open up the FS entry
                 if starting_component_idx as usize >= self.walker.pattern_components.len() {
-                    // Matched-path payload must respect SENTINEL. The open()
-                    // probe always needs a NUL — use a separate dupeZ for it so
-                    // SENTINEL=false matched paths don't carry a spurious 0x00.
-                    let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
+                    // The open() probe always needs a NUL-terminated path.
                     let pathz_owned = dupe_z(path_without_special_syntax);
                     // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
                     let pathz = ZStr::from_slice_with_nul(&pathz_owned[..]);
                     let fd = match A::open(pathz)? {
                         Err(e) => {
+                            // ENOTDIR means a path component is a file, i.e. the
+                            // literal itself exists as a file: that's a match.
                             if e.get_errno() == E::ENOTDIR {
-                                self.iter_state = IterState::Matched(path);
+                                self.iter_state = GlobWalker::<A, SENTINEL>::matched_or_next(
+                                    &mut self.walker.matched_paths,
+                                    path_without_special_syntax,
+                                )?;
                                 return Ok(Ok(()));
                             }
                             // Doesn't exist
@@ -467,12 +469,16 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 self.iter_state = IterState::GetNext;
                                 return Ok(Ok(()));
                             }
+                            let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
                             return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&path))));
                         }
                         Ok(fd) => fd,
                     };
                     let _ = A::close(fd);
-                    self.iter_state = IterState::Matched(path);
+                    self.iter_state = GlobWalker::<A, SENTINEL>::matched_or_next(
+                        &mut self.walker.matched_paths,
+                        path_without_special_syntax,
+                    )?;
                     return Ok(Ok(()));
                 }
 
@@ -1915,6 +1921,51 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Some(name_matched_path))
     }
 
+    /// Record a fully-resolved match (`full_path` is NUL-less), deduping it
+    /// against `matched_paths`. Returns the payload to emit, or `None` if it was
+    /// already matched. Used by `Iterator::init`'s no-special-syntax fast path,
+    /// which would otherwise emit a `Matched` state without recording it: for
+    /// `walk` (reads `matched_paths`) the match would be dropped, and across
+    /// brace expansions an overlapping absolute literal (`/x/{a,a}`) would be
+    /// emitted twice to `next()` consumers. Mirrors `prepare_matched_path`'s NUL
+    /// handling so dedupe is exact in both SENTINEL modes (stored keys carry a
+    /// trailing NUL when SENTINEL is true).
+    ///
+    /// Takes `matched_paths` by reference (rather than `&mut self`) so the caller
+    /// can pass a slice borrowed from a different `self` field (`pattern`).
+    fn record_full_match(
+        matched_paths: &mut MatchedMap,
+        full_path: &[u8],
+    ) -> Result<Option<MatchedPath>, AllocError> {
+        if SENTINEL {
+            let with_nul = dupe_z(full_path);
+            if matched_paths.contains_key(&with_nul) {
+                return Ok(None);
+            }
+            matched_paths.insert(&with_nul, ());
+            Ok(Some(with_nul))
+        } else {
+            if matched_paths.contains_key(full_path) {
+                return Ok(None);
+            }
+            let slice: Box<[u8]> = Box::from(full_path);
+            matched_paths.insert(&slice, ());
+            Ok(Some(slice))
+        }
+    }
+
+    /// Record `full_path` and return the iterator state to enter: `Matched` when
+    /// it is a newly seen match, `GetNext` when it was already emitted.
+    fn matched_or_next(
+        matched_paths: &mut MatchedMap,
+        full_path: &[u8],
+    ) -> Result<IterState<A>, AllocError> {
+        Ok(match Self::record_full_match(matched_paths, full_path)? {
+            Some(p) => IterState::Matched(p),
+            None => IterState::GetNext,
+        })
+    }
+
     #[inline]
     fn join(&self, subdir_parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
         if !self.absolute {
@@ -2219,9 +2270,11 @@ const BRACE_EXPANSION_LIMIT: usize = 10_000;
 const BRACE_EXPANSION_MAX_DEPTH: u32 = 32;
 
 /// Returns true if `pattern` contains a brace group (`{...}`) with a path
-/// separator inside it. Backslash escapes and `[...]` bracket classes are
-/// honored the same way [`crate::matcher`] honors them, so commas/braces/
-/// separators inside a bracket class or after a backslash are not counted.
+/// separator inside it. `[...]` bracket classes are honored, so commas/braces/
+/// separators inside a class are not counted. On non-Windows a backslash
+/// escapes the next byte; on Windows a backslash is a native path separator
+/// (matching `is_sep_native` / `build_pattern_components`), not an escape, so a
+/// `\` inside a brace group triggers expansion there too.
 fn brace_group_spans_separator(pattern: &[u8]) -> bool {
     let mut depth: u32 = 0;
     let mut in_brackets = false;
@@ -2229,7 +2282,7 @@ fn brace_group_spans_separator(pattern: &[u8]) -> bool {
     while i < pattern.len() {
         let c = pattern[i];
         match c {
-            b'\\' => {
+            b'\\' if !cfg!(windows) => {
                 i += 2;
                 continue;
             }
@@ -2256,7 +2309,7 @@ fn find_first_brace_group(pattern: &[u8]) -> Option<(usize, usize, Vec<&[u8]>)> 
     let mut i = 0usize;
     while i < pattern.len() {
         match pattern[i] {
-            b'\\' => {
+            b'\\' if !cfg!(windows) => {
                 i += 2;
                 continue;
             }
@@ -2279,7 +2332,7 @@ fn find_first_brace_group(pattern: &[u8]) -> Option<(usize, usize, Vec<&[u8]>)> 
     let mut j = open;
     while j < pattern.len() {
         match pattern[j] {
-            b'\\' => {
+            b'\\' if !cfg!(windows) => {
                 j += 2;
                 continue;
             }
@@ -2515,6 +2568,9 @@ mod brace_expansion_tests {
     #[test]
     fn single_alternative_group_unwraps() {
         assert_eq!(expand("svc/{src/env.ts}"), vec!["svc/src/env.ts"]);
+        // A whole-pattern single-alternative group with a wildcard: `{*/*}` -> `*/*`.
+        assert!(brace_group_spans_separator(b"{*/*}"));
+        assert_eq!(expand("{*/*}"), vec!["*/*"]);
     }
 
     #[test]

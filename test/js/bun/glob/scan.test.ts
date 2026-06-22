@@ -23,7 +23,7 @@
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -640,6 +640,10 @@ describe("brace patterns containing path separators", async () => {
     ["svc/{src/env.ts,src/env.ts}", ["svc/src/env.ts"]],
     // A single-alternative group still expands.
     ["svc/{src/env.ts}", ["svc/src/env.ts"]],
+    // A single-alternative group wrapping a wildcard that spans a separator,
+    // the shape of `{*/*}` from https://github.com/oven-sh/bun/issues/24000.
+    ["{src/*.ts}", ["src/cli.ts"]],
+    ["pkg/{a/*/*.ts}", ["pkg/a/deep/x.ts"]],
   ];
 
   for (const [pattern, expected] of cases) {
@@ -665,6 +669,19 @@ describe("brace patterns containing path separators", async () => {
       expect(glob.match(entry.split(path.sep).join("/"))).toBe(true);
     }
     expect(entries.length).toBe(2);
+  });
+
+  // Expanded alternatives that are absolute literals hit the no-special-syntax
+  // fast path; it must still record matches (so they surface) and dedupe them.
+  // POSIX-only: the pattern is built with "/" to keep separators unambiguous.
+  test.skipIf(isWindows)("absolute literal brace expansions surface and dedupe", async () => {
+    const distinct = await Array.fromAsync(
+      new Glob(`${cwd}/{svc/env.ts,svc/src/env.ts}`).scan({ dot: true }),
+    );
+    expect(distinct.sort()).toEqual([`${cwd}/svc/env.ts`, `${cwd}/svc/src/env.ts`].sort());
+
+    const overlapping = await Array.fromAsync(new Glob(`${cwd}/{svc/env.ts,svc/env.ts}`).scan({ dot: true }));
+    expect(overlapping).toEqual([`${cwd}/svc/env.ts`]);
   });
 });
 

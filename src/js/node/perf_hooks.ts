@@ -178,10 +178,12 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
     let requested;
     let isTypeMode = false;
     if (options != null && typeof options === "object") {
-      if (options.entryTypes !== undefined && Array.isArray(options.entryTypes)) {
-        requested = options.entryTypes;
-      } else if (options.type !== undefined) {
-        requested = [options.type];
+      const entryTypes = options.entryTypes;
+      let type;
+      if (entryTypes !== undefined && Array.isArray(entryTypes)) {
+        requested = entryTypes;
+      } else if ((type = options.type) !== undefined) {
+        requested = [type];
         isTypeMode = true;
       }
     }
@@ -362,34 +364,37 @@ export default {
     let highest = Number.MAX_SAFE_INTEGER;
     let figures = 3;
 
-    if (opts.lowest !== undefined) {
-      if (typeof opts.lowest === "bigint") {
-        lowest = Number(opts.lowest);
-      } else if (typeof opts.lowest === "number") {
-        lowest = opts.lowest;
+    const lowestOpt = opts.lowest;
+    if (lowestOpt !== undefined) {
+      if (typeof lowestOpt === "bigint") {
+        lowest = Number(lowestOpt);
+      } else if (typeof lowestOpt === "number") {
+        lowest = lowestOpt;
       } else {
-        throw $ERR_INVALID_ARG_TYPE("options.lowest", ["number", "bigint"], opts.lowest);
+        throw $ERR_INVALID_ARG_TYPE("options.lowest", ["number", "bigint"], lowestOpt);
       }
     }
 
-    if (opts.highest !== undefined) {
-      if (typeof opts.highest === "bigint") {
-        highest = Number(opts.highest);
-      } else if (typeof opts.highest === "number") {
-        highest = opts.highest;
+    const highestOpt = opts.highest;
+    if (highestOpt !== undefined) {
+      if (typeof highestOpt === "bigint") {
+        highest = Number(highestOpt);
+      } else if (typeof highestOpt === "number") {
+        highest = highestOpt;
       } else {
-        throw $ERR_INVALID_ARG_TYPE("options.highest", ["number", "bigint"], opts.highest);
+        throw $ERR_INVALID_ARG_TYPE("options.highest", ["number", "bigint"], highestOpt);
       }
     }
 
-    if (opts.figures !== undefined) {
-      if (typeof opts.figures !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.figures", "number", opts.figures);
+    const figuresOpt = opts.figures;
+    if (figuresOpt !== undefined) {
+      if (typeof figuresOpt !== "number") {
+        throw $ERR_INVALID_ARG_TYPE("options.figures", "number", figuresOpt);
       }
-      if (opts.figures < 1 || opts.figures > 5) {
-        throw $ERR_OUT_OF_RANGE("options.figures", ">= 1 && <= 5", opts.figures);
+      if (figuresOpt < 1 || figuresOpt > 5) {
+        throw $ERR_OUT_OF_RANGE("options.figures", ">= 1 && <= 5", figuresOpt);
       }
-      figures = opts.figures;
+      figures = figuresOpt;
     }
 
     // Node.js validation - highest must be >= 2 * lowest

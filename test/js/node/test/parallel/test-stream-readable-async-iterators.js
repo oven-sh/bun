@@ -710,11 +710,7 @@ async function tests() {
   // AsyncIterator should throw if prematurely closed
   // before end has been emitted.
   (async function() {
-    // Bun: Bun's fs.ReadStream can read this whole file in a single chunk and
-    // mark the stream ended before close() runs, in which case the close is
-    // not premature (matching node's isReadableFinished semantics). Force
-    // multiple chunks so close() happens mid-stream like upstream intends.
-    const readable = fs.createReadStream(__filename, { highWaterMark: 64 });
+    const readable = fs.createReadStream(__filename);
 
     try {
       // eslint-disable-next-line no-unused-vars

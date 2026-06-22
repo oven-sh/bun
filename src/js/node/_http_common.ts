@@ -113,7 +113,8 @@ function parserOnHeadersComplete(
   let n = headers.length;
 
   // If parser.maxHeaderPairs <= 0 assume that there's no limit.
-  if (parser.maxHeaderPairs > 0) n = Math.min(n, parser.maxHeaderPairs);
+  const maxHeaderPairs = parser.maxHeaderPairs;
+  if (maxHeaderPairs > 0) n = Math.min(n, maxHeaderPairs);
 
   incoming._addHeaderLines(headers, n);
 
@@ -150,8 +151,9 @@ function parserOnMessageComplete() {
     stream.complete = true;
     // Emit any trailing headers.
     const headers = parser._headers;
-    if (headers.length) {
-      stream._addHeaderLines(headers, headers.length);
+    const headersLength = headers.length;
+    if (headersLength) {
+      stream._addHeaderLines(headers, headersLength);
       parser._headers = [];
       parser._url = "";
     }
@@ -228,7 +230,8 @@ function cleanParser(parser) {
 
 function prepareError(err, parser, rawPacket) {
   err.rawPacket = rawPacket || parser.getCurrentBuffer();
-  if (typeof err.reason === "string") err.message = `Parse Error: ${err.reason}`;
+  const reason = err.reason;
+  if (typeof reason === "string") err.message = `Parse Error: ${reason}`;
 }
 
 let warnedLenient = false;

@@ -2367,6 +2367,103 @@ it("http.request rejects an options.port that is not a valid port number", async
   }
 });
 
+it("ClientRequest.destroy(err) emits 'error' before the terminal 'close'", async () => {
+  // Node: socketErrorListener forwards the error to the request before
+  // socketCloseListener emits 'close'. Code treating 'close' as terminal
+  // (e.g. removing listeners there) must still observe the error.
+  const server = http.createServer((req, res) => {
+    res.write("x"); // keep the response incomplete
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const events = await new Promise<string[]>(resolve => {
+      const req = http.get({ host: "127.0.0.1", port }, () => {
+        const seen: string[] = [];
+        req.on("error", () => seen.push("error"));
+        req.on("close", () => {
+          seen.push("close");
+          resolve(seen);
+        });
+        req.destroy(new Error("boom"));
+      });
+      req.on("error", () => {}); // swallow pre-response errors
+    });
+    expect(events).toEqual(["error", "close"]);
+  } finally {
+    server.close();
+  }
+});
+
+it("ClientRequest.destroy(err) with no error listener does not throw and still tears down", async () => {
+  // destroy() must never throw synchronously (node routes the error through
+  // the socket's listener and surfaces it async). A listener attached after
+  // destroy() returns, same tick, still catches it.
+  const server = http.createServer((req, res) => {
+    res.write("x");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const { err, closedAtError } = await new Promise<{ err: Error; closedAtError: boolean }>(resolve => {
+      const req = http.get({ host: "127.0.0.1", port }, () => {
+        let sawClose = false;
+        req.on("close", () => (sawClose = true));
+        req.destroy(new Error("boom")); // must not throw
+        req.on("error", e => resolve({ err: e, closedAtError: sawClose }));
+      });
+    });
+    expect(err.message).toBe("boom");
+    // 'error' fires before the terminal 'close' (node v26.3.0 verified).
+    expect(closedAtError).toBe(false);
+  } finally {
+    server.close();
+  }
+});
+
+it("ClientRequest.destroy(err) with a throwing error listener still tears down; the throw surfaces async", async () => {
+  // node: a throwing 'error' handler becomes an async uncaught exception
+  // after socket.destroy(err) already ran; destroy() itself never throws.
+  const script = `
+    const http = require("node:http");
+    const server = http.createServer((req, res) => res.write("x"));
+    server.listen(0, "127.0.0.1", () => {
+      const req = http.get({ host: "127.0.0.1", port: server.address().port }, () => {
+        req.on("error", () => {
+          throw new Error("handler bug");
+        });
+        let sawClose = false;
+        req.on("close", () => (sawClose = true));
+        try {
+          req.destroy(new Error("boom"));
+          console.log("destroy-returned");
+        } catch (e) {
+          console.log("destroy-threw:" + e.message);
+        }
+        console.log("teardown-ran:" + sawClose);
+        process.on("uncaughtException", e => {
+          console.log("async-uncaught:" + e.message);
+          process.exit(0);
+        });
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // node v26.3.0 verified: 'close' is async (after destroy() returns).
+  expect(stdout.trim().split("\n")).toEqual(["destroy-returned", "teardown-ran:false", "async-uncaught:handler bug"]);
+  expect(exitCode).toBe(0);
+});
+
 it("keep-alive socket reused after a 304 response still frames the next response body", async () => {
   // The native per-request reset must clear the 204/304 no-body flag, or the
   // 200 that follows a 304 on the same connection is sent with no framing

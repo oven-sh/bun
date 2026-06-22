@@ -8,7 +8,13 @@
 
 # If you need to make a change to this script, such as upgrading a dependency,
 # increment the version comment to indicate that a new image should be built.
-# Otherwise, the existing image will be retroactively updated.
+# Then, on a PR (image bakes are disabled on main):
+#   1. Put `[build windows images]` in the commit subject to bake throwaway
+#      images and run CI against them.
+#   2. Once green, change the subject to `[publish windows images]` and push
+#      again to bake the real `-vN` image tag.
+#   3. Merge after the publish run finishes so main never waits on a bake.
+# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
 
 param (
   [Parameter(Mandatory = $false)]

@@ -398,10 +398,13 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
 
   const handle = this[kHandle];
   if (handle) {
-    // Native server path.
+    // Native server path. The stream destroyer (internal/streams/destroy.ts)
+    // assigns `req.socket = null` before calling destroy() to signal that the
+    // connection must outlive the request so the response can still reply
+    // (node's _destroy null-socket check).
     this[kHandle] = undefined;
     handle.onabort = handle.ondata = undefined;
-    if (!handle.finished && shouldEmitAborted) {
+    if (!handle.finished && shouldEmitAborted && this.socket) {
       handle.abort();
     }
     const socket = this.socket;

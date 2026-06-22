@@ -45,13 +45,15 @@ const copyProps = (src, dest) => {
 };
 
 const makeSafe = (unsafe, safe) => {
-  if (Symbol.iterator in unsafe.prototype) {
+  const unsafePrototype = unsafe.prototype;
+  const safePrototype = safe.prototype;
+  if (Symbol.iterator in unsafePrototype) {
     const dummy = new unsafe();
     let next; // We can reuse the same `next` method.
 
-    ArrayPrototypeForEach(Reflect.ownKeys(unsafe.prototype), key => {
-      if (!Reflect.getOwnPropertyDescriptor(safe.prototype, key)) {
-        const desc = Reflect.getOwnPropertyDescriptor(unsafe.prototype, key);
+    ArrayPrototypeForEach(Reflect.ownKeys(unsafePrototype), key => {
+      if (!Reflect.getOwnPropertyDescriptor(safePrototype, key)) {
+        const desc = Reflect.getOwnPropertyDescriptor(unsafePrototype, key);
         if (typeof desc.value === "function" && desc.value.length === 0) {
           const called = desc.value.$call(dummy) || {};
           if (Symbol.iterator in (typeof called === "object" ? called : {})) {
@@ -63,14 +65,14 @@ const makeSafe = (unsafe, safe) => {
             };
           }
         }
-        Reflect.defineProperty(safe.prototype, key, desc);
+        Reflect.defineProperty(safePrototype, key, desc);
       }
     });
-  } else copyProps(unsafe.prototype, safe.prototype);
+  } else copyProps(unsafePrototype, safePrototype);
   copyProps(unsafe, safe);
 
-  Object.setPrototypeOf(safe.prototype, null);
-  Object.freeze(safe.prototype);
+  Object.setPrototypeOf(safePrototype, null);
+  Object.freeze(safePrototype);
   Object.freeze(safe);
   return safe;
 };

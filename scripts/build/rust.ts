@@ -477,6 +477,20 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Zsanitizer=address");
     rustflags.push("--cfg=bun_asan");
   }
+  // `bun_debug`: the cargo profile is `dev` (a Debug-buildtype build).
+  // `bun_core::env::IS_DEBUG` and `build_options::ENABLE_LOGS` key on this
+  // instead of `cfg!(debug_assertions)` so that release-asan /
+  // release-assertions (which enable `debug-assertions` below for
+  // `debug_assert!()` coverage) don't also flip on Debug-only conveniences:
+  // `DUMP_SOURCE` (per-module writes to /tmp/bun-debug-src/), `debug_warn!`
+  // stderr noise, the `bun-debug` self-name for `npm run` rewrites,
+  // experimental feature-flag defaults. Mirrors Zig's
+  // `builtin.mode == .Debug`, which the Rust port had proxied via
+  // `debug_assertions` only because the two were coextensive until now.
+  rustflags.push("--check-cfg=cfg(bun_debug)");
+  if (cfg.debug) {
+    rustflags.push("--cfg=bun_debug");
+  }
   // `bun_codegen_embed`: embed codegen-output `.js` (`include_bytes!`) instead
   // of reading them from `BUN_CODEGEN_DIR` at runtime. Mirrors Zig
   // `BunBuildOptions.shouldEmbedCode() = optimize != .Debug or codegen_embed`.
@@ -502,6 +516,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // is nightly.
   if (cfg.release && !cfg.assertions) {
     rustflags.push("-Zlocation-detail=none");
+  }
+  // Path remapping (CI reproducibility) — rustc equivalent of the C/C++
+  // `-ffile-prefix-map` entries in flags.ts. Without this, `file!()` /
+  // panic locations and the DWARF compilation-dir from every workspace
+  // crate and vendored Rust dep (lol-html) embed the absolute checkout
+  // path into the release binary (`strings bun | grep $PWD` shows them).
+  // Gated on `cfg.ci` to match the flags.ts entry.
+  if (cfg.ci) {
+    rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
+    rustflags.push(`--remap-path-prefix=${cfg.vendorDir}=vendor`);
   }
   // IR PGO, Rust half — mirrors the C++ `-fprofile-generate`/`-fprofile-use`
   // (flags.ts) so the Rust ~half of bun's `.text` participates too (a port-era
@@ -716,6 +740,17 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // cargo step vs 4m36s for the linker-plugin-lto build (which defers
     // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
+  }
+  if (cfg.assertions) {
+    // Turn `debug_assert!()` / `#[cfg(debug_assertions)]` on in the release
+    // cargo profile. `cfg.assertions` defaults to `debug || asan`
+    // (config.ts), so release-asan and release-assertions both get Rust
+    // invariant checks to match the C++ side's `-DASSERT_ENABLED=1` (keyed
+    // on the same `cfg.assertions` in flags.ts). Without this override the
+    // workspace `[profile.release]` leaves debug-assertions off and ~3k
+    // `debug_assert!` sites compile to nothing under ASAN. The `dev` profile
+    // (debug builds) already defaults it on, so this is a no-op there.
+    env.CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS = "true";
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 

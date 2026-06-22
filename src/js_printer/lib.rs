@@ -1464,7 +1464,7 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
-        ExprData::ENumber(e) => e.value.is_infinite() || e.value.is_nan(),
+        ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,
     }
 }
@@ -2004,7 +2004,7 @@ pub mod __gated_printer {
                 unreachable!();
             }
 
-            if import.star_name_loc.is_some() {
+            if !import.star_name_loc.is_empty() {
                 self.print(b"var ");
                 self.print_symbol(import.namespace_ref);
                 self.print_space();
@@ -2028,7 +2028,7 @@ pub mod __gated_printer {
             if let Some(default) = &import.default_name {
                 self.print_semicolon_if_needed();
                 self.print(b"var ");
-                self.print_symbol(default.ref_.expect("infallible: ref bound"));
+                self.print_symbol(default.ref_);
                 match statement {
                     None => {
                         self.print_equals();
@@ -2080,7 +2080,7 @@ pub mod __gated_printer {
 
                 self.print_whitespacer(ws!(b"} = "));
 
-                if import.star_name_loc.is_none() && import.default_name.is_none() {
+                if import.star_name_loc.is_empty() && import.default_name.is_none() {
                     match statement {
                         None => self.print_require_or_import_expr(
                             import.import_record_index,
@@ -2093,7 +2093,7 @@ pub mod __gated_printer {
                         Some(s) => self.print(s),
                     }
                 } else if let Some(name) = &import.default_name {
-                    self.print_symbol(name.ref_.expect("infallible: ref bound"));
+                    self.print_symbol(name.ref_);
                 } else {
                     self.print_symbol(import.namespace_ref);
                 }
@@ -2105,20 +2105,20 @@ pub mod __gated_printer {
             // bypasses printDeclStmt/printBinding, so we must record vars explicitly.
             // reshaped for borrowck — compute names before borrowing module_info.
             if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
-                if import.star_name_loc.is_some() {
+                if !import.star_name_loc.is_empty() {
                     let name = self.name_for_symbol(import.namespace_ref);
                     let mi = self.module_info().expect("infallible: module_info enabled");
                     let id = mi.str(name);
                     mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
                 }
                 if let Some(default) = &import.default_name {
-                    let name = self.name_for_symbol(default.ref_.expect("infallible: ref bound"));
+                    let name = self.name_for_symbol(default.ref_);
                     let mi = self.module_info().expect("infallible: module_info enabled");
                     let id = mi.str(name);
                     mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
                 }
                 for item in slice_of(import.items).iter() {
-                    let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
+                    let name = self.name_for_symbol(item.name.ref_);
                     let mi = self.module_info().expect("infallible: module_info enabled");
                     let id = mi.str(name);
                     mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
@@ -3077,7 +3077,7 @@ pub mod __gated_printer {
         }
 
         fn print_clause_item_as(&mut self, item: &js_ast::ClauseItem, as_: ClauseItemAs) {
-            let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
+            let name = self.name_for_symbol(item.name.ref_);
 
             match as_ {
                 ClauseItemAs::Import => {
@@ -3387,12 +3387,7 @@ pub mod __gated_printer {
                     let mut found: Option<usize> = None;
                     if let Some(exports) = self.options.commonjs_named_exports {
                         for (idx, value) in exports.values().iter().enumerate() {
-                            if value
-                                .loc_ref
-                                .ref_
-                                .expect("infallible: ref bound")
-                                .eql(id.ref_)
-                            {
+                            if value.loc_ref.ref_.eql(id.ref_) {
                                 found = Some(idx);
                                 break;
                             }
@@ -3435,7 +3430,7 @@ pub mod __gated_printer {
                                 self.print(b"]");
                             }
                         } else {
-                            self.print_symbol(value.loc_ref.ref_.expect("infallible: ref bound"));
+                            self.print_symbol(value.loc_ref.ref_);
                         }
                     }
                 }
@@ -3861,11 +3856,7 @@ pub mod __gated_printer {
                     if let Some(sym) = &e.func.name {
                         self.print_space_before_identifier();
                         self.add_source_mapping(sym.loc);
-                        self.print_symbol(sym.ref_.unwrap_or_else(|| {
-                            Output::panic(format_args!(
-                                "internal error: expected E.Function's name symbol to have a ref"
-                            ))
-                        }));
+                        self.print_symbol(sym.ref_);
                     }
 
                     self.print_func(&e.func);
@@ -3886,11 +3877,7 @@ pub mod __gated_printer {
                     if let Some(name) = &e.class_name {
                         self.print(b" ");
                         self.add_source_mapping(name.loc);
-                        self.print_symbol(name.ref_.unwrap_or_else(|| {
-                            Output::panic(format_args!(
-                                "internal error: expected E.Class's name symbol to have a ref"
-                            ))
-                        }));
+                        self.print_symbol(name.ref_);
                     }
                     self.print_class(e);
                     if wrap {
@@ -4219,7 +4206,7 @@ pub mod __gated_printer {
                 }
                 ExprData::ENumber(e) => {
                     self.add_source_mapping(expr.loc);
-                    self.print_number(e.value, level);
+                    self.print_number(e.value(), level);
                 }
                 ExprData::EIdentifier(e) => {
                     let name = self.name_for_symbol(e.ref_);
@@ -4703,7 +4690,7 @@ pub mod __gated_printer {
                                 }
                                 js_ast::InlinedEnumValueDecoded::Number(num) => {
                                     item.key.as_mut().unwrap().data =
-                                        ExprData::ENumber(E::Number { value: num });
+                                        ExprData::ENumber(E::Number::new(num));
                                     set_flag(
                                         &mut item.flags,
                                         js_ast::flags::Property::IsComputed,
@@ -4770,7 +4757,7 @@ pub mod __gated_printer {
             // Automatically print numbers that would cause a syntax error as computed properties
             if !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
-                && matches!(&key.data, ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value))
+                && matches!(&key.data, ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value()))
             {
                 // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
                 // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
@@ -5052,7 +5039,7 @@ pub mod __gated_printer {
                                 // Automatically print numbers that would cause a syntax error as computed properties
                                 let key_must_be_computed = matches!(
                                     &property.key.data,
-                                    ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value)
+                                    ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value())
                                 );
 
                                 if property.flags.contains(js_ast::flags::Property::IsComputed)
@@ -5218,9 +5205,7 @@ pub mod __gated_printer {
                             "Internal error: expected func to have a name ref"
                         ))
                     });
-                    let name_ref = name.ref_.unwrap_or_else(|| {
-                        Output::panic(format_args!("Internal error: expected func to have a name"))
-                    });
+                    let name_ref = name.ref_;
 
                     if s.func.flags.contains(G::FnFlags::IsExport) {
                         if !REWRITE_ESM_TO_CJS {
@@ -5274,13 +5259,7 @@ pub mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    let name_ref = s
-                        .class
-                        .class_name
-                        .as_ref()
-                        .unwrap()
-                        .ref_
-                        .expect("infallible: ref bound");
+                    let name_ref = s.class.class_name.as_ref().unwrap().ref_;
                     if s.is_export {
                         if !REWRITE_ESM_TO_CJS {
                             self.print(b"export ");
@@ -5376,12 +5355,11 @@ pub mod __gated_printer {
                                         self.maybe_print_space();
                                     }
 
-                                    let func_name: Option<&[u8]> =
-                                        func.func.name.as_ref().map(|name| {
-                                            self.name_for_symbol(
-                                                name.ref_.expect("infallible: ref bound"),
-                                            )
-                                        });
+                                    let func_name: Option<&[u8]> = func
+                                        .func
+                                        .name
+                                        .as_ref()
+                                        .map(|name| self.name_for_symbol(name.ref_));
                                     if let Some(fn_name) = func_name {
                                         self.print_identifier(fn_name);
                                     }
@@ -5408,14 +5386,14 @@ pub mod __gated_printer {
                                 StmtData::SClass(class) => {
                                     self.print_space_before_identifier();
 
-                                    let class_name: Option<&[u8]> = class.class.class_name.as_ref().map(|name|
-                                    self.name_for_symbol(name.ref_.unwrap_or_else(|| Output::panic(format_args!("Internal error: Expected class to have a name ref"))))
-                                );
+                                    let class_name: Option<&[u8]> = class
+                                        .class
+                                        .class_name
+                                        .as_ref()
+                                        .map(|name| self.name_for_symbol(name.ref_));
                                     if let Some(name) = &class.class.class_name {
                                         self.print(b"class ");
-                                        let n = self.name_for_symbol(
-                                            name.ref_.expect("infallible: ref bound"),
-                                        );
+                                        let n = self.name_for_symbol(name.ref_);
                                         self.print_identifier(n);
                                     } else {
                                         self.print(b"class");
@@ -5516,11 +5494,7 @@ pub mod __gated_printer {
                                     // reshaped for borrowck — detach symbol from
                                     // `&self` via `BackRef` (arena-backed table outlives print).
                                     let symbol = BackRef::<Symbol>::new(
-                                        self.symbols()
-                                            .get_with_link_const(
-                                                item.name.ref_.expect("infallible: ref bound"),
-                                            )
-                                            .unwrap(),
+                                        self.symbols().get_with_link_const(item.name.ref_).unwrap(),
                                     );
                                     let name = symbol.original_name.slice();
                                     let mut did_print = false;
@@ -5592,7 +5566,7 @@ pub mod __gated_printer {
                                 // `&self` via `BackRef` (arena-backed; outlives the print pass).
                                 let symbol = self
                                     .symbols()
-                                    .get_const(item.name.ref_.expect("infallible: ref bound"))
+                                    .get_const(item.name.ref_)
                                     .map(BackRef::<Symbol>::new);
                                 if let Some(symbol) = symbol {
                                     if let Some(namespace) = &symbol.namespace_alias {
@@ -5601,9 +5575,7 @@ pub mod __gated_printer {
                                                 namespace.import_record_index as usize,
                                             );
                                             self.print(b"var ");
-                                            self.print_symbol(
-                                                item.name.ref_.expect("infallible: ref bound"),
-                                            );
+                                            self.print_symbol(item.name.ref_);
                                             self.print_equals();
                                             self.print_namespace_alias(import_record, namespace);
                                             self.print_semicolon_after_statement();
@@ -5653,8 +5625,7 @@ pub mod __gated_printer {
                             self.print_indent();
                         }
 
-                        let name =
-                            self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
+                        let name = self.name_for_symbol(item.name.ref_);
                         self.print_export_clause_item(item);
 
                         if Self::MAY_HAVE_MODULE_INFO {
@@ -5729,8 +5700,7 @@ pub mod __gated_printer {
                             id
                         };
                         for item in slice_of(s.items).iter() {
-                            let name = self
-                                .name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
+                            let name = self.name_for_symbol(item.name.ref_);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let alias_id = mi.str(item.alias.slice());
                             let name_id = mi.str(name);
@@ -5865,11 +5835,7 @@ pub mod __gated_printer {
                     }
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    self.print_symbol(s.name.ref_.unwrap_or_else(|| {
-                        Output::panic(format_args!(
-                            "Internal error: expected label to have a name"
-                        ))
-                    }));
+                    self.print_symbol(s.name.ref_);
                     self.print(b":");
                     self.print_body(s.stmt, tlmtlo.sub_var());
                 }
@@ -6030,9 +5996,7 @@ pub mod __gated_printer {
                                 self.print_space();
                                 self.print(b"default:");
                                 self.print_space();
-                                self.print_symbol(
-                                    default_name.ref_.expect("infallible: ref bound"),
-                                );
+                                self.print_symbol(default_name.ref_);
 
                                 if !slice_of(s.items).is_empty() {
                                     self.print_space();
@@ -6105,7 +6069,7 @@ pub mod __gated_printer {
 
                     if let Some(name) = &s.default_name {
                         self.print(b" ");
-                        self.print_symbol(name.ref_.expect("infallible: ref bound"));
+                        self.print_symbol(name.ref_);
                         item_count += 1;
                     }
 
@@ -6297,8 +6261,7 @@ pub mod __gated_printer {
                         };
 
                         if let Some(name) = &s.default_name {
-                            let local_name =
-                                self.name_for_symbol(name.ref_.expect("infallible: ref bound"));
+                            let local_name = self.name_for_symbol(name.ref_);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
@@ -6307,8 +6270,7 @@ pub mod __gated_printer {
                         }
 
                         for item in slice_of(s.items).iter() {
-                            let local_name = self
-                                .name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
+                            let local_name = self.name_for_symbol(item.name.ref_);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
@@ -6366,7 +6328,7 @@ pub mod __gated_printer {
                     self.print(b"break");
                     if let Some(label) = &s.label {
                         self.print(b" ");
-                        self.print_symbol(label.ref_.expect("infallible: ref bound"));
+                        self.print_symbol(label.ref_);
                     }
                     self.print_semicolon_after_statement();
                 }
@@ -6377,7 +6339,7 @@ pub mod __gated_printer {
                     self.print(b"continue");
                     if let Some(label) = &s.label {
                         self.print(b" ");
-                        self.print_symbol(label.ref_.expect("infallible: ref bound"));
+                        self.print_symbol(label.ref_);
                     }
                     self.print_semicolon_after_statement();
                 }
@@ -6711,8 +6673,7 @@ pub mod __gated_printer {
             self.print_semicolon_after_statement();
 
             if REWRITE_ESM_TO_CJS && is_export && !decls.is_empty() {
-                // `runtime::Imports` flattens this to `Option<Ref>`, so no `.ref_` projection.
-                let export_ref = self.options.runtime_imports.__export.unwrap();
+                let export_ref = self.options.runtime_imports.__export;
                 for decl in decls {
                     self.print_indent();
                     self.print_symbol(export_ref);
@@ -7061,7 +7022,7 @@ pub mod __gated_printer {
                         let _ = self.fmt(format_args!(", {},", item_count));
                         if item_count == 0 {
                             // Add a comment explaining why the number could be zero
-                            self.print(if import.star_name_loc.is_some() {
+                            self.print(if !import.star_name_loc.is_empty() {
                                 b" // namespace import".as_slice()
                             } else {
                                 b" // bare import".as_slice()
@@ -7889,13 +7850,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
         for ref_ in dont_break_the_code {
             if let Some(symbol) = minify_renamer.symbols.get_mut(ref_) {
-                symbol.must_not_be_renamed = true;
+                symbol.set_must_not_be_renamed(true);
             }
         }
 
         for named_export in tree.named_exports.values() {
             if let Some(symbol) = minify_renamer.symbols.get_mut(named_export.ref_) {
-                symbol.must_not_be_renamed = true;
+                symbol.set_must_not_be_renamed(true);
             }
         }
 

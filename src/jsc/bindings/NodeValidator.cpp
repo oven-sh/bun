@@ -363,7 +363,9 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 
-    if (!JSC::isArray(globalObject, value)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+    bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isArray) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
 
     auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
     RETURN_IF_EXCEPTION(scope, {});
@@ -382,7 +384,9 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 
-    if (!JSC::isArray(globalObject, value)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+    bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isArray) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
 
     auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
     RETURN_IF_EXCEPTION(scope, {});

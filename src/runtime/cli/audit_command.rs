@@ -552,7 +552,7 @@ fn parse_vulnerability(
                         } else if let ExprData::ENumber(num) = &value.data {
                             if field_name == b"id" {
                                 let mut s: Vec<u8> = Vec::new();
-                                write!(&mut s, "{}", num.value as u64).expect("unreachable");
+                                write!(&mut s, "{}", num.value() as u64).expect("unreachable");
                                 vulnerability.id = s.into_boxed_slice();
                             }
                         }

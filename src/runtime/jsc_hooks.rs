@@ -861,9 +861,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let loop_ = unsafe { (*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
-    // The swap + drain loop is un-gated in
-    // `bun_jsc::event_loop` (per-task body dispatched via `__bun_run_immediate_task`),
-    // so `immediate_tasks` after this call reflects next-tick immediates and
+    // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
@@ -3015,9 +3013,7 @@ fn transpile_source_code_inner(
                                 .module_type
                             })
                             .or_else(|| {
-                                // The async path threads `lr.package_json` (from
-                                // `read_dir_info`) into the store; while that
-                                // path is gated, recover the same lookup here so
+                                // Recover the package.json lookup here so
                                 // a `.cjs` under `"type":"module"` still tags as
                                 // `PackageJsonTypeModule` (mirrors the cache-hit
                                 // branch above).
@@ -3297,11 +3293,6 @@ fn transpile_source_code_inner(
                 // need to copy the ~12 borrowed slices out (perf: was a
                 // per-asset-import `url::URL::clone`).
                 let origin = unsafe { &(*jsc_vm).origin };
-                // Note: `jsc.API.Bun.getPublicPath` is gated behind a
-                // private `_jsc_gated` mod in BunObject.rs; it is a thin
-                // wrapper over `get_public_path_with_asset_prefix` with
-                // `dir = VM.top_level_dir`, `asset_prefix = ""`, `.loose`.
-                // Inline that body here (mirrors filesystem_router.rs).
                 let top_level_dir = Fs::FileSystem::get().top_level_dir;
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,
@@ -3485,7 +3476,7 @@ fn get_hardcoded_module(
         | HardcodedModule::NodeInternalReplHistory
         | HardcodedModule::NodeInternalUtilInspect => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
-            if !cfg!(debug_assertions) {
+            if !bun_core::env::IS_DEBUG {
                 let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                     .load(core::sync::atomic::Ordering::Relaxed);
                 if !allowed {
@@ -3669,13 +3660,9 @@ export default db;
 // `Bun__transpileFile` helpers — local copies of `options.normalizeSpecifier` /
 // `options.getLoaderAndVirtualSource`.
 //
-// The canonical Rust port (`bun_bundler::options::get_loader_and_virtual_source`)
-// is ``-gated behind a `VmLoaderCtx` vtable that nothing
-// constructs yet, and `Fs::Path::loader` returns the lower-tier
-// `bun_ast::Loader` (a *distinct* nominal type from the
-// `bun_ast::Loader` we need for `TranspileExtra`). Porting the
-// body inline here lets us name `VirtualMachine` directly (no vtable) and look
-// the loader up in `transpiler.options.loaders` (which is already
+// Porting the body inline here lets us name `VirtualMachine` directly (no
+// vtable) and look the loader up in `transpiler.options.loaders` (which is
+// already
 // `StringArrayHashMap<bun_ast::Loader>`), so no inter-enum bridge is required.
 // ────────────────────────────────────────────────────────────────────────────
 

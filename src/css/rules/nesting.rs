@@ -17,8 +17,6 @@ impl<R> NestingRule<R> {
         if dest.context().is_none() {
             dest.write_str("@nest ")?;
         }
-        // NOTE: dispatches to the `StyleRule` to_css shim in rules/mod.rs until
-        // style.rs un-gates its real body (selector serialize + Property::Composes).
         self.style.to_css(dest)
     }
 }

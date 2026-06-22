@@ -17,11 +17,12 @@ if (parseInt(process.env.NODE_NO_READLINE!)) {
   opts.terminal = false;
 }
 
-if (process.env.NODE_REPL_MODE) {
+const replModeEnv = process.env.NODE_REPL_MODE;
+if (replModeEnv) {
   opts.replMode = {
     strict: REPL.REPL_MODE_STRICT,
     sloppy: REPL.REPL_MODE_SLOPPY,
-  }[process.env.NODE_REPL_MODE.toLowerCase().trim()];
+  }[replModeEnv.toLowerCase().trim()];
 }
 
 if (opts.replMode === undefined) {

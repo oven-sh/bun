@@ -93,6 +93,25 @@ impl ReplaceableExportMap {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReactCompilerMode {
+    #[default]
+    Disabled,
+    Client,
+    Ssr,
+}
+
+impl ReactCompilerMode {
+    #[inline]
+    pub fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+    #[inline]
+    pub fn is_ssr(self) -> bool {
+        matches!(self, Self::Ssr)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ServerComponentsMode {
     /// Server components is disabled, strings "use client" and "use server" mean nothing.
@@ -141,34 +160,34 @@ impl ServerComponentsMode {
 #[allow(non_snake_case)]
 #[derive(Default, Clone)]
 pub struct Imports {
-    pub __name: Option<Ref>,
-    pub __require: Option<Ref>,
-    pub __export: Option<Ref>,
-    pub __reExport: Option<Ref>,
-    pub __exportValue: Option<Ref>,
-    pub __exportDefault: Option<Ref>,
+    pub __name: Ref,
+    pub __require: Ref,
+    pub __export: Ref,
+    pub __reExport: Ref,
+    pub __exportValue: Ref,
+    pub __exportDefault: Ref,
     // __refreshRuntime: ?GeneratedSymbol = null,
     // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
-    pub __merge: Option<Ref>,
-    pub __legacyDecorateClassTS: Option<Ref>,
-    pub __legacyDecorateParamTS: Option<Ref>,
-    pub __legacyMetadataTS: Option<Ref>,
-    pub __publicField: Option<Ref>,
-    pub __privateIn: Option<Ref>,
-    pub __privateGet: Option<Ref>,
-    pub __privateAdd: Option<Ref>,
-    pub __privateSet: Option<Ref>,
-    pub __privateMethod: Option<Ref>,
-    pub __decoratorStart: Option<Ref>,
-    pub __decoratorMetadata: Option<Ref>,
-    pub __runInitializers: Option<Ref>,
-    pub __decorateElement: Option<Ref>,
+    pub __merge: Ref,
+    pub __legacyDecorateClassTS: Ref,
+    pub __legacyDecorateParamTS: Ref,
+    pub __legacyMetadataTS: Ref,
+    pub __publicField: Ref,
+    pub __privateIn: Ref,
+    pub __privateGet: Ref,
+    pub __privateAdd: Ref,
+    pub __privateSet: Ref,
+    pub __privateMethod: Ref,
+    pub __decoratorStart: Ref,
+    pub __decoratorMetadata: Ref,
+    pub __runInitializers: Ref,
+    pub __decorateElement: Ref,
     /// The `$$typeof` runtime import (`$$typeof` is not a valid Rust identifier).
-    pub dollar_dollar_typeof: Option<Ref>,
-    pub __using: Option<Ref>,
-    pub __callDispose: Option<Ref>,
-    pub __jsonParse: Option<Ref>,
-    pub __promiseAll: Option<Ref>,
+    pub dollar_dollar_typeof: Ref,
+    pub __using: Ref,
+    pub __callDispose: Ref,
+    pub __jsonParse: Ref,
+    pub __promiseAll: Ref,
 }
 
 impl Imports {
@@ -266,7 +285,7 @@ impl Imports {
     /// Index → field.
     #[inline]
     fn field(&self, i: usize) -> Option<Ref> {
-        match i {
+        let r = match i {
             0 => self.__name,
             1 => self.__require,
             2 => self.__export,
@@ -292,12 +311,13 @@ impl Imports {
             22 => self.__callDispose,
             23 => self.__jsonParse,
             24 => self.__promiseAll,
-            _ => None,
-        }
+            _ => return None,
+        };
+        r.to_nullable()
     }
 
     #[inline]
-    fn field_mut(&mut self, i: usize) -> Option<&mut Option<Ref>> {
+    fn field_mut(&mut self, i: usize) -> Option<&mut Ref> {
         match i {
             0 => Some(&mut self.__name),
             1 => Some(&mut self.__require),
@@ -336,7 +356,7 @@ impl Imports {
     }
 
     /// Callers that know the key statically can read the field directly
-    /// (`imports.__foo.is_some()`); this is the runtime-keyed equivalent.
+    /// (`!imports.__foo.is_empty()`); this is the runtime-keyed equivalent.
     pub fn contains(&self, key: &[u8]) -> bool {
         Self::ALL
             .iter()
@@ -359,7 +379,7 @@ impl Imports {
     pub fn put(&mut self, key: &[u8], ref_: Ref) {
         if let Some(i) = Self::ALL.iter().position(|&k| k == key) {
             if let Some(slot) = self.field_mut(i) {
-                *slot = Some(ref_);
+                *slot = ref_;
             }
         }
     }

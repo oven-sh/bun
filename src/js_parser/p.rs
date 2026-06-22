@@ -5639,7 +5639,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.features.auto_polyfill_require {
             debug_assert!(self.options.features.allow_runtime);
             self.ensure_require_symbol();
-            let r = self.runtime_identifier_ref(bun_ast::Loc::EMPTY, b"__require");
+            let r = self.runtime_identifier_ref(b"__require");
             self.record_usage(r);
         }
     }
@@ -5647,7 +5647,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn ignore_usage_of_runtime_require(&mut self) {
         if self.options.features.auto_polyfill_require {
             debug_assert!(!self.runtime_imports.__require.is_empty());
-            let r = self.runtime_identifier_ref(bun_ast::Loc::EMPTY, b"__require");
+            let r = self.runtime_identifier_ref(b"__require");
             self.ignore_usage(r);
             self.symbols[self.require_ref.inner_index() as usize].use_count_estimate = self.symbols
                 [self.require_ref.inner_index() as usize]
@@ -6587,7 +6587,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn runtime_identifier_ref(&mut self, _loc: bun_ast::Loc, name: &'static [u8]) -> Ref {
+    pub fn runtime_identifier_ref(&mut self, name: &'static [u8]) -> Ref {
         self.has_called_runtime = true;
 
         if !self.runtime_imports.contains(name) {
@@ -6602,7 +6602,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn runtime_identifier(&mut self, loc: bun_ast::Loc, name: &'static [u8]) -> Expr {
-        let ref_ = self.runtime_identifier_ref(loc, name);
+        let ref_ = self.runtime_identifier_ref(name);
         self.record_usage(ref_);
         self.new_expr(E::ImportIdentifier::new(ref_, false), loc)
     }

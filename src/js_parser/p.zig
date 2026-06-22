@@ -3936,14 +3936,14 @@ pub fn NewParser_(
                 bun.assert(p.options.features.allow_runtime);
 
                 p.ensureRequireSymbol();
-                p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.recordUsage(p.runtimeIdentifierRef("__require"));
             }
         }
 
         pub fn ignoreUsageOfRuntimeRequire(p: *P) void {
             if (p.options.features.auto_polyfill_require) {
                 bun.assert(p.runtime_imports.__require != null);
-                p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.ignoreUsage(p.runtimeIdentifierRef("__require"));
                 p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;
             }
         }
@@ -5647,8 +5647,7 @@ pub fn NewParser_(
             @compileError("not implemented");
         }
 
-        fn runtimeIdentifierRef(p: *P, loc: logger.Loc, comptime name: string) Ref {
-            _ = loc;
+        fn runtimeIdentifierRef(p: *P, comptime name: string) Ref {
             p.has_called_runtime = true;
 
             if (!p.runtime_imports.contains(name)) {
@@ -5661,7 +5660,7 @@ pub fn NewParser_(
         }
 
         fn runtimeIdentifier(p: *P, loc: logger.Loc, comptime name: string) Expr {
-            const ref = p.runtimeIdentifierRef(loc, name);
+            const ref = p.runtimeIdentifierRef(name);
             p.recordUsage(ref);
             return p.newExpr(
                 E.ImportIdentifier{

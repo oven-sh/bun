@@ -3150,7 +3150,7 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(globalObject, scope);
+        promise->rejectWithCaughtException(vm, scope);
     }
 
     auto status = promise->status();
@@ -3666,7 +3666,7 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
         (void)scope.tryClearException();
 
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-            promise->reject(vm, globalObject, exception->value());
+            promise->reject(vm, exception->value());
             RETURN_IF_EXCEPTION(scope, );
             return;
         }
@@ -3676,7 +3676,7 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 
     if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(result)) {
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-            promise->reject(vm, globalObject, errorInstance);
+            promise->reject(vm, errorInstance);
             RETURN_IF_EXCEPTION(scope, );
             return;
         }
@@ -3738,7 +3738,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
         exception = uncheckedDowncast<JSC::Exception>(value);
     }
 
-    arg0->reject(vm, globalObject, exception);
+    arg0->reject(vm, exception);
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
@@ -3747,7 +3747,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     ASSERT_WITH_MESSAGE(arg0->status() == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
 
     auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg1, JSC::JSValue::decode(JSValue2));
+    arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
 }
 
 JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1)
@@ -3899,20 +3899,20 @@ void JSC__JSInternalPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* g
         exception = uncheckedDowncast<JSC::Exception>(value);
     }
 
-    arg0->reject(vm, globalObject, exception);
+    arg0->reject(vm, exception);
 }
 void JSC__JSInternalPromise__rejectAsHandled(JSC::JSPromise* arg0,
     JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg1, JSC::JSValue::decode(JSValue2));
+    arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
 }
 void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSPromise* arg0,
     JSC::JSGlobalObject* arg1,
     JSC::Exception* arg2)
 {
     auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg1, arg2);
+    arg0->rejectAsHandled(vm, arg2);
 }
 
 JSC::JSPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0,

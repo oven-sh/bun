@@ -461,7 +461,21 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     controller->m_sinkPtr = nullptr;
 
     ${name}__close(lexicalGlobalObject, ptr);
-    RETURN_IF_EXCEPTION(scope, {});
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native close threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
 
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
@@ -494,7 +508,21 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     controller->m_sinkPtr = nullptr;
 
     auto result = ${name}__endWithSink(ptr, lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native end threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
 
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});

@@ -452,9 +452,19 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native close first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    ${name}__close(lexicalGlobalObject, ptr);
+    RETURN_IF_EXCEPTION(scope, {});
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -475,9 +485,20 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native end first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    auto result = ${name}__endWithSink(ptr, lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    return ${name}__endWithSink(ptr, lexicalGlobalObject);
+    return result;
 }
 
 extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);

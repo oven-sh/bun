@@ -13,8 +13,8 @@
 import { describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { wptTest } from "./testharness-shim";
 import "./known-failures";
+import { wptTest } from "./testharness-shim";
 
 function load(file: string) {
   return readFileSync(join(import.meta.dir, file), "utf8");

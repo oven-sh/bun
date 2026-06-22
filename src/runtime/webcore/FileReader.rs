@@ -454,7 +454,10 @@ impl FileReader {
                 // Non-lazy fromPipe path (Bun.spawn stdout/stderr): hold a
                 // ref across the pending uv_read_start so the source is not
                 // finalized while IOCP has a read queued on it.
-                if self.reader().source.is_some() && !self.reader().is_done() {
+                if !self.started.get()
+                    && self.reader().source.is_some()
+                    && !self.reader().is_done()
+                {
                     self.waiting_for_on_reader_done.set(true);
                     // SAFETY: see `parent()`.
                     unsafe { (*self.parent()).increment_count() };

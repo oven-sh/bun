@@ -189,7 +189,21 @@ Once imported, you should see something like this:
 
 ### Native heap stats
 
-Bun uses mimalloc for the other heap. To report a summary of non-JavaScript memory usage, set the `MIMALLOC_SHOW_STATS=1` environment variable. and stats will print on exit.
+Bun uses mimalloc for the other heap. To report a summary of non-JavaScript memory usage, set the `MIMALLOC_SHOW_STATS=1` environment variable, and stats will print to stderr on exit.
+
+<Note>
+This is only available in builds of Bun compiled with mimalloc. Official release builds for most platforms include mimalloc, but some custom or debug builds may not.
+</Note>
+
+The table has five columns:
+
+| Column | Meaning |
+| --- | --- |
+| `peak` | Highest amount allocated at any point |
+| `total` | Total amount allocated over the lifetime |
+| `freed` | Total amount freed |
+| `current` | Current allocated amount (`total - freed`) |
+| `count` | Number of allocations (where applicable) |
 
 ```sh terminal icon="terminal"
 MIMALLOC_SHOW_STATS=1 bun script.js

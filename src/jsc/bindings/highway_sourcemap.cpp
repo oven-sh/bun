@@ -712,8 +712,11 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             // Stage og = zip(gen_line, a_gc) and oo = zip(a_ol, a_oc),
             // then copy the first m rows. InterleaveWholeLower/Upper
             // (cross-block, unlike InterleaveLower which is per-128b)
-            // produce [gl, gc0, gl, gc1, ..] for rows 0..K/2-1 and
-            // K/2..K-1 respectively.
+            // produce [gl, gc0, gl, gc1, ..] for rows 0..L/2-1 and
+            // L/2..L-1 respectively where L = Lanes(di32). The upper
+            // half lands at bgen + L (runtime Lanes on SVE, not
+            // MaxLanes) so the two halves are contiguous; bgen[] is
+            // sized at 2*MaxLanes so this is always in-bounds.
             {
                 const auto vgl = hn::Set(di32, gen_line);
                 const auto g_lo = hn::InterleaveWholeLower(di32, vgl, a_gc);
@@ -721,9 +724,9 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 const auto o_lo = hn::InterleaveWholeLower(di32, a_ol, a_oc);
                 const auto o_hi = hn::InterleaveWholeUpper(di32, a_ol, a_oc);
                 hn::Store(g_lo, di32, bgen);
-                hn::Store(g_hi, di32, bgen + K);
+                hn::Store(g_hi, di32, bgen + kLanesI32);
                 hn::Store(o_lo, di32, borg);
-                hn::Store(o_hi, di32, borg + K);
+                hn::Store(o_hi, di32, borg + kLanesI32);
                 hn::Store(a_si, di32, bcol_si);
                 std::memcpy(og, bgen, sizeof(int32_t) * 2 * m);
                 std::memcpy(oo, borg, sizeof(int32_t) * 2 * m);

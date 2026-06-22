@@ -405,6 +405,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_cwd => super::get_cwd,
         BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
         BunObject_lazyPropCb_enableANSIColors => super::enable_ansi_colors,
+        BunObject_lazyPropCb_isStandaloneExecutable => super::get_is_standalone_executable,
         BunObject_lazyPropCb_hash => super::get_hash_object,
         BunObject_lazyPropCb_inspect => super::get_inspect,
         BunObject_lazyPropCb_origin => super::get_origin,
@@ -1987,6 +1988,10 @@ pub(crate) fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JS
 
 pub(crate) fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::bun_terminal_body::js::get_constructor(global_this)
+}
+
+pub(crate) fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
 }
 
 pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {

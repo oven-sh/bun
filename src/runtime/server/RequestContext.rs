@@ -1507,6 +1507,32 @@ where
         Self::on_file_stream_complete(ctx, resp);
     }
 
+    /// Forward uWS's drain notification to the streaming response sink so it
+    /// can resend any `try_end` tail and signal the JS writer to resume.
+    ///
+    /// Registered once in `do_render_stream` (pending-promise branch) for the
+    /// lifetime of the streaming response, so the sink itself never touches
+    /// uWS callback registration — it only tracks `has_backpressure`. uWS only
+    /// invokes the handler once its own send buffer has fully drained, so an
+    /// always-armed registration costs nothing on the no-backpressure path.
+    pub(crate) fn on_writable_response_stream(
+        this: *mut Self,
+        write_offset: u64,
+        _resp: uws::AnyResponse,
+    ) -> bool {
+        ctx_log!("onWritableResponseStream({})", write_offset);
+        // SAFETY: `this` is the live `RequestContext` user-data pointer
+        // registered with uWS in `do_render_stream`; uWS invokes the callback
+        // while the response (and so this context) is alive.
+        let this = unsafe { &mut *this };
+        if let Some(wrapper) = this.sink_mut() {
+            return wrapper
+                .sink
+                .on_writable(write_offset, core::ptr::null_mut());
+        }
+        true
+    }
+
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
     pub(crate) fn on_writable_bytes(
@@ -1814,9 +1840,9 @@ where
         }
 
         // FileResponseStream registers its own onAborted/onWritable with itself
-        // as userData. uWS keeps a single shared userData slot per response, so
-        // any later setAbortHandler()/onWritable() from this RequestContext would
-        // stomp it and hand FileResponseStream's callbacks a *RequestContext.
+        // as userData; any later setAbortHandler()/onWritable() from this
+        // RequestContext would replace them and FileResponseStream would never
+        // hear about the abort/drain it is driving.
         self.flags.set_has_sendfile_ctx(true);
         self.flags.set_has_abort_handler(true);
         self.flags.set_has_marked_pending(true);
@@ -1979,8 +2005,12 @@ where
 
         assignment_result.ensure_still_alive();
 
-        // assert that it was updated
-        debug_assert!(!response_stream.sink.signal.is_dead());
+        // assignToStream stored the controller's encoded JSValue in
+        // signal.ptr. If the stream already finished synchronously inside the
+        // call, controller.end()/.close() detached the controller and cleared
+        // the signal again (`__controllerDetached`), so the signal may be
+        // legitimately dead here; the has_responded()/promise-status branches
+        // below handle that state.
 
         #[cfg(debug_assertions)]
         if resp.has_responded() {
@@ -2018,10 +2048,10 @@ where
         // A fully-synchronous ReadableStream can drain through writeBytes
         // and reach endFromJS() inside assignToStream(). If tryEnd() then
         // hits transport backpressure (common on QUIC right after the
-        // HEADERS frame), the sink parks a pending_flush promise and
-        // registers onWritable, but assignToStream() itself returns
-        // undefined. Surface that promise here so the request waits for
-        // the drain instead of falling through to the cancel path below.
+        // HEADERS frame), the sink parks a pending_flush promise, but
+        // assignToStream() itself returns undefined. Surface that promise
+        // here so the request waits for the drain (the Pending branch below
+        // arms on_writable) instead of falling through to the cancel path.
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
             if let Some(flush) = response_stream.sink.pending_flush {
@@ -2045,6 +2075,15 @@ where
                             response_stream.sink.ctx = None;
                             this.render_metadata();
                         }
+
+                        // The sink only tracks `has_backpressure`; the
+                        // on_writable registration lives here so it is armed
+                        // once for the response's lifetime instead of toggled
+                        // on every write — see `on_writable_response_stream`.
+                        resp.on_writable(
+                            |this, off, resp| Self::on_writable_response_stream(this, off, resp),
+                            std::ptr::from_mut::<Self>(this),
+                        );
 
                         // TODO: should this timeout?
                         let body_value = this.response_weakref.get().unwrap().get_body_value();

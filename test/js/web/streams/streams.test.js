@@ -1466,3 +1466,293 @@ it("wrapping an async stream callback result observes Promise.prototype.then (We
     exitCode: 0,
   });
 });
+
+// The transformer.cancel hook (https://streams.spec.whatwg.org/#dom-transformer-cancel,
+// added in whatwg/streams#1283): invoked — instead of flush — when the
+// readable side is canceled or the writable side is aborted. Semantics below
+// verified against Node v24, which implements the same spec text.
+describe("TransformStream transformer.cancel", () => {
+  test("reader.cancel() invokes cancel with the reason and skips flush", async () => {
+    const events = [];
+    const ts = new TransformStream({
+      flush() {
+        events.push("flush");
+      },
+      cancel(reason) {
+        events.push(`cancel:${reason}`);
+      },
+    });
+    const writer = ts.writable.getWriter();
+    await ts.readable.cancel("stop");
+    expect(events).toEqual(["cancel:stop"]);
+    // The cancel reason propagates to the writable side.
+    expect(
+      await writer.closed.then(
+        () => null,
+        e => e,
+      ),
+    ).toBe("stop");
+  });
+
+  test("writer.abort() invokes cancel with the reason and errors the readable", async () => {
+    const events = [];
+    const ts = new TransformStream({
+      flush() {
+        events.push("flush");
+      },
+      cancel(reason) {
+        events.push(`cancel:${reason.message}`);
+      },
+    });
+    const reader = ts.readable.getReader();
+    const pendingRead = reader.read().then(
+      () => null,
+      e => e,
+    );
+    const boom = new Error("boom");
+    await ts.writable.getWriter().abort(boom);
+    expect(events).toEqual(["cancel:boom"]);
+    expect(await pendingRead).toBe(boom);
+  });
+
+  test("cancel only runs once when both sides tear down", async () => {
+    const events = [];
+    const ts = new TransformStream({
+      flush() {
+        events.push("flush");
+      },
+      cancel(reason) {
+        events.push(`cancel:${reason}`);
+      },
+    });
+    await ts.readable.cancel("first");
+    await ts.writable.abort("second");
+    expect(events).toEqual(["cancel:first"]);
+  });
+
+  test("cancel is not called on a normal close", async () => {
+    const events = [];
+    const ts = new TransformStream({
+      transform(chunk, controller) {
+        controller.enqueue(chunk);
+      },
+      flush() {
+        events.push("flush");
+      },
+      cancel() {
+        events.push("cancel");
+      },
+    });
+    const writer = ts.writable.getWriter();
+    const collected = (async () => {
+      const out = [];
+      for await (const chunk of ts.readable) out.push(chunk);
+      return out;
+    })();
+    await writer.write("x");
+    await writer.close();
+    expect(await collected).toEqual(["x"]);
+    expect(events).toEqual(["flush"]);
+  });
+
+  test("the writable only errors after an async cancel settles", async () => {
+    const events = [];
+    const { promise: gate, resolve: release } = Promise.withResolvers();
+    const ts = new TransformStream({
+      async cancel() {
+        events.push("cancel-start");
+        await gate;
+        events.push("cancel-end");
+      },
+    });
+    const writer = ts.writable.getWriter();
+    const closed = writer.closed.then(
+      () => events.push("closed-resolved"),
+      () => events.push("closed-rejected"),
+    );
+    const cancelPromise = ts.readable.cancel("r").then(() => events.push("cancel()-resolved"));
+    await Bun.sleep(0);
+    events.push("release");
+    release();
+    await cancelPromise;
+    await closed;
+    expect(events).toEqual(["cancel-start", "release", "cancel-end", "closed-rejected", "cancel()-resolved"]);
+  });
+
+  test("a throwing cancel rejects readable.cancel() and errors the writable with that error", async () => {
+    const fail = new Error("cancel-fail");
+    const ts = new TransformStream({
+      cancel() {
+        throw fail;
+      },
+    });
+    const writer = ts.writable.getWriter();
+    expect(
+      await ts.readable.cancel("x").then(
+        () => null,
+        e => e,
+      ),
+    ).toBe(fail);
+    expect(
+      await writer.closed.then(
+        () => null,
+        e => e,
+      ),
+    ).toBe(fail);
+  });
+
+  test("a failing flush racing reader.cancel() surfaces the flush error", async () => {
+    // The cancel joins the in-flight close's finishPromise; when the flush
+    // then rejects, the readable is already closed (by the cancel), so
+    // rejecting with the readable's storedError would surface `undefined`.
+    // Both promises must carry the flush error itself.
+    const fail = new Error("flush-fail");
+    const ts = new TransformStream({
+      async flush() {
+        await Bun.sleep(0);
+        throw fail;
+      },
+    });
+    const writer = ts.writable.getWriter();
+    await writer.ready;
+    const closeResult = writer.close().then(
+      () => null,
+      e => e,
+    );
+    const cancelResult = ts.readable.cancel("x").then(
+      () => null,
+      e => e,
+    );
+    expect(await closeResult).toBe(fail);
+    expect(await cancelResult).toBe(fail);
+  });
+
+  test("a rejecting cancel rejects writer.abort() and errors the readable with that error", async () => {
+    const fail = new Error("cancel-fail");
+    const ts = new TransformStream({
+      cancel() {
+        return Promise.reject(fail);
+      },
+    });
+    const reader = ts.readable.getReader();
+    expect(
+      await ts.writable
+        .getWriter()
+        .abort("reason")
+        .then(
+          () => null,
+          e => e,
+        ),
+    ).toBe(fail);
+    expect(
+      await reader.read().then(
+        () => null,
+        e => e,
+      ),
+    ).toBe(fail);
+  });
+
+  test("a non-function cancel member throws at construction", () => {
+    expect(() => new TransformStream({ cancel: 42 })).toThrow(TypeError);
+  });
+
+  test("reader.cancel() after terminate() with queued chunks settles cleanly", async () => {
+    // terminate() clears the transformer algorithms while the readable still
+    // holds the queued chunk and stays cancelable — and no hook may run for
+    // a transformer that is already torn down. (Node crashes here with an
+    // internal 'cancelAlgorithm is not a function' TypeError.)
+    const events = [];
+    const ts = new TransformStream(
+      {
+        transform(chunk, controller) {
+          controller.enqueue(chunk);
+          controller.terminate();
+        },
+        flush() {
+          events.push("flush");
+        },
+        cancel(reason) {
+          events.push(`cancel:${reason}`);
+        },
+      },
+      undefined,
+      { highWaterMark: 1 }, // let the write through with no reader attached
+    );
+    const writer = ts.writable.getWriter();
+    await writer.write("x");
+    await ts.readable.cancel("stop");
+    expect(events).toEqual([]);
+  });
+
+  test("a write racing reader.cancel() rejects with the cancel reason", async () => {
+    // The algorithms are already cleared while the cancel algorithm settles;
+    // a write slipping into that window must reject with the teardown
+    // outcome. (Node rejects it with an internal 'transformAlgorithm is not
+    // a function' TypeError here.)
+    const ts = new TransformStream({
+      transform(chunk, controller) {
+        controller.enqueue(chunk);
+      },
+      cancel() {},
+    });
+    const reader = ts.readable.getReader();
+    const firstRead = reader.read().then(
+      r => `read:${r.done}`,
+      () => "read rejected",
+    );
+    await Bun.sleep(0); // let the initial pull clear backpressure
+    const writer = ts.writable.getWriter();
+    const cancelPromise = reader.cancel("stop"); // intentionally not awaited before the write
+    expect(
+      await writer.write("x").then(
+        () => null,
+        e => e,
+      ),
+    ).toBe("stop");
+    await cancelPromise;
+    expect(await firstRead).toBe("read:true");
+  });
+
+  test("abort during an in-flight failing transform settles every promise", async () => {
+    // The failing transform clears the algorithms while the abort's steps
+    // are still queued behind the in-flight write; nothing here may crash or
+    // hang. (The spec reference implementation crashes on this race; Node
+    // rejects the abort with an internal TypeError.)
+    const fail = new Error("transform-fail");
+    const { promise: gate, resolve: release } = Promise.withResolvers();
+    const events = [];
+    const ts = new TransformStream({
+      async transform() {
+        events.push("transform");
+        await gate;
+        throw fail;
+      },
+      cancel() {
+        events.push("cancel");
+      },
+    });
+    const reader = ts.readable.getReader();
+    const pendingRead = reader.read().then(
+      () => null,
+      e => e,
+    );
+    const writer = ts.writable.getWriter();
+    const writeResult = writer.write("x").then(
+      () => null,
+      e => e,
+    );
+    await Bun.sleep(0);
+    // Settling is what matters here; whether abort() resolves or rejects on
+    // an already-failed stream is not pinned.
+    const abortResult = writer.abort(new Error("abort-reason")).then(
+      () => "settled",
+      () => "settled",
+    );
+    await Bun.sleep(0);
+    release();
+    expect(await writeResult).toBe(fail);
+    expect(await pendingRead).toBe(fail);
+    expect(await abortResult).toBe("settled");
+    expect(events).toEqual(["transform"]);
+  });
+});

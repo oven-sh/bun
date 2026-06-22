@@ -99,6 +99,7 @@ using namespace JSC;
     macro(fatal) \
     macro(fd) \
     macro(filename) \
+    macro(finishPromise) \
     macro(flushAlgorithm) \
     macro(format) \
     macro(fulfillModuleSync) \

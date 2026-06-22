@@ -786,8 +786,11 @@ it("should trigger error when aborted even if connection failed #13126", async (
   socket.on("connect", reject);
   socket.on("error", resolve);
 
-  const err = (await promise) as Error;
-  expect(err.name).toBe("TimeoutError");
+  // Node destroys the socket with an AbortError carrying the signal's reason as `cause`.
+  const err = (await promise) as Error & { code?: string; cause?: Error };
+  expect(err.name).toBe("AbortError");
+  expect(err.code).toBe("ABORT_ERR");
+  expect(err.cause?.name).toBe("TimeoutError");
 });
 
 it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
@@ -803,8 +806,11 @@ it("should trigger error when aborted even if connection failed, and the signal 
   socket.on("connect", reject);
   socket.on("error", resolve);
 
-  const err = (await promise) as Error;
-  expect(err.name).toBe("TimeoutError");
+  // Node destroys the socket with an AbortError carrying the signal's reason as `cause`.
+  const err = (await promise) as Error & { code?: string; cause?: Error };
+  expect(err.name).toBe("AbortError");
+  expect(err.code).toBe("ABORT_ERR");
+  expect(err.cause?.name).toBe("TimeoutError");
 });
 
 it.if(isWindows)(
@@ -998,4 +1004,36 @@ describe("paused socket whose peer sends RST", () => {
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
   });
+});
+
+// On Windows the native layer does not report fatal send errors yet (the WSA
+// error translation is a follow-up), so the write error never surfaces there.
+it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+  // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
+  // writable side open like Node, so the failure must surface from the write
+  // path (Node: errnoException(status, "write") via onWriteComplete).
+  const server = createServer(c => {
+    c.on("error", () => {});
+    c.resetAndDestroy();
+  });
+  try {
+    await new Promise<void>(r => server.listen(0, r));
+    const conn = connect({ port: (server.address() as { port: number }).port, host: "127.0.0.1", allowHalfOpen: true });
+    conn.on("error", resolve);
+    conn.on("close", () => reject(new Error("socket closed without emitting 'error'")));
+    const chunk = Buffer.alloc(16384, 97);
+    const pump = () => {
+      if (!conn.destroyed) {
+        conn.write(chunk);
+        setImmediate(pump);
+      }
+    };
+    conn.on("connect", pump);
+    const err = await promise;
+    expect(["EPIPE", "ECONNRESET", "ENOTCONN"]).toContain(err.code);
+    expect(typeof err.errno).toBe("number");
+  } finally {
+    server.close();
+  }
 });

@@ -1576,6 +1576,13 @@ describe("HTTP Server Security Tests - Advanced", () => {
     return mockHandler;
   };
 
+  // Like Node, installing a 'clientError' listener makes the listener
+  // responsible for the connection: reply with a raw 400 and close, mirroring
+  // Node's documented handler, so the client still observes the rejection.
+  const replyBadRequest = socket => {
+    socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+  };
+
   // Test Suites
 
   describe("Header Injection Protection", () => {
@@ -1583,7 +1590,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, socket) => {
+        replyBadRequest(socket);
         try {
           expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
           resolve();
@@ -1604,9 +1612,11 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, socket) => {
+        replyBadRequest(socket);
         try {
-          expect(err.code).toBe("HPE_INTERNAL");
+          // Node reports a bare CR not followed by LF as HPE_LF_EXPECTED.
+          expect(err.code).toBe("HPE_LF_EXPECTED");
           resolve();
         } catch (err) {
           reject(err);
@@ -1625,7 +1635,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
   describe("Transfer-Encoding Attacks", () => {
     test("rejects chunked requests with malformed chunk size", async () => {
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, socket) => {
+        replyBadRequest(socket);
         try {
           expect(err.code).toBe("HPE_INTERNAL");
           resolve();
@@ -1653,7 +1664,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
 
     test("rejects chunked requests with invalid chunk ending", async () => {
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, socket) => {
+        replyBadRequest(socket);
         try {
           expect(err.code).toBe("HPE_INTERNAL");
           resolve();
@@ -1685,7 +1697,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, socket) => {
+        replyBadRequest(socket);
         try {
           expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
           resolve();
@@ -1716,7 +1729,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, socket) => {
+        replyBadRequest(socket);
         try {
           expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
           resolve();
@@ -1875,9 +1889,11 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, socket) => {
+        replyBadRequest(socket);
         try {
-          expect(err.code).toBe("HPE_INTERNAL");
+          // Node reports an unsupported version as HPE_INVALID_VERSION.
+          expect(err.code).toBe("HPE_INVALID_VERSION");
           resolve();
         } catch (err) {
           reject(err);
@@ -1891,7 +1907,9 @@ describe("HTTP Server Security Tests - Advanced", () => {
       ].join("\r\n");
 
       const response = await sendRequest(msg);
-      expect(response).toInclude("505 HTTP Version Not Supported");
+      // Like Node, the parse error is answered with 400 Bad Request (the
+      // 'clientError' handler above owns the reply).
+      expect(response).toInclude("400 Bad Request");
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
@@ -1900,7 +1918,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, socket) => {
+        replyBadRequest(socket);
         try {
           expect(err.code).toBe("HPE_INTERNAL");
           resolve();

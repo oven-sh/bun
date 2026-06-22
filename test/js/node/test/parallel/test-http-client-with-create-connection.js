@@ -1,6 +1,5 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
 const http = require('http');
 const net = require('net');
 const tmpdir = require('../common/tmpdir');

@@ -2496,6 +2496,11 @@ void *us_internal_ssl_sni_userdata(struct us_socket_t *s) {
   return us_socket_server_name_userdata(s);
 }
 
+const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {
+  if (!s->ssl || !s_ssl(s)) return NULL;
+  return SSL_get_servername(s_ssl(s), TLSEXT_NAMETYPE_host_name);
+}
+
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
   /* Accepted sockets carry `ls` in per-SSL ex_data so sni_cb can reach the
    * listener's SNI tree. Those sockets may outlive the listener (server.close()

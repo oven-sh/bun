@@ -822,3 +822,10 @@ struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s) {
     }
     return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
 }
+
+const char *us_socket_sni_servername(struct us_socket_t *s) {
+    if (s->ssl) {
+        return us_internal_ssl_sni_servername(s);
+    }
+    return NULL;
+}

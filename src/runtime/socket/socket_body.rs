@@ -820,15 +820,32 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         this.ref_();
         // reshaped for borrowck — explicit deref at end instead of a scope guard.
-        // NOTE: the drain dispatch deliberately does not depend on whether the
-        // flush hit a fatal send error. Skipping it on fatal (tried in
-        // f0325bddf2) made Windows servers reset FIN-terminated responses:
-        // write_check_error's fatal detection interacts with Windows
-        // would-block semantics, and a skipped drain stalls the response
-        // teardown into an RST. Until that detection is verified on Windows,
-        // keep the legacy contract (the close path still fails the pending
-        // write callback when the socket is torn down).
-        let _ = this.internal_flush();
+        let fatal_errno = this.internal_flush();
+        if fatal_errno != 0 {
+            // The retried send() failed for good for data JS already saw
+            // acknowledged. Node delivers that to the pending write callback as
+            // errnoException(status, 'write'), else destroys the stream with it
+            // (lib/internal/stream_base_commons.js#L81-L92); the JS error
+            // handler implements both.
+            let code = sys::Error::from_code_int(fatal_errno, sys::Tag::write)
+                .get_error_code_tag_name()
+                .map_or("EPIPE", |(name, _)| name);
+            let global = handlers.global_object;
+            let err_value = SystemError {
+                errno: -fatal_errno,
+                message: BunString::clone_utf8(format!("write {code}").as_bytes()),
+                syscall: BunString::static_("write"),
+                code: BunString::static_(code),
+                path: BunString::EMPTY,
+                hostname: BunString::EMPTY,
+                fd: c_int::MIN,
+                dest: BunString::EMPTY,
+            }
+            .to_error_instance(&global);
+            this.handle_error(err_value);
+            this.deref();
+            return;
+        }
         log!(
             "onWritable buffered_data_for_node_net {}",
             this.buffered_data_for_node_net.get().len()
@@ -2403,22 +2420,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             return res;
         }
 
-        let (res, fatal) = socket.write_check_error(buffer);
-        if fatal {
-            // The kernel rejected the write outright (EPIPE/ECONNRESET after
-            // the peer vanished): fail the write. Do NOT close the socket from
-            // inside the write call - a synchronous close dispatches the whole
-            // JS teardown ('close' -> http2 session destroy -> ...) underneath
-            // the caller that issued this write, which is how the x64-asan
-            // lane caught a stale read. Returning -1 makes the JS write fail,
-            // and node:net destroys the handle on a clean stack; the read side
-            // surfaces the reset for anyone who is only waiting.
-            //
-            // The undeliverable buffered data (if the input aliases it) is
-            // dropped by the caller: clearing it here would create a `&mut` of
-            // `buffered_data_for_node_net` while `buffer` may still borrow its
-            // heap allocation.
-            return -1;
+        let (res, fatal_errno) = socket.write_check_error(buffer);
+        if fatal_errno != 0 {
+            // Kernel rejected the send (peer gone): return the negative errno so
+            // JS fails the write; never close from under the caller's stack, and
+            // leave the undeliverable buffer to the caller (aliasing).
+            return -fatal_errno;
         }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
@@ -2445,7 +2452,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
                 WriteResult::Fail => JSValue::ZERO,
                 WriteResult::Success { wrote, total } => {
-                    if usize::try_from(wrote.max(0)).expect("int cast") == total {
+                    if wrote < -1 {
+                        // Fatal send (peer gone): hand JS the negative errno so
+                        // node:net fails the write like Node's onWriteComplete;
+                        // -1 stays the legacy closed/shutdown sentinel.
+                        JSValue::js_number(f64::from(wrote))
+                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
                         JSValue::TRUE
                     } else {
                         JSValue::FALSE
@@ -2879,13 +2891,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             && self.buffered_data_for_node_net.get().len() == 0
     }
 
-    /// Returns `false` when a fatal send error dropped the buffered data.
-    /// NOTE: callers currently ignore this (the drain callback is dispatched
-    /// regardless) - skipping the drain on fatal made Windows servers reset
-    /// FIN-terminated responses (see a5e7ba5905). The return value stays so
-    /// the contract can be re-landed once the Windows fatal-write detection
-    /// is verified.
-    fn internal_flush(&self) -> bool {
+    /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
+    /// a fatal send error (buffer dropped, writable not re-armed). Only
+    /// `on_writable` surfaces the errno today; other callers still discard it.
+    fn internal_flush(&self) -> i32 {
         // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
         // `noalias` for them and the previous `black_box` launder (which
         // mitigated ASM-verified PROVEN_CACHED stale loads of
@@ -2904,22 +2913,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
                 self.do_socket_write(self.buffered_data_for_node_net.get().slice())
             } else {
-                let (res, fatal) = self
+                let (res, fatal_errno) = self
                     .socket
                     .get()
                     .write_check_error(self.buffered_data_for_node_net.get().slice());
-                if fatal {
+                if fatal_errno != 0 {
                     // Same rule as write_maybe_corked: drop the undeliverable
-                    // buffer and stop re-arming the writable retry, but do not
-                    // close from inside the drain dispatch - the peer reset is
-                    // delivered on the read side and tears the socket down on
-                    // a clean stack. Report the failure so callers do not
-                    // dispatch the JS drain callback (the write did NOT
-                    // complete; Node fails the callback instead of succeeding
-                    // it).
+                    // buffer, stop re-arming the writable retry, and report the
+                    // errno so the event-loop caller surfaces it (the data was
+                    // already acknowledged to JS, so only an 'error' can).
                     self.buffered_data_for_node_net
                         .with_mut(|b| b.clear_and_free());
-                    return false;
+                    return fatal_errno;
                 }
                 res
             };
@@ -2946,7 +2951,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if self.can_end_after_flush() {
             self.mark_inactive();
         }
-        true
+        0
     }
 
     #[bun_jsc::host_fn(method)]

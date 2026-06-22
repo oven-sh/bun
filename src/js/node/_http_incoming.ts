@@ -19,7 +19,6 @@ const {
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
   NodeHTTPResponseAbortEvent,
-  setRequestTimeout,
   kAbortController,
 } = require("internal/http");
 
@@ -107,7 +106,9 @@ function IncomingMessage(socket) {
     // req.socket and some code still reaches for it).
     this.client = arguments[7];
     this.upgrade = null;
-    Readable.$call(this);
+    // Like Node's IncomingMessage: the readable side inherits the connection
+    // socket's highWaterMark (which carries createServer({ highWaterMark })).
+    Readable.$call(this, arguments[7] ? { highWaterMark: arguments[7].readableHighWaterMark } : undefined);
 
     // If there's a body, pay attention to pause/resume events
     if (arguments[6]) {
@@ -300,15 +301,12 @@ ObjectDefineProperty(IncomingMessage.prototype, "signal", {
   },
 });
 
+// Like Node.js: req.setTimeout configures the inactivity timeout of the
+// underlying socket; the 'timeout' event itself reaches the request through
+// the server's socket timeout handling.
 IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (callback) this.on("timeout", callback);
-
-  const handle = this[kHandle];
-  if (handle) {
-    setRequestTimeout(handle, Math.ceil(msecs / 1000));
-  } else {
-    this.socket?.setTimeout(msecs);
-  }
+  this.socket?.setTimeout(msecs);
   return this;
 };
 
@@ -331,7 +329,16 @@ IncomingMessage.prototype._read = function _read(_n) {
   // Native server path.
   const socket = this.socket;
   if (socket && socket.readable) {
-    socket.resume();
+    if (this.upgrade) {
+      // Upgrade request with a body (Node 26 semantics): reading the request
+      // must not flip the raw socket into flowing mode - tunnel bytes pushed
+      // to the socket before the 'upgrade' listener attaches its own 'data'
+      // handler would be discarded by a flowing stream with no readers.
+      // Resume the native body source directly instead.
+      onIncomingMessageResumeNodeHTTPResponse.$call(this);
+    } else {
+      socket.resume();
+    }
   }
 
   if (this[eofInProgress]) {
@@ -377,6 +384,11 @@ function onDataIncomingMessage(
     this.destroy();
     return;
   }
+
+  // Incoming request-body bytes are socket activity: push the connection's
+  // inactivity timeout (socket.setTimeout / server.timeout) further out, like
+  // Node.js does for reads on the socket.
+  this.socket?._unrefTimer?.();
 
   if (chunk && !this._dumped) this.push(chunk);
 

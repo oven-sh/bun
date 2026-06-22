@@ -658,7 +658,9 @@ test("--inspect-brk breakpoint stops on the requested line, not the line before 
     const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
     const pausedResolvers = Promise.withResolvers<any>();
     ws.addEventListener("message", event => {
-      const message = JSON.parse(typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf8"));
+      const message = JSON.parse(
+        typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf8"),
+      );
       if (typeof message.id === "number") {
         const p = pending.get(message.id);
         if (p) {

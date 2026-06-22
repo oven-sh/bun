@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "path";
 
@@ -612,9 +612,160 @@ describe("Bun.Archive", () => {
         // Throwing is also acceptable for empty/invalid data
       }
     });
+
+    test("files() does not leak entries when readData fails mid-stream", async () => {
+      // Regression test: a tarball with two valid 64KB entries followed by a third
+      // entry whose header advertises 64KB but whose data is truncated. libarchive
+      // successfully reads the first two entries (allocating path + data for each),
+      // then readData() fails on the third. The already-collected entries must be
+      // freed on that error path; previously they were leaked on every call.
+      //
+      // Each leaked iteration costs ~128KB (2 entries × 64KB data), so 1500
+      // iterations would leak ~190MB. A 64MB threshold comfortably separates
+      // "fixed" (stable RSS) from "leaking".
+      const code = /* ts */ `
+          function ustarHeader(name, size) {
+            const h = Buffer.alloc(512);
+            h.write(name, 0, 100, "utf8");
+            h.write("0000644\\0", 100);
+            h.write("0000000\\0", 108);
+            h.write("0000000\\0", 116);
+            h.write(size.toString(8).padStart(11, "0") + "\\0", 124);
+            h.write("00000000000\\0", 136);
+            h.write("        ", 148);
+            h.write("0", 156);
+            h.write("ustar\\0", 257);
+            h.write("00", 263);
+            let sum = 0;
+            for (let i = 0; i < 512; i++) sum += h[i];
+            h.write(sum.toString(8).padStart(6, "0") + "\\0 ", 148);
+            return h;
+          }
+          function ustarEntry(name, data) {
+            const pad = Buffer.alloc((512 - (data.length % 512)) % 512);
+            return Buffer.concat([ustarHeader(name, data.length), data, pad]);
+          }
+          const payload = Buffer.alloc(64 * 1024, "A");
+          const corrupt = new Uint8Array(Buffer.concat([
+            ustarEntry("file1.txt", payload),
+            ustarEntry("file2.txt", payload),
+            ustarHeader("file3.txt", 64 * 1024),
+            Buffer.alloc(100),
+          ]));
+          const archive = new Bun.Archive(corrupt);
+
+          async function once() {
+            let rejected = false;
+            try { await archive.files(); } catch { rejected = true; }
+            if (!rejected) throw new Error("expected archive.files() to reject for truncated entry");
+          }
+
+          for (let i = 0; i < 100; i++) await once();
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 1500; i++) await once();
+          Bun.gc(true);
+          const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+          console.log("RSS growth: " + growthMB.toFixed(1) + " MB");
+          if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(1) + " MB");
+        `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", code],
+        env: {
+          ...bunEnv,
+          // Under ASAN every freed allocation parks in the allocator quarantine
+          // (default quarantine_size_mb=256) instead of being returned, so the
+          // RSS-delta heuristic over-reports by up to the quarantine size even
+          // when nothing leaks. Disable the quarantine for this measurement
+          // process so the 64 MB threshold keeps separating "fixed" from
+          // "leaking ~190 MB". Harmless when the binary is not ASAN-built.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("RSS growth:");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("path safety", () => {
+    test("skips tar entries whose pathname exceeds the platform path limit", async () => {
+      // GNU `@LongLink` ('L') records let a tar entry carry a pathname of
+      // arbitrary length, far beyond what fits in the extractor's fixed-size
+      // path buffer (PATH_MAX). Such an entry must be skipped during
+      // extraction instead of aborting the process, and the remaining entries
+      // in the archive must still be extracted.
+      // ~40 K characters: longer than the platform path buffer everywhere,
+      // including Windows where wide paths may be up to 32767 UTF-16 code units.
+      const longName = Buffer.alloc(40000, "d/").toString() + "payload.txt";
+
+      // GNU longname record: a header with typeflag 'L' whose data block holds
+      // the real (overlong) pathname for the entry that follows.
+      const nameBytes = Buffer.concat([Buffer.from(longName, "utf8"), Buffer.from([0])]);
+      const longLink = Buffer.alloc(512);
+      longLink.write("././@LongLink", 0, 100, "utf8");
+      longLink.write("0000644\0", 100);
+      longLink.write("0000000\0", 108);
+      longLink.write("0000000\0", 116);
+      longLink.write(nameBytes.length.toString(8).padStart(11, "0") + "\0", 124);
+      longLink.write("00000000000\0", 136);
+      longLink.write("        ", 148);
+      longLink.write("L", 156);
+      longLink.write("ustar\0", 257);
+      longLink.write("00", 263);
+      let longLinkSum = 0;
+      for (let i = 0; i < 512; i++) longLinkSum += longLink[i];
+      longLink.write(longLinkSum.toString(8).padStart(6, "0") + "\0 ", 148);
+      const namePad = Buffer.alloc((512 - (nameBytes.length % 512)) % 512);
+
+      const tarball = Buffer.concat([
+        ustarEntry("safe.txt", Buffer.from("safe contents")),
+        longLink,
+        nameBytes,
+        namePad,
+        // The real entry header carries a truncated name; readers replace it
+        // with the pathname from the preceding 'L' record.
+        ustarEntry(longName.slice(0, 99), Buffer.from("overlong contents")),
+        Buffer.alloc(1024),
+      ]);
+
+      using dir = tempDir("archive-overlong-path", {
+        "input.tar": tarball,
+        "extract.ts": `
+          const fs = require("node:fs");
+          const tar = fs.readFileSync("input.tar");
+          fs.mkdirSync("out", { recursive: true });
+          const archive = new Bun.Archive(new Uint8Array(tar));
+          const count = await archive.extract("out");
+          console.log("count:" + count);
+          console.log("safe:" + fs.readFileSync("out/safe.txt", "utf8"));
+        `,
+      });
+
+      // Run extraction in a child process: the failure mode being guarded
+      // against is a hard process abort, which would otherwise take down the
+      // test runner itself.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The well-formed entry is still extracted; the overlong one is skipped
+      // and does not contribute to the returned count.
+      expect(stdout).toContain("count:1");
+      expect(stdout).toContain("safe:safe contents");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("normalizes paths with redundant separators", async () => {
       const archive = new Bun.Archive({
         "dir//subdir///file.txt": "content",

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tls } from "harness";
 
 // Adversarial fuzzer-style coverage for the HTTP/3 large-body path. The server
-// binds UDP only (`h1: false`) so a fetch that silently fell back to HTTP/1.1
+// binds UDP only (`http1: false`) so a fetch that silently fell back to HTTP/1.1
 // would ECONNREFUSED — every pass here proves the QUIC path carried the bytes.
 let server: Server;
 let base: string;
@@ -12,8 +12,8 @@ beforeAll(() => {
   server = Bun.serve({
     port: 0,
     tls,
-    h3: true,
-    h1: false,
+    http3: true,
+    http1: false,
     routes: {
       "/echo": async req => {
         const body = await req.bytes();
@@ -224,4 +224,52 @@ test("AbortController during 1MB upload", async () => {
   if (err !== undefined) {
     expect((err as Error).name).toMatch(/Abort/);
   }
+});
+
+describe("http3 response header field validation", () => {
+  test("rejects a response carrying a connection-specific header field instead of delivering it", async () => {
+    // RFC 9114 §4.2 forbids connection-specific fields in HTTP/3 responses. The
+    // HTTP/2 client already rejects such response header blocks
+    // (h2_client/dispatch.rs is_malformed_response_field /
+    // is_malformed_response_value); this exercises the same validation on the
+    // HTTP/3 response path. Bun.serve's HTTP/3 writer strips `connection`,
+    // `keep-alive`, `proxy-connection` and `upgrade` itself but forwards `te`
+    // verbatim, so a handler returning `te: trailers` produces exactly the kind
+    // of response header block the client must refuse to hand to application
+    // code. (If the server ever starts stripping `te` too, the tainted fetch
+    // below succeeds with no failure recorded and this test fails loudly
+    // instead of passing vacuously.)
+    using upstream = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/clean") {
+          return new Response("clean", { headers: { "x-mark": "clean" } });
+        }
+        return new Response("tainted", { headers: { te: "trailers", "x-mark": "tainted" } });
+      },
+    });
+    const origin = `https://127.0.0.1:${upstream.port}`;
+
+    // A well-formed response is unaffected by the validation.
+    const ok = await fetch(`${origin}/clean`, h3);
+    expect(ok.headers.get("x-mark")).toBe("clean");
+    expect(await ok.text()).toBe("clean");
+    expect(ok.status).toBe(200);
+
+    // The response carrying a connection-specific field must fail before
+    // reaching application code rather than exposing the field on
+    // Response.headers.
+    let delivered: Response | undefined;
+    let failure: unknown;
+    try {
+      delivered = await fetch(`${origin}/tainted`, h3);
+    } catch (e) {
+      failure = e;
+    }
+    expect(delivered?.headers.get("te") ?? null).toBeNull();
+    expect(failure).toBeInstanceOf(Error);
+  });
 });

@@ -24,7 +24,7 @@ import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1";
+const BORINGSSL_COMMIT = "1a41b9025c2c0a37edd07ff10f6944f03e028522";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -70,7 +70,13 @@ export const boringssl: Dependency = {
       // nasm needs -I with a trailing slash and CodeView debug info to
       // match cmake's `-gcv8`. Absolute path quoted — a checkout root
       // with a space (C:\Users\John Doe\bun) would otherwise split argv.
-      nasmflags: ["-fwin64", "-gcv8", `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", true)}`],
+      // Quote style follows the HOST shell (cmd natively, sh when
+      // cross-compiling win-x64 from linux).
+      nasmflags: [
+        "-fwin64",
+        "-gcv8",
+        `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", cfg.host.os === "windows")}`,
+      ],
     };
     return spec;
   },
@@ -125,7 +131,7 @@ const CRYPTO_SRCS = [
   "crypto/evp/evp.cc", "crypto/evp/evp_asn1.cc", "crypto/evp/evp_ctx.cc", "crypto/evp/evp_kem.cc",
   "crypto/evp/p_dh.cc", "crypto/evp/p_dsa.cc", "crypto/evp/p_ec.cc", "crypto/evp/p_ed25519.cc",
   "crypto/evp/p_hkdf.cc", "crypto/evp/p_mldsa.cc", "crypto/evp/p_mlkem.cc", "crypto/evp/p_rsa.cc",
-  "crypto/evp/p_x25519.cc", "crypto/evp/pbkdf.cc", "crypto/evp/print.cc", "crypto/evp/scrypt.cc",
+  "crypto/evp/p_x25519.cc", "crypto/evp/p_xwing.cc", "crypto/evp/pbkdf.cc", "crypto/evp/print.cc", "crypto/evp/scrypt.cc",
   "crypto/evp/sign.cc", "crypto/ex_data.cc", "crypto/fipsmodule/fips_shared_support.cc",
   "crypto/fuzzer_mode.cc", "crypto/hpke/hpke.cc", "crypto/hrss/hrss.cc", "crypto/kyber/kyber.cc",
   "crypto/lhash/lhash.cc", "crypto/md4/md4.cc", "crypto/md5/md5.cc", "crypto/mem.cc",
@@ -137,7 +143,7 @@ const CRYPTO_SRCS = [
   "crypto/pkcs8/pkcs8_x509.cc", "crypto/poly1305/poly1305.cc", "crypto/poly1305/poly1305_arm.cc",
   "crypto/poly1305/poly1305_vec.cc", "crypto/pool/pool.cc", "crypto/rand/deterministic.cc",
   "crypto/rand/fork_detect.cc", "crypto/rand/forkunsafe.cc", "crypto/rand/getentropy.cc",
-  "crypto/rand/ios.cc", "crypto/rand/passive.cc", "crypto/rand/rand.cc", "crypto/rand/trusty.cc",
+  "crypto/rand/ios.cc", "crypto/rand/rand.cc", "crypto/rand/trusty.cc",
   "crypto/rand/urandom.cc", "crypto/rand/windows.cc", "crypto/rc4/rc4.cc", "crypto/refcount.cc",
   "crypto/ripemd/ripemd.cc", "crypto/rsa/rsa_asn1.cc", "crypto/rsa/rsa_crypt.cc",
   "crypto/rsa/rsa_extra.cc", "crypto/rsa/rsa_print.cc", "crypto/sha/sha1.cc",

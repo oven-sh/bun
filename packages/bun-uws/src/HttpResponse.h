@@ -131,7 +131,7 @@ public:
         }
 
         /* if write was called and there was previously no Content-Length header set */
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
@@ -257,7 +257,9 @@ public:
 
         /* Note: OpenSSL can be used here to speed this up somewhat */
         char secWebSocketAccept[29] = {};
-        WebSocketHandshake::generate(secWebSocketKey.data(), secWebSocketAccept);
+        char secWebSocketKeyBuffer[24] = {};
+        secWebSocketKey.copy(secWebSocketKeyBuffer, 24);
+        WebSocketHandshake::generate(secWebSocketKeyBuffer, secWebSocketAccept);
 
         writeStatus("101 Switching Protocols")
             ->writeHeader("Upgrade", "websocket")
@@ -458,7 +460,44 @@ public:
 
     /* End the response with an optional data chunk. Always starts a timeout. */
     void end(std::string_view data = {}, bool closeConnection = false) {
-        internalEnd(data, data.length(), false, !(this->getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER), closeConnection);
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        /* 204/304 responses carry no body framing at all: no Content-Length,
+         * no chunked framing and no terminating chunk, even when an explicit
+         * Transfer-Encoding header was written (RFC 9110 6.4.1). */
+        if (httpResponseData->noBodyStatus) {
+            internalEnd({nullptr, 0}, 0, false, false, closeConnection);
+            return;
+        }
+
+        /* Close-delimited responses (the user removed the framing headers):
+         * raw body bytes after the headers, no Content-Length, no chunked
+         * framing, and the connection closes to delimit the message. The
+         * CONNECTION_CLOSE state is set directly so internalEnd() closes the
+         * socket without adding a Connection: close header the user removed. */
+        if (httpResponseData->closeDelimited) {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            internalEnd(data, data.length(), false, false, false);
+            return;
+        }
+
+        /* When the user wrote an explicit Transfer-Encoding header but never started
+         * streaming writes (a one-shot end), the body must still be chunk-framed.
+         * Terminate the headers and enter chunked mode so internalEnd() takes the
+         * chunked path instead of writing the raw body after the headers. */
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER) &&
+            !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) &&
+            !httpResponseData->fromAncientRequest && !httpResponseData->noBodyStatus) {
+            writeStatus(HTTP_200_OK);
+            writeMark();
+            Super::write("\r\n", 2);
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+        }
+
+        /* Do not auto-write a Content-Length header when the user already wrote
+         * a Content-Length or an explicit Transfer-Encoding header (a message
+         * must not carry both, see RFC 9112 §6.2). */
+        internalEnd(data, data.length(), false, !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)), closeConnection);
     }
 
     /* Try and end the response. Returns [true, true] on success.
@@ -495,7 +534,9 @@ public:
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+        /* Close-delimited responses must not re-add the Transfer-Encoding
+         * header the user removed; their body is raw, so take the else path. */
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
@@ -566,7 +607,9 @@ public:
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+        /* Close-delimited responses (the user removed the framing headers)
+         * write raw bytes with no chunk framing, like the else path. */
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
@@ -606,7 +649,9 @@ public:
             total_written += written;
         }
 
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
+        /* Close-delimited bodies are raw; the chunk-terminating CRLF would be
+         * injected into the body bytes. */
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited) {
             // Write End of Chunked Encoding after data has been written
             Super::write("\r\n", 2);
         }
@@ -693,7 +738,7 @@ public:
     HttpResponse *onWritable(void* userData, HttpResponseData<SSL>::OnWritableCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        httpResponseData->userData = userData;
+        httpResponseData->writableUserData = userData;
         httpResponseData->onWritable = handler;
         return this;
     }
@@ -703,6 +748,7 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
+        httpResponseData->writableUserData = nullptr;
         return this;
     }
 
@@ -727,6 +773,7 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
+        httpResponseData->writableUserData = nullptr;
         httpResponseData->onAborted = nullptr;
         httpResponseData->onTimeout = nullptr;
 

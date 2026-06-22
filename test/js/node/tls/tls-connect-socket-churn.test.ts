@@ -4,12 +4,12 @@
 // clients via the memoised SecureContext), and RSS must stay flat.
 //
 // Regression for #12117 / #24118 / #29887.
-import { test, expect } from "bun:test";
-import tls from "node:tls";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
+import tls from "node:tls";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { tls as tlsCerts, isASAN, isDebug } from "harness";
+import { isASAN, isDebug, tls as tlsCerts } from "harness";
 
 test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () => {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, sock => {
@@ -48,7 +48,11 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
     // first verify all bump it). The original regression was ~50 KB/conn of
     // SSL_CTX; bound at 16 MB so a return of that leak (50 × 50 KB ≈ 2.5 MB on
     // top of the noise floor) would still trip without flaking on the noise.
-    const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 16 * 1024 * 1024;
+    // ASAN/debug bound is high because BoringSSL's per-handshake allocation
+    // churn (PQ key shares, transcript buffers) lands in the ASAN quarantine
+    // and isn't released by Bun.gc — when this file runs after the rest of the
+    // tls/ suite the delta hits ~150 MB with zero LSAN-reported per-conn leak.
+    const rssBound = isASAN || isDebug ? 300 * 1024 * 1024 : 16 * 1024 * 1024;
     expect(rssAfter - rssBefore).toBeLessThan(rssBound);
   } finally {
     server.close();
@@ -59,12 +63,14 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   // crypto, not a wait-for-condition.
 }, 30_000);
 
-test("createSecureContext memoises the native SSL_CTX (not the wrapper) by config", () => {
+test("createSecureContext owns its native SSL_CTX exclusively (fresh wrapper too)", () => {
   const a = tls.createSecureContext({ cert: tlsCerts.cert });
   const b = tls.createSecureContext({ cert: tlsCerts.cert, servername: "other.example" });
-  // Same SSL_CTX-relevant fields → same native handle…
-  expect(a.context).toBe(b.context);
-  // …but the wrapper is fresh so per-call fields don't leak across callers.
+  // The user-facing constructor owns its SSL_CTX exclusively so addCACert on
+  // one context can never affect another; only the internal connect/listen
+  // paths memoise by config digest.
+  expect(a.context).not.toBe(b.context);
+  // The wrapper is fresh too, so per-call fields don't leak across callers.
   expect(a).not.toBe(b);
   expect(b.servername).toBe("other.example");
   expect(a.servername).toBeUndefined();

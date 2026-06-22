@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, gc, tempDir, tls } from "harness";
+import { bunEnv, bunExe, gc, isASAN, tempDir, tls } from "harness";
 import { createServer } from "net";
 import { join } from "path";
 import process from "process";
@@ -916,7 +916,8 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     console.log(JSON.stringify({ baseline, after, growthMiB }));
     // 500 iterations * 2 paths * 256 KiB would leak ~250 MiB. Allow generous
     // headroom for allocator noise while still catching the regression.
-    if (growthMiB > 64) {
+    // ASAN's quarantine retains freed allocations so widen the threshold there.
+    if (growthMiB > ${isASAN ? 256 : 64}) {
       process.exitCode = 1;
     }
   `;
@@ -937,7 +938,108 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
       .join("\n");
     expect(filteredStderr).toBe("");
     const { growthMiB } = JSON.parse(stdout.trim());
-    expect(growthMiB).toBeLessThan(64);
+    expect(growthMiB).toBeLessThan(isASAN ? 256 : 64);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("WebSocket CloseEvent reports the received close code", () => {
+  // Raw TCP server: complete the WS handshake, then run `afterUpgrade(socket)`.
+  function rawWsServer(afterUpgrade) {
+    return new Promise(resolveServer => {
+      const server = createServer(sock => {
+        let buf = "";
+        let upgraded = false;
+        sock.on("data", chunk => {
+          if (upgraded) {
+            sock.end();
+            return;
+          }
+          buf += chunk.toString("latin1");
+          if (!buf.includes("\r\n\r\n")) return;
+          const key = /Sec-WebSocket-Key:\s*(.*)\r\n/i.exec(buf)[1].trim();
+          const accept = crypto
+            .createHash("sha1")
+            .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+            .digest("base64");
+          sock.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              "Sec-WebSocket-Accept: " +
+              accept +
+              "\r\n\r\n",
+          );
+          upgraded = true;
+          afterUpgrade(sock);
+        });
+        sock.on("error", () => {});
+      });
+      server.listen(0, "127.0.0.1", () => resolveServer(server));
+    });
+  }
+
+  function closeFrame(code, reason = "") {
+    const r = Buffer.from(reason);
+    const f = Buffer.alloc(4 + r.length);
+    f[0] = 0x88;
+    f[1] = 2 + r.length;
+    f[2] = (code >> 8) & 0xff;
+    f[3] = code & 0xff;
+    r.copy(f, 4);
+    return f;
+  }
+
+  async function connectAndAwaitClose(server) {
+    const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}`);
+    const { promise, resolve } = Promise.withResolvers();
+    ws.addEventListener("close", e => resolve({ code: e.code, reason: e.reason, wasClean: e.wasClean }));
+    ws.addEventListener("error", () => {});
+    const result = await promise;
+    await new Promise(r => server.close(r));
+    return result;
+  }
+
+  it("bodyless Close frame reports code 1005", async () => {
+    const server = await rawWsServer(sock => sock.write(Buffer.from([0x88, 0x00])));
+    expect(await connectAndAwaitClose(server)).toEqual({ code: 1005, reason: "", wasClean: true });
+  });
+
+  it("Close frame with code 1001 reports 1001", async () => {
+    const server = await rawWsServer(sock => sock.write(closeFrame(1001)));
+    expect(await connectAndAwaitClose(server)).toEqual({ code: 1001, reason: "", wasClean: true });
+  });
+
+  describe.each([1000, 1002, 1003, 1007, 1011, 3000, 4000, 4999])("Close frame with code %i", code => {
+    it("passes through unchanged", async () => {
+      const server = await rawWsServer(sock => sock.write(closeFrame(code)));
+      expect(await connectAndAwaitClose(server)).toEqual({ code, reason: "", wasClean: true });
+    });
+  });
+
+  // RFC6455 §7.4.1: codes < 1000, the reserved 1004-1006 range, and 1016-2999
+  // are not legal on the wire; a server that sends one is reporting a protocol
+  // error, so JS sees 1002.
+  describe.each([999, 1004, 1005, 1006, 1016, 2999])("reserved/invalid code %i", code => {
+    it("reports 1002", async () => {
+      const server = await rawWsServer(sock => sock.write(closeFrame(code)));
+      expect(await connectAndAwaitClose(server)).toEqual({ code: 1002, reason: "", wasClean: true });
+    });
+  });
+
+  it("Close frame with reason preserves reason", async () => {
+    const server = await rawWsServer(sock => sock.write(closeFrame(1011, "boom")));
+    expect(await connectAndAwaitClose(server)).toEqual({ code: 1011, reason: "boom", wasClean: true });
+  });
+
+  it("server-initiated clean close reports wasClean=true", async () => {
+    const server = await rawWsServer(sock => sock.write(closeFrame(1000)));
+    const { wasClean } = await connectAndAwaitClose(server);
+    expect(wasClean).toBe(true);
+  });
+
+  it("abnormal close (socket destroyed without Close frame) reports wasClean=false", async () => {
+    const server = await rawWsServer(sock => sock.destroy());
+    expect(await connectAndAwaitClose(server)).toEqual({ code: 1006, reason: "Connection ended", wasClean: false });
   });
 });

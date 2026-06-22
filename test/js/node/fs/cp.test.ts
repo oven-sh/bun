@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const impls = [
@@ -42,8 +42,10 @@ for (const [name, copy] of impls) {
       });
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
-      expect(e.code).toBe("EISDIR");
-      expect(e.path).toBe(join(basename, "from"));
+      expect(e.code).toBe("ERR_FS_EISDIR");
+      // The path field echoes the caller's string verbatim (node does not
+      // resolve or normalize it), so expect the same concatenation we passed.
+      expect(e.path).toBe(basename + "/from");
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -136,8 +138,9 @@ for (const [name, copy] of impls) {
         force: false,
         errorOnExist: true,
       });
-      expect(e.code).toBe("EEXIST");
-      expect(e.path).toBe(join(basename, "result", "a.txt"));
+      expect(e.code).toBe("ERR_FS_CP_EEXIST");
+      // As above, the path field carries the caller's string verbatim.
+      expect(e.path).toBe(basename + "/result/a.txt");
 
       assertContent(basename + "/result/a.txt", "win");
     });
@@ -218,6 +221,47 @@ for (const [name, copy] of impls) {
       expect(fs.readdirSync(basename + "/result/dir_symlink")).toEqual(["c.txt"]);
     });
 
+    test("symlinks - copied link target is the original target, not the source link path", async () => {
+      // Previously the ELOOP fallback on Linux/FreeBSD called symlink(src, dest),
+      // so the copied link's target string was the path of the *source* symlink
+      // and every copied link pointed back into the source tree.
+      const basename = tempDirWithFiles("cp", {
+        "target.txt": "hello",
+        "from/keep": "",
+      });
+
+      const origTarget = join(basename, "target.txt");
+
+      // Absolute target — exercises the isAbsolute fast path.
+      const srcAbs = join(basename, "from", "abs_link");
+      fs.symlinkSync(origTarget, srcAbs);
+
+      // Relative target — exercises the dirname(src) resolve path.
+      const srcRel = join(basename, "from", "rel_link");
+      fs.symlinkSync(join("..", "target.txt"), srcRel);
+
+      await copy(basename + "/from", basename + "/to", { recursive: true });
+
+      for (const [which, srcLink] of [
+        ["abs_link", srcAbs],
+        ["rel_link", srcRel],
+      ] as const) {
+        const copiedLink = join(basename, "to", which);
+        expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
+
+        // The copied link's target string must not be the path of the source
+        // symlink. With the bug, readlink(copiedLink) returned srcLink.
+        expect(fs.readlinkSync(copiedLink)).not.toBe(srcLink);
+        expect(fs.realpathSync(copiedLink)).toBe(fs.realpathSync(origTarget));
+      }
+
+      // Deleting the source tree must not break the absolute link, since its
+      // target lives outside the source tree. With the bug, the copied link
+      // pointed at from/abs_link and would dangle once from/ was removed.
+      fs.rmSync(join(basename, "from"), { recursive: true, force: true });
+      expect(fs.readFileSync(join(basename, "to", "abs_link"), "utf8")).toBe("hello");
+    });
+
     test("filter - works", async () => {
       const basename = tempDirWithFiles("cp", {
         "from/a.txt": "a",
@@ -226,6 +270,10 @@ for (const [name, copy] of impls) {
 
       await copy(basename + "/from", basename + "/result", {
         filter: (src: string) => {
+          // cp joins child paths with the platform separator, so on Windows
+          // the filter sees backslash-separated paths; normalize for the
+          // assertion.
+          src = src.replaceAll("\\", "/");
           return src.endsWith("/from") || src.includes("a.txt");
         },
         recursive: true,
@@ -312,7 +360,15 @@ for (const [name, copy] of impls) {
         "hey": "hi",
       });
 
-      await copy(basename + "/hey", basename + "/hey");
+      // node rejects copying a file onto itself with ERR_FS_CP_EINVAL;
+      // the regression this guards against is throwing EBUSY instead.
+      let err: any;
+      try {
+        await copy(basename + "/hey", basename + "/hey");
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_FS_CP_EINVAL");
     });
   });
 }
@@ -322,6 +378,47 @@ test("cp with missing callback throws", () => {
     // @ts-expect-error
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
+});
+
+// On Windows, _copySingleFileSync's reparse-point branch opens a handle to the
+// source symlink to resolve its target via GetFinalPathNameByHandleW. Previously
+// that handle was never closed, leaking one OS handle per symlink copied. Over a
+// large tree (e.g. node_modules with junctions) this eventually exhausts the
+// process handle table. bun:ffi (TinyCC) is unavailable on Windows arm64.
+test.skipIf(!isWindows || isArm64)("cpSync over symlinks does not leak Windows handles", () => {
+  const { dlopen } = require("bun:ffi");
+  const k32 = dlopen("kernel32.dll", {
+    GetCurrentProcess: { args: [], returns: "ptr" },
+    GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+  });
+  const out = new Uint32Array(1);
+  const handleCount = () => {
+    if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+      throw new Error("GetProcessHandleCount failed");
+    }
+    return out[0];
+  };
+
+  const N = 64;
+  const basename = tempDirWithFiles("cp-symlink-leak", {
+    "from/target.txt": "hello",
+  });
+  for (let i = 0; i < N; i++) {
+    fs.symlinkSync(join(basename, "from", "target.txt"), join(basename, "from", `link${i}.txt`));
+  }
+
+  // Warm up once so any lazy init (thread pool, path buffers, etc.) doesn't
+  // count against the measured delta.
+  fs.cpSync(join(basename, "from"), join(basename, "warmup"), { recursive: true });
+
+  const before = handleCount();
+  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+  const after = handleCount();
+
+  // Without the fix every symlink leaks a handle, so `after - before` is >= N.
+  // With the fix the delta is ~0; allow generous slack for unrelated background
+  // activity while still catching a per-symlink leak.
+  expect(after - before).toBeLessThan(N / 2);
 });
 
 // On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed
@@ -395,5 +492,67 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
       expect(stdout.trim()).toBe("ENAMETOOLONG");
       expect(exitCode).toBe(0);
     });
+  },
+);
+
+// fs.promises.cp recursive: when one SingleTask copy fails while siblings are
+// still in flight on the thread pool, the parent AsyncCpTask must not be
+// destroyed until every subtask has dropped its reference. Before the fix,
+// the failing subtask enqueued runFromJSThread immediately and the JS thread
+// freed the parent while other subtasks were still dereferencing it
+// (heap-use-after-free under ASAN).
+//
+// POSIX-only: uses a pre-existing directory at the destination path of one
+// file so that its SingleTask fails with EISDIR. This works even when running
+// as root. On macOS the pre-existing dst/ makes clonefile() fail with EEXIST
+// and fall through to the per-file SingleTask path being tested.
+test.skipIf(!isPosix)(
+  "fs.promises.cp recursive does not free parent task while subtasks are in flight after an error",
+  async () => {
+    const files: Record<string, string | object> = {};
+    // Enough siblings so several SingleTasks are running on the thread pool
+    // when the failing one errors.
+    for (let i = 0; i < 32; i++) files[`src/f${i}.txt`] = "x";
+    files["src/000-bad.txt"] = "x";
+    // The destination for 000-bad.txt is a directory → copying into it fails.
+    files["dst/000-bad.txt"] = { ".keep": "" };
+    using dir = tempDir("cp-uaf", files);
+    const base = String(dir);
+
+    // Run the copy in a subprocess: before the fix this is a
+    // heap-use-after-free that ASAN aborts on. The subprocess loops to make
+    // the race reliable. It must reject with EISDIR each iteration and exit 0.
+    const script = `
+      const fs = require("fs");
+      const path = require("path");
+      const base = ${JSON.stringify(base)};
+      const src = path.join(base, "src");
+      const dst = path.join(base, "dst");
+      (async () => {
+        for (let i = 0; i < 20; i++) {
+          try {
+            await fs.promises.cp(src, dst, { recursive: true });
+            console.log("UNEXPECTED-SUCCESS");
+            process.exit(1);
+          } catch (e) {
+            if (e?.code !== "ERR_FS_CP_NON_DIR_TO_DIR") {
+              console.log("UNEXPECTED-ERROR:" + (e?.code ?? e?.message));
+              process.exit(1);
+            }
+          }
+        }
+        console.log("ok");
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
   },
 );

@@ -110,3 +110,80 @@ test("simple query with multiple statements uses each RowDescription's column na
     server.close();
   }
 });
+
+// NotificationResponse ('A', sent by NOTIFY), NoticeResponse ('N', sent by
+// RAISE NOTICE and server chatter like "relation exists, skipping") and unknown
+// async messages can arrive between result sets. The protocol reader must
+// consume exactly the message body so the following messages stay correctly
+// framed.
+for (const [name, asyncMessage] of [
+  ["NotificationResponse", pkt("A", Buffer.concat([int32(4321), cstr("some_channel"), cstr("some payload")]))],
+  // NoticeResponse shares ErrorResponse's field-list format: repeated
+  // (field-type byte + cstring), closed by a single zero byte. It must be
+  // decoded and discarded without failing the query.
+  [
+    "NoticeResponse",
+    pkt(
+      "N",
+      Buffer.concat([
+        Buffer.from("S"),
+        cstr("NOTICE"),
+        Buffer.from("C"),
+        cstr("00000"),
+        Buffer.from("M"),
+        cstr("relation exists, skipping"),
+        Buffer.from([0]),
+      ]),
+    ),
+  ],
+  // Degenerate notice: declared length 4, no field list at all.
+  ["empty NoticeResponse", pkt("N", Buffer.alloc(0))],
+  // 'v' = NegotiateProtocolVersion, which the client does not handle explicitly
+  ["unknown message type", pkt("v", Buffer.concat([int32(0), int32(0)]))],
+] as const) {
+  test(`${name} between result sets does not corrupt message framing`, async () => {
+    const server = net.createServer(socket => {
+      let startup = true;
+      socket.on("data", data => {
+        if (startup) {
+          startup = false;
+          socket.write(Buffer.concat([authenticationOk, readyForQuery]));
+          return;
+        }
+        if (data[0] !== 0x51 /* 'Q' */) return;
+        // End the socket after the response so a mis-framed reader stalls into a
+        // connection error instead of waiting for more data forever.
+        socket.end(
+          Buffer.concat([
+            rowDescription(["x"]),
+            dataRow(["1"]),
+            commandComplete("SELECT 1"),
+            asyncMessage,
+            rowDescription(["y"]),
+            dataRow(["2"]),
+            commandComplete("SELECT 1"),
+            readyForQuery,
+          ]),
+        );
+      });
+    });
+
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as net.AddressInfo).port;
+
+    const sql = new SQL({
+      url: `postgres://u@127.0.0.1:${port}/db`,
+      max: 1,
+      idleTimeout: 5,
+      connectionTimeout: 5,
+    });
+
+    try {
+      const result = await sql`select 1 as x; select 2 as y`.simple();
+      expect(result).toEqual([[{ x: "1" }], [{ y: "2" }]]);
+    } finally {
+      await sql.close();
+      server.close();
+    }
+  });
+}

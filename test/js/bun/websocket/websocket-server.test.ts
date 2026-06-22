@@ -521,6 +521,35 @@ describe("Server", () => {
       }));
       */
     it.todo("perMessageDeflate");
+    describe("perMessageDeflate (validation)", () => {
+      it.each([1073741824, "hello", 1n, Symbol()])("throws when not a boolean or object", value => {
+        expect(() => {
+          serve({
+            port: 0,
+            fetch: () => new Response(),
+            websocket: {
+              message() {},
+              // @ts-expect-error
+              perMessageDeflate: value,
+            },
+          });
+        }).toThrow("websocket expects perMessageDeflate to be a boolean or an object");
+      });
+      it.each([true, false, null, undefined, {}, { compress: true, decompress: "shared" }] as const)(
+        "accepts %p",
+        value => {
+          using server = serve({
+            port: 0,
+            fetch: () => new Response(),
+            websocket: {
+              message() {},
+              perMessageDeflate: value as any,
+            },
+          });
+          expect(server.port).toBeGreaterThan(0);
+        },
+      );
+    });
   });
 });
 describe("ServerWebSocket", () => {
@@ -899,6 +928,41 @@ describe("ServerWebSocket", () => {
             ws.sendBinary(new TextEncoder().encode("3"));
           });
         }, 5);
+      },
+      message(_, message) {
+        if (typeof message === "string") {
+          expect(+message).toBe(++count);
+        } else {
+          expect(+new TextDecoder().decode(message)).toBe(++count);
+        }
+        if (count === 3) {
+          done();
+        }
+      },
+    };
+  });
+  // https://github.com/oven-sh/bun/issues/21588
+  test("cork() passes ws to callback", done => {
+    let count = 0;
+    return {
+      open(ws) {
+        try {
+          let thisInside;
+          const ret = ws.cork(function (ctx) {
+            thisInside = this;
+            ctx.send("1");
+            ctx.sendText("2");
+            ctx.sendBinary(new TextEncoder().encode("3"));
+            return ctx;
+          });
+          expect(ret).toBe(ws);
+          expect(thisInside).toBe(ws);
+          ws.cork(ctx => {
+            expect(ctx).toBe(ws);
+          });
+        } catch (err) {
+          done(err);
+        }
       },
       message(_, message) {
         if (typeof message === "string") {

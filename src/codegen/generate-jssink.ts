@@ -117,12 +117,12 @@ function header() {
 
             uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                     
-            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)                                                                                                    
-                : Base(vm, structure)                                                                                                                                               
-            {                                                                                                                                                                       
+            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+                : Base(vm, structure)
+            {
                 m_sinkPtr = sinkPtr;
                 m_onDestroy = onDestroy;
-            }                                                                                                                                                                       
+            }
                                                                                                                                                                                     
             void finishCreation(JSC::VM&);
         };
@@ -175,12 +175,12 @@ function header() {
 
                 uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                         
-                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)                                                                                                    
-                    : Base(vm, structure)                                                                                                                                               
-                {                                                                                                                                                                       
+                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
+                    : Base(vm, structure)
+                {
                     m_sinkPtr = sinkPtr;
                     m_onDestroy = onDestroy;
-                }                                                                                                                                                                       
+                }
                                                                                                                                                                                         
                 void finishCreation(JSC::VM&);
             };
@@ -282,11 +282,11 @@ async function implementation() {
 #include <JavaScriptCore/WeakInlines.h>
 
 extern "C" void Bun__onSinkDestroyed(uintptr_t destructor, void* sinkPtr);
-
 namespace WebCore {
 using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
+${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
 
 JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
@@ -480,7 +480,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     return ${name}__endWithSink(ptr, lexicalGlobalObject);
 }
 
-extern "C" JSC::EncodedJSValue ${name}__getInternalFd(WebCore::${className}*);
+extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);
 
 // TODO: how to make this a property callback. then, we can expose this as a documented field
 // It should not be shipped as a function call.
@@ -500,7 +500,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObj
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    return ${name}__getInternalFd(sink);
+    return ${name}__getInternalFd(ptr);
 }
 
 JSC_DECLARE_HOST_FUNCTION(${name}__doClose);
@@ -635,6 +635,7 @@ ${controller}::~${controller}()
     }
 
     if (m_sinkPtr) {
+        ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
         ${name}__finalize(m_sinkPtr);
     }
 }
@@ -654,6 +655,10 @@ void JS${controllerName}::detach() {
         auto destroy = m_onDestroy;
         m_onDestroy = 0;
         Bun__onSinkDestroyed(destroy, m_sinkPtr);
+    }
+
+    if (m_sinkPtr) {
+        ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
     }
 
     m_sinkPtr = nullptr;
@@ -1018,6 +1023,161 @@ extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::Encod
   return templ;
 }
 
+// ── Rust output ────────────────────────────────────────────────────────────
+// Emits `generated_jssink.rs`: `#[unsafe(no_mangle)] extern "C"` thunks for the
+// per-sink symbols the C++ side (JSSink.cpp / headers.h) declares as
+// `BUN_DECLARE_HOST_FUNCTION(${name}__{construct,write,end,flush,start})` plus
+// the two non-host-fn externs `${name}__getInternalFd` / `${name}__memoryCost`.
+// Each thunk calls an inherent method on the real sink struct in
+// `crate::webcore`; a missing method is a compile error.
+//
+// Calling convention: `BUN_DECLARE_HOST_FUNCTION` and `endWithSink` use
+// `SYSV_ABI` (= `extern "sysv64"` on win-x64, `"C"` elsewhere) — wrapped in
+// `bun_jsc::jsc_host_abi!`. The remaining `ZIG_DECL` / plain `extern "C"`
+// symbols (finalize/close/updateRef/getInternalFd/memoryCost) stay `extern "C"`.
+function rustSink() {
+  // All sink structs live (or will live) under `crate::webcore`.
+  const sinkPaths: Record<string, string> = {
+    ArrayBufferSink: "crate::webcore::array_buffer_sink::ArrayBufferSink",
+    FileSink: "crate::webcore::file_sink::FileSink",
+    HTTPResponseSink: "crate::webcore::streams::HTTPResponseSink",
+    HTTPSResponseSink: "crate::webcore::streams::HTTPSResponseSink",
+    H3ResponseSink: "crate::webcore::streams::H3ResponseSink",
+    NetworkSink: "crate::webcore::streams::NetworkSink",
+  };
+
+  const symbols: string[] = [];
+  // Safe-body thunks: every body either routes through a safe `host_fn::*`
+  // helper (which centralises the raw-pointer deref + SAFETY contract for
+  // `JSGlobalObject` / `CallFrame`) or takes its `m_sinkPtr` param as
+  // `&`/`&mut ${name}` directly (ABI-identical to `void*` for non-null inputs;
+  // every JSSink.cpp call site null-checks `m_sinkPtr`/`wrapped()` before
+  // calling). The SYSV-ABI thunks are `unsafe fn` (mandated by `jsc_host_abi!`;
+  // bodies remain safe — only C++ calls these); the plain-C thunks stay safe.
+  let templ = `// Auto-generated by src/codegen/generate-jssink.ts — DO NOT EDIT.
+//
+// Per-sink \`#[unsafe(no_mangle)]\` thunks satisfying the externs declared by
+// JSSink.cpp / headers.h. Each thunk calls an inherent method on the real sink
+// struct (re-exported here as \`\${name}\`). No trait, no opaque placeholder —
+// a missing method is a hard compile error.
+//
+// Calling convention: \`BUN_DECLARE_HOST_FUNCTION\` and \`endWithSink\` use
+// SYSV ABI (\`jsc_host_abi!\`); the \`ZIG_DECL\` / plain \`extern "C"\` symbols
+// (finalize/close/updateRef/getInternalFd/memoryCost) stay \`extern "C"\`.
+//
+// Safe-body: \`m_sinkPtr\` params are typed \`&\`/\`&mut\` (every C++ caller
+// null-checks first); host fns route through \`bun_jsc::host_fn::host_fn_static\`.
+
+use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
+
+`;
+
+  for (const name of classes) {
+    const rustPath = sinkPaths[name] ?? `crate::webcore::streams::${name}`;
+    const JSSinkT = `crate::webcore::sink::JSSink::<${name}>`;
+    templ += `// ════════════════════════════════════════════════════════════════════════════
+// ${name}
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Native backing type for \`JS${name}.m_sinkPtr\`.
+pub use ${rustPath} as ${name};
+
+`;
+
+    const hostFns = ["construct", "write", "end", "flush", "start"] as const;
+    for (const fn of hostFns) {
+      const sym = `${name}__${fn}`;
+      symbols.push(sym);
+      // BUN_DECLARE_HOST_FUNCTION → JSC_HOST_CALL_ATTRIBUTES → SYSV ABI.
+      templ += `bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+        host_fn::host_fn_static(global, callframe, ${JSSinkT}::js_${fn})
+    }
+}
+
+`;
+    }
+
+    // extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr)
+    // C++ caller passes `sink->wrapped()` (null-checked before calling).
+    symbols.push(`${name}__getInternalFd`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {
+    ${JSSinkT}::js_get_internal_fd(this)
+}
+
+`;
+
+    // extern "C" size_t ${name}__memoryCost(void* sinkPtr)
+    // C++ caller null-checks `sinkPtr` before calling.
+    symbols.push(`${name}__memoryCost`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
+    ${JSSinkT}::js_memory_cost(this)
+}
+
+`;
+
+    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
+    // C++ caller null-checks `m_sinkPtr` before calling.
+    symbols.push(`${name}__finalize`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__finalize(this: &mut ${name}) {
+    ${JSSinkT}::js_finalize(this)
+}
+
+`;
+
+    // extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue)
+    // — called from JSReadable${name}Controller::detach() and its destructor.
+    // C++ caller null-checks `m_sinkPtr` before calling.
+    symbols.push(`${name}__controllerDetached`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JSValue) {
+    ${JSSinkT}::js_controller_detached(this, controller)
+}
+
+`;
+
+    // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr)
+    // C++ caller null-checks `ptr` before calling.
+    symbols.push(`${name}__close`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) -> JSValue {
+    ${JSSinkT}::js_close(global, this)
+}
+
+`;
+
+    // ZIG_DECL JSC::EncodedJSValue SYSV_ABI ${name}__endWithSink(void* sinkPtr, JSC::JSGlobalObject*)
+    // headers.h declares this with `callconv(jsc.conv)` (SYSV_ABI) — sysv64 on
+    // win-x64, "C" elsewhere. C++ caller null-checks `ptr` before calling.
+    symbols.push(`${name}__endWithSink`);
+    templ += `bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn ${name}__endWithSink(this: &mut ${name}, global: &JSGlobalObject) -> JSValue {
+        ${JSSinkT}::js_end_with_sink(this, global)
+    }
+}
+
+`;
+
+    // ZIG_DECL void ${name}__updateRef(void* sinkPtr, bool)
+    // C++ caller null-checks `m_sinkPtr` before calling.
+    symbols.push(`${name}__updateRef`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__updateRef(this: &mut ${name}, value: bool) {
+    ${JSSinkT}::js_update_ref(this, value)
+}
+
+`;
+  }
+
+  templ += `// sinks: ${classes.length}, exported symbols: ${symbols.length}\n`;
+  return { src: templ, symbols };
+}
+
 function lutInput() {
   let templ = "";
   for (let name of classes) {
@@ -1059,6 +1219,11 @@ const outDir = resolve(process.argv[2]);
 await Bun.write(resolve(outDir + "/JSSink.h"), header());
 await Bun.write(resolve(outDir + "/JSSink.cpp"), await implementation());
 await Bun.write(resolve(outDir + "/JSSink.lut.txt"), lutInput());
+{
+  const { src, symbols } = rustSink();
+  await Bun.write(resolve(outDir + "/generated_jssink.rs"), src);
+  console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
+}
 
 Bun.spawnSync(
   [

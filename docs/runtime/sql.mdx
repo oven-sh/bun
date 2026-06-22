@@ -1041,14 +1041,16 @@ try {
 
 ### PostgreSQL Connection Errors
 
-| Connection Errors                 | Description                                          |
-| --------------------------------- | ---------------------------------------------------- |
-| `ERR_POSTGRES_CONNECTION_CLOSED`  | Connection was terminated or never established       |
-| `ERR_POSTGRES_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period |
-| `ERR_POSTGRES_IDLE_TIMEOUT`       | Connection closed due to inactivity                  |
-| `ERR_POSTGRES_LIFETIME_TIMEOUT`   | Connection exceeded maximum lifetime                 |
-| `ERR_POSTGRES_TLS_NOT_AVAILABLE`  | SSL/TLS connection not available                     |
-| `ERR_POSTGRES_TLS_UPGRADE_FAILED` | Failed to upgrade connection to SSL/TLS              |
+| Connection Errors                 | Description                                                                                                                                                                                                                                                                            |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ERR_POSTGRES_CONNECTION_CLOSED`  | An established connection was terminated                                                                                                                                                                                                                                               |
+| `ERR_POSTGRES_CONNECTION_FAILED`  | Connection was accepted but closed before the handshake completed (e.g. the server is still starting up). Retried with backoff until `connectionTimeout` while queries are waiting. Note: errors the server sends during startup, like `57P03`, surface as `ERR_POSTGRES_SERVER_ERROR` |
+| `ERR_POSTGRES_CONNECTION_REFUSED` | Connection was refused because nothing is listening at the address. Fails immediately and is not retried                                                                                                                                                                               |
+| `ERR_POSTGRES_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period                                                                                                                                                                                                                                   |
+| `ERR_POSTGRES_IDLE_TIMEOUT`       | Connection closed due to inactivity                                                                                                                                                                                                                                                    |
+| `ERR_POSTGRES_LIFETIME_TIMEOUT`   | Connection exceeded maximum lifetime                                                                                                                                                                                                                                                   |
+| `ERR_POSTGRES_TLS_NOT_AVAILABLE`  | SSL/TLS connection not available                                                                                                                                                                                                                                                       |
+| `ERR_POSTGRES_TLS_UPGRADE_FAILED` | Failed to upgrade connection to SSL/TLS                                                                                                                                                                                                                                                |
 
 ### Authentication Errors
 
@@ -1266,7 +1268,7 @@ MySQL types are automatically converted to JavaScript types:
 | DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                                |
 | FLOAT, DOUBLE                           | number                   |                                                                                                      |
 | DATE                                    | Date                     | JavaScript Date object                                                                               |
-| DATETIME, TIMESTAMP                     | Date                     | With timezone handling                                                                               |
+| DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                                |
 | TIME                                    | number                   | Total of microseconds                                                                                |
 | YEAR                                    | number                   |                                                                                                      |
 | CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                      |
@@ -1275,6 +1277,8 @@ MySQL types are automatically converted to JavaScript types:
 | JSON                                    | object/array             | Automatically parsed                                                                                 |
 | BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                      |
 | GEOMETRY                                | string                   | Geometry data                                                                                        |
+
+`DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC** — the `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. This matches how values are written (a bound `Date` stores its UTC components). The same applies to PostgreSQL's `timestamp` (without time zone); `timestamptz` carries an explicit offset and is unaffected.
 
 #### Differences from PostgreSQL
 

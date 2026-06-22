@@ -13,6 +13,7 @@ import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
+import { machoPostlinkCommand } from "./shims.ts";
 import { streamPath } from "./stream.ts";
 
 // ---------------------------------------------------------------------------
@@ -27,7 +28,9 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // Quote tool paths — ninja passes commands through cmd/sh; a space in a
   // toolchain path (e.g. "C:\Program Files\LLVM\bin\clang-cl.exe") would
   // split argv without quoting. quote() passes through safe paths unchanged.
-  const q = (p: string) => quote(p, cfg.windows);
+  // Quoting style follows the HOST shell (cmd vs sh) — the target decides
+  // the command *shape* (clang-cl vs clang flags) below.
+  const q = (p: string) => quote(p, cfg.host.os === "windows");
   const cc = q(cfg.cc);
   const cxx = q(cfg.cxx);
   const ar = q(cfg.ar);
@@ -109,21 +112,30 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // suppress JSC warnings, which makes everything it transitively includes
   // "system" for -MMD purposes. -MMD would give a near-empty depfile; -MD
   // tracks all headers so PCH invalidates when WebKit headers change.
-  // -fno-pch-timestamp: don't embed input mtimes in the PCH. ccache returns
-  // cached PCH outputs by content hash, so the embedded mtime can be stale
-  // (e.g. after deleting pch/ and reconfiguring) → every consumer fails with
-  // "mtime changed". ninja's depfile already tracks invalidation; clang's
-  // redundant mtime check just fights ccache.
+  // -fno-pch-timestamp: don't embed input mtimes in the PCH. A cached PCH's
+  // embedded mtime can be stale (e.g. after deleting pch/ and reconfiguring)
+  // → every consumer fails with "mtime changed". ninja's depfile already
+  // tracks invalidation; clang's redundant mtime check just fights caching.
   // Windows: -Xclang -include, NOT /FI. clang-cl's /FI auto-promotes to
   // -include-pch when a .pch already exists at the /Fp path — even for the
   // /Yc -emit-pch cc1 job — so a stale PCH (e.g. after a cxxflags change)
   // gets validated instead of overwritten and the build fails with
   // "<langopt> was enabled in precompiled file but is currently disabled".
   // -Xclang goes straight to cc1, bypassing the driver's auto-detection.
+  //
+  // No ccache for the pch rule. CCACHE_BASEDIR + CCACHE_NOHASHDIR (set in
+  // configure.ts so worktrees share .o cache entries) makes the pch compile
+  // hash identically across worktrees, but clang bakes ABSOLUTE header paths
+  // into the .pch artifact. ccache would serve worktree A's .pch (with
+  // /path/to/A/src/... inside) to worktree B; B's .cpp files then see
+  // every PCH-reached header at A's path and their own #include of the same
+  // header at B's path → #pragma once doesn't match → "redefinition of
+  // 'DOMClientIsoSubspaces'" et al. The pch compile is one ~10-15s job per
+  // build; the cross-worktree correctness hazard outweighs the cache savings.
   n.rule("pch", {
     command: cfg.windows
-      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates -Xclang -fno-pch-timestamp /Yc$pch_header -Xclang -include -Xclang $pch_header /Fp$out /c $in /Fo$pch_stub_obj`
-      : `${ccacheLauncher}${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
+      ? `${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates -Xclang -fno-pch-timestamp /Yc$pch_header -Xclang -include -Xclang $pch_header /Fp$out /c $in /Fo$pch_stub_obj`
+      : `${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
     description: "pch $out",
     ...depfileOpts,
   });
@@ -140,11 +152,25 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // everything after passes verbatim to lld-link. Our ldflags are all
   // pure linker options (/STACK, /DEF, /OPT, /errorlimit, system libs)
   // that clang-cl's driver doesn't recognize.
+  //
+  // /clang:-B<dir of cfg.ld> pins WHICH lld-link `-fuse-ld=lld` resolves:
+  // -B program-prefix dirs are searched before the driver's own InstalledDir
+  // and PATH. Normally that's the same host-LLVM lld-link the driver would
+  // pick anyway; under cross-language LTO resolveConfig() swaps cfg.ld to
+  // rustc's gcc-ld/lld-link (newer LLVM, able to read rustc's bitcode), and
+  // this is what makes the link actually use it — clang-cl has no working
+  // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
+  // target triple.
+  //
+  // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
+  // empty everywhere else): ninja runs the whole command through `sh -c`,
+  // so the fixup runs after the link succeeds and the declared output is
+  // already the final, patched, re-signed artifact. See shims.ts.
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
-      ? `${wrap} ${cxx} /nologo -fuse-ld=lld @$out.rsp /Fe$out /link $ldflags`
-      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out`,
+      ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
+      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -198,7 +224,7 @@ export interface CompileOpts {
  * Compile a C++ source file. Returns absolute path to the .o output.
  *
  * Output path: {buildDir}/obj/{path-from-cwd-with-slashes-flattened}.o
- * E.g. src/bun.js/bindings/foo.cpp → obj/src_bun.js_bindings_foo.cpp.o
+ * E.g. src/jsc/bindings/foo.cpp → obj/src_jsc_bindings_foo.cpp.o
  */
 export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): string {
   assert(
@@ -234,7 +260,10 @@ export function nasm(
 ): string {
   assert(extname(src) === ".asm", `nasm() expects .asm source, got: ${src}`);
   assert(cfg.nasm !== undefined, "nasm not found in toolchain", {
-    hint: "Install from https://nasm.us or `winget install NASM.NASM`",
+    hint:
+      cfg.host.os === "windows"
+        ? "Install from https://nasm.us or `winget install NASM.NASM`"
+        : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
   });
   const out = objectPath(cfg, src);
   n.build({
@@ -413,7 +442,7 @@ export interface LinkOpts {
    */
   implicitInputs?: string[];
   /** Output linker map to this path (for debugging symbol bloat). */
-  linkerMapOutput?: string;
+  linkerMapOutput?: string | undefined;
 }
 
 /**
@@ -468,8 +497,8 @@ export function ar(n: Ninja, cfg: Config, out: string, objects: string[]): strin
 /**
  * Compute the .o output path for a source file.
  *
- * Mirrors the source tree under obj/, so `src/bun.js/bindings/foo.cpp` →
- * `obj/src/bun.js/bindings/foo.cpp.o`. Generated sources (codegen .cpp
+ * Mirrors the source tree under obj/, so `src/jsc/bindings/foo.cpp` →
+ * `obj/src/jsc/bindings/foo.cpp.o`. Generated sources (codegen .cpp
  * files under buildDir) go under `obj/codegen/` to keep a single tree.
  *
  * Ninja does NOT auto-create parent directories of outputs. Directories

@@ -73,11 +73,11 @@ void us_socket_local_address(struct us_socket_t *s, char *buf, int *length) {
     }
 }
 
-struct us_socket_group_t *us_socket_group(struct us_socket_t *s) {
+__attribute__((always_inline)) struct us_socket_group_t *us_socket_group(struct us_socket_t *s) {
     return s->group;
 }
 
-unsigned char us_socket_kind(struct us_socket_t *s) {
+__attribute__((always_inline)) unsigned char us_socket_kind(struct us_socket_t *s) {
     return s->kind;
 }
 
@@ -89,7 +89,7 @@ void us_socket_set_ssl_raw_tap(struct us_socket_t *s, int enabled) {
     s->ssl_raw_tap = !!enabled;
 }
 
-int us_socket_is_tls(struct us_socket_t *s) {
+__attribute__((always_inline)) int us_socket_is_tls(struct us_socket_t *s) {
     return s->ssl != NULL;
 }
 
@@ -101,7 +101,7 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
     return c->kind;
 }
 
-void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
+__attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
     if (seconds) {
         s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
     } else {
@@ -117,7 +117,7 @@ void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int
     }
 }
 
-void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
+__attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
     if (minutes) {
         s->long_timeout = ((unsigned int)s->group->long_timestamp + minutes) % 240;
     } else {
@@ -133,13 +133,13 @@ void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigne
     }
 }
 
-void us_socket_flush(struct us_socket_t *s) {
+__attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
     if (!us_socket_is_shut_down(s)) {
         bsd_socket_flush(us_poll_fd((struct us_poll_t *) s));
     }
 }
 
-int us_socket_is_closed(struct us_socket_t *s) {
+__attribute__((always_inline)) int us_socket_is_closed(struct us_socket_t *s) {
     return s->flags.is_closed;
 }
 
@@ -161,7 +161,7 @@ int us_connecting_socket_is_closed(struct us_connecting_socket_t *c) {
     return c->closed;
 }
 
-int us_socket_is_established(struct us_socket_t *s) {
+__attribute__((always_inline)) int us_socket_is_established(struct us_socket_t *s) {
     /* Everything that is not POLL_TYPE_SEMI_SOCKET is established */
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
@@ -259,6 +259,16 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
  * handshake/secureConnection event. openssl.c re-enters here once that
  * graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
+  if (s->ssl && s->ssl_in_use) {
+    /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
+     * keylog, ...) destroyed this socket. Closing now frees the SSL and
+     * releases context state BoringSSL is still reading on the stack; defer
+     * the close to the SSL driver's epilogue instead, preserving the close
+     * code so a requested reset still resets. */
+    s->ssl_pending_detach = 1;
+    s->ssl_pending_close_code = (unsigned char) code;
+    return s;
+  }
     if (!us_socket_is_closed(s)) {
         struct us_loop_t *loop = s->group->loop;
 
@@ -324,7 +334,7 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
     return s;
 }
 
-struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reason) {
+__attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reason) {
     if (s->ssl && !us_socket_is_closed(s)) {
         return us_internal_ssl_close(s, code, reason);
     }
@@ -469,6 +479,56 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     return written < 0 ? 0 : written;
 }
 
+int us_socket_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
+    if (fatal_write_error) *fatal_write_error = 0;
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+        return 0;
+    }
+    if (s->ssl) {
+        /* TLS writes have their own error propagation; keep the existing path. */
+        return us_socket_write(s, data, length);
+    }
+
+    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    if (written < 0) {
+        /* bsd_send already retries EINTR; bsd_would_block() reads errno on
+         * POSIX and WSAGetLastError() on Windows. */
+        if (bsd_would_block()) {
+            s->flags.last_write_failed = 1;
+            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        }
+        /* Fatal send error (EPIPE/ECONNRESET after the peer vanished): report
+         * it to callers that opt in instead of masking it as would-block, and
+         * do not keep polling writable - retrying can never succeed. */
+        if (fatal_write_error) *fatal_write_error = 1;
+        return 0;
+    }
+    if (written != length) {
+        s->flags.last_write_failed = 1;
+        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+    return written;
+}
+
+int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+    if (us_socket_is_closed(s) ||
+        us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) {
+        return 0;
+    }
+
+    size_t total = 0;
+    for (int i = 0; i < count; i++) total += iov[i].iov_len;
+
+    ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
+    if (written != (ssize_t)total) {
+        s->flags.last_write_failed = 1;
+        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+
+    return written < 0 ? 0 : (int)written;
+}
+
 int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking
@@ -526,15 +586,15 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 }
 #endif
 
-void *us_socket_ext(struct us_socket_t *s) {
+__attribute__((always_inline)) void *us_socket_ext(struct us_socket_t *s) {
     return s + 1;
 }
 
-void *us_connecting_socket_ext(struct us_connecting_socket_t *c) {
+__attribute__((always_inline)) void *us_connecting_socket_ext(struct us_connecting_socket_t *c) {
     return c + 1;
 }
 
-int us_socket_is_shut_down(struct us_socket_t *s) {
+__attribute__((always_inline)) int us_socket_is_shut_down(struct us_socket_t *s) {
     if (s->ssl) {
         return us_internal_ssl_is_shut_down(s);
     }
@@ -556,7 +616,7 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
     }
 }
 
-void us_socket_shutdown(struct us_socket_t *s) {
+__attribute__((always_inline)) void us_socket_shutdown(struct us_socket_t *s) {
     if (s->ssl) {
         us_internal_ssl_shutdown(s);
         return;
@@ -630,6 +690,26 @@ void us_socket_nodelay(struct us_socket_t *s, int enabled) {
     if (!us_socket_is_shut_down(s)) {
         bsd_socket_nodelay(us_poll_fd((struct us_poll_t *) s), enabled);
     }
+}
+
+#ifndef EBADF
+#define EBADF 9
+#endif
+
+/* Returns 0 on success or a negative platform errno. */
+int us_socket_set_tos(struct us_socket_t *s, int tos) {
+    if (us_socket_is_closed(s)) {
+        return -EBADF;
+    }
+    return bsd_socket_set_tos(us_poll_fd((struct us_poll_t *) s), tos);
+}
+
+/* Returns the current TOS / traffic class (>= 0) or a negative platform errno. */
+int us_socket_get_tos(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) {
+        return -EBADF;
+    }
+    return bsd_socket_get_tos(us_poll_fd((struct us_poll_t *) s));
 }
 
 /// Returns 0 on success. Returned error values depend on the platform.

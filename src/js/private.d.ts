@@ -201,7 +201,7 @@ interface JSCommonJSModule {
  * codegen. Passing a template parameter will break codegen. Prefer `$cpp(...)
  * as Foo` instead.
  *
- * Binding files are located in `src/bun.js/bindings`
+ * Binding files are located in `src/jsc/bindings`
  *
  * @see {@link $zig} for native zig bindings.
  * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
@@ -220,7 +220,7 @@ declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
  * codegen. Passing a template parameter will break codegen. Prefer `$zig(...)
  * as Foo` instead.
  *
- * Binding files are located in `src/bun.js/bindings`
+ * Binding files are located in `src/jsc/bindings`
  *
  * @see {@link $cpp} for native c++ bindings.
  * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
@@ -243,7 +243,7 @@ declare function $newZigFunction<T = (...args: any) => any>(
   argCount: number,
 ): T;
 /**
- * Retrieves a handle to a function defined in Zig or C++, defined in a
+ * Retrieves a handle to a function defined in native code, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
  * [bindgen's documentation](https://bun.com/docs/project/bindgen).
  * @param filename - The basename of the `.bind.ts` file.

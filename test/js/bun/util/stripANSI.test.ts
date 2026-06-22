@@ -478,4 +478,81 @@ describe("Bun.stripANSI", () => {
     expect(Bun.stripANSI(null as any)).toBe("null");
     expect(Bun.stripANSI(undefined as any)).toBe("undefined");
   });
+
+  // Large inputs take the runtime-dispatched Highway escape-scan kernel
+  // (findEscapeCharacter delegates to it past a 1 KB length threshold); shorter
+  // inputs use the inlined scan. Both implement the identical broad-mask +
+  // exact-match contract, so the core invariant is: a long all-ASCII prefix (no
+  // escapes — skipped by the scan) followed by any sequence strips to that
+  // prefix plus the short-input result for the sequence. These guard the
+  // kernel's correctness across SIMD-chunk boundaries and the widest vectors.
+  const prefix = Buffer.alloc(4096, "a").toString();
+  const suffix = Buffer.alloc(4096, "b").toString();
+
+  describe("large-input escape scan", () => {
+    // The regressing benchmark case: a 16 KB string with no escapes must scan
+    // clean and return the *same* object (zero copy). toBe compares strings by
+    // value, so the heap-count delta is what actually proves no new string was
+    // allocated. Warm up once so the measured call has a settled baseline.
+    test("large no-ANSI string returns the same object", () => {
+      const input = Buffer.alloc(16 * 1024, "a").toString();
+      Bun.stripANSI(input);
+      heapStats();
+
+      const before = heapStats().objectTypeCounts.string;
+      const result = Bun.stripANSI(input);
+      const after = heapStats().objectTypeCounts.string;
+      expect(result).toBe(input);
+      expect(after).toBe(before); // no copy made
+    });
+
+    // Dispatched path matches the inlined path for a variety of sequences: the
+    // long no-escape prefix is skipped identically, so stripping the prefixed
+    // input equals the prefix plus stripping the sequence alone.
+    const sequences = [
+      "\x1b[31mred\x1b[39m", // CSI (ESC [)
+      "\x9b31mtext\x9b39m", // C1 CSI (0x9B)
+      "\x1b]8;;https://example.com\x07link\x1b]8;;\x07", // OSC hyperlink
+      "\x1b]0;title\x1b\\rest", // OSC with ST (ESC \) terminator
+      "\x1bDtext", // bare ESC sequence
+      "\x9ctext", // standalone C1 ST (0x9C) — in the mask, not an introducer
+      "no escapes at all here", // nothing to strip past the prefix
+    ];
+    describe.each(sequences)("dispatched scan matches inlined for %j", seq => {
+      test("strips identically with and without a large prefix", () => {
+        const short = Bun.stripANSI(seq);
+        expect(Bun.stripANSI(prefix + seq)).toBe(prefix + short);
+        expect(Bun.stripANSI(prefix + seq + suffix)).toBe(prefix + Bun.stripANSI(seq + suffix));
+      });
+    });
+
+    // An ESC at each of many byte offsets exercises the SIMD chunk scan
+    // (offsets landing mid-vector) and the scalar tail, for lengths crossing
+    // the dispatch threshold.
+    test("ESC at every offset across the dispatch threshold", () => {
+      for (const total of [1024, 1040, 2048]) {
+        const filler = Buffer.alloc(total, "a").toString();
+        for (let pos = 0; pos < total; pos += 13) {
+          const input = filler.slice(0, pos) + "\x1b[31m" + filler.slice(pos);
+          expect(Bun.stripANSI(input)).toBe(stripAnsi(input));
+        }
+      }
+    });
+
+    // A UTF-16 (two-byte) large string routes through the u16 kernel. The
+    // leading non-Latin1 char forces a 16-bit JSString; the trailing ASCII run
+    // is where the escape scan does its work.
+    test("large UTF-16 string with escapes", () => {
+      const input = "☃" + prefix + "\x1b[31mred\x1b[39m" + suffix;
+      expect(Bun.stripANSI(input)).toBe("☃" + prefix + "red" + suffix);
+    });
+
+    // Broad-mask false positives (0x10-0x1A, 0x1C-0x1F, 0x91-0x97, 0x99-0x9A)
+    // are in the broad range but not the exact introducer set — the large-input
+    // kernel's refinement rejects them, so the bytes survive verbatim.
+    test("broad-mask false positives are preserved in a large string", () => {
+      const input = prefix + "\x11\x1a\x1f\x99\x9a" + suffix;
+      expect(Bun.stripANSI(input)).toBe(input);
+    });
+  });
 });

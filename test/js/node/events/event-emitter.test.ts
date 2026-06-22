@@ -65,6 +65,36 @@ describe("node:events", () => {
     await promise;
     expect(emitter.listenerCount("hey")).toBe(0);
   });
+
+  // `events.once()` is an `async function` in Node: a bad `options`, a bad
+  // `options.signal`, or an already-aborted signal must produce a *rejected
+  // promise*, never a synchronous throw.
+  test("once is an async function", () => {
+    expect(EventEmitter.once.constructor.name).toBe("AsyncFunction");
+  });
+
+  test("once with already-aborted signal rejects (not a synchronous throw)", async () => {
+    const ee = new EventEmitter();
+    const p = EventEmitter.once(ee, "foo", { signal: AbortSignal.abort() });
+    expect(p).toBeInstanceOf(Promise);
+    await expect(p).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+  });
+
+  test("once with invalid options.signal rejects (not a synchronous throw)", async () => {
+    for (const signal of [1, {}, "hi", null, false]) {
+      const ee = new EventEmitter();
+      const p = EventEmitter.once(ee, "foo", { signal } as any);
+      expect(p).toBeInstanceOf(Promise);
+      await expect(p).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    }
+  });
+
+  test("once with non-object options rejects (not a synchronous throw)", async () => {
+    const ee = new EventEmitter();
+    const p = EventEmitter.once(ee, "foo", "hi" as any);
+    expect(p).toBeInstanceOf(Promise);
+    await expect(p).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+  });
 });
 
 describe("EventEmitter", () => {

@@ -1231,3 +1231,89 @@ it("handles exceptions during empty stream creation", () => {
     throw new Error("not stack overflow");
   }).toThrow("not stack overflow");
 });
+
+it("auto-allocated byte stream chunks are zero-filled before being exposed to the source", async () => {
+  const CHUNK_SIZE = 4096;
+
+  // Populate the allocator's free lists with same-sized blocks full of a
+  // non-zero pattern so a recycled, non-zeroed allocation would be visible.
+  for (let i = 0; i < 256; i++) {
+    new Uint8Array(CHUNK_SIZE).fill(0xaa);
+  }
+  Bun.gc(true);
+
+  let nonZeroIndex = -1;
+  const stream = new ReadableStream({
+    type: "bytes",
+    autoAllocateChunkSize: CHUNK_SIZE,
+    pull(controller) {
+      const request = controller.byobRequest;
+      if (!request) return;
+      const view = request.view;
+      // Per the Streams spec the auto-allocated chunk is `new
+      // ArrayBuffer(autoAllocateChunkSize)`, which is zero-filled. A source
+      // that under-writes and over-reports must hand the reader zeros, not
+      // recycled heap contents.
+      for (let i = 0; i < view.byteLength; i++) {
+        if (view[i] !== 0) {
+          nonZeroIndex = i;
+          break;
+        }
+      }
+      view[0] = 1;
+      request.respond(view.byteLength);
+    },
+  });
+
+  const reader = stream.getReader();
+  const { done, value } = await reader.read();
+  expect(done).toBe(false);
+  expect(nonZeroIndex).toBe(-1);
+  expect(value.byteLength).toBe(CHUNK_SIZE);
+  // The byte the source actually wrote survives...
+  expect(value[0]).toBe(1);
+  // ...and every byte it did not write is zero.
+  expect(value.subarray(1).every(b => b === 0)).toBe(true);
+  reader.cancel();
+});
+
+it("ReadableStream BYOB read pending at close() + respond(0) returns a zero-length view of the caller's buffer", async () => {
+  // Spec EOF pattern for byte sources: controller.close() leaves the pending
+  // BYOB read unsettled; byobRequest.respond(0) then resolves it with a
+  // zero-length view over the caller's (transferred) buffer, returning the
+  // buffer for reuse. Only cancel() resolves pending reads with undefined.
+  let ctrl;
+  const rs = new ReadableStream({
+    type: "bytes",
+    start(c) {
+      ctrl = c;
+    },
+  });
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(new ArrayBuffer(16)));
+  ctrl.close();
+  ctrl.byobRequest.respond(0);
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeInstanceOf(Uint8Array);
+  expect(value.byteLength).toBe(0);
+  // The caller's 16-byte buffer comes back (transferred) for reuse.
+  expect(value.buffer.byteLength).toBe(16);
+  await reader.closed;
+});
+
+it("ReadableStream BYOB read pending at cancel() resolves with undefined", async () => {
+  // Spec (ReadableStreamCancel step 6): pending readIntoRequests get their
+  // close steps with undefined - { value: undefined, done: true }.
+  const rs = new ReadableStream({
+    type: "bytes",
+    start() {},
+  });
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(16));
+  await reader.cancel("bye");
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeUndefined();
+  await reader.closed;
+});

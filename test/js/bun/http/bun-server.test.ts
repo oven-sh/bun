@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {
@@ -1093,6 +1093,94 @@ describe("HEAD requests #15355", () => {
       expect(response.headers.get("transfer-encoding")).toBe("chunked");
     });
 
+    // fastGet(.TransferEncoding/.ContentLength) returns a ZigString borrowing
+    // the header map entry's WTF::StringImpl; renderMetadata() -> doWriteHeaders()
+    // then calls fastRemove() on those names and derefs the FetchHeaders,
+    // destroying the StringImpl before the borrowed bytes are written to the
+    // socket (Transfer-Encoding) or parsed (Content-Length).
+    //
+    // Passing duplicate header entries makes FetchHeaders combine them via
+    // makeString(), producing a fresh StringImpl owned solely by the map so the
+    // remove actually frees it. `Malloc=1` routes bmalloc through the system
+    // allocator so ASAN-enabled builds observe the use-after-free; release
+    // builds fall through and validate the header values round-trip.
+    test("transfer-encoding / content-length whose StringImpl is held only by the header map", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { connect } from "node:net";
+            using server = Bun.serve({
+              port: 0,
+              fetch(req) {
+                if (req.url.endsWith("/te")) {
+                  return new Response("hello", {
+                    headers: [
+                      ["Transfer-Encoding", "gzip"],
+                      ["Transfer-Encoding", "chunked"],
+                    ],
+                  });
+                }
+                return new Response("hello", {
+                  headers: [
+                    ["Content-Length", "1"],
+                    ["Content-Length", "2"],
+                  ],
+                });
+              },
+            });
+            function rawHead(path) {
+              return new Promise((resolve, reject) => {
+                let data = "";
+                const sock = connect(server.port, "127.0.0.1", () => {
+                  sock.write("HEAD " + path + " HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+                });
+                sock.on("data", d => (data += d.toString("latin1")));
+                sock.on("end", () => resolve(data));
+                sock.on("error", reject);
+              });
+            }
+            const te = await rawHead("/te");
+            const cl = await rawHead("/cl");
+            console.log(JSON.stringify({
+              te: /transfer-encoding:\\s*(.+)\\r\\n/i.exec(te)?.[1],
+              cl: /content-length:\\s*(.+)\\r\\n/i.exec(cl)?.[1],
+            }));
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          // Route bmalloc through the system heap so ASAN observes StringImpl
+          // allocations in sanitizer builds. On Windows bmalloc's SystemHeap is
+          // unimplemented and would RELEASE_BASSERT, so leave bmalloc in place
+          // there — Windows has no ASAN lane anyway.
+          ...(isWindows
+            ? {}
+            : {
+                Malloc: "1",
+                // symbolize=0 so a pre-fix ASAN abort exits promptly instead of
+                // spending seconds in llvm-symbolizer; detect_leaks=0 because
+                // routing WTF allocations through system malloc makes
+                // process-lifetime WebKit singletons visible to LSan at exit.
+                ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+              }),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // "1, 2" is not a valid integer so Content-Length parses as 0; what we
+      // care about is that parsing it does not read freed memory.
+      expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+        stdout: JSON.stringify({ te: "gzip, chunked", cl: "0" }),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test("status only with body", async () => {
       using server = Bun.serve({
         port: 0,
@@ -1300,4 +1388,83 @@ test("should be able to redirect when using empty streams #15320", async () => {
 
   const response = await fetch(`http://localhost:${server.port}/redirect`);
   expect(await response.text()).toBe("Hello, World");
+});
+
+test("HEAD request for a Response with an S3 file body reports the object size and the server keeps serving", async () => {
+  // Answering a HEAD request whose Response body is an S3-backed Blob resolves
+  // the object size with an async S3 stat before writing headers. Run the
+  // server in a subprocess so a crash on that completion path shows up as a
+  // non-zero exit code instead of taking down the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Fake S3 origin: answers the stat (HEAD) with a fixed Content-Length.
+        const s3Origin = Bun.serve({
+          port: 0,
+          fetch(req) {
+            if (req.method === "HEAD") {
+              return new Response(null, {
+                headers: {
+                  "Content-Length": "11",
+                  "ETag": '"abc123"',
+                  "Content-Type": "text/plain",
+                },
+              });
+            }
+            return new Response("Hello World");
+          },
+        });
+
+        const s3 = new Bun.S3Client({
+          accessKeyId: "test",
+          secretAccessKey: "test",
+          region: "us-east-1",
+          bucket: "my-bucket",
+          endpoint: s3Origin.url.href,
+        });
+
+        const app = Bun.serve({
+          port: 0,
+          fetch(req) {
+            if (new URL(req.url).pathname === "/health") {
+              return new Response("alive");
+            }
+            return new Response(s3.file("hello.txt"));
+          },
+        });
+
+        for (let i = 0; i < 8; i++) {
+          const res = await fetch(new URL("/object", app.url), { method: "HEAD" });
+          if (res.status !== 200) {
+            throw new Error("unexpected HEAD status: " + res.status);
+          }
+          const contentLength = res.headers.get("content-length");
+          if (contentLength !== "11") {
+            throw new Error("unexpected content-length: " + contentLength);
+          }
+          await res.arrayBuffer();
+        }
+
+        // The request context for each HEAD request above has been released by
+        // now; a fresh request must still be served off the same pool.
+        const health = await fetch(new URL("/health", app.url));
+        if ((await health.text()) !== "alive") {
+          throw new Error("server is no longer responding");
+        }
+
+        console.log("s3-head-ok");
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("s3-head-ok");
+  expect(exitCode).toBe(0);
 });

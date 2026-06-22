@@ -1,0 +1,32 @@
+[package]
+name = "bun_lolhtml_sys"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_opaque.workspace = true
+# The C-API crate is pulled in as an rlib path dep so its `#[no_mangle]`
+# `lol_html_*` symbols end up inside `libbun_rust.a` rather than a second
+# Rust staticlib on the link line (two staticlibs = two copies of std =
+# duplicate `rust_begin_unwind`/`__rdl_alloc`/...). The `vendor/` tree is
+# excluded from the workspace so this stays a non-member path dep — its
+# `[profile]` and dev-deps are ignored. Source is fetched by
+# `scripts/build/deps/lolhtml.ts` before the workspace cargo build runs.
+lolhtml = { package = "lol_html_c_api", path = "../../vendor/lolhtml/c-api" }
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bun_core.workspace = true
+
+thiserror.workspace = true

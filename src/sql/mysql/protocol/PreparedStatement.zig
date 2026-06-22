@@ -108,7 +108,7 @@ const AnyMySQLError = @import("./AnyMySQLError.zig");
 const bun = @import("bun");
 const std = @import("std");
 const CommandType = @import("./CommandType.zig").CommandType;
-const Param = @import("../MySQLStatement.zig").Param;
+const Param = @import("../MySQLParam.zig").Param;
 const Value = @import("../MySQLTypes.zig").Value;
 
 const NewReader = @import("./NewReader.zig").NewReader;

@@ -1456,6 +1456,19 @@ interface Blob {
   json(): Promise<any>;
 
   /**
+   * Wrap this blob in a {@link Bun.Image} pipeline. Equivalent to
+   * `new Bun.Image(this, options)` — the constructor is synchronous (the
+   * underlying read happens lazily when an Image terminal is awaited), so
+   * this works on `Bun.file()`, `Bun.s3()`, fd-backed and in-memory blobs
+   * alike:
+   *
+   * ```ts
+   * await Bun.file("photo.jpg").image().resize(400).webp().write("thumb.webp");
+   * ```
+   */
+  image(options?: Bun.Image.ConstructorOptions): Bun.Image;
+
+  /**
    * Read the data from the blob as a {@link FormData} object.
    *
    * This first decodes the data from UTF-8, then parses it as a
@@ -2020,6 +2033,20 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   decompress?: boolean;
+
+  /**
+   * The maximum number of redirects to follow when `redirect` is `"follow"`.
+   * If the response chain redirects more than this many times, the request
+   * rejects with a "too many redirects" error.
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @default 126
+   * @example
+   * ```js
+   * const response = await fetch("https://example.com/", { maxRedirects: 3 });
+   * ```
+   */
+  maxRedirects?: number;
 }
 
 /**

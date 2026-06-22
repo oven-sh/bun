@@ -3250,16 +3250,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `options.bundle == true`, which would let a user-level
         // `var __require` collide in `current_scope.members` and link the
         // runtime require to the user symbol via the IS_GENERATED merge path.
-        // Runtime equivalent of `generated_symbol_name!("__require")`:
-        let hash = bun_wyhash::hash(b"__require");
-        let hashed: &'a [u8] = bun_alloc::arena_format!(
-            in self.arena,
-            "{}_{}",
-            bstr::BStr::new(b"__require".as_slice()),
-            bun_core::fmt::truncated_hash32(hash)
-        )
-        .into_bump_str()
-        .as_bytes();
+        let hashed = self.hash_generated_name(b"__require");
         let ref_ = self
             .declare_symbol_maybe_generated::<true>(
                 js_ast::symbol::Kind::Other,
@@ -4819,6 +4810,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
+    /// Runtime equivalent of `generated_symbol_name!`. Same bytes as the
+    /// macro produces; arena-owned for symbol lifetime.
+    fn hash_generated_name(&self, name: &'static [u8]) -> &'a [u8] {
+        let hash = bun_wyhash::hash(name);
+        bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash))
+            .into_bump_str()
+            .as_bytes()
+    }
+
     /// Callers must pre-hash via `generated_symbol_name!`
     /// and pass the result, OR (non-bundle) we runtime-hash into the bump arena.
     pub fn declare_generated_symbol(
@@ -4830,10 +4830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.bundle {
             return self.declare_symbol_maybe_generated::<true>(kind, bun_ast::Loc::EMPTY, name);
         }
-        // Runtime equivalent of `generated_symbol_name!`.
-        // Same bytes as the macro produces; arena-owned for symbol lifetime.
-        let hash = bun_wyhash::hash(name);
-        let hashed: &'a [u8] = bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
+        let hashed = self.hash_generated_name(name);
         self.declare_symbol_maybe_generated::<true>(kind, bun_ast::Loc::EMPTY, hashed)
     }
 
@@ -4852,8 +4849,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = if self.options.bundle {
             self.new_symbol(kind, name)?
         } else {
-            let hash = bun_wyhash::hash(name);
-            let hashed: &'a [u8] = bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
+            let hashed = self.hash_generated_name(name);
             self.new_symbol(kind, hashed)?
         };
         VecExt::append(&mut self.module_scope_mut().generated, ref_);

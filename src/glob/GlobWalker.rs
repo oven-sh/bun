@@ -2231,11 +2231,13 @@ const BRACE_EXPANSION_LIMIT: usize = 10_000;
 const BRACE_EXPANSION_MAX_DEPTH: u32 = 32;
 
 /// Returns true if `pattern` contains a brace group (`{...}`) with a path
-/// separator inside it. `[...]` bracket classes are honored, so commas/braces/
-/// separators inside a class are not counted. On non-Windows a backslash
-/// escapes the next byte; on Windows a backslash is a native path separator
-/// (matching `is_sep_native` / `build_pattern_components`), not an escape, so a
-/// `\` inside a brace group triggers expansion there too.
+/// separator inside it. `[...]` bracket classes are honored for brace depth
+/// (commas/braces inside a class are not structural), but a separator inside a
+/// class still counts, because `build_pattern_components` splits on separators
+/// regardless of bracket state. On non-Windows a backslash escapes the next
+/// byte; on Windows a backslash is a native path separator (matching
+/// `is_sep_native` / `build_pattern_components`), not an escape, so a `\` inside
+/// a brace group triggers expansion there too.
 fn brace_group_spans_separator(pattern: &[u8]) -> bool {
     let mut depth: u32 = 0;
     let mut in_brackets = false;
@@ -2251,7 +2253,12 @@ fn brace_group_spans_separator(pattern: &[u8]) -> bool {
             b']' if in_brackets => in_brackets = false,
             b'{' if !in_brackets => depth += 1,
             b'}' if !in_brackets && depth > 0 => depth -= 1,
-            _ if depth > 0 && !in_brackets && bun_core::path_sep::is_sep_native(c) => {
+            // Not gated on `!in_brackets`: `build_pattern_components` splits on a
+            // separator regardless of bracket state, so a `/` inside a `[...]`
+            // class within a brace group would still be cut there. Counting it
+            // here keeps the detector faithful to the splitter and lets the
+            // group's other alternatives be expanded instead of mis-split.
+            _ if depth > 0 && bun_core::path_sep::is_sep_native(c) => {
                 return true;
             }
             _ => {}
@@ -2499,6 +2506,14 @@ mod brace_expansion_tests {
     fn separator_in_bracket_class_is_not_a_brace() {
         // `[` opens a class; a `/` there is not "inside a brace group".
         assert!(!brace_group_spans_separator(b"file[/]name"));
+    }
+
+    #[test]
+    fn separator_in_bracket_class_inside_braces_is_counted() {
+        // `build_pattern_components` splits on the `/` regardless of the class,
+        // so the detector must expand to rescue the other alternatives.
+        assert!(brace_group_spans_separator(b"{x,a[/]b}"));
+        assert_eq!(expand("{x,a[/]b}"), vec!["a[/]b", "x"]);
     }
 
     #[test]

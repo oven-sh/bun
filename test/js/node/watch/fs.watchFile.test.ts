@@ -308,8 +308,6 @@ describe("fs.watchFile", () => {
   test("terminating a worker while many watchFile initial-stat callbacks are queued does not crash", async () => {
     const fixture = /* js */ `
       const { Worker } = require("worker_threads");
-      const os = require("os");
-      const path = require("path");
 
       const workerCode = \`
         const fs = require("fs");
@@ -365,12 +363,17 @@ describe("fs.watchFile", () => {
   // reordering in initial_stat_error_on_main_thread (append before
   // propagating the error).
   test("a throwing listener on the initial ENOENT callback keeps watching", async () => {
+    // Fresh per-run directory so the target is guaranteed not to exist and
+    // the initial stat takes the ENOENT path.
+    const dir = tempDirWithFiles("watchfile-throw", {
+      ".keep": "",
+    });
+    const target = path.join(dir, "does-not-exist.txt");
+
     const fixture = /* js */ `
       const fs = require("fs");
-      const os = require("os");
-      const path = require("path");
 
-      const target = path.join(os.tmpdir(), "bun-watchfile-throw-" + process.pid);
+      const target = ${JSON.stringify(target)};
       let calls = 0;
 
       process.on("uncaughtException", (err) => {
@@ -392,7 +395,6 @@ describe("fs.watchFile", () => {
         } else {
           console.log("second");
           fs.unwatchFile(target);
-          try { fs.unlinkSync(target); } catch {}
           process.exit(0);
         }
       });

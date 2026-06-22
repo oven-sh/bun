@@ -588,8 +588,18 @@ export function createCompressionTransform(mode) {
       flush(controller) {
         return handle.transformAsync(emptyChunk, true).$then(
           outputs => {
-            enqueueOutputs(controller, outputs);
+            // The engine is done once the outputs are extracted; close
+            // before enqueueing so a reader.cancel() that landed while
+            // the worker ran (it closes the readable and returns the
+            // already-set finishPromise without invoking cancel()) still
+            // releases the native context deterministically. The enqueue
+            // then throws on the closed readable — discard the outputs,
+            // the reader no longer wants them; sinkCloseAlgorithm sees
+            // the readable is not errored and resolves the close.
             close();
+            try {
+              enqueueOutputs(controller, outputs);
+            } catch {}
           },
           error => {
             close();

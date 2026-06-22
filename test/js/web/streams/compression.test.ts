@@ -975,4 +975,29 @@ describe("CompressionStream large-chunk work-pool offload", () => {
     expect((closeErr as any).code).toBe("Z_BUF_ERROR");
     expect(readErr).toBe(closeErr);
   });
+
+  // reader.cancel() while the finish-flush worker is in flight closes
+  // the readable and short-circuits sourceCancelAlgorithm on the
+  // already-set finishPromise, so the transformer's cancel() hook never
+  // runs. The flush fulfillment must release the engine itself and
+  // discard the outputs rather than throwing on the closed readable
+  // (which would reject both close and cancel with an internal error
+  // and skip the release).
+  test("reader.cancel() racing the async finish-flush resolves cleanly", async () => {
+    const cs = new CompressionStream("brotli");
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+    // 200KB at q11: PROCESS buffers it, FINISH encodes it on the pool,
+    // giving the cancel a wide window.
+    await writer.write(randomBytes(200 * 1024));
+    const closeP = writer.close();
+    const cancelP = reader.cancel("stop");
+    const [closeR, cancelR] = await Promise.allSettled([closeP, cancelP]);
+    // Before the fix both reject with
+    // "TypeError: TransformStream.readable cannot close or enqueue".
+    expect({ close: closeR, cancel: cancelR }).toEqual({
+      close: { status: "fulfilled", value: undefined },
+      cancel: { status: "fulfilled", value: undefined },
+    });
+  });
 });

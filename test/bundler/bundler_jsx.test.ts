@@ -230,6 +230,26 @@ describe("bundler", () => {
   });
   // Same as above but with `--minify-identifiers`. Covers jsx / jsxs /
   // Fragment / createElement (prod) and jsxDEV / Fragment (dev).
+  // The property under test is that the minified names assigned to the
+  // auto-imported runtime helpers and the user's local `let` bindings are
+  // pairwise distinct; literal minified slot names are not pinned.
+  function expectMinifiedRuntimeImportsNotShadowed(out: string, runtimeKinds: string[]) {
+    const importClauses = [...out.matchAll(/^import \{([^}]+)\} from /gm)].map(m => m[1]).join(",");
+    const importAliases: Record<string, string> = {};
+    for (const [, orig, alias] of importClauses.matchAll(/\b(\w+) as (\w+)\b/g)) {
+      importAliases[orig] = alias;
+    }
+    const locals = [...out.matchAll(/\blet (\w+);/g)].map(m => m[1]);
+    expect(Object.keys(importAliases).sort()).toEqual([...runtimeKinds].sort());
+    expect(locals).toHaveLength(runtimeKinds.length);
+    for (const kind of runtimeKinds) {
+      expect({ kind, alias: importAliases[kind], locals }).toEqual({
+        kind,
+        alias: expect.not.stringMatching(new RegExp(`^(${locals.join("|")})$`)),
+        locals,
+      });
+    }
+  }
   itBundled("jsx/AutomaticLocalShadowMinifyIdentifiersProd", {
     files: {
       "/index.tsx": /* tsx */ `
@@ -253,34 +273,12 @@ describe("bundler", () => {
       "/index.tsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
     },
     onAfterBundle(api) {
-      const file = api.readFile("out.js");
-      expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
-        "// index.tsx
-        import { jsx as e, jsxs as i, Fragment as o } from "react/jsx-runtime";
-        import { createElement as v } from "react";
-        function y() {
-          let n;
-          let t;
-          let l;
-          let s;
-          const a = {};
-          const d = [/* @__PURE__ */ e("div", {}), /* @__PURE__ */ i("div", {
-            children: [
-              /* @__PURE__ */ e("a", {}),
-              /* @__PURE__ */ e("b", {})
-            ]
-          }), /* @__PURE__ */ e(o, {
-            children: /* @__PURE__ */ e("div", {})
-          }), /* @__PURE__ */ v("div", {
-            ...a,
-            key: "k"
-          })];
-          return [d, n, t, l, s];
-        }
-        export {
-          y as f
-        };"
-      `);
+      expectMinifiedRuntimeImportsNotShadowed(api.readFile("out.js"), [
+        "jsx",
+        "jsxs",
+        "Fragment",
+        "createElement",
+      ]);
     },
   });
   itBundled("jsx/AutomaticLocalShadowMinifyIdentifiersDev", {
@@ -300,22 +298,7 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
     onAfterBundle(api) {
-      const file = api.readFile("out.js");
-      expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
-        "// index.tsx
-        import { jsxDEV as n, Fragment as o } from "react/jsx-dev-runtime";
-        function a() {
-          let t;
-          let e;
-          const l = [/* @__PURE__ */ n("div", {}, undefined, false, undefined, this), /* @__PURE__ */ n(o, {
-            children: /* @__PURE__ */ n("div", {}, undefined, false, undefined, this)
-          }, undefined, false, undefined, this)];
-          return [l, t, e];
-        }
-        export {
-          a as f
-        };"
-      `);
+      expectMinifiedRuntimeImportsNotShadowed(api.readFile("out.js"), ["jsxDEV", "Fragment"]);
     },
   });
   itBundledDevAndProd("jsx/ImportSource", {

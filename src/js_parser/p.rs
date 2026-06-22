@@ -3244,19 +3244,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.runtime_imports.__require.is_empty() {
             return;
         }
-        // Call declare_symbol_maybe_generated with the hashed
-        // "__require" name directly, regardless of bundle mode. Do NOT route through
-        // declare_generated_symbol — that helper skips the hash when
-        // `options.bundle == true`, which would let a user-level
-        // `var __require` collide in `current_scope.members` and link the
-        // runtime require to the user symbol via the IS_GENERATED merge path.
-        let hashed = self.hash_generated_name(b"__require");
         let ref_ = self
-            .declare_symbol_maybe_generated::<true>(
-                js_ast::symbol::Kind::Other,
-                bun_ast::Loc::EMPTY,
-                hashed,
-            )
+            .declare_generated_symbol(js_ast::symbol::Kind::Other, b"__require")
             .expect("oom");
         self.runtime_imports.__require = ref_;
         self.runtime_imports.put(b"__require", ref_);
@@ -4819,33 +4808,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .as_bytes()
     }
 
-    /// Callers must pre-hash via `generated_symbol_name!`
-    /// and pass the result, OR (non-bundle) we runtime-hash into the bump arena.
+    /// Create a parser-generated symbol (runtime/JSX auto-imports, fast-refresh
+    /// hooks, etc.) and register it on `module_scope.generated` only.
+    ///
+    /// Never inserts into `current_scope.members`, so a user binding of the
+    /// same name in any scope cannot capture it. Safe to call from the visit
+    /// pass where `current_scope` is nested.
+    ///
+    /// Name selection:
+    /// - Bundle mode: keep `name` as-is. `NumberRenamer` assigns a unique
+    ///   printed name from `module_scope.generated`.
+    /// - Non-bundle: `printAst` uses `NoOpRenamer`, which prints
+    ///   `symbol.original_name` verbatim with no collision handling and never
+    ///   reads `module_scope.generated`. The `generatedSymbolName` hash suffix
+    ///   appended here is the sole collision guard on that path.
     pub fn declare_generated_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
     ) -> Result<Ref, bun_core::Error> {
-        // The bundler runs the renamer, so it is ok to not append a hash
-        if self.options.bundle {
-            return self.declare_symbol_maybe_generated::<true>(kind, bun_ast::Loc::EMPTY, name);
-        }
-        let hashed = self.hash_generated_name(name);
-        self.declare_symbol_maybe_generated::<true>(kind, bun_ast::Loc::EMPTY, hashed)
-    }
-
-    /// Like [`Self::declare_generated_symbol`] but never touches
-    /// `current_scope.members`. Use for module-level auto-imports created
-    /// during the visit pass, where `current_scope` may be a nested scope
-    /// containing a user binding of the same name; `declare_generated_symbol`
-    /// would link the generated symbol to that binding via the
-    /// `IS_GENERATED` merge path.
-    pub fn new_generated_symbol(
-        &mut self,
-        kind: js_ast::symbol::Kind,
-        name: &'static [u8],
-    ) -> Result<Ref, bun_core::Error> {
-        // The bundler runs the renamer, so it is ok to not append a hash
         let ref_ = if self.options.bundle {
             self.new_symbol(kind, name)?
         } else {
@@ -4862,28 +4843,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         name: &'a [u8],
     ) -> Result<Ref, bun_core::Error> {
-        self.declare_symbol_maybe_generated::<false>(kind, loc, name)
-    }
-
-    pub fn declare_symbol_maybe_generated<const IS_GENERATED: bool>(
-        &mut self,
-        kind: js_ast::symbol::Kind,
-        loc: bun_ast::Loc,
-        name: &'a [u8],
-    ) -> Result<Ref, bun_core::Error> {
         // p.checkForNonBMPCodePoint(loc, name)
-        if !IS_GENERATED {
-            // Forbid declaring a symbol with a reserved word in strict mode
-            if self.is_strict_mode()
-                && name.as_ptr() != arguments_str.as_ptr()
-                && bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
-            {
-                self.mark_strict_mode_feature(
-                    StrictModeFeature::ReservedWord,
-                    js_lexer::range_of_identifier(self.source, loc),
-                    name,
-                )?;
-            }
+
+        // Forbid declaring a symbol with a reserved word in strict mode
+        if self.is_strict_mode()
+            && name.as_ptr() != arguments_str.as_ptr()
+            && bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
+        {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(self.source, loc),
+                name,
+            )?;
         }
 
         // Allocate a new symbol
@@ -4914,59 +4885,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
 
-            if !IS_GENERATED {
-                use js_ast::scope::SymbolMergeResult as MR;
-                let merge = js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
-                    scope_kind,
-                    self.symbols[symbol_idx].kind,
-                    kind,
-                );
-                match merge {
-                    MR::Forbidden => {
-                        // Entry already holds `existing`; leave it untouched.
-                        // SAFETY: original_name is an arena-owned slice valid for 'a.
-                        let orig = self.symbols[symbol_idx].original_name.slice();
-                        self.log().add_symbol_already_declared_error(
-                            self.source,
-                            orig,
-                            loc,
-                            existing.loc,
-                        );
-                        return Ok(existing.ref_);
-                    }
-                    MR::KeepExisting => {
-                        ref_ = existing.ref_;
-                    }
-                    MR::ReplaceWithNew => {
-                        self.symbols[symbol_idx].link.set(ref_);
-
-                        // If these are both functions, remove the overwritten declaration
-                        if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
-                            self.symbols[symbol_idx]
-                                .set_remove_overwritten_function_declaration(true);
-                        }
-                    }
-                    MR::BecomePrivateGetSetPair => {
-                        ref_ = existing.ref_;
-                        self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateGetSetPair;
-                    }
-                    MR::BecomePrivateStaticGetSetPair => {
-                        ref_ = existing.ref_;
-                        self.symbols[symbol_idx].kind =
-                            js_ast::symbol::Kind::PrivateStaticGetSetPair;
-                    }
-                    MR::OverwriteWithNew => {}
+            use js_ast::scope::SymbolMergeResult as MR;
+            let merge = js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
+                scope_kind,
+                self.symbols[symbol_idx].kind,
+                kind,
+            );
+            match merge {
+                MR::Forbidden => {
+                    // Entry already holds `existing`; leave it untouched.
+                    // SAFETY: original_name is an arena-owned slice valid for 'a.
+                    let orig = self.symbols[symbol_idx].original_name.slice();
+                    self.log().add_symbol_already_declared_error(
+                        self.source,
+                        orig,
+                        loc,
+                        existing.loc,
+                    );
+                    return Ok(existing.ref_);
                 }
-            } else {
-                self.symbols[ref_.inner_index() as usize]
-                    .link
-                    .set(existing.ref_);
+                MR::KeepExisting => {
+                    ref_ = existing.ref_;
+                }
+                MR::ReplaceWithNew => {
+                    self.symbols[symbol_idx].link.set(ref_);
+
+                    // If these are both functions, remove the overwritten declaration
+                    if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
+                        self.symbols[symbol_idx]
+                            .set_remove_overwritten_function_declaration(true);
+                    }
+                }
+                MR::BecomePrivateGetSetPair => {
+                    ref_ = existing.ref_;
+                    self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateGetSetPair;
+                }
+                MR::BecomePrivateStaticGetSetPair => {
+                    ref_ = existing.ref_;
+                    self.symbols[symbol_idx].kind =
+                        js_ast::symbol::Kind::PrivateStaticGetSetPair;
+                }
+                MR::OverwriteWithNew => {}
             }
         }
         *entry.value_ptr = js_ast::scope::Member { ref_, loc };
-        if IS_GENERATED {
-            VecExt::append(&mut self.module_scope_mut().generated, ref_);
-        }
         Ok(ref_)
     }
 
@@ -6164,7 +6126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None => {
                 let symbol_name = kind.tag_name();
                 let new_ref = self
-                    .new_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
+                    .declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
                     .expect("unreachable");
                 let loc_ref = LocRef { loc, ref_: new_ref };
                 self.is_import_item.insert(new_ref, ());
@@ -6624,20 +6586,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.has_called_runtime = true;
 
         if !self.runtime_imports.contains(name) {
-            if !self.options.bundle {
-                let generated_symbol = self
-                    .declare_generated_symbol(js_ast::symbol::Kind::Other, name)
-                    .expect("unreachable");
-                self.runtime_imports.put(name, generated_symbol);
-                generated_symbol
-            } else {
-                let ref_ = self
-                    .new_symbol(js_ast::symbol::Kind::Other, name)
-                    .expect("unreachable");
-                self.runtime_imports.put(name, ref_);
-                VecExt::append(&mut self.module_scope_mut().generated, ref_);
-                ref_
-            }
+            let ref_ = self
+                .declare_generated_symbol(js_ast::symbol::Kind::Other, name)
+                .expect("unreachable");
+            self.runtime_imports.put(name, ref_);
+            ref_
         } else {
             self.runtime_imports.at(name).unwrap()
         }

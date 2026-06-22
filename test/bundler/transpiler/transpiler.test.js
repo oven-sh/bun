@@ -1705,6 +1705,27 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // Non-bundle transpile uses NoOpRenamer (prints symbol.original_name
+  // verbatim), so the `generatedSymbolName` hash suffix on the automatic JSX
+  // runtime import is the sole collision guard against a user local of the
+  // same name in the first JSX element's scope.
+  it("JSX automatic runtime import is not shadowed by a user local", () => {
+    var bun = new Bun.Transpiler({
+      loader: "tsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+
+    const out = bun.transformSync(
+      "export function f() { let jsx: any; let jsxDEV: any; let Fragment: any; return [<><div /></>, jsx, jsxDEV, Fragment] }",
+    );
+    expect(out).toContain("jsxDEV_7x81h0kn(");
+    expect(out).toContain("Fragment_8vg9x3sq,");
+    expect(out).toContain("let jsx;");
+    expect(out).toContain("let jsxDEV;");
+    expect(out).toContain("let Fragment;");
+    expect(out).not.toMatch(/\bjsxDEV\(/);
+  });
+
   it("JSX bare key prop followed by key with a value does not crash", async () => {
     await using proc = Bun.spawn({
       cmd: [

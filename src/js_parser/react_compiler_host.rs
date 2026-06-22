@@ -68,7 +68,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
             Some(existing) => existing,
             None => {
                 let new_ref = p
-                    .new_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name())
+                    .declare_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name())
                     .expect("oom");
                 let loc_ref = js_ast::LocRef {
                     loc: bun_ast::Loc::EMPTY,

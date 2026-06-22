@@ -2223,8 +2223,7 @@ pub fn NewParser_(
 
         fn ensureRequireSymbol(p: *P) void {
             if (p.runtime_imports.__require != null) return;
-            const static_symbol = generatedSymbolName("__require");
-            p.runtime_imports.__require = bun.handleOom(declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true));
+            p.runtime_imports.__require = bun.handleOom(p.declareGeneratedSymbol(.other, "__require"));
             p.runtime_imports.put("__require", p.runtime_imports.__require.?);
         }
 
@@ -3301,26 +3300,31 @@ pub fn NewParser_(
             return ref;
         }
 
+        /// Create a parser-generated symbol and register it on
+        /// `module_scope.generated` only. Never inserts into
+        /// `current_scope.members`, so a user binding of the same name in any
+        /// scope cannot capture it.
+        ///
+        /// Bundle mode: `NumberRenamer` assigns a unique printed name from
+        /// `module_scope.generated`. Non-bundle: `printAst` uses `NoOpRenamer`,
+        /// which prints `symbol.original_name` verbatim and never reads
+        /// `module_scope.generated`; the `generatedSymbolName` hash suffix
+        /// appended here is the sole collision guard on that path.
         pub fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
-            // The bundler runs the renamer, so it is ok to not append a hash
-            if (p.options.bundle) {
-                return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, name, true);
-            }
-
-            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, generatedSymbolName(name), true);
+            const ref = if (p.options.bundle)
+                try p.newSymbol(kind, name)
+            else
+                try p.newSymbol(kind, generatedSymbolName(name));
+            try p.module_scope.generated.append(p.allocator, ref);
+            return ref;
         }
 
         pub fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
-            return try @call(bun.callmod_inline, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
-        }
-
-        pub fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
             // p.checkForNonBMPCodePoint(loc, name)
-            if (comptime !is_generated) {
-                // Forbid declaring a symbol with a reserved word in strict mode
-                if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
-                    try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
-                }
+
+            // Forbid declaring a symbol with a reserved word in strict mode
+            if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
+                try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
             }
 
             // Allocate a new symbol
@@ -3332,47 +3336,40 @@ pub fn NewParser_(
                 const existing = entry.value_ptr.*;
                 var symbol: *Symbol = &p.symbols.items[existing.ref.innerIndex()];
 
-                if (comptime !is_generated) {
-                    switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
-                        .forbidden => {
-                            try p.log.addSymbolAlreadyDeclaredError(p.allocator, p.source, symbol.original_name, loc, existing.loc);
-                            return existing.ref;
-                        },
+                switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
+                    .forbidden => {
+                        try p.log.addSymbolAlreadyDeclaredError(p.allocator, p.source, symbol.original_name, loc, existing.loc);
+                        return existing.ref;
+                    },
 
-                        .keep_existing => {
-                            ref = existing.ref;
-                        },
+                    .keep_existing => {
+                        ref = existing.ref;
+                    },
 
-                        .replace_with_new => {
-                            symbol.link = ref;
+                    .replace_with_new => {
+                        symbol.link = ref;
 
-                            // If these are both functions, remove the overwritten declaration
-                            if (kind.isFunction() and symbol.kind.isFunction()) {
-                                symbol.remove_overwritten_function_declaration = true;
-                            }
-                        },
+                        // If these are both functions, remove the overwritten declaration
+                        if (kind.isFunction() and symbol.kind.isFunction()) {
+                            symbol.remove_overwritten_function_declaration = true;
+                        }
+                    },
 
-                        .become_private_get_set_pair => {
-                            ref = existing.ref;
-                            symbol.kind = .private_get_set_pair;
-                        },
+                    .become_private_get_set_pair => {
+                        ref = existing.ref;
+                        symbol.kind = .private_get_set_pair;
+                    },
 
-                        .become_private_static_get_set_pair => {
-                            ref = existing.ref;
-                            symbol.kind = .private_static_get_set_pair;
-                        },
+                    .become_private_static_get_set_pair => {
+                        ref = existing.ref;
+                        symbol.kind = .private_static_get_set_pair;
+                    },
 
-                        .overwrite_with_new => {},
-                    }
-                } else {
-                    p.symbols.items[ref.innerIndex()].link = existing.ref;
+                    .overwrite_with_new => {},
                 }
             }
             entry.key_ptr.* = name;
             entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref, .loc = loc };
-            if (comptime is_generated) {
-                try p.module_scope.generated.append(p.allocator, ref);
-            }
             return ref;
         }
 
@@ -4575,25 +4572,11 @@ pub fn NewParser_(
                         if (p.jsx_imports.getWithTag(kind) == null) {
                             const symbol_name = @tagName(field);
 
-                            // This runs during visit, so `p.current_scope` may be a
-                            // nested scope containing a user binding named "jsx" /
-                            // "jsxDEV" / "Fragment" etc. Do not route through
-                            // `declareGeneratedSymbol` (which inserts into
-                            // `p.current_scope.members` and would link the runtime
-                            // symbol to the user's local). Create the symbol
-                            // directly and register it on `module_scope.generated`
-                            // only; the renamer handles uniqueness.
-                            const new_ref = if (p.options.bundle)
-                                p.newSymbol(.other, symbol_name) catch unreachable
-                            else
-                                p.newSymbol(.other, generatedSymbolName(symbol_name)) catch unreachable;
-
                             const loc_ref = LocRef{
                                 .loc = loc,
-                                .ref = new_ref,
+                                .ref = (p.declareGeneratedSymbol(.other, symbol_name) catch unreachable),
                             };
 
-                            bun.handleOom(p.module_scope.generated.append(p.allocator, loc_ref.ref.?));
                             p.is_import_item.put(p.allocator, loc_ref.ref.?, {}) catch unreachable;
                             @field(p.jsx_imports, @tagName(field)) = loc_ref;
                             break :brk loc_ref.ref.?;
@@ -5653,25 +5636,13 @@ pub fn NewParser_(
         }
 
         fn runtimeIdentifierRef(p: *P, loc: logger.Loc, comptime name: string) Ref {
+            _ = loc;
             p.has_called_runtime = true;
 
             if (!p.runtime_imports.contains(name)) {
-                if (!p.options.bundle) {
-                    const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
-                    p.runtime_imports.put(name, generated_symbol);
-                    return generated_symbol;
-                } else {
-                    const loc_ref = js_ast.LocRef{
-                        .loc = loc,
-                        .ref = p.newSymbol(.other, name) catch unreachable,
-                    };
-                    p.runtime_imports.put(
-                        name,
-                        loc_ref.ref.?,
-                    );
-                    bun.handleOom(p.module_scope.generated.append(p.allocator, loc_ref.ref.?));
-                    return loc_ref.ref.?;
-                }
+                const ref = p.declareGeneratedSymbol(.other, name) catch unreachable;
+                p.runtime_imports.put(name, ref);
+                return ref;
             } else {
                 return p.runtime_imports.at(name).?;
             }

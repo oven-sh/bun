@@ -334,3 +334,72 @@ describe("Ed25519", () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/32613
+describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
+  // The serialized JWK is rarely a multiple of 8 bytes, which AES-KW (RFC 3394)
+  // requires. Bun used to reject these with OperationError; it now pads the JWK
+  // JSON with trailing spaces, matching Node.js.
+  it.each(["SHA-256", "SHA-384", "SHA-512"])("round-trips an HMAC %s key", async hash => {
+    const hmacKey = await crypto.subtle.generateKey({ name: "HMAC", hash }, true, ["sign", "verify"]);
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const originalJwk = (await crypto.subtle.exportKey("jwk", hmacKey)) as JsonWebKey;
+
+    const wrapped = await crypto.subtle.wrapKey("jwk", hmacKey, wrappingKey, "AES-KW");
+    expect(wrapped.byteLength % 8).toBe(0);
+
+    const unwrapped = await crypto.subtle.unwrapKey(
+      "jwk",
+      wrapped,
+      wrappingKey,
+      "AES-KW",
+      { name: "HMAC", hash },
+      true,
+      ["sign", "verify"],
+    );
+    const roundTrippedJwk = (await crypto.subtle.exportKey("jwk", unwrapped)) as JsonWebKey;
+    expect(roundTrippedJwk.kty).toBe("oct");
+    expect(roundTrippedJwk.k).toBe(originalJwk.k);
+  });
+
+  it("does not pad raw-format key material", async () => {
+    const keyToWrap = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    // 32-byte key is already a multiple of 8; wrapped output is key + 8 bytes, no padding.
+    const wrapped = await crypto.subtle.wrapKey("raw", keyToWrap, wrappingKey, "AES-KW");
+    expect(wrapped.byteLength).toBe(40);
+  });
+
+  it("unwraps an AES-KW jwk blob produced by Node.js", async () => {
+    // Fixed wrapping key + HMAC SHA-512 key wrapped by Node.js, proving interop.
+    const wrappingKey = await crypto.subtle.importKey(
+      "raw",
+      Buffer.from("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "hex"),
+      "AES-KW",
+      false,
+      ["unwrapKey"],
+    );
+    const wrapped = Buffer.from(
+      "8bb2ba91c19d8e05a8c07a4634bacc1fb3eac4725a5c206452865a3d034cc8d1cad992b8d6e45cea1369d2a3073306ab8f2fe826e71da572dc404a9662a05fdd759dcfd4fea26f8b980d87d4871ed12b3b681bb090f29ee19d0def9c708a462ab29789f59c1b68861877667fd39a3e20bae77eb0f6581ad758cd4a70b1659dd5005db7405b88cd1a15aa1397c3dbde2b11a61a84d467881375cb5a779cdcab00e4faabba1121e450",
+      "hex",
+    );
+    const unwrapped = await crypto.subtle.unwrapKey(
+      "jwk",
+      wrapped,
+      wrappingKey,
+      "AES-KW",
+      { name: "HMAC", hash: "SHA-512" },
+      true,
+      ["sign", "verify"],
+    );
+    const jwk = (await crypto.subtle.exportKey("jwk", unwrapped)) as JsonWebKey;
+    expect(jwk.kty).toBe("oct");
+    expect(jwk.k).toBe("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QA");
+  });
+});

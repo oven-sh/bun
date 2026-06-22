@@ -63,9 +63,7 @@ import { jsxDEV } from "react/jsx-dev-runtime";
 import { c as _c } from "react/compiler-runtime";
 function Comp(t0) {
   const $ = _c(8);
-  let a;
-  let b;
-  let rest;
+  let a, b, rest;
   if ($[0] !== t0)
     ({
       a,
@@ -203,16 +201,16 @@ export {
 `;
 
 exports[`bundler react-compiler/SelfRefConstArrow 1`] = `
-"// entry.tsx
+"var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
+
+// entry.tsx
 import { useState, useLayoutEffect } from "react";
 import { c as _c } from "react/compiler-runtime";
-const $rc_sentinel = Symbol.for("react.memo_cache_sentinel");
 function useTick() {
   const $ = _c(2);
   let [n, setN] = useState(0);
-  let t0;
-  let t1;
-  if ($[0] === $rc_sentinel)
+  let t0, t1;
+  if ($[0] === __MEMO_CACHE_SENTINEL)
     t0 = () => {
       let tick = () => {
         setN(1);

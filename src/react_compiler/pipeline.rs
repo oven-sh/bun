@@ -195,7 +195,7 @@ pub fn compile_fn(
     );
     // Write back any sentinel refs minted during this function's codegen so the
     // next function in the module reuses the same module-scope local and
-    // `finish()` knows to emit the hoisted `const` decl.
+    // `finish()` knows to emit the `bun:wrap` runtime import.
     (
         context.memo_cache_sentinel_ref,
         context.early_return_sentinel_ref,

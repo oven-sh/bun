@@ -168,10 +168,19 @@ impl<'a> MergeTransform<'a> {
                     match &instr.value {
                         ReactiveValue::Instruction(iv) => {
                             match iv {
+                                // NOTE: LoadGlobal is intentionally NOT tolerated here.
+                                // Absorbing an interposed `Tn = LoadGlobal(ImportedComponent)`
+                                // into a merged scope promotes a module-constant to a cached
+                                // scope output (codegen emits `T0 = ThemedText` and downstream
+                                // guards compare `$[N] !== T0` against an immutable import),
+                                // and widens the merged dep set so unrelated deps re-execute
+                                // trivial expressions. Treat LoadGlobal as a merge barrier so
+                                // it stays at top level (re-emitted after the flushed run),
+                                // matching the Babel reference. LoadLocal remains tolerated —
+                                // the resulting Category-C N→N−1 slot reduction is benign.
                                 InstructionValue::BinaryExpression { .. }
                                 | InstructionValue::ComputedLoad { .. }
                                 | InstructionValue::JSXText { .. }
-                                | InstructionValue::LoadGlobal { .. }
                                 | InstructionValue::LoadLocal { .. }
                                 | InstructionValue::Primitive { .. }
                                 | InstructionValue::PropertyLoad { .. }

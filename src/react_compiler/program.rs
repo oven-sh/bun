@@ -696,9 +696,14 @@ fn returns_non_node_in_stmts(stmts: &[Stmt]) -> bool {
 fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
     match &stmt.data {
         StmtData::SReturn(ret) => {
+            // Upstream isNonNode (babel-plugin-react-compiler dist/index.js:107623-107637) only
+            // flags Object/Arrow/Function/BigInt/Class/New expressions. `return undefined` falls
+            // through to false there. Bun's visit pass folds `return undefined` → bare `return;`,
+            // so ret.value == None must be treated the same as null/JSX/undefined — otherwise a
+            // component with an early `return undefined` is rejected by get_component_or_hook_like.
             *result = match &ret.value {
                 Some(arg) => is_non_node(arg),
-                None => true,
+                None => false,
             };
         }
         StmtData::SBlock(block) => {
@@ -1442,36 +1447,25 @@ pub fn finish(
 
     out_stmts.append(&mut state.outlined_decls);
 
-    // Prepend the hoisted `const $rc_sentinel = Symbol.for(...)` decls (if any
-    // memo-slot comparison referenced them) so they sit right after the runtime
-    // import in the RC `Part` and every compiled function in this module shares
-    // one `Symbol.for` call instead of repeating it inline per comparison.
-    if state.context.memo_cache_sentinel_ref.is_some()
-        || state.context.early_return_sentinel_ref.is_some()
-    {
-        // SAFETY: same as in `maybe_compile_node` — the arena is owned by the
-        // parser's `P` and outlives the `&mut dyn Host` borrow here.
-        let arena: &bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(host.arena()) };
-        let mut prefix: Vec<Stmt> = Vec::with_capacity(2 + out_stmts.len());
-        if let Some(r) = state.context.memo_cache_sentinel_ref {
-            prefix.push(crate::codegen::build_hoisted_sentinel_decl(
-                host,
-                arena,
-                r,
-                crate::codegen::MEMO_CACHE_SENTINEL,
-            ));
-        }
-        if let Some(r) = state.context.early_return_sentinel_ref {
-            prefix.push(crate::codegen::build_hoisted_sentinel_decl(
-                host,
-                arena,
-                r,
-                crate::codegen::EARLY_RETURN_SENTINEL,
-            ));
-        }
-        prefix.append(out_stmts);
-        *out_stmts = prefix;
+    // Register the lazily-minted `bun:wrap` sentinel refs as import specifiers
+    // so `add_imports_to_program` emits a single
+    //   import { __MEMO_CACHE_SENTINEL as $rc_sentinel } from "bun:wrap"
+    // per RC-compiled module. The bundler resolves `bun:wrap` to its runtime
+    // (`src/runtime.js`), giving ONE `Symbol.for(...)` per bundle instead of
+    // one per module.
+    if let Some(r) = state.context.memo_cache_sentinel_ref {
+        state.context.register_import_with_ref(
+            crate::imports::BUN_RUNTIME_MODULE,
+            crate::codegen::MEMO_CACHE_SENTINEL_EXPORT,
+            r,
+        );
+    }
+    if let Some(r) = state.context.early_return_sentinel_ref {
+        state.context.register_import_with_ref(
+            crate::imports::BUN_RUNTIME_MODULE,
+            crate::codegen::EARLY_RETURN_SENTINEL_EXPORT,
+            r,
+        );
     }
 
     add_imports_to_program(out_stmts, host, &state.context);

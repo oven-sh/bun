@@ -50,8 +50,10 @@ use crate::reactive_scopes::{
 
 use crate::program::{Host, JsxImportKind};
 
-pub const MEMO_CACHE_SENTINEL: &str = "react.memo_cache_sentinel";
-pub const EARLY_RETURN_SENTINEL: &str = "react.early_return_sentinel";
+/// Names of the `bun:wrap` runtime exports the React Compiler imports for the
+/// memo-cache slot sentinels (see `src/runtime.js`).
+pub const MEMO_CACHE_SENTINEL_EXPORT: &str = "__MEMO_CACHE_SENTINEL";
+pub const EARLY_RETURN_SENTINEL_EXPORT: &str = "__EARLY_RETURN_SENTINEL";
 
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
@@ -104,12 +106,13 @@ enum WellKnown {
     NaN,
     Infinity,
     Underscore,
-    /// Module-scope `const $rc_sentinel = Symbol.for("react.memo_cache_sentinel")`
-    /// hoisted by Bun so each memo-slot comparison is `$[i] === $rc_sentinel`
-    /// instead of re-calling `Symbol.for(...)` inline (Babel emits the inline
-    /// form; this is a Bun-side enhancement over upstream).
+    /// `import { __MEMO_CACHE_SENTINEL as $rc_sentinel } from "bun:wrap"` —
+    /// Bun's bundler runtime defines the `Symbol.for(...)` once so each
+    /// memo-slot comparison is `$[i] === $rc_sentinel` instead of re-calling
+    /// `Symbol.for(...)` inline (Babel emits the inline form; this is a
+    /// Bun-side enhancement over upstream).
     MemoCacheSentinel,
-    /// Same hoist for `Symbol.for("react.early_return_sentinel")`.
+    /// Same runtime import for `__EARLY_RETURN_SENTINEL`.
     EarlyReturnSentinel,
 }
 
@@ -154,7 +157,7 @@ impl<'h> Codegen<'h> {
     /// Module-scope sentinel refs minted (or reused) during this function's
     /// codegen, for write-back into `ProgramContext` so the next function in the
     /// same module references the same `Ref` and `finish()` can emit the single
-    /// hoisted `const` decl.
+    /// `bun:wrap` runtime import.
     pub fn sentinel_refs(&self) -> (Option<Ref>, Option<Ref>) {
         (
             self.well_known[WellKnown::MemoCacheSentinel as usize],
@@ -180,6 +183,27 @@ impl<'h> Codegen<'h> {
         let r = self.host.new_generated(name);
         self.well_known[w as usize] = Some(r);
         r
+    }
+
+    /// Like `well_known` but routes through `Host::new_import_item` so the
+    /// minted ref carries `Kind::Import` and is registered in the parser's
+    /// `is_import_item` map, and emits the call site as `EImportIdentifier`
+    /// (not `EIdentifier`) so the printer's namespace-alias rewrite applies
+    /// when the `bun:wrap` runtime is bundled. `record_usage` is called on
+    /// every emission (including first mint) so the linker's per-symbol
+    /// tree-shaking keeps the runtime export even when only one component in
+    /// the module references it. `program::finish()` later attaches the ref to
+    /// an `S::Import` clause item via `ProgramContext::register_import_with_ref`.
+    fn well_known_import(&mut self, w: WellKnown, name: &[u8], loc: Loc) -> Expr {
+        let r = if let Some(r) = self.well_known[w as usize] {
+            r
+        } else {
+            let r = self.host.new_import_item(name);
+            self.well_known[w as usize] = Some(r);
+            r
+        };
+        self.host.record_usage(r);
+        Expr::init(E::ImportIdentifier::new(r, true), loc)
     }
 
     /// Like `well_known` but routes through `Host::global_ref` so the parser's
@@ -728,6 +752,7 @@ fn codegen_reactive_scope(
     let mut decls = scope_decls;
     decls.sort_unstable_by(|(_a, a), (_b, b)| compare_scope_declaration(a, b, cx.env));
 
+    let mut output_declarators: Vec<G::Decl> = Vec::new();
     for (_ident_id, decl) in &decls {
         let index = cx.alloc_cache_index();
         if first_output_index.is_none() {
@@ -747,24 +772,26 @@ fn codegen_reactive_scope(
 
         let (name_ref, name_loc) = convert_identifier(cx, decl.identifier)?;
         if !cx.has_declared(decl.identifier) {
-            statements.push(Stmt::alloc(
-                S::Local {
-                    kind: S::Kind::KLet,
-                    decls: decl_list([G::Decl {
-                        binding: Binding::alloc(
-                            cx.cg.arena,
-                            b::Identifier { r#ref: name_ref },
-                            name_loc,
-                        ),
-                        value: None,
-                    }]),
-                    ..Default::default()
-                },
-                loc,
-            ));
+            output_declarators.push(G::Decl {
+                binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: name_ref }, name_loc),
+                value: None,
+            });
         }
         cache_loads.push((name_ref, index, Expr::init_identifier(name_ref, name_loc)));
         cx.declare(decl.identifier);
+    }
+    if !output_declarators.is_empty() {
+        // Emit a single `let a, b, c;` instead of one S::Local per output. The
+        // synthesized body is spliced after the visitor walks children, so
+        // mangleStmts never gets a chance to merge adjacent `let` ladders here.
+        statements.push(Stmt::alloc(
+            S::Local {
+                kind: S::Kind::KLet,
+                decls: decl_list(output_declarators),
+                ..Default::default()
+            },
+            loc,
+        ));
     }
 
     for reassignment_id in scope_reassignments {
@@ -784,11 +811,9 @@ fn codegen_reactive_scope(
             E::Binary {
                 op: OpCode::BinStrictEq,
                 left: cache_slot(first_idx),
-                right: Expr::init_identifier(
-                    cx.cg
-                        .well_known(WellKnown::MemoCacheSentinel, b"$rc_sentinel"),
-                    loc,
-                ),
+                right: cx
+                    .cg
+                    .well_known_import(WellKnown::MemoCacheSentinel, b"$rc_sentinel", loc),
             },
             loc,
         )
@@ -892,9 +917,9 @@ fn codegen_reactive_scope(
                     E::Binary {
                         op: OpCode::BinStrictNe,
                         left: name_expr,
-                        right: Expr::init_identifier(
-                            cx.cg
-                                .well_known(WellKnown::EarlyReturnSentinel, b"$rc_early"),
+                        right: cx.cg.well_known_import(
+                            WellKnown::EarlyReturnSentinel,
+                            b"$rc_early",
                             loc,
                         ),
                     },
@@ -990,9 +1015,14 @@ fn codegen_terminal(
             let stmt_loc = convert_loc(*loc);
             let consequent_block = codegen_block(cx, consequent)?;
             let alternate_stmt = if let Some(alt) = alternate {
-                let block = codegen_block(cx, alt)?;
+                let mut block = codegen_block(cx, alt)?;
                 if block.is_empty() {
                     None
+                } else if block.len() == 1 && matches!(block[0].data, StmtData::SIf(_)) {
+                    // Unwrap a lone nested `if` so the printer emits `else if (...)`
+                    // instead of `else { if (...) }`. The synthesized body is spliced
+                    // post-visitor, so mangleStmts never sees this to flatten it.
+                    Some(block.pop().unwrap())
                 } else {
                     Some(block_stmt(block, stmt_loc))
                 }
@@ -1912,13 +1942,13 @@ fn codegen_base_instruction_value(
             // propagate_early_returns.rs synthesizes a ModuleLocal `$rc_early`
             // load for the assignment side of the early-return sentinel; route
             // it through the same well-known slot as the post-scope `!==`
-            // comparison so both sides share the single hoisted `const` decl
-            // emitted in program.rs (instead of inlining `Symbol.for(...)`).
+            // comparison so both sides share the single `bun:wrap` runtime
+            // import emitted in program.rs (instead of inlining `Symbol.for`).
             if let NonLocalKind::ModuleLocal { name } = &binding.kind {
                 if name.slice() == b"$rc_early" {
-                    return Ok(Expr::init_identifier(
-                        cx.cg
-                            .well_known(WellKnown::EarlyReturnSentinel, b"$rc_early"),
+                    return Ok(cx.cg.well_known_import(
+                        WellKnown::EarlyReturnSentinel,
+                        b"$rc_early",
                         loc,
                     ));
                 }
@@ -3271,54 +3301,6 @@ fn property_access_expr(
             loc,
         ),
     }
-}
-
-/// Build the module-scope `const <sentinel_ref> = Symbol.for("<name>")` decl
-/// emitted once per RC-compiled module by `program::finish()`. Memo-slot
-/// comparisons reference `<sentinel_ref>` directly instead of repeating the
-/// `Symbol.for(...)` call inline (Babel's output) at every comparison site.
-pub fn build_hoisted_sentinel_decl(
-    host: &mut dyn Host,
-    arena: &Arena,
-    sentinel_ref: Ref,
-    name: &'static str,
-) -> Stmt {
-    let symbol = Expr::init_identifier(host.global_ref(b"Symbol"), Loc::EMPTY);
-    let callee = Expr::init(
-        E::Dot {
-            target: symbol,
-            name: StoreStr::new(b"for"),
-            name_loc: Loc::EMPTY,
-            optional_chain: None,
-            ..Default::default()
-        },
-        Loc::EMPTY,
-    );
-    let call = Expr::init(
-        E::Call {
-            target: callee,
-            args: AstAlloc::vec_from_iter([string_expr(name, Loc::EMPTY)]),
-            ..Default::default()
-        },
-        Loc::EMPTY,
-    );
-    Stmt::alloc(
-        S::Local {
-            kind: S::Kind::KConst,
-            decls: decl_list([G::Decl {
-                binding: Binding::alloc(
-                    arena,
-                    b::Identifier {
-                        r#ref: sentinel_ref,
-                    },
-                    Loc::EMPTY,
-                ),
-                value: Some(call),
-            }]),
-            ..Default::default()
-        },
-        Loc::EMPTY,
-    )
 }
 
 fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -> Expr {

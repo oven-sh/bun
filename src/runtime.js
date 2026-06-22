@@ -104,6 +104,11 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
+// React Compiler memo-cache slot sentinels. RC-compiled modules import these
+// (via `bun:wrap`) instead of repeating `Symbol.for(...)` per module.
+export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
+export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");
+
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
     value: name,

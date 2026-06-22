@@ -96,6 +96,42 @@ sync_source() {
     ok "源码同步完成"
 }
 
+# ─── 同步 WebKit ──────────────────────────────────────────────────────────────
+sync_webkit() {
+    local webkit_commit
+    webkit_commit=$(grep "WEBKIT_VERSION" "$DEV_SRC/scripts/build/deps/webkit.ts" | grep -oP '"[a-f0-9]{40}"' | tr -d '"')
+    if [ -z "$webkit_commit" ]; then
+        warn "无法解析 WEBKIT_VERSION，跳过 WebKit 同步"
+        return
+    fi
+
+    local wk_dir="$CI_SRC/vendor/WebKit"
+    if [ ! -d "$wk_dir/.git" ]; then
+        warn "vendor/WebKit 不是 git 仓库，跳过同步"
+        return
+    fi
+
+    info "检查 WebKit: $webkit_commit"
+    local current
+    current=$(cd "$wk_dir" && git log --oneline -1 --format='%H' 2>/dev/null || true)
+    if [ "$current" = "$webkit_commit" ]; then
+        ok "WebKit 已是最新 ($(echo "$webkit_commit" | head -c 12))"
+        return
+    fi
+
+    info "同步 WebKit: ${current:-(none)} → ${webkit_commit:0:12}"
+    (cd "$wk_dir"
+     git fetch --depth=1 origin "$webkit_commit" 2>&1 | while IFS= read -r line; do
+         echo "  [fetch] $line"
+     done
+     # 丢弃本地修改（如之前手动覆盖的 JSType.h），确保 checkout 到目标版本
+     git stash --include-untracked 2>/dev/null || true
+     git checkout "$webkit_commit" 2>&1 | while IFS= read -r line; do
+         echo "  [checkout] $line"
+     done)
+    ok "WebKit 同步完成 ($(echo "$webkit_commit" | head -c 12))"
+}
+
 # ─── 编译 ─────────────────────────────────────────────────────────────────────
 run_build() {
     info "开始编译 (ninja -C ${BUILD_DIR} bun)"
@@ -197,6 +233,7 @@ main() {
         full|"")
             pre_check
             sync_source
+            sync_webkit
             run_build
             deploy_artifact
             ;;

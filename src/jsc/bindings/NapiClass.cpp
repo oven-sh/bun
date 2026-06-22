@@ -92,7 +92,7 @@ NapiClass* NapiClass::create(VM& vm, napi_env env, WTF::String name,
         NapiClass_ConstructorFunction<false>,
         ImplementationVisibility::Public,
         // for constructor call
-        NapiClass_ConstructorFunction<true>, name);
+        NapiClass_ConstructorFunction<true>, 0, name);
     Structure* structure = env->globalObject()->NapiClassStructure();
     NapiClass* napiClass = new (NotNull, allocateCell<NapiClass>(vm)) NapiClass(vm, executable, env, structure, data);
     napiClass->finishCreation(vm, name, constructor, data, property_count, properties);

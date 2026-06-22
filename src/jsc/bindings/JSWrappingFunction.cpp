@@ -31,7 +31,7 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     auto name = Identifier::fromString(vm, nameStr);
     // Pass callHostFunctionAsConstructor so `new` on the wrapper throws a
     // TypeError instead of jumping to a null native constructor.
-    NativeExecutable* executable = vm.getHostFunction(functionPointer, ImplementationVisibility::Public, callHostFunctionAsConstructor, nameStr);
+    NativeExecutable* executable = vm.getHostFunction(functionPointer, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nameStr);
 
     // Structure* structure = globalObject->FFIFunctionStructure();
     Structure* structure = JSWrappingFunction::createStructure(vm, globalObject, globalObject->objectPrototype());

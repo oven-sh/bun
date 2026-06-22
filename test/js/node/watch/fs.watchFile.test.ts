@@ -333,7 +333,15 @@ describe("fs.watchFile", () => {
     const runOnce = async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        env: bunEnv,
+        env: {
+          ...bunEnv,
+          // detect_leaks=0: ConcurrentTask/ManagedTask nodes left in a
+          // terminated worker's undrained concurrent queue are a known
+          // pre-existing leak (see #32071); this test asserts no crash, not
+          // no leaks. symbolize=0 so a pre-fix ASAN abort exits promptly
+          // instead of spending seconds in llvm-symbolizer.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+        },
         stdout: "pipe",
         stderr: "pipe",
       });

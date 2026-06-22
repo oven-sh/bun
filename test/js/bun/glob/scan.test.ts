@@ -618,6 +618,56 @@ describe("literal fast path", async () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/32596
+describe("brace patterns containing path separators", async () => {
+  let cwd = "";
+  beforeAll(() => {
+    cwd = tempDirWithFiles("glob-scan-brace-sep", {
+      "svc": { "src": { "env.ts": "" }, "env.ts": "" },
+      "src": { "helpers": { "paths.ts": "" }, "cli.ts": "" },
+      "pkg": { "a": { "deep": { "x.ts": "" } }, "b.ts": "" },
+    });
+  });
+
+  const sep = (p: string) => p.split("/").join(path.sep);
+  const cases: Array<[string, string[]]> = [
+    // The alternatives span different directory depths.
+    ["svc/{src/env.ts,env.ts}", ["svc/src/env.ts", "svc/env.ts"]],
+    ["src/{helpers/paths.ts,cli.ts}", ["src/helpers/paths.ts", "src/cli.ts"]],
+    // A globstar inside a brace alternative still works.
+    ["pkg/{a/**/*.ts,b.ts}", ["pkg/a/deep/x.ts", "pkg/b.ts"]],
+    // Overlapping alternatives are deduplicated.
+    ["svc/{src/env.ts,src/env.ts}", ["svc/src/env.ts"]],
+    // A single-alternative group still expands.
+    ["svc/{src/env.ts}", ["svc/src/env.ts"]],
+  ];
+
+  for (const [pattern, expected] of cases) {
+    const want = expected.map(sep).sort();
+
+    test(`scan ${pattern}`, async () => {
+      const entries = await Array.fromAsync(new Glob(pattern).scan({ cwd, dot: true }));
+      expect(entries.sort()).toEqual(want);
+    });
+
+    test(`scanSync ${pattern}`, () => {
+      const entries = Array.from(new Glob(pattern).scanSync({ cwd, dot: true }));
+      expect(entries.sort()).toEqual(want);
+    });
+  }
+
+  // scan() and match() must agree on the same pattern.
+  test("scan agrees with match", async () => {
+    const pattern = "svc/{src/env.ts,env.ts}";
+    const glob = new Glob(pattern);
+    const entries = await Array.fromAsync(glob.scan({ cwd, dot: true }));
+    for (const entry of entries) {
+      expect(glob.match(entry.split(path.sep).join("/"))).toBe(true);
+    }
+    expect(entries.length).toBe(2);
+  });
+});
+
 describe("trailing directory separator", async () => {
   test("matches directories absolute", async () => {
     const tmpdir = tmpdirSync();

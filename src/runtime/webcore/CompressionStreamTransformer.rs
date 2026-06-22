@@ -215,10 +215,13 @@ impl AnyTaskJobCtx for AsyncTransformCtx {
 
         let result = core::mem::replace(&mut self.result, Ok(Vec::new()));
         match result {
-            Ok(outputs) => {
-                let array = build_outputs_array(global, outputs)?;
-                self.promise.resolve(global, array)?;
-            }
+            Ok(outputs) => match build_outputs_array(global, outputs) {
+                Ok(array) => self.promise.resolve(global, array)?,
+                // Building the JS array threw (OOM in the Uint8Array/array
+                // allocation): settle the promise so the awaiting write
+                // rejects instead of hanging.
+                Err(e) => self.promise.reject(global, Err(e))?,
+            },
             Err(err) => {
                 let error = build_engine_error(global, err);
                 self.promise.reject(global, Ok(error))?;

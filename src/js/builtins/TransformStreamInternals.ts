@@ -495,7 +495,14 @@ export function createCompressionTransform(mode) {
   // hop, no promise allocation); above it the compression work dominates and
   // offloading keeps the main thread responsive — the previous node:zlib
   // adapter paid a threadpool round-trip per 16KB of output regardless.
-  const asyncThreshold = 4 * chunkSize;
+  //
+  // For DecompressionStream the input size says nothing about the work: a
+  // sub-threshold compressed chunk can expand to arbitrary output and stall
+  // the JS thread for its whole drive loop, so the decode modes (INFLATE,
+  // GUNZIP, INFLATERAW, BROTLI_DECODE, ZSTD_DECOMPRESS) always take the async
+  // path (the previous adapter was always async here too).
+  const isDecode = mode === 2 || mode === 4 || mode === 6 || mode === 8 || mode === 11;
+  const asyncThreshold = isDecode ? 1 : 4 * chunkSize;
 
   // node surfaces engine failures as a TypeError carrying the error code
   // (its webstreams adapter wraps them); match the class and code but keep

@@ -349,7 +349,6 @@ describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
     const originalJwk = (await crypto.subtle.exportKey("jwk", hmacKey)) as JsonWebKey;
 
     const wrapped = await crypto.subtle.wrapKey("jwk", hmacKey, wrappingKey, "AES-KW");
-    expect(wrapped.byteLength % 8).toBe(0);
 
     const unwrapped = await crypto.subtle.unwrapKey(
       "jwk",

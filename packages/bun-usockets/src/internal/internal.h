@@ -215,6 +215,7 @@ int us_internal_ssl_write(us_socket_r s, const char *data, int length);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 void *us_internal_ssl_sni_userdata(us_socket_r s);
+const char *us_internal_ssl_sni_servername(us_socket_r s);
 void us_internal_ssl_handshake_abort(us_socket_r s);
 /* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);

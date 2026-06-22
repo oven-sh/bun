@@ -290,6 +290,11 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub on_clienterror: jsc::StrongOptional,
 
+    /// node:http compat: JS callback invoked with the JSNodeHTTPServerSocket
+    /// when a connection is accepted (for TLS, when its handshake completes),
+    /// before any request bytes. Backs `server.emit("connection", ...)`.
+    pub on_connection: jsc::StrongOptional,
+
     pub inspector_server_id: jsc::DebuggerId,
 }
 
@@ -302,7 +307,8 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
 impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         // The remaining owned fields (config, base_url, h3_alt_svc, dev_server,
-        // user_routes, all_closed_promise, on_clienterror) drop automatically.
+        // user_routes, all_closed_promise, on_clienterror, on_connection) drop
+        // automatically.
         if let Some(p) = self.plugins.take() {
             // SAFETY: `plugins` carries the `heap::alloc` provenance from
             // `ServePlugins::init`; this releases the server's counted ref.
@@ -1459,11 +1465,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.config.idle_timeout = seconds.min(255) as u8;
     }
 
-    pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
+    pub fn set_flags(
+        &mut self,
+        require_host_header: bool,
+        use_strict_method_validation: bool,
+        use_insecure_http_parser: bool,
+    ) {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(app)
-                .set_flags(require_host_header, use_strict_method_validation);
+            bun_opaque::opaque_deref_mut(app).set_flags(
+                require_host_header,
+                use_strict_method_validation,
+                use_insecure_http_parser,
+            );
         }
     }
 
@@ -1913,6 +1927,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             plugins: None,
             user_routes: Vec::new(),
             on_clienterror: jsc::StrongOptional::empty(),
+            on_connection: jsc::StrongOptional::empty(),
             inspector_server_id: jsc::DebuggerId::init(0),
         }));
 

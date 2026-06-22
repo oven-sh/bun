@@ -757,6 +757,12 @@ public:
         httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }
 
+    /* Marks this app as backing a node:http server, enabling the per-socket
+     * request timing used by headersTimeout/requestTimeout. */
+    void setUsingNodeHttpCompat(bool value) {
+        httpContext->getSocketContextData()->flags.usingNodeHttpCompat = value;
+    }
+
     TemplatedApp &&run() {
         uWS::run();
         return std::move(*this);
@@ -767,9 +773,10 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation) {
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
+        httpContext->getSocketContextData()->flags.useInsecureHTTPParser = useInsecureHTTPParser;
         return std::move(*this);
     }
 

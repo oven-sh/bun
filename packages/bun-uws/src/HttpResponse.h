@@ -139,23 +139,43 @@ public:
             }
         }
 
-        /* if write was called and there was previously no Content-Length header set */
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
+        /* if write was called and there was previously no Content-Length header set.
+         * node:http compat: pending response trailers (addTrailers) also force chunked
+         * framing, since trailer fields can only be sent on a chunked body. */
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED || !httpResponseData->nodeHttpResponseTrailers.empty()) && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
+            /* Trailers-only end with no body chunk: write() below would early-return on
+             * empty data, so terminate the header section and enter chunked mode here. */
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) && data.empty()) [[unlikely]] {
+                writeMark();
+                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                    writeHeader("Transfer-Encoding", "chunked");
+                }
+                Super::write("\r\n", 2);
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            }
 
             /* Write the chunked data if there is any (this will not send zero chunks) */
             this->write(data, nullptr);
 
 
-            /* Terminating 0 chunk */
-            Super::write("0\r\n\r\n", 5);
+            /* Terminating 0 chunk; node:http response trailers (RFC 9112 7.1.2) sit
+             * between it and the final CRLF. */
+            if (!httpResponseData->nodeHttpResponseTrailers.empty()) [[unlikely]] {
+                Super::write("0\r\n", 3);
+                Super::write(httpResponseData->nodeHttpResponseTrailers.data(), (int) httpResponseData->nodeHttpResponseTrailers.length());
+                Super::write("\r\n", 2);
+                httpResponseData->nodeHttpResponseTrailers.clear();
+            } else {
+                Super::write("0\r\n\r\n", 5);
+            }
             httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
             if (!Super::isCorked()) {
-                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+                if (httpResponseData->shouldCloseConnection()) {
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                         if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                             ((AsyncSocket<SSL> *) this)->shutdown();
@@ -221,7 +241,7 @@ public:
 
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {
-                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+                    if (httpResponseData->shouldCloseConnection()) {
                         if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                             if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                                 ((AsyncSocket<SSL> *) this)->shutdown();
@@ -739,7 +759,7 @@ public:
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */
             HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+            if (httpResponseData->shouldCloseConnection()) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                     if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
                         ((AsyncSocket<SSL> *) this)->shutdown();

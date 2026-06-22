@@ -24,8 +24,10 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
+    insecureHTTPParser: boolean,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+    onConnection?: (socketHandle: any) => undefined,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
@@ -88,7 +90,6 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-const kDeferredTimeouts = Symbol("deferredTimeouts");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -185,8 +186,36 @@ function emitCloseNTAndComplete(self) {
 }
 
 function emitEOFIncomingMessageOuter(self) {
-  self.push(null);
   self.complete = true;
+  // node:http server: trailer fields received after a chunked request body
+  // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
+  // parserOnMessageComplete. The native parser captures them on the
+  // connection's socket handle.
+  if (self[kHandle] !== undefined) {
+    const socketHandle = self.socket?.[kHandle];
+    if (socketHandle != null) {
+      const rawTrailers = socketHandle.takeRequestTrailers();
+      if (rawTrailers !== undefined) {
+        self._addHeaderLines(rawTrailers, rawTrailers.length);
+      }
+    }
+  }
+  // The parser shim must not retain the request once it has ended. Node clears
+  // parser.incoming on the tick after 'end' so 'end' listeners still see
+  // `parser.incoming === req` (test-http-server-keepalive-end). push(null)
+  // schedules 'end' via nextTick (endReadableNT); a second nextTick scheduled
+  // here runs after that.
+  self.push(null);
+  const socket = self.socket;
+  if (socket != null) {
+    const parser = socket.parser;
+    if (parser != null && parser.incoming === self) {
+      process.nextTick(clearServerParserIncoming, parser, self);
+    }
+  }
+}
+function clearServerParserIncoming(parser, req) {
+  if (parser.incoming === req) parser.incoming = null;
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
@@ -543,7 +572,6 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,
   kEmptyObject,

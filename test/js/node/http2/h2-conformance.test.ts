@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
+import { Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -545,6 +546,96 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     } finally {
       client.destroy();
       raw.close();
+    }
+  });
+});
+
+describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
+  // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
+  // side before the request body arrives, the request body is piped into a backpressured
+  // writable, and the upload is larger than the 64 KiB initial windows. The server must keep
+  // sending WINDOW_UPDATE as the consumer drains so the upload completes.
+  test("WINDOW_UPDATE keeps flowing for a request body received after the response ended, with a backpressured reader", async () => {
+    const total = 256 * 1024;
+    let received = 0;
+    const finished = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      // Slow consumer: tiny highWaterMark + async completion forces repeated pause/resume of the
+      // request readable while the body is still arriving.
+      const slow = new Writable({
+        highWaterMark: 1024,
+        write(chunk: Buffer, _enc, cb) {
+          received += chunk.length;
+          setImmediate(cb);
+        },
+      });
+      slow.on("finish", () => finished.resolve());
+      stream.on("error", (err: Error) => finished.reject(err));
+      stream.pipe(slow);
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+      // POST / without END_STREAM: static-table indexed [:method POST, :scheme http, :path /]
+      // plus a literal :authority.
+      const block = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, block);
+      // Wait until the response has fully ended (HEADERS then END_STREAM) before sending any of
+      // the request body — that ordering is what previously stalled the inbound windows.
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      await c.waitFor(f => f.streamId === 1 && (f.flags & 0x1) !== 0);
+
+      // Send the body respecting flow control: track WINDOW_UPDATE frames the server sends and
+      // never exceed the connection/stream windows (initially 65535 each).
+      let connWindow = 65535;
+      let streamWindow = 65535;
+      let harvested = 0;
+      const harvestWindowUpdates = () => {
+        for (; harvested < c.frames.length; harvested++) {
+          const f = c.frames[harvested];
+          if (f.type !== FrameType.WINDOW_UPDATE) continue;
+          const inc = f.payload.readUInt32BE(0) & 0x7fffffff;
+          if (f.streamId === 0) connWindow += inc;
+          else if (f.streamId === 1) streamWindow += inc;
+        }
+      };
+      const windowUpdateCount = () => c.frames.filter(f => f.type === FrameType.WINDOW_UPDATE).length;
+      let sent = 0;
+      while (sent < total) {
+        harvestWindowUpdates();
+        const budget = Math.min(connWindow, streamWindow, 16384, total - sent);
+        if (budget <= 0) {
+          // Stalled on flow control: wait for the server to grant more window. If it never does,
+          // this rejects and the test fails with the stall position.
+          const before = windowUpdateCount();
+          await c
+            .waitFor(() => windowUpdateCount() > before, 3000)
+            .catch(() => {
+              throw new Error(
+                `flow control stalled: sent=${sent} connWindow=${connWindow} streamWindow=${streamWindow}`,
+              );
+            });
+          continue;
+        }
+        const last = sent + budget >= total;
+        c.sendFrame(FrameType.DATA, last ? 0x1 /* END_STREAM */ : 0, 1, Buffer.alloc(budget, 0x61));
+        sent += budget;
+        connWindow -= budget;
+        streamWindow -= budget;
+      }
+      await finished.promise;
+      expect(received).toBe(total);
+    } finally {
+      c.destroy();
+      server.close();
     }
   });
 });

@@ -38,8 +38,9 @@ extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JS
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
-extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation);
+extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, bool use_insecure_http_parser);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
+extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
@@ -455,6 +456,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 template<bool isSSL>
 static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
 {
+    app->setUsingNodeHttpCompat(true);
     app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
@@ -526,11 +528,20 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     args.append(nodeHTTPResponseObject);
     args.append(jsBoolean(hasBody));
 
-    auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(response->getHttpResponseData()->socketData);
+    auto* httpResponseData = response->getHttpResponseData();
+    // HTTP/1.1 pipelining: this request arrived while an earlier response on
+    // the connection is still in flight. It is queued on the server socket
+    // (and in JS) instead of becoming the connection's current response.
+    const bool isPipelinedDispatch = httpResponseData->isNodeHttpPipelinedDispatch;
+    auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(httpResponseData->socketData);
 
     if (currentSocketDataPtr) {
         auto* thisSocket = uncheckedDowncast<JSNodeHTTPServerSocket>(currentSocketDataPtr);
-        thisSocket->currentResponseObject.set(vm, thisSocket, nodeHTTPResponseObject);
+        if (isPipelinedDispatch) {
+            thisSocket->appendPipelinedResponse(vm, nodeHTTPResponseObject);
+        } else {
+            thisSocket->currentResponseObject.set(vm, thisSocket, nodeHTTPResponseObject);
+        }
         args.append(thisSocket);
         args.append(jsBoolean(false));
         if (thisSocket->m_duplex) {
@@ -559,6 +570,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     } else {
         args.append(jsUndefined());
     }
+
+    args.append(jsBoolean(isPipelinedDispatch));
 
     JSValue returnValue = AsyncContextFrame::profiledCall(globalObject, callbackObject, jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});
@@ -988,18 +1001,20 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 5);
+    ASSERT(callFrame->argumentCount() == 7);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
     JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue maxHeaderSize = callFrame->uncheckedArgument(3);
-    JSValue callback = callFrame->uncheckedArgument(4);
+    JSValue useInsecureHTTPParser = callFrame->uncheckedArgument(3);
+    JSValue maxHeaderSize = callFrame->uncheckedArgument(4);
+    JSValue callback = callFrame->uncheckedArgument(5);
+    JSValue onConnectionCallback = callFrame->argument(6);
 
     double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject));
+    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), useInsecureHTTPParser.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHeaderSizeNumber);
@@ -1007,6 +1022,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 
     Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (onConnectionCallback.isCallable()) {
+        Server__setOnConnection(globalObject, JSValue::encode(serverValue), JSValue::encode(onConnectionCallback));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     return JSValue::encode(jsUndefined());
 }

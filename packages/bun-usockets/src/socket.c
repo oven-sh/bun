@@ -500,10 +500,22 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
             us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return 0;
         }
-        /* Fatal send error (EPIPE/ECONNRESET after the peer vanished): report
-         * it to callers that opt in instead of masking it as would-block, and
-         * do not keep polling writable - retrying can never succeed. */
-        if (fatal_write_error) *fatal_write_error = 1;
+#ifndef _WIN32
+        /* libuv treats ENOBUFS like EAGAIN and reports macOS's racy EPROTOTYPE
+         * as ECONNRESET (vendor/libuv/src/unix/stream.c uv__try_write). */
+        if (errno == ENOBUFS) {
+            s->flags.last_write_failed = 1;
+            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        }
+#ifdef __APPLE__
+        if (errno == EPROTOTYPE) errno = ECONNRESET;
+#endif
+        /* Fatal send error: report the errno to callers that opt in and stop
+         * polling writable - retrying can never succeed. Windows leaves the
+         * out-param 0 until its WSA-to-errno translation is wired up. */
+        if (fatal_write_error) *fatal_write_error = errno;
+#endif
         return 0;
     }
     if (written != length) {

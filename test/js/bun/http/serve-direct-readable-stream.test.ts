@@ -39,8 +39,10 @@ test("HTTPResponseSink displays correct message", async () => {
 // callback (which is what detach()'s onClose invokes for a direct stream).
 // Under ASAN this is a heap-use-after-free without the fix; in release it
 // segfaults on the scrubbed buffer pointer.
-test.skipIf(!isASAN)("controller.end() after pull() resolved does not use the sink after free", async () => {
-  const fixture = `
+test.skipIf(!isASAN)(
+  "controller.end() after pull() resolved does not use the sink after free",
+  async () => {
+    const fixture = `
     const { drainMicrotasks } = require("bun:jsc");
 
     const big = Buffer.alloc(128 * 1024, 0x61);
@@ -96,21 +98,19 @@ test.skipIf(!isASAN)("controller.end() after pull() resolved does not use the si
     console.log("ok");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "ok\n",
-    stderr: "",
-    exitCode: 0,
-  });
-}, 30_000);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
+);

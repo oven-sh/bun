@@ -2309,8 +2309,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ref_: entry.r#ref,
                     is_top_level: true,
                 });
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                VecExt::append(&mut self.module_scope_mut().generated, entry.r#ref);
                 self.is_import_item.insert(entry.r#ref, ());
                 self.named_imports.put(
                     entry.r#ref,
@@ -3144,13 +3142,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let module_scope = self.module_scope_mut();
-        module_scope
+        self.module_scope_mut()
             .generated
             .ensure_unused_capacity(generated_symbols_count as usize * 3);
-        module_scope.members.ensure_unused_capacity(
-            generated_symbols_count as usize * 3 + module_scope.members.count(),
-        )?;
 
         self.exports_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
@@ -4819,18 +4813,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// pass where `current_scope` is nested.
     ///
     /// Name selection:
-    /// - Bundle mode: keep `name` as-is. `NumberRenamer` assigns a unique
-    ///   printed name from `module_scope.generated`.
-    /// - Non-bundle: `printAst` uses `NoOpRenamer`, which prints
-    ///   `symbol.original_name` verbatim with no collision handling and never
-    ///   reads `module_scope.generated`. The `generatedSymbolName` hash suffix
-    ///   appended here is the sole collision guard on that path.
+    /// - [`Self::will_use_renamer`] (bundle or `minify_identifiers`): keep
+    ///   `name` as-is. Collision-free printing additionally requires the ref
+    ///   to land in some live `Part.declared_symbols` with `is_top_level =
+    ///   true` (or the file to be CJS-wrapped); callers do this via their
+    ///   import-stmt emitters (`generate_import_stmt` etc.).
+    ///   `module_scope.generated` alone is not read by `NumberRenamer`'s
+    ///   top-level pass for wrap=none/ESM.
+    /// - Otherwise: `printAst` uses `NoOpRenamer`, which prints
+    ///   `symbol.original_name` verbatim with no collision handling. The
+    ///   `generatedSymbolName` hash suffix appended here is the sole
+    ///   collision guard on that path.
+    ///
+    /// The `'static` bound is the line: generated symbols whose name is
+    /// computed at runtime (react-compiler temps, namespace refs from import
+    /// paths, `${name}` CJS-export shims) hand-roll `new_symbol` +
+    /// `module_scope.generated.append` instead.
     pub fn declare_generated_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
     ) -> Result<Ref, bun_core::Error> {
-        let ref_ = if self.options.bundle {
+        let ref_ = if self.will_use_renamer() {
             self.new_symbol(kind, name)?
         } else {
             let hashed = self.hash_generated_name(name);

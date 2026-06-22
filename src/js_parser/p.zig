@@ -1556,7 +1556,6 @@ pub fn NewParser_(
                         .name = LocRef{ .ref = entry.ref, .loc = logger.Loc{} },
                     });
                     declared_symbols.appendAssumeCapacity(.{ .ref = entry.ref, .is_top_level = true });
-                    try p.module_scope.generated.append(allocator, entry.ref);
                     try p.is_import_item.put(allocator, entry.ref, {});
                     try p.named_imports.put(allocator, entry.ref, .{
                         .alias = entry.name,
@@ -2156,7 +2155,6 @@ pub fn NewParser_(
             }
 
             try p.module_scope.generated.ensureUnusedCapacity(p.allocator, generated_symbols_count * 3);
-            try p.module_scope.members.ensureUnusedCapacity(p.allocator, generated_symbols_count * 3 + p.module_scope.members.count());
 
             p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
             p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
@@ -3308,13 +3306,24 @@ pub fn NewParser_(
         /// `current_scope.members`, so a user binding of the same name in any
         /// scope cannot capture it.
         ///
-        /// Bundle mode: `NumberRenamer` assigns a unique printed name from
-        /// `module_scope.generated`. Non-bundle: `printAst` uses `NoOpRenamer`,
-        /// which prints `symbol.original_name` verbatim and never reads
-        /// `module_scope.generated`; the `generatedSymbolName` hash suffix
-        /// appended here is the sole collision guard on that path.
+        /// `willUseRenamer()` (bundle or `minify_identifiers`): keep `name`
+        /// as-is. Collision-free printing additionally requires the ref to
+        /// land in some live `Part.declared_symbols` with `is_top_level =
+        /// true` (or the file to be CJS-wrapped); callers do this via their
+        /// import-stmt emitters (`generateImportStmt` etc.).
+        /// `module_scope.generated` alone is not read by `NumberRenamer`'s
+        /// top-level pass for wrap=none/ESM.
+        ///
+        /// Otherwise: `printAst` uses `NoOpRenamer`, which prints
+        /// `symbol.original_name` verbatim with no collision handling. The
+        /// `generatedSymbolName` hash suffix appended here is the sole
+        /// collision guard on that path.
+        ///
+        /// The `comptime` bound is the line: generated symbols whose name is
+        /// computed at runtime hand-roll `newSymbol` +
+        /// `module_scope.generated.append` instead.
         pub fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
-            const ref = if (p.options.bundle)
+            const ref = if (p.willUseRenamer())
                 try p.newSymbol(kind, name)
             else
                 try p.newSymbol(kind, generatedSymbolName(name));

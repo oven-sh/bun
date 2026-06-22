@@ -557,8 +557,8 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
         for (;;) {
             // Leading ';' run.
             if (HWY_UNLIKELY(semi & 1)) {
-                // semi's bits >= N are always 0 (StoreMaskBits writes only
-                // N bits into a zeroed buffer), so ~semi is nonzero for any
+                // semi's bits >= N are always 0 (ToBits/BitsFromMask
+                // zeros the upper 64-N bits), so ~semi is nonzero for any
                 // N < 64; for N == 64 an all-';' block makes ~semi == 0.
                 const uint64_t ns = ~semi;
                 if (HWY_UNLIKELY(ns == 0)) {

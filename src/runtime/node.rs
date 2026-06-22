@@ -101,6 +101,8 @@ pub mod win_watcher;
 // Force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
 // for C++ (`src/jsc/bindings/BunProcess.cpp`). Must be `mod`-declared or the
 // `#[no_mangle]` exports are never compiled into the binary.
+#[path = "node/memory_pressure.rs"]
+pub mod memory_pressure;
 #[path = "node/node_fs_binding.rs"]
 pub mod node_fs_binding;
 #[path = "node/node_fs_stat_watcher.rs"]
@@ -110,8 +112,6 @@ pub mod node_fs_watcher;
 #[cfg(windows)]
 #[path = "node/uv_signal_handle_windows.rs"]
 pub mod uv_signal_handle_windows;
-#[path = "node/memory_pressure.rs"]
-pub mod memory_pressure;
 
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
 // `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside

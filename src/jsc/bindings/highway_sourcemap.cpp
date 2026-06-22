@@ -270,6 +270,25 @@ static HWY_INLINE uint64_t MaskBelow(size_t k)
     return k >= 64 ? ~uint64_t { 0 } : ((uint64_t { 1 } << k) - 1);
 }
 
+// Mask -> one-bit-per-lane uint64_t. On the AVX-512 family the mask
+// register already is the bit layout; everywhere else BitsFromMask
+// provides it without the StoreMaskBits memory round-trip. This matters
+// on NEON, where each BitsFromMask is ~6 insns (no native movemask) and
+// the previous memset+StoreMaskBits+memcpy sequence added store-forward
+// stalls on top of that.
+template<class D, class M>
+static HWY_INLINE uint64_t ToBits(D d, M m)
+{
+#if HWY_TARGET <= HWY_AVX3
+    (void)d;
+    // MFromD<D>::raw is __mmask{8,16,32,64}; the 64-byte CappedTag this
+    // file uses makes it __mmask64.
+    return static_cast<uint64_t>(m.raw);
+#else
+    return hn::BitsFromMask(d, m);
+#endif
+}
+
 // One block of classification: decode base64 -> sextets[], compute the
 // four bitmaps. `d` is CappedTag<u8, 64> so the bitmaps fit in a uint64_t.
 template<class D>
@@ -322,19 +341,22 @@ static HWY_INLINE void ClassifyBlock(D d, const uint8_t* bytes,
 
     hn::StoreU(sx, d, sextets);
 
-    alignas(8) uint8_t mbuf[8];
-    const auto toBits = [&](auto m) HWY_ATTR -> uint64_t {
-        std::memset(mbuf, 0, sizeof(mbuf));
-        hn::StoreMaskBits(d, m, mbuf);
-        uint64_t bits;
-        std::memcpy(&bits, mbuf, sizeof(bits));
-        return bits;
-    };
-
-    delim_bits = toBits(is_delim);
-    semi_bits = toBits(is_semi);
-    invalid_bits = toBits(is_invalid);
-    cont_bits = toBits(has_cont);
+    delim_bits = ToBits(d, is_delim);
+    cont_bits = ToBits(d, has_cont);
+    // Semicolons and invalid bytes are rare (on a measured 3.5 MB minified
+    // bundle: 443 ';' and 0 invalid across 688K segments). AllFalse is a
+    // single reduction (vmaxvq on NEON, ptest on x86) so testing it first
+    // avoids two mask extractions per block on the common path. This
+    // halves the mask-extraction work on NEON, where BitsFromMask is ~6
+    // insns; on x86 the saving is marginal (pmovmskb is one insn).
+    const auto rare = hn::Or(is_semi, is_invalid);
+    if (HWY_LIKELY(hn::AllFalse(d, rare))) {
+        semi_bits = 0;
+        invalid_bits = 0;
+    } else {
+        semi_bits = ToBits(d, is_semi);
+        invalid_bits = ToBits(d, is_invalid);
+    }
 }
 
 // Sign-magnitude decode of every sextet in a u8 vector into i8 lanes.
@@ -583,7 +605,15 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             if (HWY_UNLIKELY(((cont >> (seg_len - 1)) & 1) || seg_len > 10))
                 goto bail;
             const uint64_t seg_cont = cont & ((uint64_t { 1 } << seg_len) - 1);
-            const size_t field_count = seg_len - static_cast<size_t>(hwy::PopCount(seg_cont));
+            // field_count == seg_len - popcount(seg_cont). When seg_cont==0
+            // (all 1-char VLQs; 93% of segments on bundler maps, 68% on
+            // tsc's minified output) field_count IS seg_len and the popcnt
+            // is skipped. ARM64 has no scalar popcnt: __builtin_popcountll
+            // is a 4-insn vector round-trip (fmov/cnt/addv/fmov) with a
+            // cross-domain stall per call, so this mattered on M-series.
+            const size_t field_count = (seg_cont == 0)
+                ? seg_len
+                : seg_len - static_cast<size_t>(hwy::PopCount(seg_cont));
             // 6..10 fields: the scalar parser decodes five then treats the
             // rest as a fresh segment (and {2,3} fail decode_vlq on the
             // delimiter). Neither matches a straight read of 4-5 deltas,

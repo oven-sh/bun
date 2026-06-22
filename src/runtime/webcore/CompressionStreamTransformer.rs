@@ -2,8 +2,8 @@ use core::cell::Cell;
 
 use bun_jsc::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPromiseStrong, JSUint8Array, JSValue, JsCell, JsResult, Strong,
-    StringJsc as _,
+    CallFrame, JSGlobalObject, JSPromiseStrong, JSUint8Array, JSValue, JsCell, JsResult,
+    StringJsc as _, Strong,
 };
 use bun_zlib::NodeMode;
 

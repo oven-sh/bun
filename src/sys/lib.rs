@@ -2828,7 +2828,10 @@ mod posix_impl {
             );
             Ok(())
         }
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+        // OHOS: seccomp blocks fchmodat2 (syscall #452) with SIGSYS.
+        // Skipping the syscall eliminates 3000+ signal handler invocations
+        // per test run, which would otherwise cause massive slowdown and OOM.
+        #[cfg(not(any(target_os = "macos", target_os = "freebsd", target_env = "ohos")))]
         {
             const SYS_FCHMODAT2: libc::c_long = 452;
             loop {

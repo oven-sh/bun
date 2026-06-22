@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import zlib from "node:zlib";
 
 describe("CompressionStream and DecompressionStream", () => {
@@ -922,5 +923,56 @@ describe("CompressionStream large-chunk work-pool offload", () => {
         e => e,
       ),
     ).toBe(err);
+  });
+
+  // brotli at the default quality 11 buffers input during PROCESS and
+  // encodes the residual block at FINISH, so the 0-byte finish chunk is
+  // where the work is. flush() must take the work-pool path so that
+  // encoding runs off the JS thread.
+  test("brotli finish-flush runs on the work pool, not the JS thread", async () => {
+    const cs = new CompressionStream("brotli");
+    const writer = cs.writable.getWriter();
+    const drain = (async () => {
+      for await (const _ of cs.readable);
+    })();
+
+    // 200KB incompressible so q11 FINISH does hundreds of ms of real
+    // encoding; < 256KB so PROCESS buffers it whole and emits nothing.
+    await writer.write(randomBytes(200 * 1024));
+
+    // If flush blocks the JS thread, the close promise settles via
+    // microtasks only and this macrotask never gets a turn before the
+    // await below resumes. If flush goes to the work pool, the close
+    // promise stays pending across the event-loop iteration that runs
+    // this callback.
+    let eventLoopTurned = false;
+    setImmediate(() => {
+      eventLoopTurned = true;
+    });
+
+    await writer.close();
+    await drain;
+
+    expect(eventLoopTurned).toBe(true);
+  });
+
+  test("an engine error on the async finish-flush rejects close with the wrapped code", async () => {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    // Valid gzip header with no body: PROCESS accepts it, FINISH fails
+    // with Z_BUF_ERROR because the stream ended prematurely.
+    await writer.write(zlib.gzipSync(Buffer.from("hello")).subarray(0, 10));
+    const closeErr = await writer.close().then(
+      () => null,
+      e => e,
+    );
+    const readErr = await reader.read().then(
+      () => null,
+      e => e,
+    );
+    expect(closeErr).toBeInstanceOf(TypeError);
+    expect((closeErr as any).code).toBe("Z_BUF_ERROR");
+    expect(readErr).toBe(closeErr);
   });
 });

@@ -580,14 +580,22 @@ export function createCompressionTransform(mode) {
           throw e;
         }
       },
+      // The finish flush always takes the work pool: brotli at the default
+      // quality 11 buffers input during PROCESS and encodes the residual
+      // block (up to ~256KB) at FINISH, so the 0-byte input here says
+      // nothing about the work. For zlib/zstd the finish is just a trailer
+      // and the one thread hop is noise. close() is chained on settlement.
       flush(controller) {
-        try {
-          drive(emptyChunk, true, controller);
-        } catch (e) {
-          close();
-          throw e;
-        }
-        close();
+        return handle.transformAsync(emptyChunk, true).$then(
+          outputs => {
+            enqueueOutputs(controller, outputs);
+            close();
+          },
+          error => {
+            close();
+            throw wrapEngineError(error);
+          },
+        );
       },
       // reader.cancel() / writer.abort() skip flush() — this is the
       // teardown path that releases the native handle for them.

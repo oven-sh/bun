@@ -643,7 +643,9 @@ pub trait SourceContext: Sized {
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: bool,
-    pub ref_count: u32,
+    /// Atomic so the GC-thread `has_pending_activity` can read it while the
+    /// JS thread mutates it in `increment_count`/`decrement_count`.
+    pub ref_count: core::sync::atomic::AtomicU32,
     pub pending_err: Option<syscall::Error>,
     pub close_handler: Option<fn(Option<*mut c_void>)>,
     /// Borrowed opaque context for native `close_handler`s (never
@@ -671,7 +673,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
         Self {
             context: C::default(),
             cancelled: false,
-            ref_count: 1,
+            ref_count: core::sync::atomic::AtomicU32::new(1),
             pending_err: None,
             close_handler: None,
             close_ctx: None,
@@ -912,7 +914,19 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn increment_count(&mut self) {
-        self.ref_count += 1;
+        self.ref_count
+            .fetch_add(1, core::sync::atomic::Ordering::Release);
+    }
+
+    /// Called from the GC thread via the codegen
+    /// `{Blob,Bytes,File}InternalReadableStreamSource__hasPendingActivity`
+    /// thunks. Returns true while any ref other than the JS wrapper's own is
+    /// held (in practice: a `FileReader` `waiting_for_on_reader_done` I/O ref),
+    /// so the wrapper stays marked and `this_jsvalue` is never read after the
+    /// cell is dead-but-unswept. Only touches the atomic field so `&self` is
+    /// sound across threads.
+    pub fn has_pending_activity(&self) -> bool {
+        self.ref_count.load(core::sync::atomic::Ordering::Acquire) > 1
     }
 
     /// Release one reference. If the count hits zero, runs context teardown and
@@ -928,13 +942,12 @@ impl<C: SourceContext> NewSource<C> {
     pub unsafe fn decrement_count(this: *mut Self) -> u32 {
         // SAFETY: caller contract — `this` is live for the duration of this block.
         let remaining = unsafe {
-            let r = &mut (*this).ref_count;
+            let r = &(*this).ref_count;
             #[cfg(debug_assertions)]
-            if *r == 0 {
+            if r.load(core::sync::atomic::Ordering::Relaxed) == 0 {
                 panic!("Attempted to decrement ref count below zero");
             }
-            *r -= 1;
-            *r
+            r.fetch_sub(1, core::sync::atomic::Ordering::Release) - 1
         };
         if remaining == 0 {
             // SAFETY: still live; run side-effect teardown while fields are valid.

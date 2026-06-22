@@ -249,15 +249,31 @@ pub(crate) fn lower_expression(
             })?;
             Ok(unsupported_node("Super", loc))
         }
-        Data::EImport(_) => {
-            builder.record_error(CompilerErrorDetail {
-                category: ErrorCategory::Todo,
-                reason: "(BuildHIR::lowerExpression) Handle Import expressions".to_string(),
-                description: None,
-                loc,
-                suggestions: None,
-            })?;
-            Ok(unsupported_node("Import", loc))
+        Data::EImport(i) => {
+            // Babel parses `import(x)` as `CallExpression { callee: Import }`, so
+            // its CallExpression arm lowers the whole thing as an opaque call
+            // (Effect::Mutate / ValueKind::Mutable on the result) and never
+            // records a Todo. Bun's parser uses a dedicated `EImport` node, so
+            // the previous arm here bailed out on every component that reached
+            // `import()` transitively (ToastRow / LaunchComposer Δcount=-1 in
+            // compile-diff.txt; 9× EImport Todo in toastrow-log.txt).
+            //
+            // Mirror Babel: synthesize an UnsupportedNode("Import") callee and
+            // lower the specifier (and options, when present) as ordinary call
+            // arguments. Codegen still records a Todo if the UnsupportedNode
+            // callee survives to emission — that becomes the *next* bailout to
+            // address, not this one.
+            let callee = lower_value_to_temporary(builder, unsupported_node("Import", loc))?;
+            let mut args: HirVec<PlaceOrSpread> = AstAlloc::vec();
+            args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
+                builder, &i.expr,
+            )?));
+            if !matches!(i.options.data, Data::EMissing(_)) {
+                args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
+                    builder, &i.options,
+                )?));
+            }
+            Ok(InstructionValue::CallExpression { callee, args, loc })
         }
         Data::EThis(_) => {
             builder.record_error(CompilerErrorDetail {

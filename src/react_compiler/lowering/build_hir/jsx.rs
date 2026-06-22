@@ -6,11 +6,11 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    AstAlloc, BuiltinTag, HirVec, InstructionValue, JsxAttribute, JsxTag, Place, PrimitiveValue,
-    PropertyLiteral, SourceLocation, StoreStr,
+    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, Place,
+    PrimitiveValue, PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
-use bun_ast::{E, Expr, G, Loc};
+use bun_ast::{E, Expr, G, Loc, Ref};
 
 use super::expr::lower_expression;
 use super::helpers::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
@@ -36,13 +36,7 @@ pub(super) fn lower_jsx_element_name(
             // as identifiers. Replicate upstream's Builtin classification for non-uppercase.
             let name = builder.host().ref_name(id.ref_);
             if name.first().is_some_and(u8::is_ascii_uppercase) {
-                let place = lower_identifier(builder, id.ref_, loc)?;
-                let load_value = if builder.is_context_identifier(id.ref_) {
-                    InstructionValue::LoadContext { place, loc }
-                } else {
-                    InstructionValue::LoadLocal { place, loc }
-                };
-                let temp = lower_value_to_temporary(builder, load_value)?;
+                let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
                 Ok(JsxTag::Place(temp))
             } else {
                 Ok(JsxTag::Builtin(BuiltinTag {
@@ -54,13 +48,7 @@ pub(super) fn lower_jsx_element_name(
         ExprData::EImportIdentifier(id) => {
             let name = builder.host().ref_name(id.ref_);
             if name.first().is_some_and(u8::is_ascii_uppercase) {
-                let place = lower_identifier(builder, id.ref_, loc)?;
-                let load_value = if builder.is_context_identifier(id.ref_) {
-                    InstructionValue::LoadContext { place, loc }
-                } else {
-                    InstructionValue::LoadLocal { place, loc }
-                };
-                let temp = lower_value_to_temporary(builder, load_value)?;
+                let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
                 Ok(JsxTag::Place(temp))
             } else {
                 Ok(JsxTag::Builtin(BuiltinTag {
@@ -130,35 +118,11 @@ pub(super) fn lower_jsx_member_expression(
         ExprData::EIdentifier(id) => {
             let id_loc = convert_loc(expr.target.loc);
             // Use identifier's own loc for the place, but member expression's loc for the instruction
-            let place = lower_identifier(builder, id.ref_, id_loc)?;
-            let load_value = if builder.is_context_identifier(id.ref_) {
-                InstructionValue::LoadContext {
-                    place,
-                    loc: expr_loc,
-                }
-            } else {
-                InstructionValue::LoadLocal {
-                    place,
-                    loc: expr_loc,
-                }
-            };
-            lower_value_to_temporary(builder, load_value)?
+            lower_tag_identifier(builder, id.ref_, id_loc, expr_loc)?
         }
         ExprData::EImportIdentifier(id) => {
             let id_loc = convert_loc(expr.target.loc);
-            let place = lower_identifier(builder, id.ref_, id_loc)?;
-            let load_value = if builder.is_context_identifier(id.ref_) {
-                InstructionValue::LoadContext {
-                    place,
-                    loc: expr_loc,
-                }
-            } else {
-                InstructionValue::LoadLocal {
-                    place,
-                    loc: expr_loc,
-                }
-            };
-            lower_value_to_temporary(builder, load_value)?
+            lower_tag_identifier(builder, id.ref_, id_loc, expr_loc)?
         }
         ExprData::EDot(inner) => lower_jsx_member_expression(builder, &inner, expr.target.loc)?,
         _ => {
@@ -187,6 +151,54 @@ pub(super) fn lower_jsx_member_expression(
         loc: expr_loc,
     };
     lower_value_to_temporary(builder, value)
+}
+
+/// Lower an identifier in JSX-tag position to a temporary `Place`.
+///
+/// `lower_identifier` (helpers.rs) returns a bare `Place` for a true local
+/// (`VariableBinding::Identifier`) but for non-locals (Import* / Global /
+/// ModuleLocal) it has *already emitted* `LoadGlobal{NonLocalBinding}` and
+/// returns that instruction's temp. Unconditionally re-wrapping that temp in
+/// `LoadLocal` (the previous behaviour) loses the `NonLocalBinding` type, so
+/// AlignReactiveScopesToBlocks treats imported component tags as scope outputs
+/// requiring memo slots — Divider/ContextVisualization grew spurious
+/// `T0=ThemedText`/`T1=Decorative` cache entries vs. Babel.
+///
+/// Resolve once here: locals get the `LoadLocal`/`LoadContext` wrapper they
+/// need; non-locals are routed through `lower_identifier` for its
+/// `LoadGlobal` emission and the resulting temp is used directly.
+fn lower_tag_identifier(
+    builder: &mut HirBuilder,
+    ref_: Ref,
+    id_loc: Option<SourceLocation>,
+    instr_loc: Option<SourceLocation>,
+) -> Result<Place, CompilerError> {
+    match builder.resolve_identifier(ref_, id_loc)? {
+        VariableBinding::Identifier { identifier, .. } => {
+            let place = Place {
+                identifier,
+                effect: Effect::Unknown,
+                reactive: false,
+                loc: id_loc,
+            };
+            let load_value = if builder.is_context_identifier(ref_) {
+                InstructionValue::LoadContext {
+                    place,
+                    loc: instr_loc,
+                }
+            } else {
+                InstructionValue::LoadLocal {
+                    place,
+                    loc: instr_loc,
+                }
+            };
+            lower_value_to_temporary(builder, load_value)
+        }
+        // Non-local: lower_identifier emits LoadGlobal and returns its temp —
+        // do NOT re-wrap. Re-resolves once internally (cheap, no binding alloc
+        // on the non-Identifier path).
+        _ => lower_identifier(builder, ref_, id_loc),
+    }
 }
 
 /// Decode an `E::Call{was_jsx_element: true}` produced by Bun's JSX visit pass

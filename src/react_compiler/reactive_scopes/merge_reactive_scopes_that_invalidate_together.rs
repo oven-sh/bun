@@ -168,19 +168,28 @@ impl<'a> MergeTransform<'a> {
                     match &instr.value {
                         ReactiveValue::Instruction(iv) => {
                             match iv {
-                                // NOTE: LoadGlobal is intentionally NOT tolerated here.
-                                // Absorbing an interposed `Tn = LoadGlobal(ImportedComponent)`
-                                // into a merged scope promotes a module-constant to a cached
-                                // scope output (codegen emits `T0 = ThemedText` and downstream
-                                // guards compare `$[N] !== T0` against an immutable import),
-                                // and widens the merged dep set so unrelated deps re-execute
-                                // trivial expressions. Treat LoadGlobal as a merge barrier so
-                                // it stays at top level (re-emitted after the flushed run),
-                                // matching the Babel reference. LoadLocal remains tolerated —
-                                // the resulting Category-C N→N−1 slot reduction is benign.
+                                // Tolerated-interposition set — matches the Babel reference
+                                // (babel-plugin-react-compiler/dist/index.js:92921-92929),
+                                // which explicitly lists `case "LoadGlobal":` alongside
+                                // LoadLocal/JSXText/Primitive and adds its lvalue to
+                                // current.lvalues, gating merge on areLValuesLastUsedByScope.
+                                //
+                                // Every JSX child after the first is preceded by
+                                // `Tn = LoadGlobal(ComponentTag)`; treating LoadGlobal as a
+                                // merge barrier resets between every pair of constant-dep
+                                // sibling scopes, so N consecutive empty-dep JSX scopes stay
+                                // as N memo blocks instead of merging to 1 (the systematic
+                                // +1..+N slot band vs Babel across ~88 modules).
+                                //
+                                // The pathology the round-2 barrier was meant to prevent
+                                // (T0 = ImportedComponent cached as a scope output) is
+                                // introduced upstream of merge — fix it in
+                                // promote_used_temporaries / scope-declaration filtering,
+                                // not by breaking merge here.
                                 InstructionValue::BinaryExpression { .. }
                                 | InstructionValue::ComputedLoad { .. }
                                 | InstructionValue::JSXText { .. }
+                                | InstructionValue::LoadGlobal { .. }
                                 | InstructionValue::LoadLocal { .. }
                                 | InstructionValue::Primitive { .. }
                                 | InstructionValue::PropertyLoad { .. }

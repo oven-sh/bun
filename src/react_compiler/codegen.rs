@@ -316,9 +316,14 @@ pub fn codegen_function(
         let cache_ref = cx
             .cg
             .well_known(WellKnown::MemoCache, cache_name.as_bytes());
+        // Emit the `$ = $c(N)` preamble as `let` (not `const`) so the printer's
+        // adjacent-declarator merge can fold it with the body's leading `let`
+        // run (param destructure / first temp — see emit_store KLet rationale).
+        // Babel emits `let $2 = $c(N), {…} = t0, …`; `const` here was the
+        // largest single per-fn Δgzip contributor (873 fns × ~10B).
         preface.push(Stmt::alloc(
             S::Local {
-                kind: S::Kind::KConst,
+                kind: S::Kind::KLet,
                 decls: decl_list([G::Decl {
                     binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: cache_ref }, loc),
                     value: Some(call),
@@ -1024,7 +1029,7 @@ fn codegen_terminal(
                     // post-visitor, so mangleStmts never sees this to flatten it.
                     Some(block.pop().unwrap())
                 } else {
-                    Some(block_stmt(block, stmt_loc))
+                    Some(body_stmt(block, stmt_loc))
                 }
             } else {
                 None
@@ -1032,7 +1037,7 @@ fn codegen_terminal(
             Ok(Some(Stmt::alloc(
                 S::If {
                     test_: test_expr,
-                    yes: block_stmt(consequent_block, stmt_loc),
+                    yes: body_stmt(consequent_block, stmt_loc),
                     no: alternate_stmt,
                 },
                 stmt_loc,
@@ -1086,7 +1091,7 @@ fn codegen_terminal(
             let body = codegen_block(cx, loop_block)?;
             Ok(Some(Stmt::alloc(
                 S::DoWhile {
-                    body: block_stmt(body, stmt_loc),
+                    body: body_stmt(body, stmt_loc),
                     test_: test_expr,
                 },
                 stmt_loc,
@@ -1104,7 +1109,7 @@ fn codegen_terminal(
             Ok(Some(Stmt::alloc(
                 S::While {
                     test_: test_expr,
-                    body: block_stmt(body, stmt_loc),
+                    body: body_stmt(body, stmt_loc),
                 },
                 stmt_loc,
             )))
@@ -1130,7 +1135,7 @@ fn codegen_terminal(
                     init: init_val,
                     test_: Some(test_expr),
                     update: update_expr,
-                    body: block_stmt(body, stmt_loc),
+                    body: body_stmt(body, stmt_loc),
                 },
                 stmt_loc,
             )))
@@ -1232,7 +1237,7 @@ fn codegen_for_in(
                 stmt_loc,
             ),
             value: right,
-            body: block_stmt(body, stmt_loc),
+            body: body_stmt(body, stmt_loc),
         },
         stmt_loc,
     )))
@@ -1308,7 +1313,7 @@ fn codegen_for_of(
                 stmt_loc,
             ),
             value: right,
-            body: block_stmt(body, stmt_loc),
+            body: body_stmt(body, stmt_loc),
         },
         stmt_loc,
     )))
@@ -3252,6 +3257,20 @@ fn block_stmt(body: Vec<Stmt>, loc: Loc) -> Stmt {
         },
         loc,
     )
+}
+
+/// Wrap `body` for use as an `if`-consequent / loop body. When the body is a
+/// single expression statement, return it bare so the printer emits
+/// `if (x) a(), b();` / `for (…) a();` instead of `{ a(), b(); }`. The
+/// synthesized body is spliced post-visitor, so mangleStmts never sees this to
+/// flatten it (same as the round-2 else-if unwrap). Restricting the unwrap to
+/// `SExpr` avoids dangling-else (no bare nested `if` in a consequent) and the
+/// lexical-declaration-as-body syntax error.
+fn body_stmt(mut body: Vec<Stmt>, loc: Loc) -> Stmt {
+    if body.len() == 1 && matches!(body[0].data, StmtData::SExpr(_)) {
+        return body.pop().unwrap();
+    }
+    block_stmt(body, loc)
 }
 
 fn leak_stmts(body: Vec<Stmt>) -> StmtNodeList {

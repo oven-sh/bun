@@ -451,6 +451,45 @@ describe("bundler", () => {
     });
   }
 
+  // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
+  // component body scope must not capture the automatic JSX runtime import
+  // when the React Compiler rewrites the component.
+  itBundled("react-compiler/AutomaticLocalShadow", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ a, b }) {
+          let jsx = a
+          let jsxs = b
+          let jsxDEV = a
+          let Fragment = b
+          return <><span>{jsx}</span><span>{jsxs}{jsxDEV}{Fragment}</span></>
+        }
+        console.log(JSON.stringify(Comp({ a: "A", b: "B" })))
+      `,
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = function (n) { return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };
+      `,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `
+        exports.jsx = (type, props) => ({ $: "jsx", type: typeof type === "symbol" ? "Fragment" : type, props });
+        exports.jsxs = (type, props) => ({ $: "jsxs", type: typeof type === "symbol" ? "Fragment" : type, props });
+        exports.Fragment = Symbol.for("fragment");
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `
+        exports.jsxDEV = (type, props) => ({ $: "jsxDEV", type: typeof type === "symbol" ? "Fragment" : type, props });
+        exports.Fragment = Symbol.for("fragment");
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: {
+      stdout:
+        '{"$":"jsxDEV","type":"Fragment","props":{"children":[{"$":"jsxDEV","type":"span","props":{"children":"A"}},{"$":"jsxDEV","type":"span","props":{"children":["B","A","B"]}}]}}',
+    },
+  });
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `

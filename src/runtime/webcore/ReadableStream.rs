@@ -1018,21 +1018,11 @@ impl<C: SourceContext> NewSource<C> {
         mut result: streams::Result,
     ) -> JsResult<JSValue> {
         match &result {
-            streams::Result::Err(err) => match err {
-                streams::StreamError::Error(e) => {
-                    Err(global_this.throw_value(e.to_js(global_this)))
-                }
-                // Always throw on `.err`: `to_js_weak` handles all four variants
-                // and reports whether the value was strong-protected (needs `unprotect()`).
-                _ => {
-                    let (js_err, was_strong) = err.to_js_weak(global_this);
-                    js_err.ensure_still_alive();
-                    if was_strong == streams::WasStrong::Strong {
-                        js_err.unprotect();
-                    }
-                    Err(global_this.throw_value(js_err))
-                }
-            },
+            streams::Result::Err(err) => {
+                let js_err = err.to_js(global_this);
+                js_err.ensure_still_alive();
+                Err(global_this.throw_value(js_err))
+            }
             streams::Result::Pending(_) => {
                 let out = result.to_js(global_this)?;
                 <Self as NewSourceCodegen>::pending_promise_set_cached(

@@ -124,24 +124,22 @@ class InspectorCDPAdapter {
     } catch {
       return;
     }
-    if (parsed.id !== undefined) {
-      const pending = this.#pending.get(parsed.id);
+    const { id, error, method } = parsed;
+    if (id !== undefined) {
+      const pending = this.#pending.get(id);
       if (!pending) return;
-      this.#pending.delete(parsed.id);
-      if (pending.clientId === null || pending.clientId === undefined) return;
-      if (parsed.error) {
-        this.#replyErrorToClient(
-          pending.clientId,
-          parsed.error.code ?? -32000,
-          parsed.error.message ?? "Unknown error",
-        );
+      this.#pending.delete(id);
+      const { clientId } = pending;
+      if (clientId === null || clientId === undefined) return;
+      if (error) {
+        this.#replyErrorToClient(clientId, error.code ?? -32000, error.message ?? "Unknown error");
         return;
       }
-      this.#replyToClient(pending.clientId, this.#translateResult(pending.method, parsed.result || {}));
+      this.#replyToClient(clientId, this.#translateResult(pending.method, parsed.result || {}));
       return;
     }
-    if (typeof parsed.method === "string") {
-      this.#translateBackendEvent(parsed.method, parsed.params || {});
+    if (typeof method === "string") {
+      this.#translateBackendEvent(method, parsed.params || {});
     }
   }
 
@@ -313,17 +311,18 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.setBreakpointByUrl": {
+        const { condition, urlRegex, url } = params;
         const options: AnyObject = {};
-        if (params.condition) options.condition = params.condition;
+        if (condition) options.condition = condition;
         const jscParams: AnyObject = {
           lineNumber: params.lineNumber,
           columnNumber: params.columnNumber,
           options,
         };
-        if (params.urlRegex) {
-          jscParams.urlRegex = params.urlRegex;
-        } else if (params.url) {
-          jscParams.urlRegex = breakpointUrlRegex(params.url);
+        if (urlRegex) {
+          jscParams.urlRegex = urlRegex;
+        } else if (url) {
+          jscParams.urlRegex = breakpointUrlRegex(url);
         } else {
           this.#replyErrorToClient(id, -32602, "Either url or urlRegex must be specified.");
           return;
@@ -332,17 +331,19 @@ class InspectorCDPAdapter {
         return;
       }
 
-      case "Debugger.setBreakpoint":
+      case "Debugger.setBreakpoint": {
+        const { condition } = params;
         this.#sendToBackend(
           "Debugger.setBreakpoint",
           {
             location: params.location,
-            options: params.condition ? { condition: params.condition } : undefined,
+            options: condition ? { condition } : undefined,
           },
           id,
           method,
         );
         return;
+      }
 
       case "Debugger.getPossibleBreakpoints": {
         const start = params.start;
@@ -454,7 +455,8 @@ class InspectorCDPAdapter {
           ...property,
         }));
         const out: AnyObject = { result: properties };
-        if (result.internalProperties) out.internalProperties = result.internalProperties;
+        const { internalProperties } = result;
+        if (internalProperties) out.internalProperties = internalProperties;
         return out;
       }
 
@@ -507,7 +509,8 @@ class InspectorCDPAdapter {
           this: frame.this,
           canBeRestarted: false,
         }));
-        const cdpParams: AnyObject = { callFrames, reason: "other", data: params.data };
+        const { data, asyncStackTrace } = params;
+        const cdpParams: AnyObject = { callFrames, reason: "other", data };
         switch (params.reason) {
           case "exception":
             cdpParams.reason = "exception";
@@ -516,10 +519,10 @@ class InspectorCDPAdapter {
             cdpParams.reason = "assert";
             break;
           case "Breakpoint":
-            if (params.data?.breakpointId) cdpParams.hitBreakpoints = [params.data.breakpointId];
+            if (data?.breakpointId) cdpParams.hitBreakpoints = [data.breakpointId];
             break;
         }
-        if (params.asyncStackTrace) cdpParams.asyncStackTrace = this.#translateStackTrace(params.asyncStackTrace);
+        if (asyncStackTrace) cdpParams.asyncStackTrace = this.#translateStackTrace(asyncStackTrace);
         this.#emitToClient("Debugger.paused", cdpParams);
         return;
       }
@@ -560,8 +563,9 @@ class InspectorCDPAdapter {
         columnNumber: frame.columnNumber ?? 0,
       })),
     };
-    if (stackTrace.parentStackTrace) {
-      translated.parent = this.#translateStackTrace(stackTrace.parentStackTrace);
+    const { parentStackTrace } = stackTrace;
+    if (parentStackTrace) {
+      translated.parent = this.#translateStackTrace(parentStackTrace);
     }
     return translated;
   }

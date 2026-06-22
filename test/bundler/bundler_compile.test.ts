@@ -451,28 +451,33 @@ describe("bundler", () => {
         import { heapStats } from "bun:jsc";
         import "./asset.file";
 
-        if (Bun.isStandaloneExecutable !== true) {
-          throw new Error("expected Bun.isStandaloneExecutable === true, got " + Bun.isStandaloneExecutable);
-        }
+        const blobCount = () => heapStats().objectTypeCounts.Blob ?? 0;
 
         // Reading isStandaloneExecutable must not materialize embedded files as Blobs.
         Bun.gc(true);
-        const before = heapStats().objectTypeCounts.Blob ?? 0;
+        const baseline = blobCount();
+        if (Bun.isStandaloneExecutable !== true) {
+          throw new Error("expected Bun.isStandaloneExecutable === true, got " + Bun.isStandaloneExecutable);
+        }
+        const afterRead = blobCount();
+        if (afterRead !== baseline) {
+          throw new Error("reading Bun.isStandaloneExecutable changed Blob count (" + baseline + " -> " + afterRead + ")");
+        }
 
-        // Accessing embeddedFiles allocates a Blob per embedded asset.
+        // Accessing embeddedFiles allocates a Blob per embedded asset; if it did not,
+        // the afterRead === baseline check above would be vacuous.
         const files = Bun.embeddedFiles;
         if (files.length !== 1) throw new Error("expected 1 embedded file, got " + files.length);
-        const after = heapStats().objectTypeCounts.Blob ?? 0;
-
-        if (after <= before) {
-          throw new Error("expected Blob count to increase after reading Bun.embeddedFiles (before=" + before + " after=" + after + ")");
+        const afterEmbedded = blobCount();
+        if (afterEmbedded <= baseline) {
+          throw new Error("expected Blob count to increase after reading Bun.embeddedFiles (" + baseline + " -> " + afterEmbedded + ")");
         }
-        console.log("before=" + before, "after=" + after);
+        console.log("ok", JSON.stringify({ baseline, afterRead, afterEmbedded }));
       `,
       "/asset.file": "abcd",
     },
     outfile: "dist/out",
-    run: { stdout: /^before=0 after=[1-9]\d*$/ },
+    run: { stdout: /^ok \{"baseline":\d+,"afterRead":\d+,"afterEmbedded":\d+\}$/ },
   });
   test("Bun.isStandaloneExecutable is false when not compiled", async () => {
     await using proc = Bun.spawn({

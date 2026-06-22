@@ -443,6 +443,51 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/Bun.isStandaloneExecutable", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { heapStats } from "bun:jsc";
+        import "./asset.file";
+
+        if (Bun.isStandaloneExecutable !== true) {
+          throw new Error("expected Bun.isStandaloneExecutable === true, got " + Bun.isStandaloneExecutable);
+        }
+
+        // Reading isStandaloneExecutable must not materialize embedded files as Blobs.
+        Bun.gc(true);
+        const before = heapStats().objectTypeCounts.Blob ?? 0;
+
+        // Accessing embeddedFiles allocates a Blob per embedded asset.
+        const files = Bun.embeddedFiles;
+        if (files.length !== 1) throw new Error("expected 1 embedded file, got " + files.length);
+        const after = heapStats().objectTypeCounts.Blob ?? 0;
+
+        if (after <= before) {
+          throw new Error("expected Blob count to increase after reading Bun.embeddedFiles (before=" + before + " after=" + after + ")");
+        }
+        console.log("before=" + before, "after=" + after);
+      `,
+      "/asset.file": "abcd",
+    },
+    outfile: "dist/out",
+    run: { stdout: /^before=0 after=[1-9]\d*$/ },
+  });
+  test("Bun.isStandaloneExecutable is false when not compiled", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(JSON.stringify({ value: Bun.isStandaloneExecutable, type: typeof Bun.isStandaloneExecutable }))`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `{"value":false,"type":"boolean"}`,
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
+  });
   itBundled("compile/ResolveEmbeddedFileOutfile", {
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.

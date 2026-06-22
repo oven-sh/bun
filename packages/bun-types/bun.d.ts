@@ -4149,6 +4149,22 @@ declare module "bun" {
   const embeddedFiles: ReadonlyArray<Blob>;
 
   /**
+   * `true` when the current process is a standalone executable produced by
+   * `bun build --compile`, `false` otherwise.
+   *
+   * Unlike checking `Bun.embeddedFiles.length > 0`, reading this property does
+   * not materialize embedded files as `Blob` objects.
+   *
+   * @example
+   * ```ts
+   * if (Bun.isStandaloneExecutable) {
+   *   console.log("Running from a compiled binary");
+   * }
+   * ```
+   */
+  const isStandaloneExecutable: boolean;
+
+  /**
    * `Blob` that leverages the fastest system calls available to operate on files.
    *
    * This Blob is lazy. It won't do any work until you read from it. Errors propagate as promise rejections.

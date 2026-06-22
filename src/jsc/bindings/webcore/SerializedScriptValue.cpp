@@ -796,24 +796,48 @@ static bool unwrapCryptoKey(JSGlobalObject* lexicalGlobalObject, const Vector<ui
 }
 #endif
 
-#if ASSUME_LITTLE_ENDIAN
-template<typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
+// Vector<uint8_t>::append() grows capacity by 1.5x via expandCapacity(). When the buffer is
+// already large (from serializing a big ArrayBuffer), 1.5x can exceed the ~2GB Vector capacity
+// limit and CRASH() even though the exact needed size would fit. This helper grows by 1.5x when
+// possible but clamps to the maximum valid capacity, and reports failure instead of crashing.
+static bool ensureBufferCapacity(Vector<uint8_t>& buffer, size_t needed)
 {
+    if (needed <= buffer.capacity()) [[likely]]
+        return true;
+    constexpr size_t maxCapacity = std::numeric_limits<unsigned>::max() >> 1;
+    if (needed > maxCapacity) [[unlikely]]
+        return false;
+    size_t grown = std::min(std::max(needed, buffer.capacity() + buffer.capacity() / 2), maxCapacity);
+    return buffer.tryReserveCapacity(grown) || buffer.tryReserveCapacity(needed);
+}
+
+#if ASSUME_LITTLE_ENDIAN
+template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, T value)
+{
+    if (!ensureBufferCapacity(buffer, buffer.size() + sizeof(value))) [[unlikely]]
+        return false;
     buffer.append(std::span { reinterpret_cast<uint8_t*>(&value), sizeof(value) });
+    return true;
 }
 #else
-template<typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
+template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, T value)
 {
+    if (!ensureBufferCapacity(buffer, buffer.size() + sizeof(T))) [[unlikely]]
+        return false;
     for (unsigned i = 0; i < sizeof(T); i++) {
         buffer.append(value & 0xFF);
         value >>= 8;
     }
+    return true;
 }
 #endif
 
-template<> void writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, uint8_t value)
+template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, uint8_t value)
 {
+    if (!ensureBufferCapacity(buffer, buffer.size() + 1)) [[unlikely]]
+        return false;
     buffer.append(value);
+    return true;
 }
 
 template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, const T* values, uint32_t length)
@@ -821,6 +845,8 @@ template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, cons
     if (length > std::numeric_limits<uint32_t>::max() / sizeof(T))
         return false;
 
+    if (!ensureBufferCapacity(buffer, buffer.size() + static_cast<size_t>(length) * sizeof(T))) [[unlikely]]
+        return false;
 #if ASSUME_LITTLE_ENDIAN
     buffer.append(std::span { reinterpret_cast<const uint8_t*>(values), length * sizeof(T) });
 #else
@@ -837,6 +863,8 @@ template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, cons
 
 template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, const uint8_t* values, uint32_t length)
 {
+    if (!ensureBufferCapacity(buffer, buffer.size() + length)) [[unlikely]]
+        return false;
     buffer.append(std::span { values, length });
     return true;
 }
@@ -849,7 +877,8 @@ public:
 
     void write(const uint8_t* data, unsigned length)
     {
-        writeLittleEndian(m_buffer, data, length);
+        if (!writeLittleEndian(m_buffer, data, length)) [[unlikely]]
+            fail();
     }
     //     static SerializationReturnCode serialize(JSGlobalObject* lexicalGlobalObject, JSValue value, Vector<RefPtr<MessagePort>>& messagePorts, Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<ImageBitmap>>& imageBitmaps,
     // #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -2103,59 +2132,70 @@ private:
 
     void write(SerializationTag tag)
     {
-        writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag));
+        if (!writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag))) [[unlikely]]
+            fail();
     }
 
     void write(ArrayBufferViewSubtag tag)
     {
-        writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag));
+        if (!writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag))) [[unlikely]]
+            fail();
     }
 
     void write(DestinationColorSpaceTag tag)
     {
-        writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag));
+        if (!writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag))) [[unlikely]]
+            fail();
     }
 
 #if ENABLE(WEB_CRYPTO)
     void write(CryptoKeyClassSubtag tag)
     {
-        writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag));
+        if (!writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag))) [[unlikely]]
+            fail();
     }
 
     void write(CryptoKeyAsymmetricTypeSubtag tag)
     {
-        writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag));
+        if (!writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag))) [[unlikely]]
+            fail();
     }
 
     void write(CryptoKeyUsageTag tag)
     {
-        writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag));
+        if (!writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag))) [[unlikely]]
+            fail();
     }
 
     void write(CryptoAlgorithmIdentifierTag tag)
     {
-        writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag));
+        if (!writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag))) [[unlikely]]
+            fail();
     }
 
     void write(CryptoKeyOKPOpNameTag tag)
     {
-        writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag));
+        if (!writeLittleEndian<uint8_t>(m_buffer, static_cast<uint8_t>(tag))) [[unlikely]]
+            fail();
     }
 #endif
 
     void write(bool b)
     {
-        writeLittleEndian(m_buffer, static_cast<int32_t>(b));
+        if (!writeLittleEndian(m_buffer, static_cast<int32_t>(b))) [[unlikely]]
+            fail();
     }
 
     void write(uint8_t c)
     {
-        writeLittleEndian(m_buffer, c);
+        if (!writeLittleEndian(m_buffer, c)) [[unlikely]]
+            fail();
     }
 
     void write(uint32_t i)
     {
-        writeLittleEndian(m_buffer, i);
+        if (!writeLittleEndian(m_buffer, i)) [[unlikely]]
+            fail();
     }
 
     void write(double d)
@@ -2165,22 +2205,26 @@ private:
             int64_t i;
         } u;
         u.d = d;
-        writeLittleEndian(m_buffer, u.i);
+        if (!writeLittleEndian(m_buffer, u.i)) [[unlikely]]
+            fail();
     }
 
     void write(int32_t i)
     {
-        writeLittleEndian(m_buffer, i);
+        if (!writeLittleEndian(m_buffer, i)) [[unlikely]]
+            fail();
     }
 
     void write(uint64_t i)
     {
-        writeLittleEndian(m_buffer, i);
+        if (!writeLittleEndian(m_buffer, i)) [[unlikely]]
+            fail();
     }
 
     void write(uint16_t ch)
     {
-        writeLittleEndian(m_buffer, ch);
+        if (!writeLittleEndian(m_buffer, ch)) [[unlikely]]
+            fail();
     }
 
     void writeStringIndex(unsigned i)
@@ -2227,10 +2271,13 @@ private:
             return;
         }
 
-        if (str.is8Bit())
-            writeLittleEndian<uint32_t>(m_buffer, length | StringDataIs8BitFlag);
-        else
-            writeLittleEndian<uint32_t>(m_buffer, length);
+        if (str.is8Bit()) {
+            if (!writeLittleEndian<uint32_t>(m_buffer, length | StringDataIs8BitFlag)) [[unlikely]]
+                fail();
+        } else {
+            if (!writeLittleEndian<uint32_t>(m_buffer, length)) [[unlikely]]
+                fail();
+        }
 
         if (!length)
             return;
@@ -2263,7 +2310,8 @@ private:
     {
         uint32_t size = vector.size();
         write(size);
-        writeLittleEndian(m_buffer, vector.begin(), size);
+        if (!writeLittleEndian(m_buffer, vector.begin(), size)) [[unlikely]]
+            fail();
     }
 
     // void write(const File& file)

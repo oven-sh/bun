@@ -693,6 +693,16 @@ describe("brace patterns containing path separators", async () => {
     const missing = path.join(cwd, "definitely-missing-32596");
     expect(() => [...new Glob("{a/b,c/d}").scanSync({ cwd: missing })]).toThrow();
   });
+
+  // A single-alternative group is transparent to its bare pattern, including
+  // error handling: a missing absolute root throws the same way either form
+  // does, rather than the 1-element expansion being treated as "one of several
+  // alternatives" whose missing root is tolerated. POSIX-only (absolute paths).
+  test.skipIf(isWindows)("single-alternative group matches the bare pattern on a missing root", () => {
+    const bare = `${cwd}/nope/sub/*.ts`;
+    expect(() => [...new Glob(bare).scanSync({ dot: true })]).toThrow();
+    expect(() => [...new Glob(`{${bare}}`).scanSync({ dot: true })]).toThrow();
+  });
 });
 
 describe("trailing directory separator", async () => {

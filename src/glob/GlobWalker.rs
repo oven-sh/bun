@@ -1467,9 +1467,16 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // in `Iterator::init` so every entry point (scan, scanSync, shell,
         // workspaces) shares one code path.
         if brace_group_spans_separator(&this.pattern) {
-            if let Some(expansions) = expand_braces(&this.pattern) {
-                if !expansions.is_empty() {
-                    this.brace_expansions = expansions;
+            if let Some(mut expansions) = expand_braces(&this.pattern) {
+                match expansions.len() {
+                    0 => {}
+                    // A single expansion is equivalent to a brace-free pattern, so
+                    // walk it directly: it shares the single-pattern fast path,
+                    // `onlyFiles` filtering, and error handling (a missing root
+                    // throws, as it does without the braces). Only genuine
+                    // multi-alternative groups use the per-expansion machinery.
+                    1 => this.pattern = expansions.pop().unwrap(),
+                    _ => this.brace_expansions = expansions,
                 }
             }
         }

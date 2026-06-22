@@ -675,9 +675,7 @@ describe("brace patterns containing path separators", async () => {
   // fast path; it must still record matches (so they surface) and dedupe them.
   // POSIX-only: the pattern is built with "/" to keep separators unambiguous.
   test.skipIf(isWindows)("absolute literal brace expansions surface and dedupe", async () => {
-    const distinct = await Array.fromAsync(
-      new Glob(`${cwd}/{svc/env.ts,svc/src/env.ts}`).scan({ dot: true }),
-    );
+    const distinct = await Array.fromAsync(new Glob(`${cwd}/{svc/env.ts,svc/src/env.ts}`).scan({ dot: true }));
     expect(distinct.sort()).toEqual([`${cwd}/svc/env.ts`, `${cwd}/svc/src/env.ts`].sort());
 
     const overlapping = await Array.fromAsync(new Glob(`${cwd}/{svc/env.ts,svc/env.ts}`).scan({ dot: true }));

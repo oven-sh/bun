@@ -429,7 +429,11 @@ mod windows {
         // SAFETY: `watcher.async_` is a valid `uv_async_t`-sized slot; `uv_loop`
         // is the VM's live libuv loop.
         let rc = unsafe {
-            libuv::uv_async_init(uv_loop, ptr::addr_of_mut!((*watcher).async_), Some(on_async))
+            libuv::uv_async_init(
+                uv_loop,
+                ptr::addr_of_mut!((*watcher).async_),
+                Some(on_async),
+            )
         };
         if rc != 0 {
             // SAFETY: allocation is still `MaybeUninit`; never handed out.

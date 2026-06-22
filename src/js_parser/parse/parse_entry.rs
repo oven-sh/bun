@@ -2200,6 +2200,25 @@ impl<'a> Parser<'a> {
                                     ref_: item.name.ref_,
                                     is_top_level: true,
                                 })?;
+                                // Mirror `generate_import_stmt`: register the
+                                // clause item as a named import so the linker
+                                // assigns its `namespace_alias` and the
+                                // printer's `EImportIdentifier` branch can
+                                // rewrite the call site to a property access
+                                // when the runtime is bundled.
+                                p.is_import_item.insert(item.name.ref_, ());
+                                p.named_imports.put(
+                                    item.name.ref_,
+                                    js_ast::NamedImport {
+                                        alias: Some(item.alias),
+                                        alias_loc: item.alias_loc,
+                                        namespace_ref: import.namespace_ref,
+                                        import_record_index: import.import_record_index,
+                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                        alias_is_star: false,
+                                        is_exported: false,
+                                    },
+                                )?;
                             }
                         }
                         js_ast::StmtData::SFunction(func) => {

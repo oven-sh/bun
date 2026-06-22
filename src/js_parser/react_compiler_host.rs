@@ -91,6 +91,27 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         ref_
     }
 
+    fn new_import_item(&mut self, name: &[u8]) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name = p.arena.alloc_slice_copy(name);
+        let ref_ = p
+            .new_symbol(js_ast::symbol::Kind::Import, name)
+            .expect("oom");
+        VecExt::append(&mut p.module_scope_mut().generated, ref_);
+        p.is_import_item.insert(ref_, ());
+        ref_
+    }
+
+    fn global_ref(&mut self, name: &[u8]) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name = p.arena.alloc_slice_copy(name);
+        // RC codegen runs from `parse_entry::finish` after visiting, so
+        // `current_scope == module_scope`; `find_symbol` returns the existing
+        // `Kind::Unbound` member (or creates one) — the renamer leaves it
+        // intact instead of renaming a never-declared `Kind::Other` local.
+        p.find_symbol(bun_ast::Loc::EMPTY, name).expect("oom").r#ref
+    }
+
     fn record_usage(&mut self, ref_: js_ast::Ref) {
         self.p.record_usage(ref_);
     }

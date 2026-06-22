@@ -185,7 +185,7 @@ impl ProgramContext {
         }
 
         let name = self.new_uid(name_hint.unwrap_or(specifier));
-        let name_ref = host.new_generated(name.as_bytes());
+        let name_ref = host.new_import_item(name.as_bytes());
         let binding = NonLocalImportSpecifier {
             name_ref,
             module,

@@ -511,4 +511,111 @@ describe("bundler", () => {
       expect(out).not.toMatch(/\b_c\(\d+\)/);
     },
   });
+
+  // Stub react packages shared by the unbound-ref regression tests below.
+  const stubReact = {
+    "/node_modules/react/index.js": /* js */ `
+      exports.useState = i => [i, () => {}];
+      exports.createElement = () => null;
+      exports.default = exports;
+    `,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+    "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+
+  // Regression: native RC codegen minted refs for `_c` / `jsx` / `jsxs` via
+  // `Host::new_generated` (Kind::Other, not in `is_import_item`) and emitted
+  // call sites as `EIdentifier`. The printer's namespace-alias rewrite is only
+  // in the `EImportIdentifier` branch, so the bundle had
+  // `var react_compiler_runtimeN = __toESM(require_compiler_runtime())` but
+  // bare `_cN(...)` with no decl -> ReferenceError at runtime.
+  itBundled("react-compiler/CJSBindsMemoCacheImport", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        function Counter({ label }: { label: string }) {
+          const [n] = useState(0);
+          return <div>{label}: {n}</div>;
+        }
+        console.log(JSON.stringify(Counter({ label: "hi" })));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    format: "cjs",
+    backend: "api",
+    run: { stdout: '{"t":"div","p":{"children":["hi",": ",0]}}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const compBody = out.slice(out.indexOf("function Counter("));
+      // The memo-cache call must be a property access on the wrapped CJS
+      // namespace (or otherwise bound), never a bare `_c(` / `jsx(`.
+      expect(compBody).not.toMatch(/(?<![.\w])_c\d*\s*\(/);
+      expect(compBody).not.toMatch(/(?<![.\w])jsxs?\s*\(/);
+      new Bun.Transpiler({ loader: "js" }).transformSync(out);
+    },
+  });
+
+  itBundled("react-compiler/ESMBindsMemoCacheImport", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        function Counter({ label }: { label: string }) {
+          const [n] = useState(0);
+          return <div>{label}: {n}</div>;
+        }
+        console.log(JSON.stringify(Counter({ label: "hi" })));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    format: "esm",
+    backend: "api",
+    run: { stdout: '{"t":"div","p":{"children":["hi",": ",0]}}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const compBody = out.slice(out.indexOf("function Counter("));
+      expect(compBody).not.toMatch(/(?<![.\w])_c\d*\s*\(/);
+      expect(compBody).not.toMatch(/(?<![.\w])jsxs?\s*\(/);
+      new Bun.Transpiler({ loader: "js" }).transformSync(out);
+    },
+  });
+
+  // Regression: `codegen.rs well_known()` minted fresh `Kind::Other` symbols
+  // for `Symbol` / `NaN` / `Infinity`. The renamer treated them as renameable
+  // locals, so minified bundles had `tQE.for("react.memo_cache_sentinel")`
+  // where `tQE` is renamed-but-never-declared `Symbol`.
+  itBundled("react-compiler/WellKnownGlobalsNotRenamed", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        function Counter({ label }: { label: string }) {
+          const [n] = useState(0);
+          return <div>{label}: {n}</div>;
+        }
+        console.log(JSON.stringify(Counter({ label: "hi" })));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    format: "cjs",
+    minifyIdentifiers: true,
+    backend: "api",
+    run: { stdout: '{"t":"div","p":{"children":["hi",": ",0]}}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // RC emits `Symbol.for("react.memo_cache_sentinel")` for the slot init
+      // guard; the only `.for("react.memo_cache_sentinel")` callee in the
+      // bundle must be the literal global `Symbol`.
+      const callees = [...out.matchAll(/([A-Za-z_$][\w$]*)\.for\("react\.memo_cache_sentinel"\)/g)].map(m => m[1]);
+      expect(callees.length).toBeGreaterThan(0);
+      expect(new Set(callees)).toEqual(new Set(["Symbol"]));
+      new Bun.Transpiler({ loader: "js" }).transformSync(out);
+    },
+  });
 });

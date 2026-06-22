@@ -88,6 +88,22 @@ pub trait Host {
     }
 
     fn new_generated(&mut self, name: &[u8]) -> Ref;
+
+    /// Mint a fresh module-scope symbol that will be bound by an `S::Import`
+    /// clause item (e.g. the `_c` memo-cache import). The host registers it as
+    /// an import item so call sites emitted as `EImportIdentifier` get the
+    /// printer's namespace-alias rewrite when bundling.
+    fn new_import_item(&mut self, name: &[u8]) -> Ref {
+        self.new_generated(name)
+    }
+
+    /// `Ref` for a global like `Symbol` / `NaN` / `Infinity`. The host reuses
+    /// (or creates) the parser's `Kind::Unbound` module-scope member so the
+    /// renamer leaves the name intact.
+    fn global_ref(&mut self, name: &[u8]) -> Ref {
+        self.new_generated(name)
+    }
+
     fn record_usage(&mut self, ref_: Ref);
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }

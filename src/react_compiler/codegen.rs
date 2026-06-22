@@ -157,6 +157,20 @@ impl<'h> Codegen<'h> {
         r
     }
 
+    /// Like `well_known` but routes through `Host::global_ref` so the parser's
+    /// existing `Kind::Unbound` module-scope member for `Symbol` / `NaN` /
+    /// `Infinity` is reused instead of minting a fresh `Kind::Other` symbol the
+    /// renamer would treat as a renameable (and never-declared) local.
+    fn well_known_global(&mut self, w: WellKnown, name: &[u8]) -> Ref {
+        if let Some(r) = self.well_known[w as usize] {
+            self.host.record_usage(r);
+            return r;
+        }
+        let r = self.host.global_ref(name);
+        self.well_known[w as usize] = Some(r);
+        r
+    }
+
     fn ident_expr(&mut self, name: StoreStr, loc: Loc) -> Expr {
         if name.slice() == b"undefined" {
             return Expr::init(E::Undefined {}, loc);
@@ -228,8 +242,15 @@ pub fn codegen_function(
         let loc = Loc::EMPTY;
 
         // const $ = useMemoCache(N)
-        let use_memo_cache = Expr::init_identifier(
-            cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
+        // Emit as `EImportIdentifier` (not `EIdentifier`) so the printer's
+        // namespace-alias rewrite applies when the runtime import is bundled —
+        // synthesized AST is never re-visited by the parser's
+        // `EIdentifier→EImportIdentifier` promotion.
+        let use_memo_cache = Expr::init(
+            E::ImportIdentifier::new(
+                cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
+                true,
+            ),
             loc,
         );
         let call = Expr::init(
@@ -2175,7 +2196,7 @@ fn codegen_base_instruction_value(
             }
             let fragment_ref = cx.cg.host.jsx_import(JsxImportKind::Fragment);
             cx.cg.host.record_usage(fragment_ref);
-            let tag_value = Expr::init_identifier(fragment_ref, loc);
+            let tag_value = Expr::init(E::ImportIdentifier::new(fragment_ref, true), loc);
             Ok(codegen_jsx_call(
                 cx,
                 tag_value,
@@ -2617,7 +2638,7 @@ fn codegen_jsx_call(
 
     Expr::init(
         E::Call {
-            target: Expr::init_identifier(target_ref, loc),
+            target: Expr::init(E::ImportIdentifier::new(target_ref, true), loc),
             args,
             can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
             was_jsx_element: true,
@@ -3161,7 +3182,10 @@ fn property_access_expr(
 }
 
 fn symbol_for(cx: &mut Context, name: &'static str) -> Expr {
-    let symbol = Expr::init_identifier(cx.cg.well_known(WellKnown::Symbol, b"Symbol"), Loc::EMPTY);
+    let symbol = Expr::init_identifier(
+        cx.cg.well_known_global(WellKnown::Symbol, b"Symbol"),
+        Loc::EMPTY,
+    );
     let callee = Expr::init(
         E::Dot {
             target: symbol,
@@ -3187,10 +3211,12 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
         PrimitiveValue::Number(n) => {
             let f = n.value();
             if f.is_nan() {
-                Expr::init_identifier(cx.cg.well_known(WellKnown::NaN, b"NaN"), loc)
+                Expr::init_identifier(cx.cg.well_known_global(WellKnown::NaN, b"NaN"), loc)
             } else if f.is_infinite() {
-                let inf =
-                    Expr::init_identifier(cx.cg.well_known(WellKnown::Infinity, b"Infinity"), loc);
+                let inf = Expr::init_identifier(
+                    cx.cg.well_known_global(WellKnown::Infinity, b"Infinity"),
+                    loc,
+                );
                 if f > 0.0 {
                     inf
                 } else {

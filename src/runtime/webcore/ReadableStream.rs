@@ -698,7 +698,7 @@ pub(crate) trait NewSourceCodegen {
     fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
 }
 
-/// Binds the four `SourceContext::js_*` accessors to the codegen'd
+/// Binds the `SourceContext::js_*` accessors to the codegen'd
 /// `crate::generated_classes::js_${Name}InternalReadableStreamSource` module
 /// (one per `.classes.ts` entry: `Blob`, `File`, `Bytes`). The extern symbols
 /// are declared exactly once inside that module — no local `extern "C"` block.

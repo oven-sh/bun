@@ -321,6 +321,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
 
     // Move mdCtx out of JSSign object
     ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
+    thisObject->m_sizeForGC = 0;
 
     // Validate DSA parameters
     if (!pkey.validateDsaParameters()) {

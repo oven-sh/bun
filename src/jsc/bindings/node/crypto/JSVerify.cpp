@@ -385,6 +385,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     // Move mdCtx out of JSVerify object to finalize it
     ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
+    thisObject->m_sizeForGC = 0;
 
     // Validate DSA parameters
     if (!keyPtr.validateDsaParameters()) {

@@ -234,10 +234,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     if (hmac->m_ctx) {
         if (!hmac->m_ctx.digestInto(&mdBuffer)) {
             hmac->m_ctx.reset();
+            hmac->m_sizeForGC = 0;
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to digest HMAC"_s);
             return {};
         }
         hmac->m_ctx.reset();
+        hmac->m_sizeForGC = 0;
     }
 
     // We shouldn't set finalized if coming from _flush, but this

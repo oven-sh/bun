@@ -110,6 +110,7 @@ static bool canPerformFastEnumeration(Structure* s)
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
+extern "C" void Bun__registerEvalPrintOnExit(Zig::GlobalObject*, JSC::EncodedJSValue, bool awaitFirst);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
@@ -174,6 +175,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         ASSERT(result);
 
         Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
+        Bun__registerEvalPrintOnExit(globalObject, JSValue::encode(result), false);
+        RETURN_IF_EXCEPTION(scope, false);
 
         RELEASE_AND_RETURN(scope, true);
     }

@@ -1183,25 +1183,21 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             Global::exit(1);
         }
 
-        // Node.js permission-model flags. The model itself is not implemented;
-        // reject these loudly instead of silently running without the
-        // requested sandbox.
-        if args.flag(b"--permission") {
-            Output::err_generic(
-                "--permission is not supported by Bun (the Node.js permission model is not implemented)",
-                (),
-            );
-            Global::exit(1);
-        }
-        for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
-            if !args.options(allow_flag).is_empty() {
-                // Same constraint (and message substring) as Node's
-                // ERR_MISSING_OPTION: "--permission is required".
-                Output::err_generic(
-                    "--permission is required to use {}",
-                    format_args!("{}", BStr::new(allow_flag)),
-                );
-                Global::exit(1);
+        // Node.js permission-model flags. The model itself is not implemented
+        // (--permission is accepted and ignored, like other unrecognized Node
+        // flags), but --allow-fs-* without --permission is rejected the same
+        // way Node rejects it (ERR_MISSING_OPTION).
+        if !args.flag(b"--permission") {
+            for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
+                if !args.options(allow_flag).is_empty() {
+                    // Same constraint (and message substring) as Node's
+                    // ERR_MISSING_OPTION: "--permission is required".
+                    Output::err_generic(
+                        "--permission is required to use {}",
+                        format_args!("{}", BStr::new(allow_flag)),
+                    );
+                    Global::exit(1);
+                }
             }
         }
 

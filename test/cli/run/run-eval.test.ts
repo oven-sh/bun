@@ -4,6 +4,7 @@ import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
+import { inspect } from "util";
 
 for (const flag of ["-e", "--print"]) {
   describe(`bun ${flag}`, () => {
@@ -32,7 +33,13 @@ for (const flag of ["-e", "--print"]) {
         file: join(process.cwd(), "[eval]"),
         require: ref.version,
       };
-      expect(stdout.toString("utf8")).toEqual(JSON.stringify(json) + "\n<hello>world</hello>\n");
+      // --print formats its result like Node (node:util inspect), while
+      // console.log keeps Bun's JSX pretty-printing.
+      const trailing =
+        flag === "--print"
+          ? inspect((ref as any).createElement("hello", null, "world")) + "\n"
+          : "<hello>world</hello>\n";
+      expect(stdout.toString("utf8")).toEqual(JSON.stringify(json) + "\n" + trailing);
     });
 
     test("error has source map info 1", async () => {
@@ -53,7 +60,13 @@ for (const flag of ["-e", "--print"]) {
         });
 
         expect(stderr.toString("utf8")).toBe("");
-        expect(JSON.parse(stdout.toString("utf8"))).toEqual(expected);
+        if (flag === "--print") {
+          // --print formats with node:util inspect (single quotes), so compare
+          // against the same formatting instead of parsing as JSON.
+          expect(stdout.toString("utf8")).toBe(inspect(expected) + "\n");
+        } else {
+          expect(JSON.parse(stdout.toString("utf8"))).toEqual(expected);
+        }
         expect(exitCode).toBe(0);
       }
 
@@ -314,13 +327,15 @@ describe("node-style CLI argument errors", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--permission is rejected instead of being silently ignored", () => {
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "--permission", "-e", "console.log('ran')"],
+  test("--allow-fs-read with --permission does not error at argument parsing", () => {
+    // The permission model itself is not implemented; --permission is accepted
+    // and ignored (same as before these flags were recognized), so existing
+    // scripts that pass it keep running.
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--permission", "--allow-fs-read=*", "-e", "console.log('ran')"],
       env: bunEnv,
     });
-    expect(stderr.toString("utf8")).toContain("--permission is not supported");
-    expect(stdout.toString("utf8")).toBe("");
-    expect(exitCode).toBe(1);
+    expect(stdout.toString("utf8")).toBe("ran\n");
+    expect(exitCode).toBe(0);
   });
 });

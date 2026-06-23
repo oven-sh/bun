@@ -92,41 +92,36 @@ fn compress_libdeflate_fast(
     enc: bun_libdeflate_sys::libdeflate::Encoding,
     level: Option<i32>,
 ) -> Option<usize> {
-    use bun_libdeflate_sys::libdeflate::Compressor;
+    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor};
+
+    // Split-borrow so the compressor handle and `shared_buffer` can be used
+    // together.
+    let LibdeflateState {
+        compressor,
+        shared_buffer,
+        ..
+    } = state;
+    let cached = compressor.get_or_insert_with(|| {
+        OwnedCompressor::new(DEFAULT_DEFLATE_LEVEL).unwrap_or_else(|| bun_core::out_of_memory())
+    });
 
     // Bound is level-independent — use the cached handle so the slow-path
     // bail-out doesn't pay for a temp compressor it never uses.
-    if state.compressor_mut().max_bytes_needed(input, enc) > state.shared_buffer.len() {
+    if cached.max_bytes_needed(input, enc) > shared_buffer.len() {
         return None;
     }
 
     // Custom level → allocate a temporary compressor; the cached handle is
     // pinned to DEFAULT_DEFLATE_LEVEL.
-    let mut tmp: *mut Compressor = core::ptr::null_mut();
+    let mut tmp: Option<OwnedCompressor> = None;
     let compressor: &mut Compressor = match level {
         Some(l) if l != DEFAULT_DEFLATE_LEVEL => {
-            tmp = Compressor::alloc(l);
-            if tmp.is_null() {
-                bun_core::out_of_memory();
-            }
-            // SAFETY: just allocated, non-null, exclusive.
-            unsafe { &mut *tmp }
+            tmp.insert(OwnedCompressor::new(l).unwrap_or_else(|| bun_core::out_of_memory()))
         }
-        _ => state.compressor_mut(),
+        _ => cached,
     };
-    let _guard = scopeguard::guard(tmp, |tmp| {
-        if !tmp.is_null() {
-            // SAFETY: `tmp` was returned by `Compressor::alloc` above and is
-            // not used after this call.
-            unsafe { Compressor::destroy(tmp) };
-        }
-    });
 
-    Some(
-        compressor
-            .compress(input, &mut state.shared_buffer, enc)
-            .written,
-    )
+    Some(compressor.compress(input, shared_buffer, enc).written)
 }
 
 /// Slow path for gzip/deflate when the libdeflate one-shot bound exceeds the
@@ -139,76 +134,32 @@ fn compress_zlib_streaming(
     level: Option<i32>,
     out: &mut Vec<u8>,
 ) -> Result<(), bun_core::Error> {
-    use bun_zlib::{FlushValue, ReturnCode, deflate, deflateEnd, deflateInit2_, zlibVersion};
+    use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
 
-    // `avail_in` is `c_uint`; feed the input in ≤u32::MAX-sized chunks so a
-    // ≥4 GiB body isn't silently truncated.
-    fn take<'a>(rem: &mut &'a [u8]) -> &'a [u8] {
-        let n = rem.len().min(u32::MAX as usize);
-        let (head, tail) = rem.split_at(n);
-        *rem = tail;
-        head
-    }
-    let mut remaining = input;
-    let first = take(&mut remaining);
-    let mut strm: bun_zlib::z_stream = bun_core::ffi::zeroed();
-    strm.next_in = first.as_ptr();
-    strm.avail_in = first.len() as _;
     // gzip wrapper: +16; HTTP "deflate" is the zlib-wrapped stream
     // (RFC 9110 §8.4.1.2): plain 15.
     let window_bits = if gzip { 15 + 16 } else { 15 };
     // libdeflate accepts 0..=12; zlib only 0..=9.
     let level = level.unwrap_or(DEFAULT_DEFLATE_LEVEL).min(9);
-    // SAFETY: `strm` is zeroed; version/size match the linked zlib.
-    let rc = unsafe {
-        deflateInit2_(
-            &raw mut strm,
-            level,
-            8, // Z_DEFLATED
-            window_bits,
-            8, // default memLevel
-            0, // Z_DEFAULT_STRATEGY
-            zlibVersion().cast::<u8>(),
-            size_of::<bun_zlib::z_stream>() as _,
-        )
-    };
-    if rc != ReturnCode::Ok {
-        return Err(bun_core::err!(CompressionFailed));
-    }
-    let strm_p: *mut bun_zlib::z_stream = &raw mut strm;
-    let _guard = scopeguard::guard(strm_p, |p| {
-        // SAFETY: `strm` is stack-pinned for the function's lifetime; the
-        // guard runs `deflateEnd` on it at scope exit (before `strm` drops).
-        // The raw pointer avoids a borrow conflict with the loop body.
-        unsafe { deflateEnd(p) };
-    });
+    let mut encoder = DeflateEncoder::new(level, window_bits, 8, 0)
+        .map_err(|_| bun_core::err!(CompressionFailed))?;
 
+    // `avail_in` is `c_uint`; `step()` clamps to u32::MAX per call so a
+    // ≥4 GiB body isn't truncated — we loop until `remaining` is empty.
+    let mut remaining = input;
     loop {
-        if strm.avail_in == 0 && !remaining.is_empty() {
-            let next = take(&mut remaining);
-            strm.next_in = next.as_ptr();
-            strm.avail_in = next.len() as _;
-        }
-        let flush = if remaining.is_empty() {
+        let flush = if remaining.len() <= u32::MAX as usize {
             FlushValue::Finish
         } else {
             FlushValue::NoFlush
         };
-        if out.capacity() == out.len() {
-            out.reserve(64 * 1024);
-        }
-        let spare = out.spare_capacity_mut();
-        strm.next_out = spare.as_mut_ptr().cast::<u8>();
-        strm.avail_out = u32::try_from(spare.len()).unwrap_or(u32::MAX);
-        let avail_out_before = strm.avail_out;
-        // SAFETY: `strm` initialized; next_in/avail_in/next_out/avail_out are
-        // valid for their lengths; `deflate` only reads input and writes the
-        // tail of `out`'s spare capacity.
-        let rc = unsafe { deflate(&raw mut strm, flush) };
-        let produced = (avail_out_before - strm.avail_out) as usize;
-        // SAFETY: zlib has initialized `produced` bytes at the start of
-        // `spare`; new len is within capacity.
-        unsafe { out.set_len(out.len() + produced) };
+        let reserve = if out.capacity() == out.len() {
+            64 * 1024
+        } else {
+            0
+        };
+        let (consumed, rc) = encoder.step(remaining, out, reserve, flush);
+        remaining = &remaining[consumed..];
         match rc {
             ReturnCode::StreamEnd => return Ok(()),
             ReturnCode::Ok => continue,
@@ -228,28 +179,16 @@ fn compress_brotli(
 ) -> Result<CompressOutput, bun_core::Error> {
     use bun_brotli::c;
     let quality = level.unwrap_or(DEFAULT_BROTLI_QUALITY);
+    let window = c::BROTLI_DEFAULT_WINDOW;
+    let mode = c::BrotliEncoderMode::generic;
 
     let bound = c::BrotliEncoderMaxCompressedSize(input.len());
     // BrotliEncoderMaxCompressedSize returns 0 when the bound would overflow
     // size_t — fall back to a heap buffer in that case.
     if bound != 0 && bound <= state.shared_buffer.len() {
-        let mut out_len = state.shared_buffer.len();
-        // SAFETY: input/output slices are valid for their lengths;
-        // BrotliEncoderCompress only reads `input` and writes `out_len`
-        // bytes to `shared_buffer`, updating `out_len` to bytes written.
-        let ok = unsafe {
-            c::BrotliEncoderCompress(
-                quality,
-                c::BROTLI_DEFAULT_WINDOW,
-                c::BrotliEncoderMode::generic,
-                input.len(),
-                input.as_ptr(),
-                &raw mut out_len,
-                state.shared_buffer.as_mut_ptr(),
-            )
-        };
-        if ok != 0 {
-            return Ok(CompressOutput::Shared(out_len));
+        if let Some(n) = bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer)
+        {
+            return Ok(CompressOutput::Shared(n));
         }
     }
 
@@ -259,25 +198,16 @@ fn compress_brotli(
         input.len() + 1024
     };
     spill.resize(cap, 0);
-    let mut out_len = spill.len();
-    // SAFETY: see above.
-    let ok = unsafe {
-        c::BrotliEncoderCompress(
-            quality,
-            c::BROTLI_DEFAULT_WINDOW,
-            c::BrotliEncoderMode::generic,
-            input.len(),
-            input.as_ptr(),
-            &raw mut out_len,
-            spill.as_mut_ptr(),
-        )
-    };
-    if ok == 0 {
-        spill.clear();
-        return Err(bun_core::err!(CompressionFailed));
+    match bun_brotli::encode(quality, window, mode, input, spill) {
+        Some(n) => {
+            spill.truncate(n);
+            Ok(CompressOutput::Spilled)
+        }
+        None => {
+            spill.clear();
+            Err(bun_core::err!(CompressionFailed))
+        }
     }
-    spill.truncate(out_len);
-    Ok(CompressOutput::Spilled)
 }
 
 fn compress_zstd(

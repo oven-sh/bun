@@ -1,3 +1,9 @@
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // During database-server startup (e.g. a postgres/mysql docker container that
 // is still initializing), clients hit two socket-level failures that are not
 // protocol errors: the connection is refused outright, or an intermediary
@@ -18,21 +24,8 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import net from "node:net";
-
-async function listeningServer(onSocket: (socket: net.Socket) => void): Promise<{ port: number; server: net.Server }> {
-  const server = net.createServer(onSocket);
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  return { port: (server.address() as net.AddressInfo).port, server };
-}
-
-async function closedPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as net.AddressInfo).port;
-  await new Promise<void>(resolve => server.close(() => resolve()));
-  return port;
-}
+import type net from "node:net";
+import { closedPort, listeningServer, pgAuthenticationOk, pgErrorResponse, pgReadyForQuery } from "./wire-frames";
 
 // connectionTimeout (seconds) bounds the connect-retry budget; keep it short
 // in tests that expect the failure to surface.
@@ -49,15 +42,7 @@ async function connectError(url: string): Promise<any> {
 }
 
 function postgresAuthOkAndReady(socket: net.Socket) {
-  const authOk = Buffer.alloc(9);
-  authOk.write("R", 0);
-  authOk.writeInt32BE(8, 1);
-  authOk.writeInt32BE(0, 5);
-  const ready = Buffer.alloc(6);
-  ready.write("Z", 0);
-  ready.writeInt32BE(5, 1);
-  ready.write("I", 5);
-  socket.write(Buffer.concat([authOk, ready]));
+  socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
 }
 
 test("postgres: connection refused is reported distinctly and fails fast", async () => {
@@ -129,27 +114,14 @@ test("postgres: server ErrorResponse during startup is still surfaced (57P03)", 
   const { port, server } = await listeningServer(socket => {
     connections++;
     socket.on("data", () => {
-      const fields: [string, string][] = [
-        ["S", "FATAL"],
-        ["V", "FATAL"],
-        ["C", "57P03"],
-        ["M", "the database system is starting up"],
-      ];
-      let len = 4;
-      for (const [, v] of fields) len += 1 + v.length + 1;
-      len += 1;
-      const buf = Buffer.alloc(1 + len);
-      let o = 0;
-      buf.write("E", o++);
-      buf.writeInt32BE(len, o);
-      o += 4;
-      for (const [k, v] of fields) {
-        buf.write(k, o++);
-        buf.write(v + "\0", o);
-        o += v.length + 1;
-      }
-      buf[o] = 0;
-      socket.end(buf);
+      socket.end(
+        pgErrorResponse({
+          S: "FATAL",
+          V: "FATAL",
+          C: "57P03",
+          M: "the database system is starting up",
+        }),
+      );
     });
   });
   try {

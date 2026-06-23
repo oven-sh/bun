@@ -726,9 +726,33 @@ interface ReadableStreamDefaultController<R = any> {
 
 interface ReadableStreamDirectController {
   close(error?: Error): void;
+  /**
+   * Write a chunk directly to the destination.
+   *
+   * Returns the number of bytes written, or a **negative number** when the
+   * destination's internal buffer is full (backpressure). When negative, the
+   * chunk *was* accepted; pause writing and `await controller.flush(true)`,
+   * which resolves once the destination has drained:
+   *
+   * ```ts
+   * if (controller.write(chunk) < 0) {
+   *   await controller.flush(true);
+   * }
+   * ```
+   *
+   * For some destinations (e.g. {@link Bun.FileSink} on Windows pipes) the
+   * write itself is asynchronous and a `Promise<number>` is returned instead.
+   */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;
-  flush(): number | Promise<number>;
+  /**
+   * Flush any locally buffered data to the destination.
+   *
+   * @param wait When `true`, the returned promise resolves only once the
+   * destination has drained its own internal buffer (i.e. backpressure has
+   * cleared). Use this after {@link write} returns a negative value.
+   */
+  flush(wait?: boolean): number | Promise<number>;
   start(): void;
 }
 

@@ -32,7 +32,7 @@ PAIRS=""
 
 while IFS= read -r ev; do
     [ -z "$ev" ] && continue
-    variant=$(echo "$ev" | sed -E 's/(^|[^A-Za-z0-9])([a-z])/\1\u\2/g; s/[^A-Za-z0-9]//g')
+    variant=$(echo "$ev" | perl -pe 's/(^|[^A-Za-z0-9])([a-z])/$1\u$2/g; s/[^A-Za-z0-9]//g')
     PAIRS="$PAIRS"$'\n'"$ev"$'\t'"$variant"
 done <<< "$LITERAL_EVENTS"
 
@@ -46,9 +46,9 @@ for v in $ENUM_VARIANTS; do
     PAIRS="$PAIRS"$'\n'"$name"$'\t'"$v"
 done
 
-# Sort by dotted name (stable ids across runs); dedup by variant (last wins,
-# so an enum-form caller's spelling overrides a literal-derived one).
-PAIRS=$(echo "$PAIRS" | grep -v '^$' | sort -t$'\t' -k1,1 -u)
+# Sort by dotted name (stable ids across runs); dedup by dotted name first,
+# then by derived variant (two literals like "X.foo" and "X::foo" collapse).
+PAIRS=$(echo "$PAIRS" | grep -v '^$' | sort -t$'\t' -k1,1 -u | awk -F'\t' '!seen[$2]++')
 
 if [ -z "$PAIRS" ]; then
     echo "error: no perf::trace() call sites found under src/" >&2

@@ -58,8 +58,7 @@ const exitScenarios = {
   // process.exit() from a beforeExit handler: the run ends normally, then the
   // handler calls process.exit() while the watcher loop is dispatching
   // beforeExit.
-  "beforeExit handler": (n: number) =>
-    `console.log("MARK:${n}");\nprocess.on("beforeExit", () => process.exit(1));\n`,
+  "beforeExit handler": (n: number) => `console.log("MARK:${n}");\nprocess.on("beforeExit", () => process.exit(1));\n`,
 } as const;
 
 for (const mode of ["--watch", "--hot"] as const) {

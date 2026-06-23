@@ -39,13 +39,13 @@ unsafe extern "C" {
 /// Emit the `"memoryPressure"` event on the given global's process object.
 /// Called from the `FilePoll` dispatch arm (already on the JS thread).
 pub fn emit(global: &JSGlobalObject, lvl: i32) {
-    // Anything other than WARN is reported as critical. On Linux the PSI
-    // trigger doesn't carry a level, and on Windows there is only
-    // `LowMemoryResourceNotification`; both map to critical.
-    let lvl = if lvl & level::WARNING != 0 {
-        level::WARNING
-    } else {
+    // `EVFILT_MEMORYSTATUS` accumulates transition bits under `EV_CLEAR`, so
+    // both WARN and CRITICAL can arrive in one kevent; pick the more severe.
+    // Linux PSI and Windows carry no level and default to critical here.
+    let lvl = if lvl & level::CRITICAL != 0 || lvl & level::WARNING == 0 {
         level::CRITICAL
+    } else {
+        level::WARNING
     };
     // SAFETY: `global` is the live per-thread global; the C++ side handles
     // the "no listeners" case via `hasEventListeners`.

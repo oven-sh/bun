@@ -41,6 +41,7 @@ public:
         , m_padding(other.m_padding)
         , m_saltLength(other.m_saltLength)
         , m_dsaSigEnc(other.m_dsaSigEnc)
+        , m_unsupportedContext(other.m_unsupportedContext)
     {
     }
 
@@ -59,6 +60,10 @@ public:
     std::optional<int32_t> m_padding;
     std::optional<int32_t> m_saltLength;
     DSASigEnc m_dsaSigEnc;
+    // A `context` signing option was provided for a key that cannot use one (BoringSSL has no
+    // Ed448, the only algorithm whose signatures take a context string), so the operation must
+    // fail with "Context parameter is unsupported" on both the sync and callback paths.
+    bool m_unsupportedContext = false;
 
     std::optional<ByteSource> m_signResult = { std::nullopt };
     std::optional<bool> m_verifyResult = { std::nullopt };

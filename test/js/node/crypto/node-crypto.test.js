@@ -858,3 +858,54 @@ it("generatePrime(Sync) should return an ArrayBuffer", async () => {
 
   await promise;
 });
+
+describe("sign/verify context option", () => {
+  // The `context` signing option only applies to Ed448, which BoringSSL does not provide, so
+  // providing one fails the operation with the same error on the sync and callback paths.
+  const data = Buffer.from("hello");
+
+  it("crypto.sign rejects the context option synchronously and asynchronously with the same error", async () => {
+    const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const keyOpts = { key: privateKey, context: Buffer.alloc(1) };
+
+    let syncErr;
+    expect(() => {
+      try {
+        crypto.sign("sha256", data, keyOpts);
+      } catch (err) {
+        syncErr = err;
+        throw err;
+      }
+    }).toThrow("Context parameter is unsupported");
+    expect(syncErr.code).toBe("ERR_CRYPTO_OPERATION_FAILED");
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    crypto.sign("sha256", data, keyOpts, (err, sig) => (err ? resolve(err) : reject(new Error("expected an error"))));
+    const asyncErr = await promise;
+    expect(asyncErr.code).toBe(syncErr.code);
+    expect(asyncErr.message).toBe(syncErr.message);
+  });
+
+  it("crypto.diffieHellman reports the same error from the sync and callback paths", async () => {
+    const alice = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const bob = crypto.generateKeyPairSync("ec", { namedCurve: "P-384" });
+    const options = { privateKey: alice.privateKey, publicKey: bob.publicKey };
+
+    let syncErr;
+    try {
+      crypto.diffieHellman(options);
+    } catch (err) {
+      syncErr = err;
+    }
+    expect(syncErr).toBeDefined();
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    crypto.diffieHellman(options, (err, secret) => (err ? resolve(err) : reject(new Error("expected an error"))));
+    const asyncErr = await promise;
+    expect(asyncErr.code).toBe(syncErr.code);
+    expect(asyncErr.message).toBe(syncErr.message);
+
+    // The failed derive must not leave OpenSSL errors behind for unrelated operations to pick up.
+    expect(() => crypto.generateKeyPairSync("rsa", { modulusLength: 2048 })).not.toThrow();
+  });
+});

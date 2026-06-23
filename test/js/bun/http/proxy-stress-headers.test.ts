@@ -1,8 +1,7 @@
 /**
  * Response- and request-header shape through the proxy tunnel: many
- * headers, duplicate Set-Cookie, folding, long header names, every
- * standard Content-Type, and the proxy's own Host / Proxy-Connection /
- * User-Agent on the CONNECT envelope.
+ * headers, duplicate Set-Cookie, every standard Content-Type, and the
+ * proxy's own Host / Proxy-Connection on the CONNECT envelope.
  *
  * Also: Content-Range (206), long URLs, and the decompress:false path
  * that surfaces the raw encoded body.
@@ -216,8 +215,8 @@ describe("decompress:false through tunnel", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CONNECT envelope shape: Host, Proxy-Connection, and User-Agent are
-// present on the proxy request.
+// CONNECT envelope shape: Host and Proxy-Connection are present on the
+// proxy request (write_proxy_connect in src/http/lib.rs).
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("CONNECT envelope shape", () => {

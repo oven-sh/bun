@@ -32,10 +32,11 @@ const wrapperCalls: WrapperCall[] = [];
 
 const srcDir = path.join(import.meta.dir, "../");
 
-const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(srcDir, ["deps", "node_modules", "WebKit"], [
-  ".cpp",
-  ".bind.ts",
-]);
+const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
+  srcDir,
+  ["deps", "node_modules", "WebKit"],
+  [".cpp", ".bind.ts"],
+);
 
 // The $zig() macro's first argument is a legacy identifier naming the module
 // a native symbol belongs to. The file itself is never opened, but its path

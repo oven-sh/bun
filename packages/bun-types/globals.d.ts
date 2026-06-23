@@ -2035,6 +2035,37 @@ interface BunFetchRequestInit extends RequestInit {
   decompress?: boolean;
 
   /**
+   * Automatically compress the request body before sending and set the
+   * `Content-Encoding` request header accordingly.
+   *
+   * - `true` is equivalent to `"gzip"`.
+   * - A string selects the encoding with its default level.
+   * - An object selects the encoding and an explicit compression `level`.
+   *
+   * Only buffered bodies (string, `ArrayBuffer`/`TypedArray`, `Blob`) are
+   * compressed; `ReadableStream` bodies are sent as-is. If the request
+   * already has a `Content-Encoding` header, the body is left unchanged.
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @default false
+   * @example
+   * ```js
+   * await fetch("https://example.com/upload", {
+   *   method: "POST",
+   *   body: JSON.stringify(bigPayload),
+   *   compress: "gzip",
+   * });
+   * ```
+   */
+  compress?:
+    | boolean
+    | "gzip"
+    | "deflate"
+    | "br"
+    | "zstd"
+    | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
+
+  /**
    * The maximum number of redirects to follow when `redirect` is `"follow"`.
    * If the response chain redirects more than this many times, the request
    * rejects with a "too many redirects" error.

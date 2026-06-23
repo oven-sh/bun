@@ -283,6 +283,7 @@ pub struct CertCheckResumeMessage {
 
 pub struct LibdeflateState {
     pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
+    pub compressor: *mut bun_libdeflate_sys::libdeflate::Compressor,
     pub shared_buffer: [u8; 512 * 1024],
 }
 
@@ -305,6 +306,28 @@ impl LibdeflateState {
     ) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *self.decompressor }
+    }
+
+    /// Lazy libdeflate compressor at [`DEFAULT_DEFLATE_LEVEL`]; same lifetime
+    /// and aliasing invariants as [`decompressor_mut`].
+    ///
+    /// [`DEFAULT_DEFLATE_LEVEL`]: crate::compress_body::DEFAULT_DEFLATE_LEVEL
+    /// [`decompressor_mut`]: Self::decompressor_mut
+    #[inline]
+    pub(crate) fn compressor_mut<'a>(
+        &mut self,
+    ) -> &'a mut bun_libdeflate_sys::libdeflate::Compressor {
+        if self.compressor.is_null() {
+            self.compressor = bun_libdeflate_sys::libdeflate::Compressor::alloc(
+                crate::compress_body::DEFAULT_DEFLATE_LEVEL,
+            );
+            if self.compressor.is_null() {
+                bun_core::out_of_memory();
+            }
+        }
+        // SAFETY: just ensured non-null; HTTP-thread-only; separate C heap
+        // allocation disjoint from `shared_buffer`.
+        unsafe { &mut *self.compressor }
     }
 }
 
@@ -1049,6 +1072,7 @@ impl HttpThread {
                 let client = &mut (*nn.as_ptr()).async_http.client;
                 drop(core::mem::take(&mut client.redirect));
                 drop(core::mem::take(&mut client.prev_redirect));
+                drop(core::mem::take(&mut client.compressed_request_body));
                 if let Some(tunnel) = client.proxy_tunnel.take() {
                     (*tunnel.as_ptr()).detach_socket();
                     tunnel.deref();

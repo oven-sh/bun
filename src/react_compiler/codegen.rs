@@ -50,9 +50,6 @@ use crate::reactive_scopes::{
 
 use crate::program::{Host, JsxImportKind};
 
-pub const MEMO_CACHE_SENTINEL: &str = "react.memo_cache_sentinel";
-pub const EARLY_RETURN_SENTINEL: &str = "react.early_return_sentinel";
-
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
     pub loc: Option<DiagSourceLocation>,
@@ -101,14 +98,15 @@ pub struct OutlinedFunction {
 enum WellKnown {
     UseMemoCache,
     MemoCache,
-    Symbol,
     NaN,
     Infinity,
     Underscore,
+    MemoCacheSentinel,
+    EarlyReturnSentinel,
 }
 
 impl WellKnown {
-    const COUNT: usize = 6;
+    const COUNT: usize = 7;
 }
 
 /// Host-side state shared across nested function-expression codegen so the
@@ -153,6 +151,30 @@ impl<'h> Codegen<'h> {
             return r;
         }
         let r = self.host.new_generated(name);
+        self.well_known[w as usize] = Some(r);
+        r
+    }
+
+    fn sentinel_expr(&mut self, w: WellKnown, loc: Loc) -> Expr {
+        let r = if let Some(r) = self.well_known[w as usize] {
+            r
+        } else {
+            let r = self
+                .host
+                .runtime_sentinel(matches!(w, WellKnown::EarlyReturnSentinel));
+            self.well_known[w as usize] = Some(r);
+            r
+        };
+        self.host.record_usage(r);
+        Expr::init(E::ImportIdentifier::new(r, false), loc)
+    }
+
+    fn well_known_global(&mut self, w: WellKnown, name: &[u8]) -> Ref {
+        if let Some(r) = self.well_known[w as usize] {
+            self.host.record_usage(r);
+            return r;
+        }
+        let r = self.host.global_ref(name);
         self.well_known[w as usize] = Some(r);
         r
     }
@@ -227,9 +249,13 @@ pub fn codegen_function(
         let cache_name = cx.synthesize_name("$");
         let loc = Loc::EMPTY;
 
-        // const $ = useMemoCache(N)
-        let use_memo_cache = Expr::init_identifier(
-            cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
+        // Synthesized AST is never re-visited by the parser's `EIdentifier→EImportIdentifier`
+        // promotion, so emit `EImportIdentifier` directly.
+        let use_memo_cache = Expr::init(
+            E::ImportIdentifier::new(
+                cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
+                true,
+            ),
             loc,
         );
         let call = Expr::init(
@@ -248,7 +274,7 @@ pub fn codegen_function(
             .well_known(WellKnown::MemoCache, cache_name.as_bytes());
         preface.push(Stmt::alloc(
             S::Local {
-                kind: S::Kind::KConst,
+                kind: S::Kind::KLet,
                 decls: decl_list([G::Decl {
                     binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: cache_ref }, loc),
                     value: Some(call),
@@ -630,8 +656,8 @@ fn codegen_reactive_scope(
     let scope_reassignments = cx.env.scopes[scope_id.0 as usize].reassignments.clone();
     let loc = Loc::EMPTY;
 
-    let mut cache_store_stmts: Vec<Stmt> = Vec::new();
-    let mut cache_load_stmts: Vec<Stmt> = Vec::new();
+    let mut cache_store_exprs: Vec<Expr> = Vec::new();
+    let mut cache_load_exprs: Vec<Expr> = Vec::new();
     let mut cache_loads: Vec<(Ref, u32, Expr)> = Vec::new();
     let mut change_exprs: Vec<Expr> = Vec::new();
 
@@ -667,15 +693,12 @@ fn codegen_reactive_scope(
         change_exprs.push(comparison);
 
         let dep_value = codegen_dependency(cx, dep)?;
-        cache_store_stmts.push(expr_stmt(
-            Expr::init(
-                E::Binary {
-                    op: OpCode::BinAssign,
-                    left: cache_slot(index),
-                    right: dep_value,
-                },
-                loc,
-            ),
+        cache_store_exprs.push(Expr::init(
+            E::Binary {
+                op: OpCode::BinAssign,
+                left: cache_slot(index),
+                right: dep_value,
+            },
             loc,
         ));
     }
@@ -685,6 +708,7 @@ fn codegen_reactive_scope(
     let mut decls = scope_decls;
     decls.sort_unstable_by(|(_a, a), (_b, b)| compare_scope_declaration(a, b, cx.env));
 
+    let mut output_declarators: Vec<G::Decl> = Vec::new();
     for (_ident_id, decl) in &decls {
         let index = cx.alloc_cache_index();
         if first_output_index.is_none() {
@@ -704,24 +728,24 @@ fn codegen_reactive_scope(
 
         let (name_ref, name_loc) = convert_identifier(cx, decl.identifier)?;
         if !cx.has_declared(decl.identifier) {
-            statements.push(Stmt::alloc(
-                S::Local {
-                    kind: S::Kind::KLet,
-                    decls: decl_list([G::Decl {
-                        binding: Binding::alloc(
-                            cx.cg.arena,
-                            b::Identifier { r#ref: name_ref },
-                            name_loc,
-                        ),
-                        value: None,
-                    }]),
-                    ..Default::default()
-                },
-                loc,
-            ));
+            output_declarators.push(G::Decl {
+                binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: name_ref }, name_loc),
+                value: None,
+            });
         }
         cache_loads.push((name_ref, index, Expr::init_identifier(name_ref, name_loc)));
         cx.declare(decl.identifier);
+    }
+    if !output_declarators.is_empty() {
+        // Synthesized body is spliced post-visitor; mangleStmts won't merge these.
+        statements.push(Stmt::alloc(
+            S::Local {
+                kind: S::Kind::KLet,
+                decls: decl_list(output_declarators),
+                ..Default::default()
+            },
+            loc,
+        ));
     }
 
     for reassignment_id in scope_reassignments {
@@ -741,7 +765,7 @@ fn codegen_reactive_scope(
             E::Binary {
                 op: OpCode::BinStrictEq,
                 left: cache_slot(first_idx),
-                right: symbol_for(cx, MEMO_CACHE_SENTINEL),
+                right: cx.cg.sentinel_expr(WellKnown::MemoCacheSentinel, loc),
             },
             loc,
         )
@@ -764,37 +788,59 @@ fn codegen_reactive_scope(
     let mut computation_block = codegen_block(cx, block)?;
 
     for (name_ref, index, value) in &cache_loads {
-        cache_store_stmts.push(expr_stmt(
-            Expr::init(
-                E::Binary {
-                    op: OpCode::BinAssign,
-                    left: cache_slot(*index),
-                    right: *value,
-                },
-                loc,
-            ),
+        cache_store_exprs.push(Expr::init(
+            E::Binary {
+                op: OpCode::BinAssign,
+                left: cache_slot(*index),
+                right: *value,
+            },
             loc,
         ));
-        cache_load_stmts.push(expr_stmt(
-            Expr::init(
-                E::Binary {
-                    op: OpCode::BinAssign,
-                    left: Expr::init_identifier(*name_ref, loc),
-                    right: cache_slot(*index),
-                },
-                loc,
-            ),
+        cache_load_exprs.push(Expr::init(
+            E::Binary {
+                op: OpCode::BinAssign,
+                left: Expr::init_identifier(*name_ref, loc),
+                right: cache_slot(*index),
+            },
             loc,
         ));
     }
 
-    computation_block.extend(cache_store_stmts);
+    if !cache_store_exprs.is_empty() {
+        computation_block.push(expr_stmt(comma_seq(cache_store_exprs, loc), loc));
+    }
+
+    let yes = if computation_block
+        .iter()
+        .all(|s| matches!(s.data, StmtData::SExpr(_)))
+    {
+        let exprs: Vec<Expr> = computation_block
+            .into_iter()
+            .map(|s| match s.data {
+                StmtData::SExpr(es) => es.value,
+                _ => unreachable!(),
+            })
+            .collect();
+        if exprs.is_empty() {
+            empty_stmt()
+        } else {
+            expr_stmt(comma_seq(exprs, loc), loc)
+        }
+    } else {
+        block_stmt(computation_block, loc)
+    };
+
+    let no = if cache_load_exprs.is_empty() {
+        None
+    } else {
+        Some(expr_stmt(comma_seq(cache_load_exprs, loc), loc))
+    };
 
     let memo_stmt = Stmt::alloc(
         S::If {
             test_: test_condition,
-            yes: block_stmt(computation_block, loc),
-            no: Some(block_stmt(cache_load_stmts, loc)),
+            yes,
+            no,
         },
         loc,
     );
@@ -819,17 +865,14 @@ fn codegen_reactive_scope(
                     E::Binary {
                         op: OpCode::BinStrictNe,
                         left: name_expr,
-                        right: symbol_for(cx, EARLY_RETURN_SENTINEL),
+                        right: cx.cg.sentinel_expr(WellKnown::EarlyReturnSentinel, loc),
                     },
                     loc,
                 ),
-                yes: block_stmt(
-                    vec![Stmt::alloc(
-                        S::Return {
-                            value: Some(name_expr),
-                        },
-                        loc,
-                    )],
+                yes: Stmt::alloc(
+                    S::Return {
+                        value: Some(name_expr),
+                    },
                     loc,
                 ),
                 no: None,
@@ -916,11 +959,13 @@ fn codegen_terminal(
             let stmt_loc = convert_loc(*loc);
             let consequent_block = codegen_block(cx, consequent)?;
             let alternate_stmt = if let Some(alt) = alternate {
-                let block = codegen_block(cx, alt)?;
+                let mut block = codegen_block(cx, alt)?;
                 if block.is_empty() {
                     None
+                } else if block.len() == 1 && matches!(block[0].data, StmtData::SIf(_)) {
+                    Some(block.pop().unwrap())
                 } else {
-                    Some(block_stmt(block, stmt_loc))
+                    Some(body_stmt(block, stmt_loc))
                 }
             } else {
                 None
@@ -928,7 +973,7 @@ fn codegen_terminal(
             Ok(Some(Stmt::alloc(
                 S::If {
                     test_: test_expr,
-                    yes: block_stmt(consequent_block, stmt_loc),
+                    yes: body_stmt(consequent_block, stmt_loc),
                     no: alternate_stmt,
                 },
                 stmt_loc,
@@ -982,7 +1027,7 @@ fn codegen_terminal(
             let body = codegen_block(cx, loop_block)?;
             Ok(Some(Stmt::alloc(
                 S::DoWhile {
-                    body: block_stmt(body, stmt_loc),
+                    body: body_stmt(body, stmt_loc),
                     test_: test_expr,
                 },
                 stmt_loc,
@@ -1000,7 +1045,7 @@ fn codegen_terminal(
             Ok(Some(Stmt::alloc(
                 S::While {
                     test_: test_expr,
-                    body: block_stmt(body, stmt_loc),
+                    body: body_stmt(body, stmt_loc),
                 },
                 stmt_loc,
             )))
@@ -1026,7 +1071,7 @@ fn codegen_terminal(
                     init: init_val,
                     test_: Some(test_expr),
                     update: update_expr,
-                    body: block_stmt(body, stmt_loc),
+                    body: body_stmt(body, stmt_loc),
                 },
                 stmt_loc,
             )))
@@ -1128,7 +1173,7 @@ fn codegen_for_in(
                 stmt_loc,
             ),
             value: right,
-            body: block_stmt(body, stmt_loc),
+            body: body_stmt(body, stmt_loc),
         },
         stmt_loc,
     )))
@@ -1204,7 +1249,7 @@ fn codegen_for_of(
                 stmt_loc,
             ),
             value: right,
-            body: block_stmt(body, stmt_loc),
+            body: body_stmt(body, stmt_loc),
         },
         stmt_loc,
     )))
@@ -1481,7 +1526,7 @@ fn emit_store(
             let lval = codegen_lvalue(cx, lvalue)?;
             Ok(Some(Stmt::alloc(
                 S::Local {
-                    kind: S::Kind::KConst,
+                    kind: S::Kind::KLet,
                     decls: decl_list([G::Decl {
                         binding: lval,
                         value,
@@ -1830,6 +1875,11 @@ fn codegen_base_instruction_value(
             if let NonLocalKind::BunOpaque(e) = binding.kind {
                 return Ok(e);
             }
+            if let NonLocalKind::ModuleLocal { name } = &binding.kind {
+                if binding.ref_().is_none() && name.slice() == b"$rc_early" {
+                    return Ok(cx.cg.sentinel_expr(WellKnown::EarlyReturnSentinel, loc));
+                }
+            }
             match binding.ref_() {
                 Some(r) => Ok(cx.cg.ident_expr_for_ref(r, loc)),
                 None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
@@ -1838,6 +1888,17 @@ fn codegen_base_instruction_value(
         InstructionValue::CallExpression { callee, args, .. } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
+            if let ExprData::EImport(orig) = callee_expr.data {
+                let mut it = arguments.into_iter();
+                return Ok(Expr::init(
+                    E::Import {
+                        expr: it.next().unwrap_or(orig.expr),
+                        options: it.next().unwrap_or(Expr::EMPTY),
+                        import_record_index: orig.import_record_index,
+                    },
+                    loc,
+                ));
+            }
             let call_expr = Expr::init(
                 E::Call {
                     target: callee_expr,
@@ -2175,7 +2236,7 @@ fn codegen_base_instruction_value(
             }
             let fragment_ref = cx.cg.host.jsx_import(JsxImportKind::Fragment);
             cx.cg.host.record_usage(fragment_ref);
-            let tag_value = Expr::init_identifier(fragment_ref, loc);
+            let tag_value = Expr::init(E::ImportIdentifier::new(fragment_ref, true), loc);
             Ok(codegen_jsx_call(
                 cx,
                 tag_value,
@@ -2617,7 +2678,7 @@ fn codegen_jsx_call(
 
     Expr::init(
         E::Call {
-            target: Expr::init_identifier(target_ref, loc),
+            target: Expr::init(E::ImportIdentifier::new(target_ref, true), loc),
             args,
             can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
             was_jsx_element: true,
@@ -3083,6 +3144,22 @@ fn string_expr(s: &str, loc: Loc) -> Expr {
 }
 
 #[inline]
+fn comma_seq(exprs: Vec<Expr>, loc: Loc) -> Expr {
+    let mut it = exprs.into_iter();
+    let first = it.next().expect("comma_seq: nonempty");
+    it.fold(first, |acc, next| {
+        Expr::init(
+            E::Binary {
+                op: OpCode::BinComma,
+                left: acc,
+                right: next,
+            },
+            loc,
+        )
+    })
+}
+
+#[inline]
 fn expr_stmt(value: Expr, loc: Loc) -> Stmt {
     Stmt::alloc(
         S::SExpr {
@@ -3109,6 +3186,14 @@ fn block_stmt(body: Vec<Stmt>, loc: Loc) -> Stmt {
         },
         loc,
     )
+}
+
+/// Unwrap only `SExpr` to avoid dangling-else and lexical-declaration-as-body.
+fn body_stmt(mut body: Vec<Stmt>, loc: Loc) -> Stmt {
+    if body.len() == 1 && matches!(body[0].data, StmtData::SExpr(_)) {
+        return body.pop().unwrap();
+    }
+    block_stmt(body, loc)
 }
 
 fn leak_stmts(body: Vec<Stmt>) -> StmtNodeList {
@@ -3160,37 +3245,17 @@ fn property_access_expr(
     }
 }
 
-fn symbol_for(cx: &mut Context, name: &'static str) -> Expr {
-    let symbol = Expr::init_identifier(cx.cg.well_known(WellKnown::Symbol, b"Symbol"), Loc::EMPTY);
-    let callee = Expr::init(
-        E::Dot {
-            target: symbol,
-            name: StoreStr::new(b"for"),
-            name_loc: Loc::EMPTY,
-            optional_chain: None,
-            ..Default::default()
-        },
-        Loc::EMPTY,
-    );
-    Expr::init(
-        E::Call {
-            target: callee,
-            args: AstAlloc::vec_from_iter([string_expr(name, Loc::EMPTY)]),
-            ..Default::default()
-        },
-        Loc::EMPTY,
-    )
-}
-
 fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -> Expr {
     match value {
         PrimitiveValue::Number(n) => {
             let f = n.value();
             if f.is_nan() {
-                Expr::init_identifier(cx.cg.well_known(WellKnown::NaN, b"NaN"), loc)
+                Expr::init_identifier(cx.cg.well_known_global(WellKnown::NaN, b"NaN"), loc)
             } else if f.is_infinite() {
-                let inf =
-                    Expr::init_identifier(cx.cg.well_known(WellKnown::Infinity, b"Infinity"), loc);
+                let inf = Expr::init_identifier(
+                    cx.cg.well_known_global(WellKnown::Infinity, b"Infinity"),
+                    loc,
+                );
                 if f > 0.0 {
                     inf
                 } else {

@@ -628,7 +628,10 @@ impl ValueError {
     ) -> streams::result::StreamError {
         match self {
             ValueError::AbortReason(reason) => streams::result::StreamError::AbortReason(*reason),
-            _ => streams::result::StreamError::JSValue(self.to_js(global_object)),
+            _ => streams::result::StreamError::JSValue(jsc::strong::Optional::create(
+                self.to_js(global_object),
+                global_object,
+            )),
         }
     }
 
@@ -2307,29 +2310,14 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
-    fn on_stream_pipe(&mut self, stream: streams::Result) {
-        let stream_ = stream;
-        let stream_needs_deinit = matches!(
-            stream_,
-            streams::Result::Owned(_) | streams::Result::OwnedAndDone(_)
-        );
-
-        let chunk = stream_.slice();
+    fn on_stream_pipe(&mut self, stream: &streams::Result) {
+        let chunk = stream.slice();
         bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", chunk.len());
         let _ = self.stream_buffer.write(chunk);
-        if stream_.is_done() {
+        if stream.is_done() {
             let bytes = self.stream_buffer.list.as_slice();
             bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe done {}", bytes.len());
             (self.on_finished_buffering)(self.ctx, bytes, None, true);
-        }
-
-        if stream_needs_deinit {
-            match stream_ {
-                streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                    drop(owned);
-                }
-                _ => unreachable!(),
-            }
         }
     }
 
@@ -2531,7 +2519,7 @@ impl<'a> ValueBufferer<'a> {
 // `webcore::Wrap<T>` requires `T: PipeHandler`.
 impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
     fn on_pipe(&mut self, stream: streams::Result) {
-        self.on_stream_pipe(stream)
+        self.on_stream_pipe(&stream)
     }
 }
 

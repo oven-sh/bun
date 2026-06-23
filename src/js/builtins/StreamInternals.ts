@@ -31,9 +31,14 @@ export function markPromiseAsHandled(promise: Promise<unknown>) {
   $pokePromiseAsHandled(promise);
 }
 
+// Web IDL "a promise resolved with x" — always a fresh promise (the
+// assimilation hop when x is a thenable is observable in the spec's microtask
+// ordering). Promise.$resolve would return x unchanged when x is already a
+// native Promise and skip that hop; the streams ref-impl explicitly avoids
+// Promise.resolve here for the same reason.
 export function shieldingPromiseResolve(result) {
-  const promise = Promise.$resolve(result);
-  if (promise.$then === undefined) promise.$then = $Promise.prototype.$then;
+  const promise = $newPromise();
+  $resolvePromise(promise, result);
   return promise;
 }
 

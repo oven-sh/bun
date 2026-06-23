@@ -587,7 +587,12 @@ export function writableStreamDefaultControllerStart(controller) {
   const startAlgorithm = $getByIdDirectPrivate(controller, "startAlgorithm");
   $putByIdDirectPrivate(controller, "startAlgorithm", undefined);
   const stream = $getByIdDirectPrivate(controller, "stream");
-  return Promise.$resolve(startAlgorithm.$call()).$then(
+  // Web IDL "a promise resolved with x" is always a fresh promise — when
+  // startAlgorithm() returns one (as TransformStream's does), the assimilation
+  // hop is observable in the spec's microtask ordering. Promise.$resolve would
+  // return the input promise unchanged and skip that hop.
+  const startResult = startAlgorithm.$call();
+  return new Promise(resolve => resolve(startResult)).$then(
     () => {
       const state = $getByIdDirectPrivate(stream, "state");
       $assert(state === "writable" || state === "erroring");

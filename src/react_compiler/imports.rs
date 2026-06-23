@@ -24,11 +24,6 @@ use crate::program::Host;
 /// Corresponds to NonLocalImportSpecifier in the TS compiler.
 #[derive(Debug, Clone, Copy)]
 pub struct NonLocalImportSpecifier {
-    /// Bun symbol for the local binding; minted via `Host::new_import_item`
-    /// (Kind::Import + `is_import_item`) so codegen emits
-    /// `E::ImportIdentifier { ref_: name_ref }` and the linker's
-    /// `namespace_alias` rewrite applies. The textual name is recoverable
-    /// via `Host::ref_name(name_ref)`.
     pub name_ref: bun_ast::Ref,
     pub module: &'static str,
     pub imported: &'static str,
@@ -57,11 +52,7 @@ pub struct ProgramContext {
     // Variable renames from lowering, to be applied back to the Babel AST
     pub renames: Vec<crate::hir::environment::BindingRename>,
 
-    /// Module-scope `Ref` for the `bun:wrap` `__MEMO_CACHE_SENTINEL` runtime
-    /// import, lazily minted on first use so every compiled function in the
-    /// module references the same local. `None` ⇒ no import emitted.
     pub memo_cache_sentinel_ref: Option<bun_ast::Ref>,
-    /// Same for the `__EARLY_RETURN_SENTINEL` runtime import.
     pub early_return_sentinel_ref: Option<bun_ast::Ref>,
 
     // Internal state
@@ -211,11 +202,7 @@ impl ProgramContext {
         binding
     }
 
-    /// Register an import specifier for a `Ref` that was already minted by
-    /// `Host::new_import_item` (e.g. the `bun:wrap` sentinel refs minted lazily
-    /// inside `Codegen::well_known_import`). Unlike `add_import_specifier` this
-    /// does not allocate a fresh ref — the existing `Ref` is already woven into
-    /// emitted expressions, so the import clause must bind exactly that symbol.
+    /// Like `add_import_specifier` but binds a pre-minted `Ref` already woven into emitted AST.
     pub fn register_import_with_ref(
         &mut self,
         module: &'static str,
@@ -408,10 +395,6 @@ fn is_hook_name(name: &str) -> bool {
             .is_some_and(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
-/// Bun's bundler runtime module — see `src/runtime.js`. The bundler resolves
-/// this import record to `Index::RUNTIME` (bundle_v2.rs) so the
-/// `__MEMO_CACHE_SENTINEL`/`__EARLY_RETURN_SENTINEL` exports are tree-shaken
-/// in alongside `__toESM`/`__commonJS`.
 pub(crate) const BUN_RUNTIME_MODULE: &str = "bun:wrap";
 
 /// Get the runtime module name based on the compiler target.

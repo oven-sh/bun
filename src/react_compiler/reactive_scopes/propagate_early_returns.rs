@@ -203,19 +203,11 @@ fn apply_early_return_to_scope(
         },
     ));
 
-    // Create temporary place for the sentinel initialization
     let sentinel_temp = create_temporary_place_id(env, loc);
 
     let original_instructions = std::mem::take(&mut scope_block.instructions);
 
     scope_block.instructions = vec![
-        // Load the `$rc_early` runtime import. Upstream TS synthesizes a
-        // literal `Symbol.for("react.early_return_sentinel")` MethodCall here,
-        // but Bun imports that value once from `bun:wrap` for the post-scope
-        // `!==` comparison (codegen.rs WellKnown::EarlyReturnSentinel).
-        // Emitting a ModuleLocal load lets codegen route the *assignment* side
-        // through the same imported Ref so cache-miss paths in early-return
-        // scopes do `tN = $rc_early` instead of re-calling `Symbol.for(...)`.
         ReactiveStatement::Instruction(ReactiveInstruction {
             id: EvaluationOrder(0),
             lvalue: Some(Place {

@@ -122,10 +122,6 @@ fn lower_block_statement_inner(
                             .as_ref()
                             .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, 1))
                     }),
-                    // Recursive function declarations: scan args/body only
-                    // (the name is the def). Matches the SFunction arm of
-                    // ref_in_nested_fn_stmt so depth parity holds with the
-                    // forward-reference path above.
                     Data::SFunction(f) => ref_in_nested_fn_func(builder, target, &f.func, 1),
                     _ => false,
                 }

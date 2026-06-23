@@ -2200,12 +2200,6 @@ impl<'a> Parser<'a> {
                                     ref_: item.name.ref_,
                                     is_top_level: true,
                                 })?;
-                                // Mirror `generate_import_stmt`: register the
-                                // clause item as a named import so the linker
-                                // assigns its `namespace_alias` and the
-                                // printer's `EImportIdentifier` branch can
-                                // rewrite the call site to a property access
-                                // when the runtime is bundled.
                                 p.is_import_item.insert(item.name.ref_, ());
                                 p.named_imports.put(
                                     item.name.ref_,

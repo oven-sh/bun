@@ -50,8 +50,6 @@ use crate::reactive_scopes::{
 
 use crate::program::{Host, JsxImportKind};
 
-/// Names of the `bun:wrap` runtime exports the React Compiler imports for the
-/// memo-cache slot sentinels (see `src/runtime.js`).
 pub const MEMO_CACHE_SENTINEL_EXPORT: &str = "__MEMO_CACHE_SENTINEL";
 pub const EARLY_RETURN_SENTINEL_EXPORT: &str = "__EARLY_RETURN_SENTINEL";
 
@@ -106,13 +104,7 @@ enum WellKnown {
     NaN,
     Infinity,
     Underscore,
-    /// `import { __MEMO_CACHE_SENTINEL as $rc_sentinel } from "bun:wrap"` —
-    /// Bun's bundler runtime defines the `Symbol.for(...)` once so each
-    /// memo-slot comparison is `$[i] === $rc_sentinel` instead of re-calling
-    /// `Symbol.for(...)` inline (Babel emits the inline form; this is a
-    /// Bun-side enhancement over upstream).
     MemoCacheSentinel,
-    /// Same runtime import for `__EARLY_RETURN_SENTINEL`.
     EarlyReturnSentinel,
 }
 
@@ -154,10 +146,6 @@ impl<'h> Codegen<'h> {
         }
     }
 
-    /// Module-scope sentinel refs minted (or reused) during this function's
-    /// codegen, for write-back into `ProgramContext` so the next function in the
-    /// same module references the same `Ref` and `finish()` can emit the single
-    /// `bun:wrap` runtime import.
     pub fn sentinel_refs(&self) -> (Option<Ref>, Option<Ref>) {
         (
             self.well_known[WellKnown::MemoCacheSentinel as usize],
@@ -185,15 +173,6 @@ impl<'h> Codegen<'h> {
         r
     }
 
-    /// Like `well_known` but routes through `Host::new_import_item` so the
-    /// minted ref carries `Kind::Import` and is registered in the parser's
-    /// `is_import_item` map, and emits the call site as `EImportIdentifier`
-    /// (not `EIdentifier`) so the printer's namespace-alias rewrite applies
-    /// when the `bun:wrap` runtime is bundled. `record_usage` is called on
-    /// every emission (including first mint) so the linker's per-symbol
-    /// tree-shaking keeps the runtime export even when only one component in
-    /// the module references it. `program::finish()` later attaches the ref to
-    /// an `S::Import` clause item via `ProgramContext::register_import_with_ref`.
     fn well_known_import(&mut self, w: WellKnown, name: &[u8], loc: Loc) -> Expr {
         let r = if let Some(r) = self.well_known[w as usize] {
             r
@@ -206,10 +185,6 @@ impl<'h> Codegen<'h> {
         Expr::init(E::ImportIdentifier::new(r, true), loc)
     }
 
-    /// Like `well_known` but routes through `Host::global_ref` so the parser's
-    /// existing `Kind::Unbound` module-scope member for `Symbol` / `NaN` /
-    /// `Infinity` is reused instead of minting a fresh `Kind::Other` symbol the
-    /// renamer would treat as a renameable (and never-declared) local.
     fn well_known_global(&mut self, w: WellKnown, name: &[u8]) -> Ref {
         if let Some(r) = self.well_known[w as usize] {
             self.host.record_usage(r);
@@ -290,11 +265,8 @@ pub fn codegen_function(
         let cache_name = cx.synthesize_name("$");
         let loc = Loc::EMPTY;
 
-        // const $ = useMemoCache(N)
-        // Emit as `EImportIdentifier` (not `EIdentifier`) so the printer's
-        // namespace-alias rewrite applies when the runtime import is bundled —
-        // synthesized AST is never re-visited by the parser's
-        // `EIdentifier→EImportIdentifier` promotion.
+        // Synthesized AST is never re-visited by the parser's `EIdentifier→EImportIdentifier`
+        // promotion, so emit `EImportIdentifier` directly.
         let use_memo_cache = Expr::init(
             E::ImportIdentifier::new(
                 cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
@@ -316,11 +288,6 @@ pub fn codegen_function(
         let cache_ref = cx
             .cg
             .well_known(WellKnown::MemoCache, cache_name.as_bytes());
-        // Emit the `$ = $c(N)` preamble as `let` (not `const`) so the printer's
-        // adjacent-declarator merge can fold it with the body's leading `let`
-        // run (param destructure / first temp — see emit_store KLet rationale).
-        // Babel emits `let $2 = $c(N), {…} = t0, …`; `const` here was the
-        // largest single per-fn Δgzip contributor (873 fns × ~10B).
         preface.push(Stmt::alloc(
             S::Local {
                 kind: S::Kind::KLet,
@@ -786,9 +753,7 @@ fn codegen_reactive_scope(
         cx.declare(decl.identifier);
     }
     if !output_declarators.is_empty() {
-        // Emit a single `let a, b, c;` instead of one S::Local per output. The
-        // synthesized body is spliced after the visitor walks children, so
-        // mangleStmts never gets a chance to merge adjacent `let` ladders here.
+        // Synthesized body is spliced post-visitor; mangleStmts won't merge these.
         statements.push(Stmt::alloc(
             S::Local {
                 kind: S::Kind::KLet,
@@ -859,10 +824,6 @@ fn codegen_reactive_scope(
         ));
     }
 
-    // Emit the run of `$[i] = dep` / `$[i] = name` stores as ONE comma-sequence
-    // statement (matching Babel) instead of N separate statements, so the
-    // printer can render the if/else brace-less when the branch is otherwise
-    // pure expression statements.
     if !cache_store_exprs.is_empty() {
         computation_block.push(expr_stmt(comma_seq(cache_store_exprs, loc), loc));
     }
@@ -1024,9 +985,6 @@ fn codegen_terminal(
                 if block.is_empty() {
                     None
                 } else if block.len() == 1 && matches!(block[0].data, StmtData::SIf(_)) {
-                    // Unwrap a lone nested `if` so the printer emits `else if (...)`
-                    // instead of `else { if (...) }`. The synthesized body is spliced
-                    // post-visitor, so mangleStmts never sees this to flatten it.
                     Some(block.pop().unwrap())
                 } else {
                     Some(body_stmt(block, stmt_loc))
@@ -1588,11 +1546,6 @@ fn emit_store(
                 ));
             }
             let lval = codegen_lvalue(cx, lvalue)?;
-            // Emit SSA `Const` rebinds as `let` (not `const`) so the printer's
-            // adjacent-declarator merge can fold them with the next scope's
-            // `let tN` output temp into one `let x = tN, tN+1;`. These are
-            // compiler-generated SSA temps, so `const` carries no semantic
-            // benefit and only blocks the merge.
             Ok(Some(Stmt::alloc(
                 S::Local {
                     kind: S::Kind::KLet,
@@ -1944,11 +1897,6 @@ fn codegen_base_instruction_value(
             if let NonLocalKind::BunOpaque(e) = binding.kind {
                 return Ok(e);
             }
-            // propagate_early_returns.rs synthesizes a ModuleLocal `$rc_early`
-            // load for the assignment side of the early-return sentinel; route
-            // it through the same well-known slot as the post-scope `!==`
-            // comparison so both sides share the single `bun:wrap` runtime
-            // import emitted in program.rs (instead of inlining `Symbol.for`).
             if let NonLocalKind::ModuleLocal { name } = &binding.kind {
                 if name.slice() == b"$rc_early" {
                     return Ok(cx.cg.well_known_import(
@@ -3210,10 +3158,6 @@ fn string_expr(s: &str, loc: Loc) -> Expr {
     Expr::init(estring_utf8(s), loc)
 }
 
-/// Fold a nonempty list of expressions into a left-associated comma sequence
-/// (`a, b, c`). Used to collapse runs of cache-slot assignment statements into
-/// a single `ExpressionStatement(SequenceExpression)` so the printer can drop
-/// braces around memo-block if/else branches (matches Babel output shape).
 #[inline]
 fn comma_seq(exprs: Vec<Expr>, loc: Loc) -> Expr {
     let mut it = exprs.into_iter();
@@ -3259,13 +3203,7 @@ fn block_stmt(body: Vec<Stmt>, loc: Loc) -> Stmt {
     )
 }
 
-/// Wrap `body` for use as an `if`-consequent / loop body. When the body is a
-/// single expression statement, return it bare so the printer emits
-/// `if (x) a(), b();` / `for (…) a();` instead of `{ a(), b(); }`. The
-/// synthesized body is spliced post-visitor, so mangleStmts never sees this to
-/// flatten it (same as the round-2 else-if unwrap). Restricting the unwrap to
-/// `SExpr` avoids dangling-else (no bare nested `if` in a consequent) and the
-/// lexical-declaration-as-body syntax error.
+/// Unwrap only `SExpr` to avoid dangling-else and lexical-declaration-as-body.
 fn body_stmt(mut body: Vec<Stmt>, loc: Loc) -> Stmt {
     if body.len() == 1 && matches!(body[0].data, StmtData::SExpr(_)) {
         return body.pop().unwrap();

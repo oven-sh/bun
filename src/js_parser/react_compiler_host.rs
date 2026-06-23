@@ -105,10 +105,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn global_ref(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
-        // RC codegen runs from `parse_entry::finish` after visiting, so
-        // `current_scope == module_scope`; `find_symbol` returns the existing
-        // `Kind::Unbound` member (or creates one) — the renamer leaves it
-        // intact instead of renaming a never-declared `Kind::Other` local.
+        // Runs after visiting, so current_scope == module_scope.
         p.find_symbol(bun_ast::Loc::EMPTY, name).expect("oom").r#ref
     }
 

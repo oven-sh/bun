@@ -997,14 +997,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         }
                     }
                 } else if receiver.effect.is_mutable() {
-                    // `arr.push(jsx)` and friends: a value captured into a mutable
-                    // array via a method call escapes through the array. Without
-                    // this the JSX temp is only an rvalue of the call (the
-                    // receiver is the sole mutable lvalue) and its producing scope
-                    // is pruned/merged into the outer mutation scope, costing the
-                    // child its referential stability. Babel keeps the per-element
-                    // inner scope; match that by treating the args as escaping
-                    // roots so their own scopes are retained.
+                    // Args of a mutable-array method call escape via the receiver.
                     let type_id = env.identifiers[receiver.identifier.0 as usize].type_;
                     if is_array_type(&env.types[type_id.0 as usize]) {
                         for arg in args {

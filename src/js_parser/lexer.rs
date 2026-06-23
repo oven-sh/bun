@@ -2340,14 +2340,9 @@ lexer_impl_header! {
             let body = &text[..end_comment_text];
             if let Some(i) = strings::index_of(body, b"eslint-disable") {
                 let after = &body[i + b"eslint-disable".len()..];
-                // Upstream `findProgramSuppressions` only recognizes two forms:
-                //   1. `eslint-disable-next-line <rule>`  (line-scoped)
-                //   2. `eslint-disable <rule>`            (block-scoped)
-                // It does NOT recognize `eslint-disable-line`, and it requires a
-                // word boundary after the directive — so `eslint-disable-foo` /
-                // `eslint-disabled` must not match the block form.
+                // Only `eslint-disable[-next-line] <rule>` with a word boundary; not `-line`.
                 let at_word_boundary =
-                    |s: &[u8]| s.first().map_or(true, |b| b.is_ascii_whitespace());
+                    |s: &[u8]| s.first().is_none_or(|b| b.is_ascii_whitespace());
                 let matched = if strings::has_prefix_comptime(after, b"-next-line") {
                     let rest = &after[b"-next-line".len()..];
                     at_word_boundary(rest).then_some((false, rest))

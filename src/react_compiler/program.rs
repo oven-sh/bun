@@ -89,17 +89,10 @@ pub trait Host {
 
     fn new_generated(&mut self, name: &[u8]) -> Ref;
 
-    /// Mint a fresh module-scope symbol that will be bound by an `S::Import`
-    /// clause item (e.g. the `_c` memo-cache import). The host registers it as
-    /// an import item so call sites emitted as `EImportIdentifier` get the
-    /// printer's namespace-alias rewrite when bundling.
     fn new_import_item(&mut self, name: &[u8]) -> Ref {
         self.new_generated(name)
     }
 
-    /// `Ref` for a global like `Symbol` / `NaN` / `Infinity`. The host reuses
-    /// (or creates) the parser's `Kind::Unbound` module-scope member so the
-    /// renamer leaves the name intact.
     fn global_ref(&mut self, name: &[u8]) -> Ref {
         self.new_generated(name)
     }
@@ -696,11 +689,7 @@ fn returns_non_node_in_stmts(stmts: &[Stmt]) -> bool {
 fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
     match &stmt.data {
         StmtData::SReturn(ret) => {
-            // Upstream isNonNode (babel-plugin-react-compiler dist/index.js:107623-107637) only
-            // flags Object/Arrow/Function/BigInt/Class/New expressions. `return undefined` falls
-            // through to false there. Bun's visit pass folds `return undefined` → bare `return;`,
-            // so ret.value == None must be treated the same as null/JSX/undefined — otherwise a
-            // component with an early `return undefined` is rejected by get_component_or_hook_like.
+            // Visit folds `return undefined` → bare `return;`, so None ≡ undefined here.
             *result = match &ret.value {
                 Some(arg) => is_non_node(arg),
                 None => false,
@@ -1447,12 +1436,6 @@ pub fn finish(
 
     out_stmts.append(&mut state.outlined_decls);
 
-    // Register the lazily-minted `bun:wrap` sentinel refs as import specifiers
-    // so `add_imports_to_program` emits a single
-    //   import { __MEMO_CACHE_SENTINEL as $rc_sentinel } from "bun:wrap"
-    // per RC-compiled module. The bundler resolves `bun:wrap` to its runtime
-    // (`src/runtime.js`), giving ONE `Symbol.for(...)` per bundle instead of
-    // one per module.
     if let Some(r) = state.context.memo_cache_sentinel_ref {
         state.context.register_import_with_ref(
             crate::imports::BUN_RUNTIME_MODULE,

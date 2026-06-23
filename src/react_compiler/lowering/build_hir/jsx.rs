@@ -153,20 +153,8 @@ pub(super) fn lower_jsx_member_expression(
     lower_value_to_temporary(builder, value)
 }
 
-/// Lower an identifier in JSX-tag position to a temporary `Place`.
-///
-/// `lower_identifier` (helpers.rs) returns a bare `Place` for a true local
-/// (`VariableBinding::Identifier`) but for non-locals (Import* / Global /
-/// ModuleLocal) it has *already emitted* `LoadGlobal{NonLocalBinding}` and
-/// returns that instruction's temp. Unconditionally re-wrapping that temp in
-/// `LoadLocal` (the previous behaviour) loses the `NonLocalBinding` type, so
-/// AlignReactiveScopesToBlocks treats imported component tags as scope outputs
-/// requiring memo slots — Divider/ContextVisualization grew spurious
-/// `T0=ThemedText`/`T1=Decorative` cache entries vs. Babel.
-///
-/// Resolve once here: locals get the `LoadLocal`/`LoadContext` wrapper they
-/// need; non-locals are routed through `lower_identifier` for its
-/// `LoadGlobal` emission and the resulting temp is used directly.
+/// For non-locals `lower_identifier` already emits `LoadGlobal` and returns its temp;
+/// re-wrapping that in `LoadLocal` would lose the `NonLocalBinding` type.
 fn lower_tag_identifier(
     builder: &mut HirBuilder,
     ref_: Ref,
@@ -194,9 +182,6 @@ fn lower_tag_identifier(
             };
             lower_value_to_temporary(builder, load_value)
         }
-        // Non-local: lower_identifier emits LoadGlobal and returns its temp —
-        // do NOT re-wrap. Re-resolves once internally (cheap, no binding alloc
-        // on the non-Identifier path).
         _ => lower_identifier(builder, ref_, id_loc),
     }
 }

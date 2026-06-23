@@ -561,16 +561,8 @@ fn compare_deps(
             ManualMemoDependencyRoot::NamedLocal { value: a, .. },
             ManualMemoDependencyRoot::NamedLocal { value: b, .. },
         ) => {
-            // Upstream Babel compares `identifier.id`, which works because Babel
-            // shares a single Identifier object across all Places of a named
-            // local. Bun's arena-backed HIR can hold distinct IdentifierIds for
-            // the same source variable (e.g. the StartMemoize deps-array operand
-            // vs. the scope-dep root vs. the temporaries-recorded lvalue), all
-            // sharing one declaration_id. Comparing by IdentifierId here causes
-            // spurious RootDifference and bails the whole function (observed on
-            // KeybindingHints.tsx, ui/TreeSelect.tsx, useWellbeingNotifications.tsx
-            // — Babel compiles all three). declaration_id is the semantic
-            // equivalent of Babel's object-identity check.
+            // Bun's arena HIR can hold distinct IdentifierIds for the same source
+            // variable, so compare by declaration_id.
             a.identifier == b.identifier
                 || identifiers[a.identifier.0 as usize].declaration_id
                     == identifiers[b.identifier.0 as usize].declaration_id

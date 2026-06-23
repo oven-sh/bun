@@ -3234,14 +3234,12 @@ impl<'a> HTTPClient<'a> {
                         );
                     }
 
-                    let has_sent_body = if matches!(
-                        self.state.original_request_body,
-                        HTTPRequestBody::Bytes(_)
-                    ) {
-                        self.request_body().is_empty()
-                    } else {
-                        false
-                    };
+                    let has_sent_body =
+                        if matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_)) {
+                            self.request_body().is_empty()
+                        } else {
+                            false
+                        };
 
                     if has_sent_headers && has_sent_body {
                         self.state.request_stage = RequestStage::Done;

@@ -1007,10 +1007,12 @@ describe.concurrent("bun run", () => {
     });
   });
 
-  // BUN-3MAQ: the Windows .bunx fast path serialized the environment into a
-  // fixed 32,767-u16 buffer. CreateProcessW with CREATE_UNICODE_ENVIRONMENT has
-  // no such limit on the block, so a large environment must still reach the
-  // child. POSIX would hit E2BIG long before this, so the test is Windows-only.
+  // BUN-3MAQ: guards the user-visible contract that a >32,767-u16 environment
+  // block reaches a .bunx child intact. CreateProcessW with
+  // CREATE_UNICODE_ENVIRONMENT has no documented block-size limit. This does
+  // not assert which spawn path (fast .bunx shim vs. libuv fallback) was
+  // taken, since both are correct; it fails only if the child loses env data
+  // or the process crashes. POSIX hits E2BIG first, so Windows-only.
   it.if(isWindows)(
     "runs a node_modules/.bin entry with an environment block larger than 32,767 wide chars",
     async () => {

@@ -1402,6 +1402,72 @@ describe("bundler", () => {
       expect(code).not.toContain("B=class");
     },
   });
+
+  // Under --keep-names the class expression keeps its name instead of being
+  // emitted anonymously (the name-drop is suppressed, mirroring the
+  // class-expression path in the visitor), so `.name` is preserved.
+  itBundled("minify/ClassStatementKeepsNameWithKeepNames", {
+    files: {
+      "/entry.js": /* js */ `
+        export class B { m() { return 1; } }
+        console.log(B.name, new B().m());
+      `,
+    },
+    keepNames: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("B=class B{");
+    },
+    run: { stdout: "B 1" },
+  });
+
+  // A direct `eval` may reference the class by name at runtime, so the class
+  // expression must keep its (immutable inner) name even when the body has no
+  // static self-reference. Dropping it would make `eval("B")` resolve to the
+  // reassignable outer binding instead of the class.
+  itBundled("minify/ClassStatementKeepsNameWithDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        export class B { self() { return eval("B"); } }
+        const inst = new B();
+        const Original = B;
+        B = 999;
+        console.log(inst.self() === Original);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("B=class B{");
+    },
+    run: { stdout: "true" },
+  });
+
+  // The converted `var X = class {}` must remain tree-shakeable: an unused
+  // top-level class is still dropped entirely.
+  itBundled("minify/UnusedConvertedClassIsTreeShaken", {
+    files: {
+      "/entry.js": /* js */ `
+        class Unused { m() { return 1; } }
+        export const A = 1;
+        console.log(A);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("Unused");
+      expect(code).not.toContain("class");
+    },
+    run: { stdout: "1" },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

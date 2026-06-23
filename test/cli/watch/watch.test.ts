@@ -68,7 +68,7 @@ const exitScenarios = {
 
 for (const mode of ["--watch"] as const) {
   for (const [scenario, fixture] of Object.entries(exitScenarios)) {
-    test.concurrent(`${mode}: process.exit() (${scenario}) keeps the watcher alive`, async () => {
+    test(`${mode}: process.exit() (${scenario}) keeps the watcher alive`, async () => {
       using dir = tempDir("watch-process-exit", { "index.ts": fixture(0) });
       const path = join(String(dir), "index.ts");
 
@@ -124,7 +124,7 @@ for (const mode of ["--watch"] as const) {
 
 // The keepalive is scoped to --watch (it re-execs on change). --hot
 // re-evaluates in place, so process.exit() there still exits the process.
-test.concurrent("--hot: process.exit() exits the process (no keepalive)", async () => {
+test("--hot: process.exit() exits the process (no keepalive)", async () => {
   using dir = tempDir("hot-process-exit", {
     "index.ts": `console.log("HOT_RAN");\nprocess.exit(3);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
   });

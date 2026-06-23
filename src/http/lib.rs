@@ -2749,7 +2749,14 @@ impl<'a> HTTPClient<'a> {
                         }
                         return Ok(true);
                     }
-                    Err(e) => return Err(e),
+                    // A fatal SSL_write error fires trigger_close_callback
+                    // before returning, which runs proxy on_close →
+                    // close_and_fail and may have freed *self via the
+                    // result callback. Match the other ProxyTunnel::write
+                    // callers: bail without touching self. Ok(true) makes
+                    // write_to_stream only release the (independently
+                    // allocated) stream buffer and return.
+                    Err(_) => return Ok(true),
                 }
             }
             if !data.is_empty() {
@@ -2765,7 +2772,8 @@ impl<'a> HTTPClient<'a> {
                         let _ = buffer.write(data);
                         return Ok(true);
                     }
-                    Err(e) => return Err(e),
+                    // See the matching arm above: on_close already ran.
+                    Err(_) => return Ok(true),
                 }
             }
             return Ok(false);

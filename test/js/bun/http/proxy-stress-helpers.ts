@@ -288,6 +288,15 @@ export async function createAdversarialProxy(opts: AdversarialProxyOptions = {})
         upstream?.write(chunk);
         return;
       }
+      // Head already parsed and upstream dial in flight; buffer until the
+      // connect callback flips `tunneled`. The absolute-form branch re-reads
+      // `head` inside the connect callback, so appended bytes are forwarded.
+      // CONNECT clients wait for the 200 reply before sending more, so this
+      // window is unreachable for them.
+      if (record) {
+        head = Buffer.concat([head, chunk]);
+        return;
+      }
 
       head = Buffer.concat([head, chunk]);
       const headerEnd = head.indexOf("\r\n\r\n");

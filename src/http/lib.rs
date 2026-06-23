@@ -47,7 +47,7 @@ pub mod websocket_http_client;
 #[path = "zlib.rs"]
 pub mod zlib;
 
-// ── crate-root re-exports (real types from un-gated modules) ──
+// ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;

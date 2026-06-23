@@ -280,13 +280,14 @@ function Readable(options): void {
   this._readableState = new ReadableState(options, this, false);
 
   if (options) {
-    if (typeof options.read === "function") this._read = options.read;
+    const { read, destroy, construct, signal } = options;
+    if (typeof read === "function") this._read = read;
 
-    if (typeof options.destroy === "function") this._destroy = options.destroy;
+    if (typeof destroy === "function") this._destroy = destroy;
 
-    if (typeof options.construct === "function") this._construct = options.construct;
+    if (typeof construct === "function") this._construct = construct;
 
-    if (options.signal) addAbortSignal(options.signal, this);
+    if (signal) addAbortSignal(signal, this);
   }
 
   Stream.$call(this, options);
@@ -352,11 +353,12 @@ function readableAddChunkUnshiftByteMode(stream, state, chunk, encoding) {
 
   if (typeof chunk === "string") {
     encoding ||= state.defaultEncoding;
-    if (state.encoding !== encoding) {
-      if (state.encoding) {
+    const stateEncoding = state.encoding;
+    if (stateEncoding !== encoding) {
+      if (stateEncoding) {
         // When unshifting, if state.encoding is set, we have to save
         // the string in the BufferList with the state encoding.
-        chunk = Buffer.from(chunk, encoding).toString(state.encoding);
+        chunk = Buffer.from(chunk, encoding).toString(stateEncoding);
       } else {
         chunk = Buffer.from(chunk, encoding);
       }
@@ -594,14 +596,15 @@ Readable.prototype.read = function (n) {
   // If we're doing read(0) to trigger a readable event, but we
   // already have a bunch of data in the buffer, then just trigger
   // the 'readable' event and move on.
+  const stateLength = state.length;
   if (
     n === 0 &&
     (state[kState] & kNeedReadable) !== 0 &&
-    ((state.highWaterMark !== 0 ? state.length >= state.highWaterMark : state.length > 0) ||
+    ((state.highWaterMark !== 0 ? stateLength >= state.highWaterMark : stateLength > 0) ||
       (state[kState] & kEnded) !== 0)
   ) {
     $debug("read: emitReadable");
-    if (state.length === 0 && (state[kState] & kEnded) !== 0) endReadable(this);
+    if (stateLength === 0 && (state[kState] & kEnded) !== 0) endReadable(this);
     else emitReadable(this);
     return null;
   }
@@ -1382,8 +1385,9 @@ ObjectDefineProperties(Readable.prototype, {
     },
     set(val) {
       // Backwards compat.
-      if (this._readableState) {
-        this._readableState.readable = !!val;
+      const state = this._readableState;
+      if (state) {
+        state.readable = !!val;
       }
     },
   },
@@ -1431,8 +1435,9 @@ ObjectDefineProperties(Readable.prototype, {
       return this._readableState.flowing;
     },
     set: function (state) {
-      if (this._readableState) {
-        this._readableState.flowing = state;
+      const readableState = this._readableState;
+      if (readableState) {
+        readableState.flowing = state;
       }
     },
   },
@@ -1547,10 +1552,11 @@ function fromList(n, state) {
   const buf = state.buffer;
   const len = buf.length;
 
+  let stateLength;
   if ((state[kState] & kObjectMode) !== 0) {
     ret = buf[idx];
     buf[idx++] = null;
-  } else if (!n || n >= state.length) {
+  } else if (!n || n >= (stateLength = state.length)) {
     // Read it all, truncate the list.
     if ((state[kState] & kDecoder) !== 0) {
       ret = "";
@@ -1564,7 +1570,7 @@ function fromList(n, state) {
       ret = buf[idx];
       buf[idx++] = null;
     } else {
-      ret = Buffer.allocUnsafe(state.length);
+      ret = Buffer.allocUnsafe(stateLength ?? state.length);
 
       let i = 0;
       while (idx < len) {
@@ -1585,12 +1591,13 @@ function fromList(n, state) {
     ret = "";
     while (idx < len) {
       const str = buf[idx];
-      if (n > str.length) {
+      const strLength = str.length;
+      if (n > strLength) {
         ret += str;
-        n -= str.length;
+        n -= strLength;
         buf[idx++] = null;
       } else {
-        if (n === str.length) {
+        if (n === strLength) {
           ret += str;
           buf[idx++] = null;
         } else {
@@ -1606,17 +1613,18 @@ function fromList(n, state) {
     const retLen = n;
     while (idx < len) {
       const data = buf[idx];
-      if (n > data.length) {
+      const dataLength = data.length;
+      if (n > dataLength) {
         TypedArrayPrototypeSet.$call(ret, data, retLen - n);
-        n -= data.length;
+        n -= dataLength;
         buf[idx++] = null;
       } else {
-        if (n === data.length) {
+        if (n === dataLength) {
           TypedArrayPrototypeSet.$call(ret, data, retLen - n);
           buf[idx++] = null;
         } else {
           TypedArrayPrototypeSet.$call(ret, new $Buffer(data.buffer, data.byteOffset, n), retLen - n);
-          buf[idx] = new $Buffer(data.buffer, data.byteOffset + n, data.length - n);
+          buf[idx] = new $Buffer(data.buffer, data.byteOffset + n, dataLength - n);
         }
         break;
       }

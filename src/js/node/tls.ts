@@ -391,8 +391,9 @@ function validateSecureContextOptions(options) {
     throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(maxVersion), "maximum");
   if (ticketKeys !== undefined && ticketKeys !== null) {
     validateBuffer(ticketKeys, "options.ticketKeys");
-    if (ticketKeys.byteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeys.byteLength, "must be exactly 48 bytes");
+    const ticketKeysByteLength = ticketKeys.byteLength;
+    if (ticketKeysByteLength !== 48) {
+      throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeysByteLength, "must be exactly 48 bytes");
     }
   }
   // Negative session timeouts are rejected (min 0), matching Node — newer
@@ -581,24 +582,27 @@ function checkServerIdentity(hostname, cert) {
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
-  } else if (dnsNames.length > 0 || subject?.CN) {
-    const hostParts = splitHost(hostname);
-    const wildcard = pattern => check(hostParts, pattern, true);
-
-    if (dnsNames.length > 0) {
-      valid = ArrayPrototypeSome.$call(dnsNames, wildcard);
-      if (!valid) reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
-    } else {
-      // Match against Common Name only if no supported identifiers exist.
-      const cn = subject.CN;
-
-      if (Array.isArray(cn)) valid = ArrayPrototypeSome.$call(cn, wildcard);
-      else if (cn) valid = wildcard(cn);
-
-      if (!valid) reason = `Host: ${hostname}. is not cert's CN: ${cn}`;
-    }
   } else {
-    reason = "Cert does not contain a DNS name";
+    const hasDnsNames = dnsNames.length > 0;
+    if (hasDnsNames || subject?.CN) {
+      const hostParts = splitHost(hostname);
+      const wildcard = pattern => check(hostParts, pattern, true);
+
+      if (hasDnsNames) {
+        valid = ArrayPrototypeSome.$call(dnsNames, wildcard);
+        if (!valid) reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
+      } else {
+        // Match against Common Name only if no supported identifiers exist.
+        const cn = subject.CN;
+
+        if (Array.isArray(cn)) valid = ArrayPrototypeSome.$call(cn, wildcard);
+        else if (cn) valid = wildcard(cn);
+
+        if (!valid) reason = `Host: ${hostname}. is not cert's CN: ${cn}`;
+      }
+    } else {
+      reason = "Cert does not contain a DNS name";
+    }
   }
   if (!valid) {
     return $ERR_TLS_CERT_ALTNAME_INVALID(reason, hostname, cert);
@@ -679,15 +683,13 @@ function processPfxOptions(options) {
   for (const entry of entries) {
     let buf = entry;
     let passphrase = out.passphrase;
-    if (
-      entry != null &&
-      typeof entry === "object" &&
-      !Buffer.isBuffer(entry) &&
-      !$isTypedArrayView(entry) &&
-      entry.buf !== undefined
-    ) {
-      buf = entry.buf;
-      if (entry.passphrase !== undefined) passphrase = entry.passphrase;
+    if (entry != null && typeof entry === "object" && !Buffer.isBuffer(entry) && !$isTypedArrayView(entry)) {
+      const entryBuf = entry.buf;
+      if (entryBuf !== undefined) {
+        buf = entryBuf;
+        const entryPassphrase = entry.passphrase;
+        if (entryPassphrase !== undefined) passphrase = entryPassphrase;
+      }
     }
     const parsed = NativeSecureContext.parsePkcs12(buf, passphrase);
     keys.push(parsed.key);
@@ -696,7 +698,8 @@ function processPfxOptions(options) {
     // via addCACert on top of the default roots); folding it into the `ca`
     // option would instead REPLACE the trust store and break verification
     // against the default/NODE_EXTRA_CA_CERTS roots for pfx-only clients.
-    if (parsed.ca) pfxCAs.push(parsed.ca);
+    const parsedCA = parsed.ca;
+    if (parsedCA) pfxCAs.push(parsedCA);
   }
   out.key = keys.length === 1 ? keys[0] : keys;
   out.cert = certs.length === 1 ? certs[0] : certs;
@@ -717,18 +720,22 @@ function newNativeSecureContext(options, cached = true) {
   // ALPN protocols given as an array of strings are converted to the
   // length-prefixed wire format before crossing into native, the way Node's
   // convertALPNProtocols normalizes them on the socket options.
-  if (Array.isArray(options.ALPNProtocols)) {
+  const ALPNProtocols = options.ALPNProtocols;
+  if (Array.isArray(ALPNProtocols)) {
     const normalized = {};
-    convertALPNProtocols(options.ALPNProtocols, normalized);
+    convertALPNProtocols(ALPNProtocols, normalized);
     options = { ...options, ALPNProtocols: normalized.ALPNProtocols };
   }
-  if (options && (!options.key || !options.cert || !options.ca)) {
-    options = {
-      ...options,
-      key: options.key || null,
-      cert: options.cert || null,
-      ca: options.ca || null,
-    };
+  if (options) {
+    const { key, cert, ca } = options;
+    if (!key || !cert || !ca) {
+      options = {
+        ...options,
+        key: key || null,
+        cert: cert || null,
+        ca: ca || null,
+      };
+    }
   }
   if (options) {
     // Read each option once. Translate minVersion/maxVersion/secureProtocol to
@@ -772,27 +779,28 @@ var InternalSecureContext = class SecureContext {
     }
     if (options) {
       validateSecureContextOptions(options);
-      if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
-      if (options.key) throwOnInvalidTLSArray("options.key", options.key);
-      if (options.ca) throwOnInvalidTLSArray("options.ca", options.ca);
+      const cert = options.cert;
+      if (cert) throwOnInvalidTLSArray("options.cert", cert);
+      const key = options.key;
+      if (key) throwOnInvalidTLSArray("options.key", key);
+      const ca = options.ca;
+      if (ca) throwOnInvalidTLSArray("options.ca", ca);
       if (options.servername != null && typeof options.servername !== "string")
         throw new TypeError("servername argument must be an string");
       if (options.secureOptions != null && typeof options.secureOptions !== "number")
         throw new TypeError("secureOptions argument must be an number");
-      if (!$isUndefinedOrNull(options.privateKeyIdentifier)) {
-        if ($isUndefinedOrNull(options.privateKeyEngine))
-          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
-        if (typeof options.privateKeyEngine !== "string")
-          throw $ERR_INVALID_ARG_TYPE(
-            "options.privateKeyEngine",
-            ["string", "null", "undefined"],
-            options.privateKeyEngine,
-          );
-        if (typeof options.privateKeyIdentifier !== "string")
+      const privateKeyIdentifier = options.privateKeyIdentifier;
+      if (!$isUndefinedOrNull(privateKeyIdentifier)) {
+        const privateKeyEngine = options.privateKeyEngine;
+        if ($isUndefinedOrNull(privateKeyEngine))
+          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", privateKeyEngine);
+        if (typeof privateKeyEngine !== "string")
+          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], privateKeyEngine);
+        if (typeof privateKeyIdentifier !== "string")
           throw $ERR_INVALID_ARG_TYPE(
             "options.privateKeyIdentifier",
             ["string", "null", "undefined"],
-            options.privateKeyIdentifier,
+            privateKeyIdentifier,
           );
       }
     }
@@ -923,10 +931,11 @@ function TLSSocket(socket?, options?) {
   this.secureConnecting = true;
   this._secureEstablished = false;
   this._securePending = true;
-  if (options.checkServerIdentity !== undefined) {
-    validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
+  const checkServerIdentityOption = options.checkServerIdentity;
+  if (checkServerIdentityOption !== undefined) {
+    validateFunction(checkServerIdentityOption, "options.checkServerIdentity");
   }
-  this[kcheckServerIdentity] = options.checkServerIdentity || checkServerIdentity;
+  this[kcheckServerIdentity] = checkServerIdentityOption || checkServerIdentity;
   this[ksession] = options.session || null;
 
   // `new tls.TLSSocket(socket, { isServer: true })`: drive the server-side TLS
@@ -1038,8 +1047,9 @@ TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
 
   let requestCert = !!this._requestCert;
   let rejectUnauthorized = !!this._rejectUnauthorized;
-  if (options.requestCert !== undefined) requestCert = !!options.requestCert;
-  if (options.rejectUnauthorized !== undefined) rejectUnauthorized = !!options.rejectUnauthorized;
+  const { requestCert: requestCertOption, rejectUnauthorized: rejectUnauthorizedOption } = options;
+  if (requestCertOption !== undefined) requestCert = !!requestCertOption;
+  if (rejectUnauthorizedOption !== undefined) rejectUnauthorized = !!rejectUnauthorizedOption;
   if (requestCert !== this._requestCert || rejectUnauthorized !== this._rejectUnauthorized) {
     socket.setVerifyMode?.(requestCert, rejectUnauthorized);
     this._requestCert = requestCert;
@@ -1113,12 +1123,12 @@ TLSSocket.prototype.setSession = function setSession(session) {
 };
 
 TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(detailed) {
-  if (this._handle) {
+  const handle = this._handle;
+  if (handle) {
     // The native parameter means "abbreviated" - the inverse of Node's
     // `detailed`. Detailed requests get the whole chain with
     // issuerCertificate links; everything else gets just the leaf.
-    const cert =
-      arguments.length < 1 ? this._handle.getPeerCertificate?.() : this._handle.getPeerCertificate?.(!detailed);
+    const cert = arguments.length < 1 ? handle.getPeerCertificate?.() : handle.getPeerCertificate?.(!detailed);
     if (cert) {
       return translatePeerCertificate(cert);
     }
@@ -1153,8 +1163,9 @@ TLSSocket.prototype.getPeerX509Certificate = function getPeerX509Certificate() {
     if (cached) return cached;
     const x509 = new X509Certificate(chainCert.raw);
     seen.set(chainCert, x509);
-    if (chainCert.issuerCertificate && chainCert.issuerCertificate !== chainCert) {
-      const issuer = toX509(chainCert.issuerCertificate);
+    const issuerCertificate = chainCert.issuerCertificate;
+    if (issuerCertificate && issuerCertificate !== chainCert) {
+      const issuer = toX509(issuerCertificate);
       if (issuer) {
         Object.defineProperty(x509, "issuerCertificate", {
           __proto__: null,
@@ -1250,10 +1261,11 @@ function Server(options, secureConnectionListener): void {
     if (!(context instanceof InternalSecureContext)) {
       context = new InternalSecureContext(context);
     }
-    if (this._handle) {
+    const handle = this._handle;
+    if (handle) {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
       // the native side detects it via SecureContext.fromJS and up_refs.
-      addServerName(this._handle, hostname, context.context);
+      addServerName(handle, hostname, context.context);
     } else {
       if (!contexts) contexts = new Map();
       contexts.set(hostname, context);
@@ -1297,11 +1309,12 @@ function Server(options, secureConnectionListener): void {
       // type differs from its own index-paired certificate. This is a
       // best-effort check - the native loader at listen time remains the
       // authority and still rejects configurations that pass it.
-      if (Array.isArray(key) && key.length > 1 && cert) {
+      const keyLength = Array.isArray(key) ? key.length : 0;
+      if (keyLength > 1 && cert) {
         const certs = Array.isArray(cert) ? cert : [cert];
         try {
           const { createPrivateKey, X509Certificate } = require("node:crypto");
-          for (let i = 0; i < key.length; i++) {
+          for (let i = 0; i < keyLength; i++) {
             const k = key[i];
             if (typeof k !== "string" && !$isTypedArrayView(k)) continue;
             const pairedCert = certs[i < certs.length ? i : certs.length - 1];
@@ -1377,12 +1390,13 @@ function Server(options, secureConnectionListener): void {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault();
 
-      if (typeof options.ciphers !== "undefined") {
-        if (typeof options.ciphers !== "string") {
-          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", options.ciphers);
+      const ciphers = options.ciphers;
+      if (typeof ciphers !== "undefined") {
+        if (typeof ciphers !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", ciphers);
         }
 
-        validateCiphers(options.ciphers);
+        validateCiphers(ciphers);
       }
       // Unconditional so an omitted `ciphers` clears the previous value.
       this.ciphers = options.ciphers;
@@ -1536,8 +1550,9 @@ function connect(...args) {
   // the net.createConnection factory does), so tls.connect applies it
   // explicitly, exactly like Node's tls connect.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/wrap.js#L1791
-  if (options.timeout) {
-    tlssock.setTimeout(options.timeout);
+  const timeout = options.timeout;
+  if (timeout) {
+    tlssock.setTimeout(timeout);
   }
   return tlssock.connect(normal);
 }

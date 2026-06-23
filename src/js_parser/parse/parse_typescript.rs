@@ -188,7 +188,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Declare the namespace and create the scope
         let mut name = LocRef {
             loc: name_loc,
-            ref_: None,
+            ref_: Ref::NONE,
         };
         let scope_index = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
         p.current_scope_mut().ts_namespace = Some(ts_namespace);
@@ -237,7 +237,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtData::SFunction(func) => {
                     if func.func.flags.contains(flags::Function::IsExport) {
                         let locref = func.func.name.unwrap();
-                        let ref_ = locref.ref_.expect("infallible: ref bound");
+                        let ref_ = locref.ref_;
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let fn_name: &[u8] =
                             p.symbols[ref_.inner_index() as usize].original_name.slice();
@@ -255,7 +255,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtData::SClass(class) => {
                     if class.is_export {
                         let locref = class.class.class_name.unwrap();
-                        let ref_ = locref.ref_.expect("infallible: ref bound");
+                        let ref_ = locref.ref_;
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let class_name: &[u8] =
                             p.symbols[ref_.inner_index() as usize].original_name.slice();
@@ -272,7 +272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 StmtData::SNamespace(ns) => {
                     if ns.is_export {
-                        let ref_ = ns.name.ref_.expect("infallible: ref bound");
+                        let ref_ = ns.name.ref_;
                         if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
                             let member_data = clone_ts_member_data(member_data);
                             // SAFETY: original_name is arena-owned, valid for 'a.
@@ -291,7 +291,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 StmtData::SEnum(ns) => {
                     if ns.is_export {
-                        let ref_ = ns.name.ref_.expect("infallible: ref bound");
+                        let ref_ = ns.name.ref_;
                         if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
                             let member_data = clone_ts_member_data(member_data);
                             // SAFETY: original_name is arena-owned, valid for 'a.
@@ -416,9 +416,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
 
         if !opts.is_typescript_declare {
-            name.ref_ = Some(p.declare_symbol(SymbolKind::TsNamespace, name_loc, name_text)?);
+            name.ref_ = p.declare_symbol(SymbolKind::TsNamespace, name_loc, name_text)?;
             p.ref_to_ts_namespace_member
-                .insert(name.ref_.expect("infallible: ref bound"), ns_member_data);
+                .insert(name.ref_, ns_member_data);
         }
 
         // S::Namespace.stmts is `StoreSlice<Stmt>` (arena slice). BumpVec → bump slice.
@@ -541,7 +541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TIdentifier)?;
         let mut name = LocRef {
             loc: name_loc,
-            ref_: Some(Ref::NONE),
+            ref_: Ref::NONE,
         };
 
         // Generate the namespace object
@@ -554,12 +554,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Declare the enum and create the scope
         let scope_index = p.scopes_in_order.len();
         if !opts.is_typescript_declare {
-            name.ref_ = Some(p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?);
+            name.ref_ = p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?;
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
             p.current_scope_mut().ts_namespace = Some(ts_namespace);
             // debug-assert no prior entry.
             let prev = p.ref_to_ts_namespace_member.insert(
-                name.ref_.expect("infallible: ref bound"),
+                name.ref_,
                 TSNamespaceMemberData::Namespace(exported_members),
             );
             debug_assert!(prev.is_none());

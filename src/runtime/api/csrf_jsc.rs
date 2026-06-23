@@ -10,11 +10,9 @@ use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
 use crate::node::Encoding as NodeEncoding;
 
-// ── local shims ──────────────────────────────────────────────────────────
-// The upstream
 // `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
-// the case-insensitive variant is still cfg-gated. Map keys are all lower-case
-// ASCII, so lower the probe and do a direct lookup (mirrors PBKDF2.rs).
+// map keys are all lower-case ASCII, so lower the probe and do a direct lookup
+// (mirrors PBKDF2.rs / CryptoHasher.rs).
 fn algorithm_from_js_case_insensitive(
     global: &JSGlobalObject,
     input: JSValue,
@@ -23,9 +21,9 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// Local shim: validates an integer in `[0, MAX_SAFE_INTEGER]`.
-/// `validateIntegerRange` is defined on the cfg-gated `JSGlobalObject` impl,
-/// so inline the minimal u64 path here.
+/// Validates an optional integer property in `[0, MAX_SAFE_INTEGER]`.
+/// Differs from `JSValue::get_optional_int::<u64>` in rejecting NaN and in
+/// the error message wording expected by existing tests.
 fn get_optional_int_u64(
     target: JSValue,
     global: &JSGlobalObject,

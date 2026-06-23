@@ -3799,7 +3799,8 @@ mod windows_impl {
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
             // `errnoSys` for `NTSTATUS` routes through the curated
-            // `translateNTStatusToErrno` table, NOT `RtlNtStatusToDosError`.
+            // `translateNTStatusToErrno` table first, then falls back to
+            // `RtlNtStatusToDosError` for unmapped codes.
             let errno = w::translate_nt_status_to_errno(rc);
             return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
         }
@@ -4920,9 +4921,9 @@ pub type EnvMap = std::collections::HashMap<String, String>;
 #[macro_export]
 macro_rules! syslog {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`) — matches
+        // Gate on `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) — matches
         // bun_core::scoped_log!; there is no `debug_logs` Cargo feature.
-        if cfg!(debug_assertions) && $crate::fd::SYS.is_visible() {
+        if ::bun_core::env::IS_DEBUG && $crate::fd::SYS.is_visible() {
             const __NL: &str =
                 ::bun_core::output::_needs_nl(::bun_core::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
@@ -7103,10 +7104,11 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
     if rc != w::NTSTATUS::SUCCESS {
-        // `errnoSys` for
-        // `NTSTATUS` routes through the curated `translateNTStatusToErrno`
-        // table, NOT `RtlNtStatusToDosError`. `directory_exists_at()` then
-        // branches on `ENOENT`, so the mapping must match the spec table.
+        // `errnoSys` for `NTSTATUS` routes through the curated
+        // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
+        // deterministically maps to `ENOENT`, which `directory_exists_at()`
+        // branches on), then falls back to `RtlNtStatusToDosError` for
+        // unmapped codes.
         return Err(Error::from_code(
             windows::translate_nt_status_to_errno(rc),
             Tag::access,

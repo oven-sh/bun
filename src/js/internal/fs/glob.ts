@@ -1192,8 +1192,9 @@ function lazyMinimatch() {
           const isSequence = isNumericSequence || isAlphaSequence;
           const isOptions = m.body.indexOf(",") >= 0;
           if (!isSequence && !isOptions) {
-            if (m.post.match(/,(?!,).*\}/)) {
-              str = m.pre + "{" + m.body + escClose + m.post;
+            const mPost = m.post;
+            if (mPost.match(/,(?!,).*\}/)) {
+              str = m.pre + "{" + m.body + escClose + mPost;
               return expand_(str, max, true);
             }
             return [str];
@@ -1203,7 +1204,8 @@ function lazyMinimatch() {
             n = m.body.split(/\.\./);
           } else {
             n = parseCommaParts(m.body);
-            if (n.length === 1 && n[0] !== void 0) {
+            const nLength = n.length;
+            if (nLength === 1 && n[0] !== void 0) {
               n = expand_(n[0], max, false).map(embrace);
               if (n.length === 1) {
                 return post.map(p => m.pre + n[0] + p);
@@ -2653,29 +2655,31 @@ function lazyMinimatch() {
       const [head, body, tail] = partial
         ? [pattern.slice(patternIndex, firstgs), pattern.slice(firstgs + 1), []]
         : [pattern.slice(patternIndex, firstgs), pattern.slice(firstgs + 1, lastgs), pattern.slice(lastgs + 1)];
-      if (head.length) {
-        const fileHead = file.slice(fileIndex, fileIndex + head.length);
+      const headLength = head.length;
+      if (headLength) {
+        const fileHead = file.slice(fileIndex, fileIndex + headLength);
         if (!this.#matchOne(fileHead, head, partial, 0, 0)) {
           return false;
         }
-        fileIndex += head.length;
-        patternIndex += head.length;
+        fileIndex += headLength;
+        patternIndex += headLength;
       }
       let fileTailMatch = 0;
-      if (tail.length) {
-        if (tail.length + fileIndex > file.length) return false;
-        let tailStart = file.length - tail.length;
+      const tailLength = tail.length;
+      if (tailLength) {
+        if (tailLength + fileIndex > file.length) return false;
+        let tailStart = file.length - tailLength;
         if (this.#matchOne(file, tail, partial, tailStart, 0)) {
-          fileTailMatch = tail.length;
+          fileTailMatch = tailLength;
         } else {
-          if (file[file.length - 1] !== "" || fileIndex + tail.length === file.length) {
+          if (file[file.length - 1] !== "" || fileIndex + tailLength === file.length) {
             return false;
           }
           tailStart--;
           if (!this.#matchOne(file, tail, partial, tailStart, 0)) {
             return false;
           }
-          fileTailMatch = tail.length + 1;
+          fileTailMatch = tailLength + 1;
         }
       }
       if (!body.length) {
@@ -2826,7 +2830,8 @@ function lazyMinimatch() {
       return re;
     }
     makeRe() {
-      if (this.regexp || this.regexp === false) return this.regexp;
+      const regexp = this.regexp;
+      if (regexp || regexp === false) return regexp;
       const set = this.set;
       if (!set.length) {
         this.regexp = false;
@@ -2857,15 +2862,19 @@ function lazyMinimatch() {
               }
             } else if (next === void 0) {
               pp[i - 1] = prev + "(?:\\/|\\/" + twoStar + ")?";
-            } else if (next !== exports.GLOBSTAR) {
-              pp[i - 1] = prev + "(?:\\/|\\/" + twoStar + "\\/)" + next;
-              pp[i + 1] = exports.GLOBSTAR;
+            } else {
+              const GLOBSTAR = exports.GLOBSTAR;
+              if (next !== GLOBSTAR) {
+                pp[i - 1] = prev + "(?:\\/|\\/" + twoStar + "\\/)" + next;
+                pp[i + 1] = GLOBSTAR;
+              }
             }
           });
           const filtered = pp.filter(p => p !== exports.GLOBSTAR);
-          if (this.partial && filtered.length >= 1) {
+          let filteredLength;
+          if (this.partial && (filteredLength = filtered.length) >= 1) {
             const prefixes = [];
-            for (let i = 1; i <= filtered.length; i++) {
+            for (let i = 1; i <= filteredLength; i++) {
               prefixes.push(filtered.slice(0, i).join("/"));
             }
             return "(?:" + prefixes.join("|") + ")";

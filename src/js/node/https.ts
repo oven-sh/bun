@@ -188,11 +188,12 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
       tunneledSocket = tls.connect(requestOptions, onTLSHandshakeSuccess);
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
-      if (requestOptions._agentKey) {
+      const agentKey = requestOptions._agentKey;
+      if (agentKey) {
         // The tunneled socket carries the TLS session with the target; cache
         // it (and evict on close) under the target's agent key.
-        tunneledSocket.on("session", onSocketSession.bind(agent, requestOptions._agentKey));
-        tunneledSocket.once("close", onSocketClose.bind(agent, requestOptions._agentKey));
+        tunneledSocket.on("session", onSocketSession.bind(agent, agentKey));
+        tunneledSocket.once("close", onSocketClose.bind(agent, agentKey));
       }
     }
     return headerEndIndex;
@@ -249,16 +250,18 @@ function createConnection(...args) {
     options.host = args[1];
   }
   let cb;
-  if (typeof args[args.length - 1] === "function") {
-    cb = args[args.length - 1];
+  const lastArg = args[args.length - 1];
+  if (typeof lastArg === "function") {
+    cb = lastArg;
   }
 
   $debug("https createConnection", options);
 
-  if (options._agentKey) {
-    const session = this._getSession(options._agentKey);
+  const agentKey = options._agentKey;
+  if (agentKey) {
+    const session = this._getSession(agentKey);
     if (session) {
-      $debug("reuse session for %j", options._agentKey);
+      $debug("reuse session for %j", agentKey);
       options = {
         session,
         ...options,
@@ -322,15 +325,15 @@ function createConnection(...args) {
     socket[kWaitForProxyTunnel] = true;
   }
 
-  if (options._agentKey && tunnelConfig === null) {
+  if (agentKey && tunnelConfig === null) {
     // Cache new session for reuse. On the proxy-tunnel path `socket` is the
     // connection to the proxy, not the target - establishTunnel attaches
     // these listeners to the tunneled target socket instead, so the proxy's
     // session is never cached under the target's key.
-    socket.on("session", onSocketSession.bind(this, options._agentKey));
+    socket.on("session", onSocketSession.bind(this, agentKey));
 
     // Evict session on error
-    socket.once("close", onSocketClose.bind(this, options._agentKey));
+    socket.once("close", onSocketClose.bind(this, agentKey));
   }
 
   return socket;
@@ -369,65 +372,89 @@ Agent.prototype.createConnection = createConnection;
 Agent.prototype.getName = function getName(options = kEmptyObject) {
   let name = http.Agent.prototype.getName.$call(this, options);
 
-  name += ":";
-  if (options.ca) name += options.ca;
+  const {
+    ca,
+    cert,
+    clientCertEngine,
+    ciphers,
+    key,
+    pfx,
+    rejectUnauthorized,
+    servername,
+    host,
+    minVersion,
+    maxVersion,
+    secureProtocol,
+    crl,
+    honorCipherOrder,
+    ecdhCurve,
+    dhparam,
+    secureOptions,
+    sessionIdContext,
+    sigalgs,
+    privateKeyIdentifier,
+    privateKeyEngine,
+  } = options;
 
   name += ":";
-  if (options.cert) name += options.cert;
+  if (ca) name += ca;
 
   name += ":";
-  if (options.clientCertEngine) name += options.clientCertEngine;
+  if (cert) name += cert;
 
   name += ":";
-  if (options.ciphers) name += options.ciphers;
+  if (clientCertEngine) name += clientCertEngine;
 
   name += ":";
-  if (options.key) name += options.key;
+  if (ciphers) name += ciphers;
 
   name += ":";
-  if (options.pfx) name += options.pfx;
+  if (key) name += key;
 
   name += ":";
-  if (options.rejectUnauthorized !== undefined) name += options.rejectUnauthorized;
+  if (pfx) name += pfx;
 
   name += ":";
-  if (options.servername && options.servername !== options.host) name += options.servername;
+  if (rejectUnauthorized !== undefined) name += rejectUnauthorized;
 
   name += ":";
-  if (options.minVersion) name += options.minVersion;
+  if (servername && servername !== host) name += servername;
 
   name += ":";
-  if (options.maxVersion) name += options.maxVersion;
+  if (minVersion) name += minVersion;
 
   name += ":";
-  if (options.secureProtocol) name += options.secureProtocol;
+  if (maxVersion) name += maxVersion;
 
   name += ":";
-  if (options.crl) name += options.crl;
+  if (secureProtocol) name += secureProtocol;
 
   name += ":";
-  if (options.honorCipherOrder !== undefined) name += options.honorCipherOrder;
+  if (crl) name += crl;
 
   name += ":";
-  if (options.ecdhCurve) name += options.ecdhCurve;
+  if (honorCipherOrder !== undefined) name += honorCipherOrder;
 
   name += ":";
-  if (options.dhparam) name += options.dhparam;
+  if (ecdhCurve) name += ecdhCurve;
 
   name += ":";
-  if (options.secureOptions !== undefined) name += options.secureOptions;
+  if (dhparam) name += dhparam;
 
   name += ":";
-  if (options.sessionIdContext) name += options.sessionIdContext;
+  if (secureOptions !== undefined) name += secureOptions;
 
   name += ":";
-  if (options.sigalgs) name += JSONStringify(options.sigalgs);
+  if (sessionIdContext) name += sessionIdContext;
 
   name += ":";
-  if (options.privateKeyIdentifier) name += options.privateKeyIdentifier;
+  if (sigalgs) name += JSONStringify(sigalgs);
 
   name += ":";
-  if (options.privateKeyEngine) name += options.privateKeyEngine;
+  if (privateKeyIdentifier) name += privateKeyIdentifier;
+
+  name += ":";
+  if (privateKeyEngine) name += privateKeyEngine;
 
   return name;
 };
@@ -441,8 +468,9 @@ Agent.prototype._cacheSession = function _cacheSession(key, session) {
   if (this.maxCachedSessions === 0) return;
 
   // Fast case - update existing entry
-  if (this._sessionCache.map[key]) {
-    this._sessionCache.map[key] = session;
+  const sessionMap = this._sessionCache.map;
+  if (sessionMap[key]) {
+    sessionMap[key] = session;
     return;
   }
 

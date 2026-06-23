@@ -284,6 +284,12 @@ static HWY_INLINE uint64_t ToBits(D d, M m)
     // MFromD<D>::raw is __mmask{8,16,32,64}; the 64-byte CappedTag this
     // file uses makes it __mmask64.
     return static_cast<uint64_t>(m.raw);
+#elif HWY_TARGET == HWY_SVE || HWY_TARGET == HWY_SVE2
+    // Scalable SVE/SVE2: BitsFromMask is only available for fixed-size
+    // variants (SVE_256/SVE2_128). Use StoreMaskBits instead.
+    uint8_t bits[8] = {};
+    hn::StoreMaskBits(d, m, bits);
+    return *reinterpret_cast<uint64_t*>(bits);
 #else
     return hn::BitsFromMask(d, m);
 #endif

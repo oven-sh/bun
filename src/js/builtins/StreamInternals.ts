@@ -37,21 +37,28 @@ export function markPromiseAsHandled(promise: Promise<unknown>) {
 // native Promise and skip that hop; the streams ref-impl explicitly avoids
 // Promise.resolve here for the same reason.
 //
-// $resolvePromise performs thenable assimilation via Get(x, "then") and
-// invokes it when it differs from the builtin, so a monkey-patched
-// Promise.prototype.then is reached. For native promises replicate the
-// PromiseResolveThenableJob timing — queue a job that chains the reaction
-// — through the intrinsic .$then: same two-hop microtask ordering,
-// tamper-proof.
+// For native-promise results replicate PromiseResolveThenableJob's timing by
+// queuing a job that chains through the intrinsic Promise.prototype.@then:
+// same two-hop microtask ordering, and the job's try/catch + reject is the
+// spec job's step 3 (abrupt completion of the then call rejects the wrapper,
+// e.g. a throwing @@species on the result). $resolvePromise alone would do
+// Get(result, "then") once Promise.prototype.then has been replaced, reaching
+// the user override for every async callback result.
 export function shieldingPromiseResolve(result) {
   const promise = $newPromise();
   if ($isPromise(result)) {
     $enqueueJob(
-      (p, r) =>
-        r.$then(
-          v => $resolvePromise(p, v),
-          e => $rejectPromise(p, e),
-        ),
+      (p, r) => {
+        try {
+          $Promise.prototype.$then.$call(
+            r,
+            v => $resolvePromise(p, v),
+            e => $rejectPromise(p, e),
+          );
+        } catch (e) {
+          $rejectPromise(p, e);
+        }
+      },
       promise,
       result,
     );

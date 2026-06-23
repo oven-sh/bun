@@ -317,6 +317,43 @@ describe("WritableStream", () => {
       await done;
       expect(order).toEqual(["mt1", "mt2", "transform"]);
     });
+
+    // PromiseResolveThenableJob step 3: an abrupt completion of the then call
+    // rejects the wrapper. Intrinsic Promise.prototype.then runs
+    // SpeciesConstructor(this), so a throwing @@species on the start()-
+    // returned promise must reject startPromise and error the stream, not
+    // leave startPromise pending forever.
+    it("start() returns a Promise whose @@species throws: the stream errors with the thrown value", async () => {
+      const speciesError = new Error("species-boom");
+      const p = Promise.resolve();
+      p.constructor = { get [Symbol.species]() { throw speciesError; } };
+
+      let closedResult = "pending";
+      const writer = new WritableStream({ start: () => p }).getWriter();
+      writer.closed.then(
+        () => { closedResult = "fulfilled"; },
+        e => { closedResult = e; },
+      );
+      // [[started]] settles within a bounded number of microtask rounds; poll
+      // rather than awaiting writer.closed so a never-settling wrapper fails
+      // fast instead of hanging the test.
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(closedResult).toBe(speciesError);
+    });
+
+    // The assimilation job looks up the intrinsic @then on Promise.prototype
+    // directly, not via the result's prototype chain, so a native promise with
+    // a detached prototype still lets [[started]] flip and writes proceed.
+    it("start() returns a Promise with a null prototype: [[started]] flips and write proceeds", async () => {
+      const p = Promise.resolve();
+      Object.setPrototypeOf(p, null);
+
+      let written = false;
+      const writer = new WritableStream({ start: () => p, write() { written = true; } }).getWriter();
+      writer.write("x").catch(() => {});
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(written).toBe(true);
+    });
   });
 });
 

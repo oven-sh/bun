@@ -684,7 +684,11 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
         }
         poll_tag::MEMORY_PRESSURE => {
-            crate::node::memory_pressure::on_poll(owner.ptr.cast(), size_or_offset);
+            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract;
+            // `owner.ptr` was set at `FilePoll::init` with this tag.
+            unsafe {
+                crate::node::memory_pressure::on_poll(poll, owner.ptr.cast(), size_or_offset)
+            };
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);

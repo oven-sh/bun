@@ -101,11 +101,16 @@ mod posix {
                 continue;
             };
             let rest = rest.strip_prefix(b"/").unwrap_or(rest);
+            // cgroup v2 names are restricted to non-NUL, non-`/` bytes and in
+            // practice systemd-escaped ASCII, so this always succeeds; go
+            // through `str` so the bytes are spliced verbatim (systemd unit
+            // names can contain literal `\` which `escape_ascii` would mangle).
+            let rest = core::str::from_utf8(rest).ok()?;
             return bun_core::fmt::buf_print_z(
                 buf,
                 format_args!(
                     "/sys/fs/cgroup/{}{}memory.pressure",
-                    rest.escape_ascii(),
+                    rest,
                     if rest.is_empty() { "" } else { "/" }
                 ),
             )
@@ -237,11 +242,37 @@ mod posix {
 
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub fn on_poll(owner_ptr: *mut core::ffi::c_void, fflags: i64) {
-        // SAFETY: `owner_ptr` was set via `Owner::new(MEMORY_PRESSURE, watcher)` in `install`.
-        let watcher = unsafe { &*owner_ptr.cast::<MemoryPressureWatcher>() };
-        // SAFETY: `global` is the live per-thread global captured at install time.
-        let global = unsafe { &*watcher.global };
+    ///
+    /// # Safety
+    /// `poll` is the live `FilePoll` this dispatch is running for and
+    /// `owner_ptr` is the `MemoryPressureWatcher` set via `Owner::new` in
+    /// `install`; both outlive the call (guaranteed by `__bun_run_file_poll`).
+    pub unsafe fn on_poll(poll: *mut FilePoll, owner_ptr: *mut core::ffi::c_void, fflags: i64) {
+        let watcher = owner_ptr.cast::<MemoryPressureWatcher>();
+
+        // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
+        // the cgroup whose `memory.pressure` we opened was removed). kernfs
+        // reports that condition permanently, so a level-triggered
+        // registration would spin the loop. Tear the watch down instead of
+        // emitting; `uninstall` sees `poll == null` and skips the second
+        // deinit. No equivalent on macOS: `EVFILT_MEMORYSTATUS` is system-wide.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        // SAFETY: caller contract above.
+        unsafe {
+            if (*poll).flags.contains(Flags::Eof) || (*poll).flags.contains(Flags::Hup) {
+                let fd = (*poll).fd;
+                (*poll).deinit();
+                let _ = bun_sys::close(fd);
+                (*watcher).poll = ptr::null_mut();
+                (*watcher).registered = false;
+                return;
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let _ = poll;
+
+        // SAFETY: caller contract above; `global` was captured at install time.
+        let global = unsafe { &*(*watcher).global };
         #[cfg(target_os = "macos")]
         let lvl = fflags as i32;
         #[cfg(not(target_os = "macos"))]

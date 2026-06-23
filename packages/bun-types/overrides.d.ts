@@ -112,6 +112,8 @@ declare global {
       off(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
       addListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
       removeListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      prependListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      prependOnceListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
       emit(event: "memoryPressure", level: "warning" | "critical"): boolean;
 
       binding(m: "constants"): {

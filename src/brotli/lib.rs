@@ -302,8 +302,7 @@ impl StreamingDecoder {
         }
 
         Ok(Self {
-            // SAFETY: `create_instance` returns non-null on success (checked above).
-            brotli: unsafe { ptr::NonNull::new_unchecked(brotli) },
+            brotli: ptr::NonNull::from(brotli),
             state: ReaderState::Uninitialized,
             max_output_size: usize::MAX,
         })

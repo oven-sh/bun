@@ -81,7 +81,7 @@ type SyntaxNode = import("@lezer/common").SyntaxNode;
 const { parser: cppParser } = await import("@lezer/cpp");
 const { mkdir } = await import("fs/promises");
 const { join, relative } = await import("path");
-const { bannedTypes, sharedTypes, typeDeclarations } = await import("./shared-types");
+const { bannedTypes, sharedTypes } = await import("./shared-types");
 
 type Point = {
   line: number;
@@ -1156,7 +1156,7 @@ async function main() {
         " ".repeat(sin) +
           (errors.length > 0 ? "✗" : "✓") +
           " cppbind.ts generated bindings to " +
-          resultFilePath +
+          rustFilePath +
           (errors.length > 0 ? " with errors" : "") +
           " in " +
           (now - start) +

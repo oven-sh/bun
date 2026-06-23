@@ -410,7 +410,7 @@ describe("tls.createServer events", () => {
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         client = await Bun.connect({
-          tls: true,
+          tls: { rejectUnauthorized: false },
           hostname: address.address,
           port: address.port,
           socket: {
@@ -462,7 +462,7 @@ describe("tls.createServer events", () => {
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         await Bun.connect({
-          tls: true,
+          tls: { rejectUnauthorized: false },
           hostname: address.address,
           port: address.port,
           socket: {
@@ -529,7 +529,7 @@ describe("tls.createServer events", () => {
 
         async function spawnClient() {
           await Bun.connect({
-            tls: true,
+            tls: { rejectUnauthorized: false },
             port: address?.port,
             hostname: address?.address,
             socket: {
@@ -618,7 +618,7 @@ describe("tls.createServer events", () => {
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         client = await Bun.connect({
-          tls: true,
+          tls: { rejectUnauthorized: false },
           hostname: address.address,
           port: address.port,
           socket: {

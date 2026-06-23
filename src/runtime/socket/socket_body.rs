@@ -1579,6 +1579,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
+        let chain_failed =
+            SSL && !handlers.mode.is_server() && success == 1 && ssl_error.error_no != 0;
 
         if SSL && authorized && !handlers.mode.is_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
@@ -1604,14 +1606,40 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         this.update_flags(|f| {
-            f.set(Flags::AUTHORIZED, authorized);
+            f.set(Flags::AUTHORIZED, authorized && !chain_failed);
             f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
         });
+
+        let reject = chain_failed && this.flags.get().contains(Flags::REJECT_UNAUTHORIZED);
 
         let mut callback = handlers.on_handshake;
         let mut is_open = false;
 
         if handlers.vm.is_shutting_down() {
+            return Ok(());
+        }
+
+        if reject && callback.is_empty() {
+            let scope = Handlers::enter_ref(handlers);
+            let global = handlers.global_object;
+            let this_value = this.get_this_value(&global);
+            let err_value = match super::uws_jsc::verify_error_to_js(&ssl_error, &global) {
+                Ok(v) => v,
+                Err(e) => {
+                    if scope.exit() {
+                        this.handlers.set(None);
+                    }
+                    return Err(e);
+                }
+            };
+            let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+            let socket = this.socket.get();
+            if !socket.is_detached() && !socket.is_closed() {
+                socket.close(uws::CloseCode::FastShutdown);
+            }
+            if scope.exit() {
+                this.handlers.set(None);
+            }
             return Ok(());
         }
 
@@ -1673,7 +1701,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             result = match callback.call(
                 &global,
                 this_value,
-                &[this_value, JSValue::from(authorized), authorization_error],
+                &[
+                    this_value,
+                    JSValue::from(authorized && !reject),
+                    authorization_error,
+                ],
             ) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
@@ -1682,6 +1714,12 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
+        }
+        if reject {
+            let socket = this.socket.get();
+            if !socket.is_detached() && !socket.is_closed() {
+                socket.close(uws::CloseCode::FastShutdown);
+            }
         }
         if scope.exit() {
             this.handlers.set(None);
@@ -3332,6 +3370,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                     )?;
                 }
             }
+            if ssl_opts.is_none() {
+                let mut default_cfg = SSLConfig::zero();
+                default_cfg.reject_unauthorized =
+                    VirtualMachine::get().get_tls_reject_unauthorized() as i32;
+                ssl_opts = Some(default_cfg);
+            }
         } else if let Some(tls_js) = opts.get_truthy(global, "tls")? {
             if !tls_js.is_boolean() {
                 ssl_opts = SSLConfig::from_js(
@@ -3341,7 +3385,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     tls_js,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(SSLConfig::default());
+                let mut default_cfg = SSLConfig::zero();
+                default_cfg.reject_unauthorized =
+                    VirtualMachine::get().get_tls_reject_unauthorized() as i32;
+                ssl_opts = Some(default_cfg);
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -3414,7 +3461,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(Flags::default() | Flags::OWNS_HANDLERS),
+            flags: Cell::new(if cfg.is_some_and(|c| c.reject_unauthorized != 0) {
+                Flags::default() | Flags::OWNS_HANDLERS | Flags::REJECT_UNAUTHORIZED
+            } else {
+                Flags::default() | Flags::OWNS_HANDLERS
+            }),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3979,6 +4030,7 @@ bitflags::bitflags! {
         const BYPASS_TLS           = 1 << 9;
         const OWNS_HANDLERS        = 1 << 10;
         const HOSTNAME_MISMATCH    = 1 << 11;
+        const REJECT_UNAUTHORIZED  = 1 << 12;
     }
 }
 
@@ -4412,8 +4464,19 @@ pub fn js_upgrade_duplex_to_tls(
         if !tls.is_boolean() {
             ssl_opts = SSLConfig::from_js(VirtualMachine::get().as_mut(), global, tls)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(SSLConfig::default());
+            let mut default_cfg = SSLConfig::zero();
+            if !is_server {
+                default_cfg.reject_unauthorized =
+                    VirtualMachine::get().get_tls_reject_unauthorized() as i32;
+            }
+            ssl_opts = Some(default_cfg);
         }
+    }
+    if !is_server && owned_ctx.is_some() && ssl_opts.is_none() {
+        let mut default_cfg = SSLConfig::zero();
+        default_cfg.reject_unauthorized =
+            VirtualMachine::get().get_tls_reject_unauthorized() as i32;
+        ssl_opts = Some(default_cfg);
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
         return Err(global.throw(format_args!("Expected \"tls\" option")));
@@ -4452,7 +4515,13 @@ pub fn js_upgrade_duplex_to_tls(
         server_name: JsCell::new(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
-        flags: Cell::new(Flags::default() | Flags::OWNS_HANDLERS),
+        flags: Cell::new(
+            if !is_server && socket_config.is_some_and(|cfg| cfg.reject_unauthorized != 0) {
+                Flags::default() | Flags::OWNS_HANDLERS | Flags::REJECT_UNAUTHORIZED
+            } else {
+                Flags::default() | Flags::OWNS_HANDLERS
+            },
+        ),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),

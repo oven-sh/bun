@@ -44,7 +44,7 @@ describe("bun.connect", () => {
     await Bun.connect({
       hostname: listener.hostname,
       port: listener.port,
-      tls: harness.tls,
+      tls: { ...harness.tls, ca: harness.tls.cert },
       socket: {
         open(socket: Socket) {},
         close() {},

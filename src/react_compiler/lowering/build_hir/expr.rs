@@ -250,7 +250,16 @@ pub(crate) fn lower_expression(
             Ok(unsupported_node("Super", loc))
         }
         Data::EImport(i) => {
-            let callee = lower_value_to_temporary(builder, unsupported_node("Import", loc))?;
+            let callee = lower_value_to_temporary(
+                builder,
+                InstructionValue::LoadGlobal {
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::BunOpaque(*expr),
+                    },
+                    loc,
+                },
+            )?;
             let mut args: HirVec<PlaceOrSpread> = AstAlloc::vec();
             args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
                 builder, &i.expr,

@@ -1876,7 +1876,7 @@ fn codegen_base_instruction_value(
                 return Ok(e);
             }
             if let NonLocalKind::ModuleLocal { name } = &binding.kind {
-                if name.slice() == b"$rc_early" {
+                if binding.ref_().is_none() && name.slice() == b"$rc_early" {
                     return Ok(cx.cg.sentinel_expr(WellKnown::EarlyReturnSentinel, loc));
                 }
             }
@@ -1888,6 +1888,17 @@ fn codegen_base_instruction_value(
         InstructionValue::CallExpression { callee, args, .. } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
+            if let ExprData::EImport(orig) = callee_expr.data {
+                let mut it = arguments.into_iter();
+                return Ok(Expr::init(
+                    E::Import {
+                        expr: it.next().unwrap_or(orig.expr),
+                        options: it.next().unwrap_or(Expr::EMPTY),
+                        import_record_index: orig.import_record_index,
+                    },
+                    loc,
+                ));
+            }
             let call_expr = Expr::init(
                 E::Call {
                     target: callee_expr,

@@ -1443,7 +1443,6 @@ pub fn finish(
     }
 
     out_stmts.append(&mut state.outlined_decls);
-
     add_imports_to_program(out_stmts, host, &state.context);
 
     CompileOutput::Changed {

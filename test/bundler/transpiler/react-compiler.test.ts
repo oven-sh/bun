@@ -659,4 +659,145 @@ describe("bundler", () => {
       expect(refs).toHaveLength(3);
     },
   });
+
+  // `import()` lowers as a CallExpression whose callee carries the original
+  // `EImport` (with `import_record_index`) as a BunOpaque LoadGlobal; codegen
+  // reconstructs `E::Import` so the bundler's chunk linkage is preserved.
+  // Previously the callee was `UnsupportedNode("Import")`, which bailed at codegen.
+  itBundled("react-compiler/DynamicImportInRender", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { use } from "react";
+        export function Comp() {
+          const M = use(import("./mod"));
+          return <div>{M.x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime", "./mod"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toMatch(/\bimport\("\.\/mod"\)/);
+    },
+  });
+
+  itBundled("react-compiler/DynamicImportInEffectClosure", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useEffect } from "react";
+        export function Comp({ x }) {
+          useEffect(() => { import("./mod").then(m => m.init()); }, []);
+          return <div>{x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime", "./mod"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toMatch(/\bimport\("\.\/mod"\)/);
+    },
+  });
+
+  itBundled("react-compiler/DynamicImportPreservesImportRecord", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { use } from "react";
+        export function Comp() {
+          const M = use(import("./mod.js"));
+          return <div>{M.x}</div>;
+        }
+      `,
+      "/mod.js": `export const x = 42;`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    splitting: true,
+    outdir: "/out",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      // The bundler chunked /mod.js and rewrote the specifier; if RC dropped
+      // `import_record_index`, the rewrite wouldn't apply and the literal
+      // "./mod.js" would survive (or the chunk wouldn't be emitted at all).
+      expect(out).not.toMatch(/import\("\.\/mod\.js"\)/);
+      const m = out.match(/import\("(\.\/[\w-]+\.js)"\)/);
+      expect(m).not.toBeNull();
+      api.assertFileExists("/out/" + m![1].slice(2));
+    },
+  });
+
+  // prune_non_escaping_scopes treats `arr.push(jsx)` args as escaping so the
+  // per-element JSX scope isn't merged into the outer mutation scope; this
+  // asserts the Fragment's `key` survives the round-trip when the JSX temp is
+  // captured into a mutable array inside a wider mutation scope.
+  itBundled("react-compiler/KeyedFragmentAsArrayPushArg", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { Fragment } from "react";
+        export function Comp({ keys }) {
+          const parts = [];
+          for (const k of keys) {
+            parts.push(<Fragment key={k}><span>{k}</span></Fragment>);
+          }
+          return <>{parts}</>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      // jsx/jsxDEV(Fragment, props, key, ...) — `k` must be the third arg of
+      // the inner Fragment call (the only `Fragment,` callee; the outer is
+      // `Fragment2,`). The props object closes on its own line so anchor on
+      // `\n      }, k`.
+      expect(out).toMatch(/jsx(?:DEV|s)?\(Fragment, \{\n[\s\S]*?\n {6}\}, k\b/);
+    },
+  });
+
+  // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
+  // (no operand is reactive, callee isn't a hook), so its scope's deps prune
+  // to empty and it becomes a sentinel-only block. Babel does the same; this
+  // is React Compiler's purity assumption (module-level functions are pure
+  // w.r.t. props/state). NotificationContent's behavior change is because
+  // Bun folds `feature()` before RC runs, so native compiles a component
+  // Babel bails on for an unrelated reason (conditional hook in source).
+  itBundled("react-compiler/ZeroArgGlobalCallMatchesBabel", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { globalFn } from "./mod";
+        export function Comp() {
+          const x = globalFn();
+          return <div>{x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime", "./mod"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      // Parity with Babel: `globalFn()` is inside the sentinel-only block.
+      const m = out.match(/\b_c\((\d+)\)/);
+      expect(m).not.toBeNull();
+      expect(m![1]).toBe("1");
+      expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
+    },
+  });
 });

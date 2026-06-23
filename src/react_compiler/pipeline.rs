@@ -186,8 +186,7 @@ pub fn compile_fn(
     let codegen_result = timed!(
         "Codegen",
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)
-    );
-    let codegen_result = codegen_result?;
+    )?;
 
     #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     if env.config.throw_unknown_exception_testonly {

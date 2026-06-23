@@ -33,7 +33,7 @@ const wrapperCalls: WrapperCall[] = [];
 const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
   path.join(import.meta.dir, "../"),
   ["deps", "node_modules", "WebKit"],
-  [".cpp", ".zig", ".bind.ts"],
+  [".cpp", ".bind.ts"],
 );
 
 function callBaseName(x: string) {
@@ -47,14 +47,19 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
   }
 
   filename = filename.replaceAll("/", sep);
+
+  // The $zig() macro's first argument is a legacy identifier naming the module
+  // a native symbol belongs to; it is only used to group/comment generated
+  // declarations and is never opened. The corresponding source no longer
+  // exists on disk, so skip the existence check.
+  if (call_type === "zig") {
+    return filename;
+  }
+
   const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {
     const fnName = call_type === "bind" ? "bindgenFn" : call_type;
     throw new Error(`Could not find file ${filename} in $${fnName} call`);
-  }
-
-  if (call_type === "zig") {
-    return resolved;
   }
 
   return filename;
@@ -371,11 +376,7 @@ export function getJS2NativeDTS() {
         .filter(x => x.endsWith("cpp"))
         .map(x => JSON.stringify(basename(x)))
         .join("|"),
-    "declare type NativeFilenameZig = " +
-      sourceFiles
-        .filter(x => x.endsWith("zig"))
-        .map(x => JSON.stringify(basename(x)))
-        .join("|"),
+    "declare type NativeFilenameZig = string;",
     "",
   ].join("\n");
 }

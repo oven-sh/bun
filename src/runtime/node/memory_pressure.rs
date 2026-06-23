@@ -12,9 +12,10 @@
 //!     signal via `POLLPRI`. Requires `CAP_SYS_RESOURCE` before kernel 6.6,
 //!     and PSI enabled (`CONFIG_PSI=y`). If neither path can be opened for
 //!     writing, the watcher silently does nothing.
-//!   - Windows: `CreateMemoryResourceNotification(LowMemoryResourceNotification)`
-//!     waited on a thread-pool thread via `RegisterWaitForSingleObject`; the
-//!     callback posts back to the JS thread through a `uv_async_t`.
+//!   - Windows: a dedicated thread blocks on
+//!     `CreateMemoryResourceNotification(LowMemoryResourceNotification)` and
+//!     posts a `ConcurrentTask` back to the JS event loop when it signals,
+//!     with a 30 s holdoff before re-waiting (the handle is level-triggered).
 //!
 //! Armed lazily on the first listener and disarmed on the last removal via
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
@@ -253,217 +254,143 @@ mod posix {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Windows backend: CreateMemoryResourceNotification + RegisterWaitForSingleObject
+// Windows backend: CreateMemoryResourceNotification on a dedicated thread
 // ────────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
 mod windows {
     use core::ffi::c_void;
-    use core::mem::MaybeUninit;
     use core::ptr::{self, NonNull};
-    use core::sync::atomic::{AtomicI32, Ordering};
 
+    use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, task_tag};
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
-    use bun_sys::windows::libuv;
 
     type HANDLE = *mut c_void;
     type BOOL = i32;
-    type ULONG = u32;
-    const INVALID_HANDLE_VALUE: HANDLE = usize::MAX as HANDLE;
+    type DWORD = u32;
+    const WAIT_OBJECT_0: DWORD = 0;
     /// `LowMemoryResourceNotification` enum value.
     const LOW_MEMORY_RESOURCE_NOTIFICATION: i32 = 0;
-    /// The notification handle is level-triggered: it stays signalled for as
-    /// long as memory is low. A recurring wait would spin the thread pool, so
-    /// each registration fires once and the JS thread re-arms after a holdoff.
-    const WT_EXECUTEONLYONCE: ULONG = 0x00000008;
-    /// Minimum gap between re-arming the wait, to avoid firing on every loop
-    /// tick while the low-memory condition persists.
-    const HOLDOFF_MS: u64 = 30_000;
+    /// The low-memory notification handle is level-triggered: it stays
+    /// signalled while the condition holds. After posting one event we wait
+    /// on `shutdown` alone for this long before re-checking `notify`, so a
+    /// sustained low-memory state fires at most once every 30 s.
+    const HOLDOFF_MS: DWORD = 30_000;
 
     unsafe extern "system" {
         fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
-        fn RegisterWaitForSingleObject(
-            out_wait: *mut HANDLE,
-            handle: HANDLE,
-            callback: unsafe extern "system" fn(ctx: *mut c_void, timed_out: u8),
-            ctx: *mut c_void,
-            millis: ULONG,
-            flags: ULONG,
-        ) -> BOOL;
-        fn UnregisterWaitEx(wait: HANDLE, completion_event: HANDLE) -> BOOL;
+        fn CreateEventW(attrs: *mut c_void, manual_reset: BOOL, initial: BOOL, name: *const u16)
+        -> HANDLE;
+        fn SetEvent(h: HANDLE) -> BOOL;
+        fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
+        fn WaitForMultipleObjects(n: DWORD, h: *const HANDLE, wait_all: BOOL, ms: DWORD) -> DWORD;
         fn CloseHandle(h: HANDLE) -> BOOL;
     }
 
-    #[repr(C)]
+    /// Per-VM watcher. Stored type-erased in `RareData.memory_pressure_watcher`.
     struct MemoryPressureWatcher {
-        /// Must come first so the `uv_close` callback can recover `*mut Self`.
-        async_: libuv::uv_async_t,
-        /// Holdoff before re-arming the wait after a fire.
-        holdoff: libuv::uv_timer_t,
-        global: *mut JSGlobalObject,
-        /// Signalled by the kernel when available memory is low.
+        /// Signalled by the kernel while available memory is low.
         notify: HANDLE,
-        /// Thread-pool wait registration. Only ever written on the JS thread;
-        /// read on the thread-pool thread only while the wait it names is
-        /// armed. Null between fires while the holdoff timer is pending.
-        wait: HANDLE,
-        /// Set from the thread-pool callback; read on the JS thread.
-        pending_level: AtomicI32,
+        /// Manual-reset event signalled by `uninstall` to wake the thread.
+        shutdown: HANDLE,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Drop for MemoryPressureWatcher {
+        fn drop(&mut self) {
+            // SAFETY: handles were created by the kernel and are owned here;
+            // the thread has been joined so nothing references them.
+            unsafe {
+                CloseHandle(self.shutdown);
+                CloseHandle(self.notify);
+            }
+        }
     }
 
     fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<c_void>> {
         vm.rare_data().memory_pressure_watcher_slot()
     }
 
-    /// Arm a one-shot thread-pool wait on `notify`. JS thread only.
-    ///
-    /// SAFETY: `watcher` is live and `(*watcher).notify` is a valid handle.
-    unsafe fn arm_wait(watcher: *mut MemoryPressureWatcher) {
-        let mut wait: HANDLE = ptr::null_mut();
-        // SAFETY: `watcher` outlives the wait (uninstall blocks on
-        // `UnregisterWaitEx(.., INVALID_HANDLE_VALUE)` before freeing).
-        let ok = unsafe {
-            RegisterWaitForSingleObject(
-                &mut wait,
-                (*watcher).notify,
-                wait_callback,
-                watcher.cast(),
-                u32::MAX,
-                WT_EXECUTEONLYONCE,
-            )
-        };
-        // SAFETY: sole writer of `wait` on the JS thread.
-        unsafe { (*watcher).wait = if ok != 0 { wait } else { ptr::null_mut() } };
-    }
-
-    /// Runs on a Windows thread-pool thread. May only touch `pending_level`
-    /// and `uv_async_send` (which is documented thread-safe).
-    unsafe extern "system" fn wait_callback(ctx: *mut c_void, _timed_out: u8) {
-        // SAFETY: `ctx` is the watcher pointer passed at registration; the
-        // wait is unregistered with `INVALID_HANDLE_VALUE` before we free it,
-        // so it outlives every callback.
-        let watcher = unsafe { &*ctx.cast::<MemoryPressureWatcher>() };
-        watcher
-            .pending_level
-            .store(super::level::CRITICAL, Ordering::SeqCst);
-        // SAFETY: `async_` was uv_async_init'd on the JS loop; uv_async_send is thread-safe.
-        let _ = unsafe { libuv::uv_async_send(ptr::from_ref(&watcher.async_).cast_mut()) };
-    }
-
-    /// Runs on the JS thread.
-    unsafe extern "C" fn on_async(handle: *mut libuv::uv_async_t) {
-        // SAFETY: `data` was set to the watcher in `install`.
-        let watcher = unsafe { (*handle).data.cast::<MemoryPressureWatcher>() };
-        // SAFETY: `watcher` is live; JS thread.
-        let lvl = unsafe { (*watcher).pending_level.swap(0, Ordering::SeqCst) };
-        if lvl == 0 {
-            return;
-        }
-        // SAFETY: `global` is the live per-thread global captured at install.
-        super::emit(unsafe { &*(*watcher).global }, lvl);
-
-        // The one-shot wait has fired; release its handle and start the
-        // holdoff before re-arming. The `WT_EXECUTEONLYONCE` callback has
-        // already returned (it posted the async that woke us), so a
-        // blocking unregister here does not deadlock.
-        // SAFETY: JS thread; `watcher` is live.
-        unsafe {
-            let wait = core::mem::replace(&mut (*watcher).wait, ptr::null_mut());
-            if !wait.is_null() {
-                UnregisterWaitEx(wait, INVALID_HANDLE_VALUE);
-            }
-            if !(*watcher).notify.is_null() {
-                let _ = libuv::uv_timer_start(
-                    ptr::addr_of_mut!((*watcher).holdoff),
-                    Some(on_holdoff),
-                    HOLDOFF_MS,
-                    0,
-                );
+    /// Blocks on `[shutdown, notify]` and posts a `MemoryPressureTask` to the
+    /// JS event loop when `notify` fires. Handles are passed as usize since
+    /// `HANDLE` (`*mut c_void`) is not `Send`.
+    fn thread_main(vm_addr: usize, notify: usize, shutdown: usize) {
+        bun_core::output::Source::configure_named_thread(bun_core::zstr!("MemoryPressure"));
+        let handles: [HANDLE; 2] = [shutdown as HANDLE, notify as HANDLE];
+        loop {
+            // SAFETY: both handles are valid for the thread's lifetime
+            // (`uninstall` joins before closing them).
+            let rc = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, u32::MAX) };
+            match rc {
+                WAIT_OBJECT_0 => break,
+                r if r == WAIT_OBJECT_0 + 1 => {
+                    let task = ConcurrentTask::create(Task::new(
+                        task_tag::MemoryPressureTask,
+                        super::level::CRITICAL as usize as *mut (),
+                    ));
+                    // SAFETY: `vm_addr` is the main-thread VM captured at
+                    // install; it lives for the process.
+                    // `enqueue_task_concurrent` is the documented thread-safe
+                    // entry point (lock-free MPSC push + loop wakeup).
+                    unsafe { &*(vm_addr as *const VirtualMachine) }
+                        .event_loop_shared()
+                        .enqueue_task_concurrent(task);
+                    // Holdoff on `shutdown` only: `notify` stays signalled
+                    // while memory is low, so waiting on it again would spin.
+                    // SAFETY: `shutdown` is valid for the thread's lifetime.
+                    if unsafe { WaitForSingleObject(handles[0], HOLDOFF_MS) } == WAIT_OBJECT_0 {
+                        break;
+                    }
+                }
+                _ => break,
             }
         }
-    }
-
-    /// Runs on the JS thread when the holdoff timer expires.
-    unsafe extern "C" fn on_holdoff(handle: *mut libuv::uv_timer_t) {
-        // SAFETY: `data` was set to the watcher in `install`.
-        let watcher = unsafe { (*handle).data.cast::<MemoryPressureWatcher>() };
-        // SAFETY: JS thread; `watcher` is live; `notify` is valid (checked before the
-        // timer was started).
-        unsafe { arm_wait(watcher) };
-    }
-
-    extern "C" fn on_async_closed(handle: *mut libuv::uv_handle_t) {
-        // SAFETY: `handle` is the leading `uv_async_t` field of a heap-allocated
-        // `MemoryPressureWatcher`; the timer is the only other uv handle and is
-        // closed next, with the final free in its close callback.
-        let watcher = handle.cast::<MemoryPressureWatcher>();
-        // SAFETY: `watcher` is live until `on_holdoff_closed` frees it.
-        unsafe {
-            libuv::uv_close(
-                ptr::addr_of_mut!((*watcher).holdoff).cast(),
-                Some(on_holdoff_closed),
-            )
-        };
-    }
-
-    extern "C" fn on_holdoff_closed(handle: *mut libuv::uv_handle_t) {
-        // SAFETY: `data` is the watcher pointer; both uv handles are now
-        // fully closed, so the allocation is unreferenced.
-        unsafe { bun_core::heap::destroy((*handle).data.cast::<MemoryPressureWatcher>()) };
     }
 
     pub(super) fn install(global: &JSGlobalObject) {
         let vm = global.bun_vm_ptr();
-        // SAFETY: same-thread VM access.
-        let vm_ref = unsafe { &mut *vm };
-        if slot(vm_ref).is_some() {
+        // SAFETY: same-thread VM access (asserted by `bun_vm_ptr`).
+        if slot(unsafe { &mut *vm }).is_some() {
             return;
         }
 
-        let uv_loop = global.bun_vm().uv_loop();
-        let uninit: *mut MaybeUninit<MemoryPressureWatcher> =
-            bun_core::heap::into_raw(Box::<MemoryPressureWatcher>::new_uninit());
-        let watcher: *mut MemoryPressureWatcher = uninit.cast();
-
-        // SAFETY: `watcher.async_` is a valid `uv_async_t`-sized slot; `uv_loop`
-        // is the VM's live libuv loop.
-        let rc = unsafe {
-            libuv::uv_async_init(
-                uv_loop,
-                ptr::addr_of_mut!((*watcher).async_),
-                Some(on_async),
-            )
-        };
-        if rc != 0 {
-            // SAFETY: allocation is still `MaybeUninit`; never handed out.
-            drop(unsafe { bun_core::heap::take(uninit) });
-            return;
-        }
-        // SAFETY: `holdoff` is a valid `uv_timer_t`-sized slot; uv_timer_init
-        // cannot fail on a live loop. Remaining fields are plain POD.
-        unsafe {
-            let _ = libuv::uv_timer_init(uv_loop, ptr::addr_of_mut!((*watcher).holdoff));
-            libuv::uv_unref(ptr::addr_of_mut!((*watcher).async_).cast());
-            libuv::uv_unref(ptr::addr_of_mut!((*watcher).holdoff).cast());
-            (*watcher).async_.data = watcher.cast();
-            (*watcher).holdoff.data = watcher.cast();
-            (*watcher).global = ptr::from_ref(global).cast_mut();
-            (*watcher).notify = ptr::null_mut();
-            (*watcher).wait = ptr::null_mut();
-            ptr::addr_of_mut!((*watcher).pending_level).write(AtomicI32::new(0));
-        }
-
-        // SAFETY: Win32 call; returns NULL on failure.
+        // SAFETY: Win32 calls; both return NULL on failure.
         let notify = unsafe { CreateMemoryResourceNotification(LOW_MEMORY_RESOURCE_NOTIFICATION) };
-        if !notify.is_null() {
-            // SAFETY: sole owner of `watcher`; `notify` is valid.
-            unsafe {
-                (*watcher).notify = notify;
-                arm_wait(watcher);
-            }
+        if notify.is_null() {
+            return;
+        }
+        // SAFETY: manual-reset, initially non-signalled, unnamed.
+        let shutdown = unsafe { CreateEventW(ptr::null_mut(), 1, 0, ptr::null()) };
+        if shutdown.is_null() {
+            // SAFETY: `notify` is owned here.
+            unsafe { CloseHandle(notify) };
+            return;
         }
 
+        let (vm_addr, notify_addr, shutdown_addr) =
+            (vm as usize, notify as usize, shutdown as usize);
+        let thread = match std::thread::Builder::new()
+            .name("MemoryPressure".into())
+            .stack_size(64 * 1024)
+            .spawn(move || thread_main(vm_addr, notify_addr, shutdown_addr))
+        {
+            Ok(t) => t,
+            Err(_) => {
+                // SAFETY: both handles are owned here and were never shared.
+                unsafe {
+                    CloseHandle(shutdown);
+                    CloseHandle(notify);
+                }
+                return;
+            }
+        };
+
+        let watcher = bun_core::heap::into_raw(Box::new(MemoryPressureWatcher {
+            notify,
+            shutdown,
+            thread: Some(thread),
+        }));
         // SAFETY: same-thread VM access.
         *slot(unsafe { &mut *vm }) = NonNull::new(watcher.cast());
     }
@@ -474,30 +401,18 @@ mod windows {
         let Some(raw) = core::mem::take(slot(unsafe { &mut *vm })) else {
             return;
         };
-        let watcher = raw.as_ptr().cast::<MemoryPressureWatcher>();
-
-        // SAFETY: `watcher` is the live allocation from `install`.
-        unsafe {
-            let _ = libuv::uv_timer_stop(ptr::addr_of_mut!((*watcher).holdoff));
-            if !(*watcher).wait.is_null() {
-                // `INVALID_HANDLE_VALUE` blocks until any in-flight callback
-                // returns, so `watcher` is guaranteed unreferenced by the
-                // thread pool afterwards. The handle came from a successful
-                // `RegisterWaitForSingleObject`, so this cannot fail with
-                // `ERROR_INVALID_HANDLE`.
-                UnregisterWaitEx((*watcher).wait, INVALID_HANDLE_VALUE);
-                (*watcher).wait = ptr::null_mut();
-            }
-            if !(*watcher).notify.is_null() {
-                CloseHandle((*watcher).notify);
-                (*watcher).notify = ptr::null_mut();
-            }
-            // Close async → its callback closes holdoff → that callback frees.
-            libuv::uv_close(
-                ptr::addr_of_mut!((*watcher).async_).cast(),
-                Some(on_async_closed),
-            );
+        // SAFETY: slot was populated by `install` with a `Box<MemoryPressureWatcher>`.
+        let mut watcher =
+            unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) };
+        // SAFETY: `shutdown` is a valid manual-reset event owned by `watcher`.
+        unsafe { SetEvent(watcher.shutdown) };
+        if let Some(thread) = watcher.thread.take() {
+            let _ = thread.join();
         }
+        // Any `MemoryPressureTask` the thread enqueued before `join` carries
+        // only the packed level (no pointer into `watcher`), so dropping
+        // `watcher` here is safe regardless of queue state. `Drop` closes the
+        // handles.
     }
 }
 

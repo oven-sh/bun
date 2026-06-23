@@ -280,32 +280,3 @@ test/js/node/test/parallel/test-http2-pipe.js [ FLAKY ]
 # node:http servers cannot listen on Windows named pipes yet (ENOENT from
 # uv_pipe bind), so common.PIPE-based http tests cannot run there.
 [ WINDOWS ] test/js/node/test/parallel/test-http-unix-socket-keep-alive.js [ FAIL ] # named-pipe listen unsupported
-
-# node v26.3.0 CLI tests (test-cli-*) not yet passing. Each needs a CLI-surface
-# decision or feature in bun's argument handling, not a test-side fix.
-# Bun does not read NODE_OPTIONS (it has BUN_OPTIONS); node also exits 9 with "<flag> is not allowed in NODE_OPTIONS"
-test/js/node/test/parallel/test-cli-node-options.js [ FAIL ]
-test/js/node/test/parallel/test-cli-node-options-disallowed.js [ FAIL ]
-# Node permission model (--permission, --allow-fs-read/--allow-fs-write, process.permission) not implemented
-test/js/node/test/parallel/test-cli-permission-deny-fs.js [ FAIL ]
-test/js/node/test/parallel/test-cli-permission-multiple-allow.js [ FAIL ]
-# needs node-style CLI arg errors: exit code 9 + "<execPath>: --eval requires an argument" for --eval/--inspect-port/--debug-port,
-# and "--permission is required" when --allow-fs-* is passed alone (bun exits 0/1 with its own message or prints help)
-test/js/node/test/parallel/test-cli-bad-options.js [ FAIL ]
-# needs -p/-e composition (-pe, -p -e <code>, --print --eval=<code>), exit code 9 + node message on missing -e value,
-# -e "" running an empty program, --input-type=module eval, node util.inspect formatting for -p output,
-# and node:crypto (not WebCrypto) as the `crypto` lazy global in the eval context
-test/js/node/test/parallel/test-cli-eval.js [ FAIL ]
-# needs --warnings/--no-warnings, the DEP0005 "Buffer() is deprecated" runtime warning,
-# and rejection of unknown/non-boolean --no-* flags ("bad option:"); bun ignores unknown flags by design
-test/js/node/test/parallel/test-cli-options-negation.js [ FAIL ]
-# bun -p prints the settled value of a promise; node prints util.inspect of the promise itself ("Promise { 42 }") without awaiting
-test/js/node/test/parallel/test-cli-print-promise.mjs [ FAIL ]
-# the syntax-check tests need --check/-c parse-only mode (-c is bun's --config shorthand); bun executes the file instead
-test/js/node/test/parallel/test-cli-syntax-eval.js [ FAIL ]
-test/js/node/test/parallel/test-cli-syntax-piped-bad.js [ FAIL ]
-test/js/node/test/parallel/test-cli-syntax-piped-good.js [ FAIL ]
-test/js/node/test/sequential/test-cli-syntax-good.js [ FAIL ]
-test/js/node/test/sequential/test-cli-syntax-require.js [ FAIL ]
-# also needs the entry-not-found error to read "Error: Cannot find module" (bun prints "error: Module not found")
-test/js/node/test/sequential/test-cli-syntax-file-not-found.js [ FAIL ]

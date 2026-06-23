@@ -70,21 +70,13 @@ describe.concurrent("node:crypto external memory is reported to the GC", () => {
   test("Hash reports XOF outputLength", async () => {
     const outputLength = 64 * 1024;
     const count = 100;
-    const delta = await extraMemoryDelta(
-      ``,
-      `crypto.createHash("shake256", { outputLength: ${outputLength} })`,
-      count,
-    );
+    const delta = await extraMemoryDelta(``, `crypto.createHash("shake256", { outputLength: ${outputLength} })`, count);
     expect(delta).toBeGreaterThan((outputLength * count) / 2);
   });
 
   test("Hmac reports HMAC_CTX size", async () => {
     const count = 1000;
-    const delta = await extraMemoryDelta(
-      `const key = Buffer.alloc(32, 1);`,
-      `crypto.createHmac("sha256", key)`,
-      count,
-    );
+    const delta = await extraMemoryDelta(`const key = Buffer.alloc(32, 1);`, `crypto.createHmac("sha256", key)`, count);
     // HMAC_CTX is 3 EVP_MD_CTX structs (each ~400B) plus overhead.
     expect(delta).toBeGreaterThan(200 * count);
   });

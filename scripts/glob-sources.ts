@@ -58,7 +58,9 @@ const patterns = {
   },
   /** server-rendering runtime bundled into binary */
   bakeRuntime: {
-    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}"],
+    // dev_server/mod.rs is read by bake-codegen.ts to derive the
+    // MessageId/IncomingMessageId const-enums in generated.ts.
+    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/mod.rs"],
     exclude: ["src/runtime/bake/generated.ts"],
   },
   /** legacy bindgen input */

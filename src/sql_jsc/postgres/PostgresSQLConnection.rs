@@ -7,8 +7,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult,
-    VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, IdentityContext, OffsetByteList, StringMap};

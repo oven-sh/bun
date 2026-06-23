@@ -803,10 +803,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
         let old_enclosing_class_keyword = self.enclosing_class_keyword;
         self.enclosing_class_keyword = class.class_keyword;
-        self.vis_scope().recursive_set_strict_mode(
-            StrictModeKind::ImplicitStrictModeClass,
-            js_ast::Loc::EMPTY,
-        );
+        self.vis_scope()
+            .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass, js_ast::Loc::EMPTY);
         // The class name is part of the class, which is always strict mode
         // code, so validate it inside the class-name scope.
         if let Some(name) = class.class_name {

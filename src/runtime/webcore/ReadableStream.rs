@@ -643,9 +643,7 @@ pub trait SourceContext: Sized {
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: bool,
-    /// Atomic so the GC-thread `has_pending_activity` can read it while the
-    /// JS thread mutates it in `increment_count`/`decrement_count`.
-    pub ref_count: core::sync::atomic::AtomicU32,
+    pub ref_count: u32,
     pub pending_err: Option<syscall::Error>,
     pub close_handler: Option<fn(Option<*mut c_void>)>,
     /// Borrowed opaque context for native `close_handler`s (never
@@ -660,9 +658,15 @@ pub struct NewSource<C: SourceContext> {
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
     pub global_this: Option<bun_ptr::BackRef<JSGlobalObject>>,
-    // SAFETY: this is the self-wrapper JSValue (points at the JSCell that owns this m_ctx).
-    // Kept alive by the wrapper itself; zeroed in finalize() before sweep.
-    pub this_jsvalue: JSValue,
+    /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
+    /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
+    /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
+    /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
+    /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
+    /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
+    /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
+    /// dead-but-unswept cell.
+    pub this_jsvalue: jsc::JsRef,
     /// R-2: written by `&self` context methods (`ByteStream::to_any_blob`,
     /// `ByteBlobLoader::to_any_blob`) via `parent_const()`, so interior-mutable.
     pub is_closed: Cell<bool>,
@@ -673,14 +677,14 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
         Self {
             context: C::default(),
             cancelled: false,
-            ref_count: core::sync::atomic::AtomicU32::new(1),
+            ref_count: 1,
             pending_err: None,
             close_handler: None,
             close_ctx: None,
             cancel_handler: Cell::new(None),
             cancel_ctx: Cell::new(None),
             global_this: None,
-            this_jsvalue: JSValue::ZERO,
+            this_jsvalue: jsc::JsRef::empty(),
             is_closed: Cell::new(false),
         }
     }
@@ -896,37 +900,37 @@ impl<C: SourceContext> NewSource<C> {
     fn on_js_close(ptr: Option<*mut c_void>) {
         // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
         let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
-        if this.this_jsvalue != JSValue::ZERO {
-            let global_this = this.global_this();
-            if let Some(cb) =
-                <Self as NewSourceCodegen>::on_close_callback_get_cached(this.this_jsvalue)
-            {
-                if !cb.is_undefined() {
-                    global_this.queue_microtask(cb, &[]);
-                }
+        // Reached from `FileReader::on_reader_done` off the event loop. While
+        // the across-read ref is held (`increment_count` upgraded to Strong),
+        // the wrapper is rooted and `try_get()` is `Some`. If the wrapper was
+        // already finalized, `try_get()` is `None` and there is no callback.
+        let Some(this_jsvalue) = this.this_jsvalue.try_get() else {
+            return;
+        };
+        let global_this = this.global_this();
+        if let Some(cb) = <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue) {
+            if !cb.is_undefined() {
+                global_this.queue_microtask(cb, &[]);
             }
-            <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                this.this_jsvalue,
-                global_this,
-                JSValue::UNDEFINED,
-            );
         }
+        <Self as NewSourceCodegen>::on_close_callback_set_cached(
+            this_jsvalue,
+            global_this,
+            JSValue::UNDEFINED,
+        );
     }
 
     pub fn increment_count(&mut self) {
-        self.ref_count
-            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-    }
-
-    /// Called from the GC thread via the codegen
-    /// `{Blob,Bytes,File}InternalReadableStreamSource__hasPendingActivity`
-    /// thunks. Returns true while any ref other than the JS wrapper's own is
-    /// held (in practice: a `FileReader` `waiting_for_on_reader_done` I/O ref),
-    /// so the wrapper stays marked and `this_jsvalue` is never read after the
-    /// cell is dead-but-unswept. Only touches the atomic field so `&self` is
-    /// sound across threads.
-    pub fn has_pending_activity(&self) -> bool {
-        self.ref_count.load(core::sync::atomic::Ordering::SeqCst) > 1
+        self.ref_count += 1;
+        // A ref beyond the JS wrapper's own is held (in practice a FileReader
+        // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
+        // `on_js_close`, reached from `on_reader_done` off the event loop with
+        // no JS frame on the stack, never reads a dead-but-unswept cell.
+        if let Some(global) = self.global_this.as_deref() {
+            if self.this_jsvalue.is_not_empty() {
+                self.this_jsvalue.upgrade(global);
+            }
+        }
     }
 
     /// Release one reference. If the count hits zero, runs context teardown and
@@ -942,13 +946,20 @@ impl<C: SourceContext> NewSource<C> {
     pub unsafe fn decrement_count(this: *mut Self) -> u32 {
         // SAFETY: caller contract — `this` is live for the duration of this block.
         let remaining = unsafe {
-            let r = &(*this).ref_count;
+            let r = &mut (*this).ref_count;
             #[cfg(debug_assertions)]
-            if r.load(core::sync::atomic::Ordering::SeqCst) == 0 {
+            if *r == 0 {
                 panic!("Attempted to decrement ref count below zero");
             }
-            r.fetch_sub(1, core::sync::atomic::Ordering::SeqCst) - 1
+            *r -= 1;
+            *r
         };
+        if remaining == 1 {
+            // Only the JS wrapper's own ref remains: drop the Strong root so
+            // the wrapper becomes collectable again.
+            // SAFETY: caller contract — `this` is live while remaining > 0.
+            unsafe { (*this).this_jsvalue.downgrade() };
+        }
         if remaining == 0 {
             // SAFETY: still live; run side-effect teardown while fields are valid.
             unsafe {
@@ -972,13 +983,15 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let out_value = if self.this_jsvalue != JSValue::ZERO {
-            self.this_jsvalue
+        let out_value = if let Some(v) = self.this_jsvalue.try_get() {
+            v
         } else {
             <Self as NewSourceCodegen>::to_js(self, global_this)
         };
         out_value.ensure_still_alive();
-        self.this_jsvalue = out_value;
+        if self.this_jsvalue.is_empty() {
+            self.this_jsvalue = jsc::JsRef::init_weak(out_value);
+        }
         ReadableStream::from_native(global_this, out_value)
     }
 
@@ -1030,7 +1043,6 @@ impl<C: SourceContext> NewSource<C> {
         let arguments = call_frame.arguments_old::<2>();
         let view = arguments.ptr[0];
         view.ensure_still_alive();
-        self.this_jsvalue = this_jsvalue;
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1041,10 +1053,9 @@ impl<C: SourceContext> NewSource<C> {
     pub fn start_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
+        _call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         self.global_this = Some(bun_ptr::BackRef::new(global_this));
-        self.this_jsvalue = call_frame.this();
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
@@ -1112,9 +1123,8 @@ impl<C: SourceContext> NewSource<C> {
     pub fn cancel_from_js(
         &mut self,
         _global_object: &JSGlobalObject,
-        call_frame: &CallFrame,
+        _call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.this_jsvalue = call_frame.this();
         self.cancel();
         Ok(JSValue::UNDEFINED)
     }
@@ -1131,9 +1141,9 @@ impl<C: SourceContext> NewSource<C> {
         self.global_this = Some(bun_ptr::BackRef::new(global_object));
 
         if value.is_undefined() {
-            if self.this_jsvalue != JSValue::ZERO {
+            if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
                 <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                    self.this_jsvalue,
+                    this_jsvalue,
                     global_object,
                     JSValue::UNDEFINED,
                 );
@@ -1149,9 +1159,9 @@ impl<C: SourceContext> NewSource<C> {
             ));
         }
         let cb = value.with_async_context_if_needed(global_object);
-        if self.this_jsvalue != JSValue::ZERO {
+        if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
             <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                self.this_jsvalue,
+                this_jsvalue,
                 global_object,
                 cb,
             );
@@ -1166,9 +1176,13 @@ impl<C: SourceContext> NewSource<C> {
     ) -> JsResult<()> {
         self.global_this = Some(bun_ptr::BackRef::new(global_object));
 
+        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
+            return Ok(());
+        };
+
         if value.is_undefined() {
             <Self as NewSourceCodegen>::on_drain_callback_set_cached(
-                self.this_jsvalue,
+                this_jsvalue,
                 global_object,
                 JSValue::UNDEFINED,
             );
@@ -1183,18 +1197,14 @@ impl<C: SourceContext> NewSource<C> {
             ));
         }
         let cb = value.with_async_context_if_needed(global_object);
-        <Self as NewSourceCodegen>::on_drain_callback_set_cached(
-            self.this_jsvalue,
-            global_object,
-            cb,
-        );
+        <Self as NewSourceCodegen>::on_drain_callback_set_cached(this_jsvalue, global_object, cb);
         Ok(())
     }
 
     pub fn get_on_close_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        if self.this_jsvalue != JSValue::ZERO {
+        if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
             if let Some(val) =
-                <Self as NewSourceCodegen>::on_close_callback_get_cached(self.this_jsvalue)
+                <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue)
             {
                 return val;
             }
@@ -1203,7 +1213,9 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn get_on_drain_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        <Self as NewSourceCodegen>::on_drain_callback_get_cached(self.this_jsvalue)
+        self.this_jsvalue
+            .try_get()
+            .and_then(<Self as NewSourceCodegen>::on_drain_callback_get_cached)
             .unwrap_or(JSValue::UNDEFINED)
     }
 
@@ -1212,7 +1224,6 @@ impl<C: SourceContext> NewSource<C> {
         _global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.this_jsvalue = call_frame.this();
         let ref_or_unref = call_frame.argument(0).to_boolean();
         self.set_ref(ref_or_unref);
         Ok(JSValue::UNDEFINED)
@@ -1224,7 +1235,7 @@ impl<C: SourceContext> NewSource<C> {
         // the raw refcount via a raw pointer (the call may free `*this`).
         let this = Box::into_raw(self);
         // SAFETY: `this` is live — just unwrapped from `Box`.
-        unsafe { (*this).this_jsvalue = JSValue::ZERO };
+        unsafe { (*this).this_jsvalue.finalize() };
         // SAFETY: `this` is live; the JS-wrapper ref below still pins the count.
         if unsafe { (*this).context.finalize_detach() } {
             // SAFETY: `this` is live; the JS-wrapper +1 (released below) keeps ref_count > 0.
@@ -1237,9 +1248,8 @@ impl<C: SourceContext> NewSource<C> {
     pub fn drain_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
+        _call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.this_jsvalue = call_frame.this();
         let mut list = self.drain();
         if list.len() > 0 {
             // Ownership of the buffer transfers to JSC: `to_js` installs
@@ -1258,10 +1268,9 @@ impl<C: SourceContext> NewSource<C> {
     fn to_buffered_value_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
+        _call_frame: &CallFrame,
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
-        self.this_jsvalue = call_frame.this();
         if let Some(r) = self.context.to_buffered_value(global_this, action) {
             return r;
         }

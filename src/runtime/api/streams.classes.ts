@@ -18,7 +18,6 @@ function source(name) {
     construct: false,
     noConstructor: true,
     finalize: true,
-    hasPendingActivity: true,
     configurable: false,
     memoryCost: true,
     proto: {

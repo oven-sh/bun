@@ -50,7 +50,7 @@ private:
     }
 
 public:
-    /* Not constexpr — the ordinals are linked from Zig (`SocketKind.zig`
+    /* Not constexpr — the ordinals are linked from `src/uws_sys/SocketKind.rs`
      * @export) so a reorder there can't silently mis-route us. */
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_WS_TLS : US_SOCKET_KIND_UWS_WS; }
 

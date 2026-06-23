@@ -64,18 +64,15 @@ function toZigNamespace(name: string): string {
 }
 
 function listOutputs(): void {
-  const outputs: string[] = [`${codegenPath}/bindgen_generated.zig`];
+  const outputs: string[] = [];
   for (const type of getNamedExports()) {
     if (type.hasCppSource) outputs.push(cppSourcePath(type));
-    if (type.hasZigSource) outputs.push(zigSourcePath(type));
   }
   process.stdout.write(outputs.join(";"));
 }
 
 function generate(): void {
   const names = new Set<string>();
-  const zigRoot: string[] = [];
-  const zigRootInternal: string[] = [];
 
   const namedExports = getNamedExports();
   {
@@ -118,27 +115,8 @@ function generate(): void {
     if (cppSource) {
       helpers.writeIfNotChanged(cppSourcePath(type), cppSource);
     }
-    if (zigSource) {
-      zigRoot.push(
-        `pub const ${zigNamespace} = @import("./bindgen_generated/${zigNamespace}.zig");`,
-        `pub const ${type.name} = ${zigNamespace}.${type.name};`,
-        "",
-      );
-      zigRootInternal.push(`pub const ${type.name} = ${zigNamespace}.Bindgen${type.name};`);
-      helpers.writeIfNotChanged(zigSourcePath(zigNamespace), zigSource);
-    }
   }
 
-  helpers.writeIfNotChanged(
-    `${codegenPath}/bindgen_generated.zig`,
-    [
-      ...zigRoot,
-      `pub const internal = struct {`,
-      ...zigRootInternal.map(s => "    " + s),
-      `};`,
-      "",
-    ].join("\n"),
-  );
 }
 
 function main(): void {

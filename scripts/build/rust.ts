@@ -418,7 +418,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Crelocation-model=static");
   }
   // Keep frame pointers — matches Zig's `omit_frame_pointer = false`
-  // (build.zig:319,841) and the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
+  // and the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
   // (flags.ts:293-301). Needed so profilers and crash backtraces walk Rust
   // frames the same as the Zig binary did.
   rustflags.push("-Cforce-frame-pointers=yes");

@@ -1579,7 +1579,6 @@ writeIfNotChanged(
   path.join(codegenRoot, "GeneratedBindings.cpp"),
   [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cppInternal.buffer + "\n" + cpp.buffer,
 );
-writeIfNotChanged(path.join(src, "jsc/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
 
 // Headers
 for (const [filename, { functions, typedefs }] of files) {

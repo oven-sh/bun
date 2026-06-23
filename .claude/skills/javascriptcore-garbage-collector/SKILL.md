@@ -215,7 +215,7 @@ JSC::Weak<JSFoo> m_wrapper { jsFoo, &myOwnerSingleton, nativeThing };
 
 ## Zig: `jsc.JSRef` — the native↔wrapper reference pattern
 
-In Bun's Zig code, when a native object needs to hold a reference back to its own JS wrapper, **use `jsc.JSRef`** (`src/jsc/bindings/JSRef.zig`), not `gcProtect`, not a raw `JSValue` field, and usually not `jsc.Strong` directly.
+In Bun's Zig code, when a native object needs to hold a reference back to its own JS wrapper, **use `jsc.JSRef`** (`src/jsc/JSRef.rs`), not `gcProtect`, not a raw `JSValue` field, and usually not `jsc.Strong` directly.
 
 `JSRef` is a tagged union with three states:
 

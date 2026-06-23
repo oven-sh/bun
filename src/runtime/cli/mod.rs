@@ -14,8 +14,7 @@ use bun_core::{pretty, pretty_error, pretty_errorln};
 #[path = "ci_info.rs"]
 pub mod ci_info;
 /// CI-provider detection table, copied from watson/ci-info@4.0.0; since the
-/// Rust build has no codegen hook for this yet, the table is maintained by
-/// hand. Keep in sync with `src/codegen/ci_info.ts`.
+/// hand. Keep in sync with the vendors.json upstream.
 pub(crate) mod ci_info_generated {
     use bun_core::{getenv_z, zstr};
 

@@ -270,33 +270,30 @@ describe("inner TLS verification", () => {
       },
     );
 
-    test.concurrent(
-      `${proxyTls ? "https" : "http"}-proxy → https-origin, checkServerIdentity rejects`,
-      async () => {
-        await using origin = await createAdversarialOrigin({ tls: true, body: "verified" });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
-        let code: string;
-        try {
-          const res = await fetch(origin.url, {
-            proxy: proxy.url,
-            keepalive: false,
-            tls: {
-              ca: tlsCert.cert,
-              rejectUnauthorized: true,
-              checkServerIdentity: () => new Error("pinned"),
-            },
-            signal: AbortSignal.timeout(15_000),
-          });
-          await res.arrayBuffer().catch(() => {});
-          code = `resolved:${res.status}`;
-        } catch (e) {
-          const any = e as any;
-          code = any?.message ?? errcode(e);
-        }
-        expect(code).toBe("pinned");
-        expect(origin.requests.length).toBe(0);
-      },
-    );
+    test.concurrent(`${proxyTls ? "https" : "http"}-proxy → https-origin, checkServerIdentity rejects`, async () => {
+      await using origin = await createAdversarialOrigin({ tls: true, body: "verified" });
+      await using proxy = await createAdversarialProxy({ tls: proxyTls });
+      let code: string;
+      try {
+        const res = await fetch(origin.url, {
+          proxy: proxy.url,
+          keepalive: false,
+          tls: {
+            ca: tlsCert.cert,
+            rejectUnauthorized: true,
+            checkServerIdentity: () => new Error("pinned"),
+          },
+          signal: AbortSignal.timeout(15_000),
+        });
+        await res.arrayBuffer().catch(() => {});
+        code = `resolved:${res.status}`;
+      } catch (e) {
+        const any = e as any;
+        code = any?.message ?? errcode(e);
+      }
+      expect(code).toBe("pinned");
+      expect(origin.requests.length).toBe(0);
+    });
   }
 });
 
@@ -308,9 +305,9 @@ describe("unsupported proxy scheme", () => {
   for (const scheme of ["ftp", "socks4", "socks5", "socks5h", "ws"] as const) {
     test.concurrent(`${scheme}:// proxy is rejected with UnsupportedProxyProtocol`, async () => {
       await using origin = await createAdversarialOrigin({ tls: false, body: "ok" });
-      await expect(
-        fetch(origin.url, { proxy: `${scheme}://127.0.0.1:1`, keepalive: false }),
-      ).rejects.toMatchObject({ code: "UnsupportedProxyProtocol" });
+      await expect(fetch(origin.url, { proxy: `${scheme}://127.0.0.1:1`, keepalive: false })).rejects.toMatchObject({
+        code: "UnsupportedProxyProtocol",
+      });
     });
   }
 });

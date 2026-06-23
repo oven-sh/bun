@@ -12,8 +12,6 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
-  AdversarialOrigin,
-  AdversarialProxy,
   BodyEncoding,
   BodyFraming,
   cartesian,

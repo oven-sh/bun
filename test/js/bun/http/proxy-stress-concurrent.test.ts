@@ -10,15 +10,13 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI } from "harness";
-import net from "node:net";
 import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 import {
   cartesian,
   clearProxyEnv,
-  createAdversarialOrigin,
   createAdversarialProxy,
-  errcode,
   laxTls,
   makeBody,
   proxyFreeEnv,
@@ -151,42 +149,38 @@ describe("tunnel reuse", () => {
 
 describe("many origins, one proxy", () => {
   for (const proxyTls of [false, true] as const) {
-    test(
-      `${proxyTls ? "https" : "http"}-proxy → 12 https origins, interleaved`,
-      async () => {
-        const N_ORIGINS = 12;
-        const origins: Array<{ url: string; stop: () => void }> = [];
-        for (let i = 0; i < N_ORIGINS; i++) {
-          const body = `origin-${i}`;
-          const s = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response(body) });
-          origins.push({ url: String(s.url), stop: () => s.stop(true) });
-        }
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+    test(`${proxyTls ? "https" : "http"}-proxy → 12 https origins, interleaved`, async () => {
+      const N_ORIGINS = 12;
+      const origins: Array<{ url: string; stop: () => void }> = [];
+      for (let i = 0; i < N_ORIGINS; i++) {
+        const body = `origin-${i}`;
+        const s = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response(body) });
+        origins.push({ url: String(s.url), stop: () => s.stop(true) });
+      }
+      await using proxy = await createAdversarialProxy({ tls: proxyTls });
 
-        try {
-          // Two rounds so each origin is reused once.
-          for (let round = 0; round < 2; round++) {
-            for (let i = 0; i < N_ORIGINS; i++) {
-              const res = await fetch(origins[i].url, { proxy: proxy.url, keepalive: true, tls: laxTls });
-              expect(await res.text()).toBe(`origin-${i}`);
-              expect(res.status).toBe(200);
-            }
+      try {
+        // Two rounds so each origin is reused once.
+        for (let round = 0; round < 2; round++) {
+          for (let i = 0; i < N_ORIGINS; i++) {
+            const res = await fetch(origins[i].url, { proxy: proxy.url, keepalive: true, tls: laxTls });
+            expect(await res.text()).toBe(`origin-${i}`);
+            expect(res.status).toBe(200);
           }
-          // Every request went through the proxy as a CONNECT; none
-          // bypassed. Tunnel reuse across rounds is an optimization —
-          // assert it for the HTTP proxy where it's deterministic.
-          const cc = proxy.connectCount();
-          expect(cc).toBeGreaterThanOrEqual(N_ORIGINS);
-          expect(cc).toBeLessThanOrEqual(2 * N_ORIGINS);
-          if (!proxyTls) {
-            expect(cc).toBe(N_ORIGINS);
-          }
-        } finally {
-          for (const o of origins) o.stop();
         }
-      },
-      45_000,
-    );
+        // Every request went through the proxy as a CONNECT; none
+        // bypassed. Tunnel reuse across rounds is an optimization —
+        // assert it for the HTTP proxy where it's deterministic.
+        const cc = proxy.connectCount();
+        expect(cc).toBeGreaterThanOrEqual(N_ORIGINS);
+        expect(cc).toBeLessThanOrEqual(2 * N_ORIGINS);
+        if (!proxyTls) {
+          expect(cc).toBe(N_ORIGINS);
+        }
+      } finally {
+        for (const o of origins) o.stop();
+      }
+    }, 45_000);
   }
 });
 
@@ -197,49 +191,45 @@ describe("many origins, one proxy", () => {
 
 describe("reject_unauthorized pool gate", () => {
   for (const proxyTls of [false, true] as const) {
-    test(
-      `${proxyTls ? "https" : "http"}-proxy → https-origin: lax then strict opens a fresh CONNECT`,
-      async () => {
-        await using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("g") });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+    test(`${proxyTls ? "https" : "http"}-proxy → https-origin: lax then strict opens a fresh CONNECT`, async () => {
+      await using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("g") });
+      await using proxy = await createAdversarialProxy({ tls: proxyTls });
 
-        // 1: lax
-        let res = await fetch(origin.url, {
-          proxy: proxy.url,
-          keepalive: true,
-          tls: { rejectUnauthorized: false },
-        });
-        expect(res.status).toBe(200);
-        await res.arrayBuffer();
-        expect(proxy.connectCount()).toBe(1);
+      // 1: lax
+      let res = await fetch(origin.url, {
+        proxy: proxy.url,
+        keepalive: true,
+        tls: { rejectUnauthorized: false },
+      });
+      expect(res.status).toBe(200);
+      await res.arrayBuffer();
+      expect(proxy.connectCount()).toBe(1);
 
-        // 2: strict with matching CA — must not reuse the lax tunnel.
-        res = await fetch(origin.url, {
-          proxy: proxy.url,
-          keepalive: true,
-          tls: { ca: tlsCert.cert, rejectUnauthorized: true },
-        });
-        expect(res.status).toBe(200);
-        await res.arrayBuffer();
-        expect(proxy.connectCount()).toBe(2);
+      // 2: strict with matching CA — must not reuse the lax tunnel.
+      res = await fetch(origin.url, {
+        proxy: proxy.url,
+        keepalive: true,
+        tls: { ca: tlsCert.cert, rejectUnauthorized: true },
+      });
+      expect(res.status).toBe(200);
+      await res.arrayBuffer();
+      expect(proxy.connectCount()).toBe(2);
 
-        // 3: strict again — reuses the strict tunnel (http-proxy).
-        res = await fetch(origin.url, {
-          proxy: proxy.url,
-          keepalive: true,
-          tls: { ca: tlsCert.cert, rejectUnauthorized: true },
-        });
-        expect(res.status).toBe(200);
-        await res.arrayBuffer();
-        // Invariant: the strict request never reused the lax tunnel
-        // (connectCount grew from 1 to ≥2 at step 2). Step 3 may or may
-        // not reuse depending on outer-socket pooling for https proxies.
-        const cc = proxy.connectCount();
-        expect(cc).toBeGreaterThanOrEqual(2);
-        expect(cc).toBeLessThanOrEqual(3);
-      },
-      30_000,
-    );
+      // 3: strict again — reuses the strict tunnel (http-proxy).
+      res = await fetch(origin.url, {
+        proxy: proxy.url,
+        keepalive: true,
+        tls: { ca: tlsCert.cert, rejectUnauthorized: true },
+      });
+      expect(res.status).toBe(200);
+      await res.arrayBuffer();
+      // Invariant: the strict request never reused the lax tunnel
+      // (connectCount grew from 1 to ≥2 at step 2). Step 3 may or may
+      // not reuse depending on outer-socket pooling for https proxies.
+      const cc = proxy.connectCount();
+      expect(cc).toBeGreaterThanOrEqual(2);
+      expect(cc).toBeLessThanOrEqual(3);
+    }, 30_000);
   }
 });
 
@@ -387,60 +377,56 @@ describe("memory probe (subprocess)", () => {
     // there but still enough to surface a UAF.
     const iterations = isASAN ? 300 : isCI ? 1200 : 600;
 
-    test(
-      `${proxyTls ? "https" : "http"}-proxy → https-origin mode=${mode} ×${iterations}`,
-      async () => {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            join(import.meta.dir, "proxy-stress-memory-fixture.ts"),
-            proxyTls ? "https" : "http",
-            mode,
-            String(iterations),
-          ],
-          env: {
-            ...bunEnv,
-            ...proxyFreeEnv,
-            // UAFs on the HTTP thread must abort the process rather
-            // than race the main thread's clean exit.
-            ASAN_OPTIONS: ((bunEnv as any).ASAN_OPTIONS ?? "") + ":abort_on_error=1:halt_on_error=1",
-          },
-          stdout: "pipe",
-          stderr: "pipe",
+    test(`${proxyTls ? "https" : "http"}-proxy → https-origin mode=${mode} ×${iterations}`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(import.meta.dir, "proxy-stress-memory-fixture.ts"),
+          proxyTls ? "https" : "http",
+          mode,
+          String(iterations),
+        ],
+        env: {
+          ...bunEnv,
+          ...proxyFreeEnv,
+          // UAFs on the HTTP thread must abort the process rather
+          // than race the main thread's clean exit.
+          ASAN_OPTIONS: ((bunEnv as any).ASAN_OPTIONS ?? "") + ":abort_on_error=1:halt_on_error=1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) console.error("fixture stderr:\n" + stderr);
+
+      // Surface the child's final stats line before asserting.
+      const lines = stdout.trim().split("\n");
+      const lastLine = lines[lines.length - 1];
+      let result: { completed: number; failed: number; rssStart: number; rssEnd: number; rssMax: number };
+      try {
+        result = JSON.parse(lastLine);
+      } catch {
+        console.error("fixture stdout:\n" + stdout);
+        throw new Error("fixture did not emit a JSON summary line");
+      }
+
+      expect(exitCode).toBe(0);
+      expect(result.completed + result.failed).toBeGreaterThanOrEqual(iterations);
+
+      // RSS leak check: after a warm-up, RSS should plateau. Allow a
+      // generous 3× growth factor (ASAN, fragmentation, per-target pool
+      // entries) — a real leak of one tunnel/request shows as 10×+ with
+      // these iteration counts. Skip the threshold under ASAN because
+      // LeakSanitizer's shadow memory makes RSS non-representative; a
+      // UAF there shows up as a crash, not a slow leak.
+      if (!isASAN) {
+        const growth = result.rssEnd / Math.max(1, result.rssStart);
+        expect({ mode, growth: Number(growth.toFixed(2)) }).toEqual({
+          mode,
+          growth: expect.any(Number),
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        if (exitCode !== 0) console.error("fixture stderr:\n" + stderr);
-
-        // Surface the child's final stats line before asserting.
-        const lines = stdout.trim().split("\n");
-        const lastLine = lines[lines.length - 1];
-        let result: { completed: number; failed: number; rssStart: number; rssEnd: number; rssMax: number };
-        try {
-          result = JSON.parse(lastLine);
-        } catch {
-          console.error("fixture stdout:\n" + stdout);
-          throw new Error("fixture did not emit a JSON summary line");
-        }
-
-        expect(exitCode).toBe(0);
-        expect(result.completed + result.failed).toBeGreaterThanOrEqual(iterations);
-
-        // RSS leak check: after a warm-up, RSS should plateau. Allow a
-        // generous 3× growth factor (ASAN, fragmentation, per-target pool
-        // entries) — a real leak of one tunnel/request shows as 10×+ with
-        // these iteration counts. Skip the threshold under ASAN because
-        // LeakSanitizer's shadow memory makes RSS non-representative; a
-        // UAF there shows up as a crash, not a slow leak.
-        if (!isASAN) {
-          const growth = result.rssEnd / Math.max(1, result.rssStart);
-          expect({ mode, growth: Number(growth.toFixed(2)) }).toEqual({
-            mode,
-            growth: expect.any(Number),
-          });
-          expect(growth).toBeLessThan(3.0);
-        }
-      },
-      120_000,
-    );
+        expect(growth).toBeLessThan(3.0);
+      }
+    }, 120_000);
   }
 });

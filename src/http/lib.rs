@@ -3163,10 +3163,8 @@ impl<'a> HTTPClient<'a> {
                             // leftover bytes OR stream/sendfile (whose body
                             // buffer is empty here; the body flows via
                             // flush_stream in the ProxyBody arm)
-                            (matches!(
-                                self.state.original_request_body,
-                                HTTPRequestBody::Bytes(_)
-                            ) && !self.request_body().is_empty())
+                            (matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+                                && !self.request_body().is_empty())
                                 || matches!(
                                     self.state.original_request_body,
                                     HTTPRequestBody::Sendfile(_) | HTTPRequestBody::Stream(_)

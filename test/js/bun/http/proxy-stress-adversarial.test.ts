@@ -12,9 +12,9 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { isASAN } from "harness";
+import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
-import { once } from "node:events";
 import {
   cartesian,
   clearProxyEnv,
@@ -185,27 +185,30 @@ describe("checkServerIdentity through tunnel", () => {
       expect(called).toBe(1);
     });
 
-    test.concurrent(`${proxyTls ? "https" : "http"}-proxy: callback rejects → fetch rejects, origin untouched`, async () => {
-      await using origin = await createAdversarialOrigin({ tls: true, body: "never" });
-      await using proxy = await createAdversarialProxy({ tls: proxyTls });
-      let caught: any;
-      try {
-        await fetch(origin.url, {
-          proxy: proxy.url,
-          keepalive: false,
-          tls: {
-            ca: tlsCert.cert,
-            rejectUnauthorized: true,
-            checkServerIdentity: () => new Error("nope"),
-          },
-          signal: AbortSignal.timeout(10_000),
-        });
-      } catch (e) {
-        caught = e;
-      }
-      expect(caught?.message).toBe("nope");
-      expect(origin.requests.length).toBe(0);
-    });
+    test.concurrent(
+      `${proxyTls ? "https" : "http"}-proxy: callback rejects → fetch rejects, origin untouched`,
+      async () => {
+        await using origin = await createAdversarialOrigin({ tls: true, body: "never" });
+        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        let caught: any;
+        try {
+          await fetch(origin.url, {
+            proxy: proxy.url,
+            keepalive: false,
+            tls: {
+              ca: tlsCert.cert,
+              rejectUnauthorized: true,
+              checkServerIdentity: () => new Error("nope"),
+            },
+            signal: AbortSignal.timeout(10_000),
+          });
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught?.message).toBe("nope");
+        expect(origin.requests.length).toBe(0);
+      },
+    );
 
     test.concurrent(
       `${proxyTls ? "https" : "http"}-proxy: callback approves ${isASAN ? 50 : 20}× under GC pressure`,
@@ -493,29 +496,25 @@ describe("WebSocket through proxy", () => {
 
   // wss through https proxy: the double-TLS case that had zero coverage.
   // Churn it under GC pressure to look for tunnel lifecycle issues.
-  test(
-    "wss via https-proxy: open/close churn under GC",
-    async () => {
-      await using origin = makeEchoServer(true);
-      await using proxy = await createAdversarialProxy({ tls: true });
-      const N = isASAN ? 40 : 20;
-      for (let i = 0; i < N; i++) {
-        const { promise, resolve, reject } = Promise.withResolvers<void>();
-        const ws = new WebSocket(`wss://localhost:${origin.port}/`, {
-          proxy: proxy.url,
-          tls: laxTls,
-        } as any);
-        ws.onmessage = () => {
-          ws.close();
-        };
-        ws.onclose = () => resolve();
-        ws.onerror = ev => reject(new Error("ws error: " + (ev as any).message));
-        await promise;
-        if (i % 5 === 0) Bun.gc(true);
-      }
-    },
-    60_000,
-  );
+  test("wss via https-proxy: open/close churn under GC", async () => {
+    await using origin = makeEchoServer(true);
+    await using proxy = await createAdversarialProxy({ tls: true });
+    const N = isASAN ? 40 : 20;
+    for (let i = 0; i < N; i++) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const ws = new WebSocket(`wss://localhost:${origin.port}/`, {
+        proxy: proxy.url,
+        tls: laxTls,
+      } as any);
+      ws.onmessage = () => {
+        ws.close();
+      };
+      ws.onclose = () => resolve();
+      ws.onerror = ev => reject(new Error("ws error: " + (ev as any).message));
+      await promise;
+      if (i % 5 === 0) Bun.gc(true);
+    }
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

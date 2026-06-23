@@ -538,39 +538,35 @@ describe("abort churn", () => {
   const ITERATIONS = isASAN ? 200 : 60;
 
   for (const proxyTls of [false, true] as const) {
-    test(
-      `${proxyTls ? "https" : "http"}-proxy → https-origin, ${ITERATIONS}× fetch+immediate-abort`,
-      async () => {
-        await using origin = await createAdversarialOrigin({ tls: true, body: Buffer.alloc(4096, "x") });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+    test(`${proxyTls ? "https" : "http"}-proxy → https-origin, ${ITERATIONS}× fetch+immediate-abort`, async () => {
+      await using origin = await createAdversarialOrigin({ tls: true, body: Buffer.alloc(4096, "x") });
+      await using proxy = await createAdversarialProxy({ tls: proxyTls });
 
-        let aborted = 0;
-        let other = 0;
-        for (let i = 0; i < ITERATIONS; i++) {
-          const ac = new AbortController();
-          const p = fetch(origin.url, {
-            proxy: proxy.url,
-            keepalive: false,
-            tls: laxTls,
-            signal: ac.signal,
-          });
-          // Abort on the next microtask — lands somewhere in the
-          // connect/CONNECT/handshake window.
-          queueMicrotask(() => ac.abort());
-          try {
-            const res = await p;
-            await res.arrayBuffer().catch(() => {});
-            other++;
-          } catch (e) {
-            if (errcode(e) === "AbortError") aborted++;
-            else other++;
-          }
+      let aborted = 0;
+      let other = 0;
+      for (let i = 0; i < ITERATIONS; i++) {
+        const ac = new AbortController();
+        const p = fetch(origin.url, {
+          proxy: proxy.url,
+          keepalive: false,
+          tls: laxTls,
+          signal: ac.signal,
+        });
+        // Abort on the next microtask — lands somewhere in the
+        // connect/CONNECT/handshake window.
+        queueMicrotask(() => ac.abort());
+        try {
+          const res = await p;
+          await res.arrayBuffer().catch(() => {});
+          other++;
+        } catch (e) {
+          if (errcode(e) === "AbortError") aborted++;
+          else other++;
         }
-        // At least some of the aborts must have actually raced the request.
-        expect(aborted + other).toBe(ITERATIONS);
-        expect(aborted).toBeGreaterThan(0);
-      },
-      60_000,
-    );
+      }
+      // At least some of the aborts must have actually raced the request.
+      expect(aborted + other).toBe(ITERATIONS);
+      expect(aborted).toBeGreaterThan(0);
+    }, 60_000);
   }
 });

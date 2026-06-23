@@ -128,6 +128,7 @@ impl<'a> BrotliReaderArrayList<'a> {
         // LARGE_WINDOW is enabled, causing Rust slice panics downstream.
         // npm registry doesn't use large windows, so this has no impact.
         #[cfg(not(target_env = "ohos"))]
+        #[cfg(not(target_env = "ohos"))]
         if options.params.large_window {
             let _ =
                 BrotliDecoder::set_parameter(brotli, c::BrotliDecoderParameter::LARGE_WINDOW, 1);

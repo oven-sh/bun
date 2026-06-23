@@ -252,6 +252,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "-p, --print <STR>                 Evaluate argument as a script and print the result"
     ),
     parse_param!(
+        "--input-type <STR>                Module type for string input from stdin or --eval: \"module\" or \"commonjs\""
+    ),
+    parse_param!(
         "--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"
     ),
     parse_param!(
@@ -313,6 +316,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
+    // Declared before BASE_PARAMS_'s "-c, --config" in the concatenated
+    // AUTO/RUN tables, so `-c` means `--check` for the runtime commands
+    // (Node.js compatibility); `--config` keeps its long form everywhere.
+    parse_param!(
+        "-c, --check                       Check the syntax of the entry point (or stdin) without executing it"
+    ),
     parse_param!(
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),
@@ -1134,6 +1143,30 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
         }
+        if let Some(input_type) = args.option(b"--input-type") {
+            ctx.runtime_options.eval.input_type = input_type.into();
+        }
+
+        // `--check` / `-c` is only declared in the AUTO/RUN tables.
+        if matches!(
+            cmd,
+            CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+        ) {
+            ctx.runtime_options.check_syntax = args.flag(b"--check");
+            if ctx.runtime_options.check_syntax && !ctx.runtime_options.eval.script.is_empty() {
+                // Node prints this (and exits 9) for `node -c -e foo`.
+                let exec_path: &[u8] = bun_core::self_exe_path()
+                    .map(|p| p.as_bytes())
+                    .unwrap_or(b"bun");
+                bun_core::pretty_errorln!(
+                    "{}: either --check or --eval can be used, not both",
+                    BStr::new(exec_path)
+                );
+                Output::flush();
+                Global::exit(9);
+            }
+        }
+
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));

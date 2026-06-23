@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 import { inspect } from "util";
@@ -337,5 +337,123 @@ describe("node-style CLI argument errors", () => {
     });
     expect(stdout.toString("utf8")).toBe("ran\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("--check / -c (syntax check)", () => {
+  test.each(["--check", "-c"])("%s exits 0 and prints nothing for a valid file", flag => {
+    using dir = tempDir("check-good", {
+      "good.js": "var foo = 'bar';\nif (foo) {\n  console.log('never runs');\n}\n",
+    });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag, join(String(dir), "good.js")],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not execute the file", () => {
+    using dir = tempDir("check-no-exec", {
+      "side-effect.js": "console.log('executed'); process.exitCode = 7;",
+    });
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check", join(String(dir), "side-effect.js")],
+      env: bunEnv,
+    });
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["--check", "-c"])("%s reports a SyntaxError starting with the file path", flag => {
+    using dir = tempDir("check-bad", {
+      "bad.js": "var foo bar;\n",
+    });
+    const file = join(String(dir), "bad.js");
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag, file],
+      env: bunEnv,
+    });
+    const errorOutput = stderr.toString("utf8");
+    expect(errorOutput.startsWith(file)).toBe(true);
+    expect(errorOutput).toMatch(/^SyntaxError: Unexpected identifier\b/m);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("checks stdin as [stdin]", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("var foo bar;"),
+    });
+    expect(stderr.toString("utf8").startsWith("[stdin]")).toBe(true);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("valid stdin exits 0 without running the code", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check"],
+      env: bunEnv,
+      stdin: Buffer.from('throw new Error("should not run");'),
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--input-type=module reports the module-parse error", () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--input-type=module", "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("export var p = 5; var foo bar;"),
+    });
+    expect(stderr.toString("utf8")).toMatch(/^SyntaxError: Unexpected identifier\b/m);
+    expect(exitCode).toBe(1);
+  });
+
+  test("top-level return passes (CommonJS wrapper), and -r can override the wrapper", () => {
+    using dir = tempDir("check-wrapper", {
+      "ret.js": "var x = 1;\nif (x) {\n  return;\n}\n",
+      "no-wrapper.js": "require('module').wrapper = ['', ''];\n",
+    });
+    const file = join(String(dir), "ret.js");
+
+    const ok = Bun.spawnSync({ cmd: [bunExe(), "--check", file], env: bunEnv });
+    expect(ok.stderr.toString("utf8")).toBe("");
+    expect(ok.exitCode).toBe(0);
+
+    const overridden = Bun.spawnSync({
+      cmd: [bunExe(), "--require", join(String(dir), "no-wrapper.js"), "--check", file],
+      env: bunEnv,
+    });
+    expect(overridden.stderr.toString("utf8")).toMatch(/^SyntaxError: /m);
+    expect(overridden.exitCode).toBe(1);
+  });
+
+  test("missing file reports Cannot find module with exit code 1", () => {
+    using dir = tempDir("check-missing", {});
+    const file = join(String(dir), "nope.js");
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check", file],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toMatch(/^Error: Cannot find module/m);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--check with --eval is rejected with exit code 9", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-c", "-e", "foo"],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(
+      `${process.execPath}: either --check or --eval can be used, not both`,
+    );
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
   });
 });

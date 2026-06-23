@@ -1456,6 +1456,13 @@ pub mod command {
             Global::exit(1);
         }
 
+        if matches!(tag, Tag::AutoCommand | Tag::RunCommand) && ctx.runtime_options.check_syntax {
+            // `--check` / `-c`: syntax-check the entry point (or stdin) without
+            // executing it. `--check` together with `--eval` already errored
+            // during argument parsing.
+            return run_command::RunCommand::exec_check(ctx);
+        }
+
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
             return run_command::RunCommand::exec_eval(ctx);
         }

@@ -549,12 +549,18 @@ pub struct RuntimeOptions {
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
+    /// `--check` / `-c`: parse the entry point (or stdin) without executing it,
+    /// like Node.js.
+    pub check_syntax: bool,
 }
 
 #[derive(Default)]
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
+    /// `--input-type`: module type for string input (stdin / `--eval`),
+    /// "module" or "commonjs". Empty when not passed.
+    pub input_type: Box<[u8]>,
 }
 
 pub struct CpuProf {
@@ -611,6 +617,7 @@ impl Default for RuntimeOptions {
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),
             heap_prof: HeapProf::default(),
+            check_syntax: false,
         }
     }
 }

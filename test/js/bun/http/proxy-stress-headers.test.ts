@@ -282,8 +282,8 @@ describe("switching proxy", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// decompress:true (default) surfaces the decoded body and strips
-// Content-Encoding from the exposed response.
+// decompress:true (default): the body is decoded and Content-Encoding is
+// preserved on the exposed response (issue #5668).
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Content-Encoding header after decompress", () => {
@@ -299,6 +299,9 @@ describe("Content-Encoding header after decompress", () => {
         await using proxy = await createAdversarialProxy({ tls: proxyTls });
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(res.status).toBe(200);
+        // Bun keeps Content-Encoding after transparent decompression
+        // (fetch.test.ts, issue #5668); the tunnel must match direct fetch.
+        expect(res.headers.get("content-encoding")).toBe("gzip");
         expect(await res.text()).toBe(payload);
       },
     );

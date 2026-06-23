@@ -189,8 +189,9 @@ mod posix {
             );
             // SAFETY: `poll` was just allocated by `FilePoll::init` (sole borrow);
             // `platform_event_loop` returns the live uws loop.
-            match unsafe { (*poll).register(ctx.platform_event_loop(), Flags::MemoryPressure, false) }
-            {
+            match unsafe {
+                (*poll).register(ctx.platform_event_loop(), Flags::MemoryPressure, false)
+            } {
                 bun_sys::Result::Ok(()) => {
                     // SAFETY: `watcher` was just heap-allocated above; sole owner.
                     unsafe { (*watcher).poll = poll };

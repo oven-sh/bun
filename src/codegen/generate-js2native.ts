@@ -30,11 +30,71 @@ type NativeCallType = "zig" | "cpp" | "bind";
 const nativeCalls: NativeCall[] = [];
 const wrapperCalls: WrapperCall[] = [];
 
-const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
-  path.join(import.meta.dir, "../"),
-  ["deps", "node_modules", "WebKit"],
-  [".cpp", ".bind.ts"],
-);
+const srcDir = path.join(import.meta.dir, "../");
+
+const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(srcDir, ["deps", "node_modules", "WebKit"], [
+  ".cpp",
+  ".bind.ts",
+]);
+
+// The $zig() macro's first argument is a legacy identifier naming the module
+// a native symbol belongs to. The file itself is never opened, but its path
+// under src/ drives both the exported C symbol name (normalizeSymbolPathPrefix)
+// and the Rust crate path (rustTarget). The .zig reference sources no longer
+// exist on disk, so the path each identifier resolved to is recorded here.
+// Adding a new $zig() call site requires adding its entry below.
+const zigIdentifierPaths: Record<string, string> = {
+  "bun.zig": "bun.zig",
+  "Counters.zig": "jsc/Counters.zig",
+  "FrameworkRouter.zig": "runtime/bake/FrameworkRouter.zig",
+  "Listener.zig": "runtime/socket/Listener.zig",
+  "SecureContext.zig": "runtime/api/bun/SecureContext.zig",
+  "Stat.zig": "runtime/node/Stat.zig",
+  "bindgen_test.zig": "jsc/bindgen_test.zig",
+  "collections/linear_fifo.zig": "collections/linear_fifo.zig",
+  "crash_handler.zig": "crash_handler/crash_handler.zig",
+  "css_internals.zig": "css_jsc/css_internals.zig",
+  "dependency.zig": "install/dependency.zig",
+  "escapeRegExp.zig": "string/escapeRegExp.zig",
+  "event_loop.zig": "jsc/event_loop.zig",
+  "ffi.zig": "runtime/ffi/ffi.zig",
+  "h2_frame_parser.zig": "runtime/api/bun/h2_frame_parser.zig",
+  "hosted_git_info.zig": "install/hosted_git_info.zig",
+  "http/H2Client.zig": "http/H2Client.zig",
+  "http/H3Client.zig": "http/H3Client.zig",
+  "ini.zig": "ini/ini.zig",
+  "install_binding.zig": "install_jsc/install_binding.zig",
+  "ipc.zig": "jsc/ipc.zig",
+  "mysql.zig": "sql_jsc/mysql.zig",
+  "node_assert_binding.zig": "runtime/node/node_assert_binding.zig",
+  "node_cluster_binding.zig": "runtime/node/node_cluster_binding.zig",
+  "node_crypto_binding.zig": "runtime/node/node_crypto_binding.zig",
+  "node_fs_binding.zig": "runtime/node/node_fs_binding.zig",
+  "node_http_binding.zig": "runtime/node/node_http_binding.zig",
+  "node_net_binding.zig": "runtime/node/node_net_binding.zig",
+  "node_os.zig": "runtime/node/node_os.zig",
+  "node_util_binding.zig": "runtime/node/node_util_binding.zig",
+  "node_zlib_binding.zig": "runtime/node/node_zlib_binding.zig",
+  "npm.zig": "install/npm.zig",
+  "pack_command.zig": "runtime/cli/pack_command.zig",
+  "parse_args.zig": "runtime/node/util/parse_args.zig",
+  "patch.zig": "patch/patch.zig",
+  "postgres.zig": "sql_jsc/postgres.zig",
+  "runtime/dns_jsc/dns.zig": "runtime/dns_jsc/dns.zig",
+  "runtime/node/types.zig": "runtime/node/types.zig",
+  "runtime/socket/socket.zig": "runtime/socket/socket.zig",
+  "runtime/timer/Timer.zig": "runtime/timer/Timer.zig",
+  "runtime/webcore/FileSink.zig": "runtime/webcore/FileSink.zig",
+  "shell.zig": "runtime/shell/shell.zig",
+  "sourcemap/InternalSourceMap.zig": "sourcemap/InternalSourceMap.zig",
+  "string/immutable/unicode.zig": "bun_core/string/immutable/unicode.zig",
+  "subprocess.zig": "runtime/api/bun/subprocess.zig",
+  "sys.zig": "sys/sys.zig",
+  "sys/Error.zig": "sys/Error.zig",
+  "udp_socket.zig": "runtime/socket/udp_socket.zig",
+  "upgrade_command.zig": "runtime/cli/upgrade_command.zig",
+  "virtual_machine_exports.zig": "jsc/virtual_machine_exports.zig",
+};
 
 function callBaseName(x: string) {
   return x.split(/[^A-Za-z0-9]/g).pop()!;
@@ -46,15 +106,17 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
     throw new Error(`Expected filename for $${call_type} to have ${ext} extension, got ${JSON.stringify(filename)}`);
   }
 
-  filename = filename.replaceAll("/", sep);
-
-  // The $zig() macro's first argument is a legacy identifier naming the module
-  // a native symbol belongs to; it is only used to group/comment generated
-  // declarations and is never opened. The corresponding source no longer
-  // exists on disk, so skip the existence check.
   if (call_type === "zig") {
-    return filename;
+    const relative = zigIdentifierPaths[filename];
+    if (!relative) {
+      throw new Error(
+        `Unknown $zig() file identifier ${JSON.stringify(filename)}. Add it to zigIdentifierPaths in src/codegen/generate-js2native.ts.`,
+      );
+    }
+    return path.join(srcDir, relative.replaceAll("/", sep));
   }
+
+  filename = filename.replaceAll("/", sep);
 
   const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {

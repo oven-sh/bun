@@ -661,13 +661,11 @@ impl<T: JsSinkAbi> JSSink<T> {
         // encoded JSValue bits (never a real Rust pointer); bitcast back.
         let value = JSValue::from_encoded(ptr.as_ptr() as usize);
         value.unprotect();
-        // `${abi}__detachPtr`
-        // calls the JS `onClose` callback via the bare `JSC::call(...)`
-        // overload (no NakedPtr/TopExceptionScope of its own), so
-        // `executeCallImpl`'s ThrowScope is the outermost scope and its dtor
-        // `simulateThrow()` leaves `m_needExceptionCheck` set. Wrap in a
-        // TopExceptionScope so the
-        // verifier is satisfied; discard the result.
+        // `${abi}__detachPtr` runs the JS `onClose` callback through the bare
+        // `AsyncContextFrame::call` overload (no TopExceptionScope of its own)
+        // and RELEASE_AND_RETURNs its ThrowScope, so `m_needExceptionCheck` is
+        // left set when it returns into this scope-less thunk. Wrap in a
+        // TopExceptionScope so the verifier is satisfied; discard the result.
         // TODO: properly propagate exception upwards.
         let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
     }
@@ -704,7 +702,14 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             _o: Option<crate::webcore::BlobSizeType>,
         ) {
             let cpp = JSValue::from_encoded(this as usize);
-            T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED);
+            // `${abi}__onReady` calls m_onPull through the bare
+            // `AsyncContextFrame::call` overload (no TopExceptionScope of its
+            // own); see `close` above. Same wrapper.
+            // TODO: this should be got from a parameter / properly propagate exception upwards.
+            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
+            let _ = ::bun_jsc::call_check_slow(global, || {
+                T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
+            });
         }
         fn start(_this: *mut c_void) {}
         Signal {

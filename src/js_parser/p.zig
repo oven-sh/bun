@@ -1556,7 +1556,6 @@ pub fn NewParser_(
                         .name = LocRef{ .ref = entry.ref, .loc = logger.Loc{} },
                     });
                     declared_symbols.appendAssumeCapacity(.{ .ref = entry.ref, .is_top_level = true });
-                    try p.module_scope.generated.append(allocator, entry.ref);
                     try p.is_import_item.put(allocator, entry.ref, {});
                     try p.named_imports.put(allocator, entry.ref, .{
                         .alias = entry.name,
@@ -2156,7 +2155,6 @@ pub fn NewParser_(
             }
 
             try p.module_scope.generated.ensureUnusedCapacity(p.allocator, generated_symbols_count * 3);
-            try p.module_scope.members.ensureUnusedCapacity(p.allocator, generated_symbols_count * 3 + p.module_scope.members.count());
 
             p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
             p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
@@ -2197,12 +2195,12 @@ pub fn NewParser_(
                 .wrap_exports_for_server_reference => {},
             }
 
-            // Server-side components:
-            // Declare upfront the symbols for "Response" and "bun:app"
+            // Server-side components: declare "Response" / "bun:app" upfront.
+            // By-name ambient — see `declareCommonJSSymbol`.
             switch (p.options.features.server_components) {
                 .none, .client_side => {},
                 else => {
-                    p.response_ref = try p.declareGeneratedSymbol(.import, "Response");
+                    p.response_ref = try p.declareCommonJSSymbol(.import, "Response");
                     p.bun_app_namespace_ref = try p.newSymbol(
                         .other,
                         "import_bun_app",
@@ -2223,8 +2221,7 @@ pub fn NewParser_(
 
         fn ensureRequireSymbol(p: *P) void {
             if (p.runtime_imports.__require != null) return;
-            const static_symbol = generatedSymbolName("__require");
-            p.runtime_imports.__require = bun.handleOom(declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true));
+            p.runtime_imports.__require = bun.handleOom(p.declareGeneratedSymbol(.other, "__require"));
             p.runtime_imports.put("__require", p.runtime_imports.__require.?);
         }
 
@@ -3257,6 +3254,29 @@ pub fn NewParser_(
             return p.options.bundle and p.options.output_format.isESM();
         }
 
+        /// Declare an ambient symbol resolvable BY NAME via `findSymbol` during
+        /// visit (writes `module_scope.members[name]`). Use for parser-minted
+        /// symbols that user code references as a bare identifier: CJS wrapper
+        /// vars (`exports`, `module`, `require`, `__dirname`, `__filename`),
+        /// jest globals, `hmr`, server-components `Response`.
+        ///
+        /// Collision contract when a user binding already owns `name` in
+        /// `module_scope.members`:
+        /// - Both sides `.hoisted` and the file has no ESM syntax: not a
+        ///   collision (`var exports` inside the CJS wrapper merges with the
+        ///   `exports` argument). Returns the user's existing ref.
+        /// - Otherwise: returns a fresh ref appended to `module_scope.generated`
+        ///   (so generated code referencing it still gets a renamer-unique
+        ///   name) and leaves the user's member entry untouched.
+        ///
+        /// Callers that only want to emit when the ambient was actually reached
+        /// (e.g. the `Response` → `bun:app` import) check
+        /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed
+        /// ref is never recorded by `findSymbol`, so the count stays 0.
+        ///
+        /// Named for its original CJS-wrapper callers. For parser-generated
+        /// symbols consumed BY REF (never via `findSymbol`), use
+        /// `declareGeneratedSymbol`.
         pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {
             const name_hash = comptime Scope.getMemberHash(name);
             const member = p.module_scope.getMemberWithHash(name, name_hash);
@@ -3301,26 +3321,42 @@ pub fn NewParser_(
             return ref;
         }
 
+        /// Create a parser-generated symbol and register it on
+        /// `module_scope.generated` only. Never inserts into
+        /// `current_scope.members`, so a user binding of the same name in any
+        /// scope cannot capture it.
+        ///
+        /// `willUseRenamer()` (bundle or `minify_identifiers`): keep `name`
+        /// as-is. Collision-free printing additionally requires the ref to
+        /// land in some live `Part.declared_symbols` with `is_top_level =
+        /// true` (or the file to be CJS-wrapped); callers do this via their
+        /// import-stmt emitters (`generateImportStmt` etc.).
+        /// `module_scope.generated` alone is not read by `NumberRenamer`'s
+        /// top-level pass for wrap=none/ESM.
+        ///
+        /// Otherwise: `printAst` uses `NoOpRenamer`, which prints
+        /// `symbol.original_name` verbatim with no collision handling. The
+        /// `generatedSymbolName` hash suffix appended here is the sole
+        /// collision guard on that path.
+        ///
+        /// The `comptime` bound is the line: generated symbols whose name is
+        /// computed at runtime hand-roll `newSymbol` +
+        /// `module_scope.generated.append` instead.
         pub fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
-            // The bundler runs the renamer, so it is ok to not append a hash
-            if (p.options.bundle) {
-                return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, name, true);
-            }
-
-            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, generatedSymbolName(name), true);
+            const ref = if (p.willUseRenamer())
+                try p.newSymbol(kind, name)
+            else
+                try p.newSymbol(kind, generatedSymbolName(name));
+            try p.module_scope.generated.append(p.allocator, ref);
+            return ref;
         }
 
         pub fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
-            return try @call(bun.callmod_inline, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
-        }
-
-        pub fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
             // p.checkForNonBMPCodePoint(loc, name)
-            if (comptime !is_generated) {
-                // Forbid declaring a symbol with a reserved word in strict mode
-                if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
-                    try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
-                }
+
+            // Forbid declaring a symbol with a reserved word in strict mode
+            if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
+                try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
             }
 
             // Allocate a new symbol
@@ -3332,47 +3368,40 @@ pub fn NewParser_(
                 const existing = entry.value_ptr.*;
                 var symbol: *Symbol = &p.symbols.items[existing.ref.innerIndex()];
 
-                if (comptime !is_generated) {
-                    switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
-                        .forbidden => {
-                            try p.log.addSymbolAlreadyDeclaredError(p.allocator, p.source, symbol.original_name, loc, existing.loc);
-                            return existing.ref;
-                        },
+                switch (scope.canMergeSymbols(symbol.kind, kind, is_typescript_enabled)) {
+                    .forbidden => {
+                        try p.log.addSymbolAlreadyDeclaredError(p.allocator, p.source, symbol.original_name, loc, existing.loc);
+                        return existing.ref;
+                    },
 
-                        .keep_existing => {
-                            ref = existing.ref;
-                        },
+                    .keep_existing => {
+                        ref = existing.ref;
+                    },
 
-                        .replace_with_new => {
-                            symbol.link = ref;
+                    .replace_with_new => {
+                        symbol.link = ref;
 
-                            // If these are both functions, remove the overwritten declaration
-                            if (kind.isFunction() and symbol.kind.isFunction()) {
-                                symbol.remove_overwritten_function_declaration = true;
-                            }
-                        },
+                        // If these are both functions, remove the overwritten declaration
+                        if (kind.isFunction() and symbol.kind.isFunction()) {
+                            symbol.remove_overwritten_function_declaration = true;
+                        }
+                    },
 
-                        .become_private_get_set_pair => {
-                            ref = existing.ref;
-                            symbol.kind = .private_get_set_pair;
-                        },
+                    .become_private_get_set_pair => {
+                        ref = existing.ref;
+                        symbol.kind = .private_get_set_pair;
+                    },
 
-                        .become_private_static_get_set_pair => {
-                            ref = existing.ref;
-                            symbol.kind = .private_static_get_set_pair;
-                        },
+                    .become_private_static_get_set_pair => {
+                        ref = existing.ref;
+                        symbol.kind = .private_static_get_set_pair;
+                    },
 
-                        .overwrite_with_new => {},
-                    }
-                } else {
-                    p.symbols.items[ref.innerIndex()].link = existing.ref;
+                    .overwrite_with_new => {},
                 }
             }
             entry.key_ptr.* = name;
             entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref, .loc = loc };
-            if (comptime is_generated) {
-                try p.module_scope.generated.append(p.allocator, ref);
-            }
             return ref;
         }
 
@@ -3927,14 +3956,14 @@ pub fn NewParser_(
                 bun.assert(p.options.features.allow_runtime);
 
                 p.ensureRequireSymbol();
-                p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.recordUsage(p.runtimeIdentifierRef("__require"));
             }
         }
 
         pub fn ignoreUsageOfRuntimeRequire(p: *P) void {
             if (p.options.features.auto_polyfill_require) {
                 bun.assert(p.runtime_imports.__require != null);
-                p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.ignoreUsage(p.runtimeIdentifierRef("__require"));
                 p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;
             }
         }
@@ -4580,7 +4609,6 @@ pub fn NewParser_(
                                 .ref = (p.declareGeneratedSymbol(.other, symbol_name) catch unreachable),
                             };
 
-                            bun.handleOom(p.module_scope.generated.append(p.allocator, loc_ref.ref.?));
                             p.is_import_item.put(p.allocator, loc_ref.ref.?, {}) catch unreachable;
                             @field(p.jsx_imports, @tagName(field)) = loc_ref;
                             break :brk loc_ref.ref.?;
@@ -5639,33 +5667,20 @@ pub fn NewParser_(
             @compileError("not implemented");
         }
 
-        fn runtimeIdentifierRef(p: *P, loc: logger.Loc, comptime name: string) Ref {
+        fn runtimeIdentifierRef(p: *P, comptime name: string) Ref {
             p.has_called_runtime = true;
 
             if (!p.runtime_imports.contains(name)) {
-                if (!p.options.bundle) {
-                    const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
-                    p.runtime_imports.put(name, generated_symbol);
-                    return generated_symbol;
-                } else {
-                    const loc_ref = js_ast.LocRef{
-                        .loc = loc,
-                        .ref = p.newSymbol(.other, name) catch unreachable,
-                    };
-                    p.runtime_imports.put(
-                        name,
-                        loc_ref.ref.?,
-                    );
-                    bun.handleOom(p.module_scope.generated.append(p.allocator, loc_ref.ref.?));
-                    return loc_ref.ref.?;
-                }
+                const ref = p.declareGeneratedSymbol(.other, name) catch unreachable;
+                p.runtime_imports.put(name, ref);
+                return ref;
             } else {
                 return p.runtime_imports.at(name).?;
             }
         }
 
         fn runtimeIdentifier(p: *P, loc: logger.Loc, comptime name: string) Expr {
-            const ref = p.runtimeIdentifierRef(loc, name);
+            const ref = p.runtimeIdentifierRef(name);
             p.recordUsage(ref);
             return p.newExpr(
                 E.ImportIdentifier{

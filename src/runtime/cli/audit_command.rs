@@ -427,20 +427,12 @@ fn send_audit_request(
     body: &[u8],
 ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
     libdeflate::load();
-    let compressor_ptr = libdeflate::Compressor::alloc(6);
-    if compressor_ptr.is_null() {
-        return Err(bun_alloc::AllocError);
-    }
-    // SAFETY: non-null checked above; libdeflate hands back a heap-allocated
-    // compressor that lives until `destroy`.
-    let compressor = unsafe { &mut *compressor_ptr };
+    let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
     let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
     let mut compressed_body = Vec::with_capacity(max_compressed_size);
     let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip);
-    // SAFETY: `compressor_ptr` was returned by `Compressor::alloc` and is not
-    // used after this point.
-    unsafe { libdeflate::Compressor::destroy(compressor_ptr) };
+    drop(compressor);
     let final_compressed_body = compressed_body;
 
     let mut headers = HeaderBuilder::default();

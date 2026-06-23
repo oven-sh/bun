@@ -539,7 +539,28 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     WTF::StringBuilder result;
     result.append("The "_s);
     addParameter(result, arg_name);
-    result.append(" must be of type "_s);
+    result.append(" must be "_s);
+
+    // Node categorizes a free-form phrase like "Array of unique strings"
+    // (spaces, but not a flattened "X, Y, or Z" list) as neither a primitive
+    // type name nor a class name: it renders "must be an Array of unique
+    // strings", not "must be of type ...". Flattened lists keep the legacy
+    // "of type" rendering.
+    bool isPhrase = expected_type.contains(' ') && !expected_type.contains(", "_s) && !expected_type.contains(" or "_s);
+    if (isPhrase) {
+        bool hasUppercase = false;
+        for (unsigned i = 0; i < expected_type.length(); i++) {
+            if (isASCIIUpper(expected_type[i])) {
+                hasUppercase = true;
+                break;
+            }
+        }
+        if (hasUppercase)
+            result.append("an "_s);
+    } else {
+        result.append("of type "_s);
+    }
+
     result.append(expected_type);
     result.append(". Received "_s);
     determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);

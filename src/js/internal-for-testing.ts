@@ -290,6 +290,18 @@ export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction
   1,
 );
 
+export const emitMemoryPressure: (level: "warning" | "critical") => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_emitMemoryPressure",
+  1,
+);
+
+export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_isMemoryPressureWatcherInstalled",
+  0,
+);
+
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newZigFunction("event_loop.zig", "getActiveTasks", 0);
 

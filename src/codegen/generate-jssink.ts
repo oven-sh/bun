@@ -452,9 +452,33 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native close first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    ${name}__close(lexicalGlobalObject, ptr);
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native close threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -475,9 +499,34 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native end first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    auto result = ${name}__endWithSink(ptr, lexicalGlobalObject);
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native end threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    return ${name}__endWithSink(ptr, lexicalGlobalObject);
+    return result;
 }
 
 extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);
@@ -651,35 +700,34 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
 }
 
 void JS${controllerName}::detach() {
-    if (m_onDestroy) {
-        auto destroy = m_onDestroy;
-        m_onDestroy = 0;
-        Bun__onSinkDestroyed(destroy, m_sinkPtr);
-    }
+    // Prevent re-entrancy.
+    JSC::EnsureStillAliveScope readableStream(m_weakReadableStream.get());
+    JSC::EnsureStillAliveScope onClose(m_onClose.get());
 
-    if (m_sinkPtr) {
-        ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
-    }
+    auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
+    auto destroy = std::exchange(m_onDestroy, 0);
 
-    m_sinkPtr = nullptr;
     m_onPull.clear();
-
-    auto readableStream = m_weakReadableStream.get();
-    auto onClose = m_onClose.get();
-    
-    if (readableStream && onClose) {
-        auto callData = JSC::getCallData(onClose);
-        if(callData.type != JSC::CallData::Type::None) {
-            JSC::JSGlobalObject *globalObject = this->globalObject();
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(readableStream);
-            arguments.append(jsUndefined());
-            call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
-        }
-    }
-
     m_onClose.clear();
     m_weakReadableStream.clear();
+
+    if (destroy) {
+        Bun__onSinkDestroyed(destroy, sinkPtr);
+    }
+
+    if (sinkPtr) {
+        ${name}__controllerDetached(sinkPtr, JSC::JSValue::encode(this));
+    }
+
+    if (readableStream.value() && onClose.value()) {
+        JSC::JSGlobalObject *globalObject = this->globalObject();
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream.value());
+        arguments.append(jsUndefined());
+        AsyncContextFrame::call(globalObject, onClose.value(), JSC::jsUndefined(), arguments);
+        RELEASE_AND_RETURN(scope, void());
+    }
 }
 `;
 

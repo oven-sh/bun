@@ -77,6 +77,13 @@ mod posix {
         /// Linux this is false when PSI is unavailable or requires privileges
         /// we don't have; the emit path is still functional for tests.
         registered: bool,
+        /// Set while `on_poll` is on the stack around the JS emit. A
+        /// `process.once` listener (or any listener that removes itself)
+        /// can reach `uninstall` synchronously from inside `emit()`; when
+        /// this is set, `uninstall` defers `poll.deinit()` and the box free
+        /// to `on_poll`'s tail so it never aliases the dispatching
+        /// `&mut FilePoll` or frees the watcher under the handler.
+        dispatching: bool,
     }
 
     fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<core::ffi::c_void>> {
@@ -167,6 +174,7 @@ mod posix {
             global: ptr::from_ref(global).cast_mut(),
             poll: ptr::null_mut(),
             registered: false,
+            dispatching: false,
         }));
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -210,33 +218,52 @@ mod posix {
         *slot(unsafe { &mut *vm }) = NonNull::new(watcher.cast());
     }
 
+    /// Unregister `poll`, close the PSI fd on Linux, and return the hive
+    /// slot. Uses the dispatch-chain `poll` pointer (same provenance as the
+    /// live `&mut FilePoll` in `on_update`), never `watcher.poll`.
+    ///
+    /// # Safety
+    /// `poll` must be the live hive slot owned by this watcher.
+    unsafe fn deinit_poll(poll: *mut FilePoll) {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        // SAFETY: caller contract; fd is read before the slot is returned.
+        let fd = unsafe { (*poll).fd };
+        // SAFETY: caller contract.
+        unsafe { (*poll).deinit() };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let _ = bun_sys::close(fd);
+        }
+    }
+
     pub(super) fn uninstall(global: &JSGlobalObject) {
         let vm = global.bun_vm_ptr();
         // SAFETY: same-thread VM access (asserted by `bun_vm_ptr`).
         let Some(raw) = core::mem::take(slot(unsafe { &mut *vm })) else {
             return;
         };
-        // SAFETY: slot was populated by `install` with a `Box<MemoryPressureWatcher>`.
-        let watcher = unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) };
+        let watcher = raw.as_ptr().cast::<MemoryPressureWatcher>();
 
+        // Called re-entrantly from inside `on_poll` → `emit()` (e.g. a
+        // `.once()` listener removed itself). `on_poll` holds the live
+        // `FilePoll` via its function argument; touching it here through
+        // `watcher.poll` would alias that `&mut`. Signal the deferral by
+        // nulling `poll` and let `on_poll`'s tail do the teardown and free
+        // the box. The slot is already cleared, so a re-subscribe inside the
+        // listener gets a fresh watcher.
+        // SAFETY: `watcher` is the live `Box` from `install`; sole writer on the JS thread.
+        if unsafe { (*watcher).dispatching } {
+            // SAFETY: same allocation; JS-thread-only write.
+            unsafe { (*watcher).poll = ptr::null_mut() };
+            return;
+        }
+
+        // SAFETY: slot was populated by `install` with a `Box<MemoryPressureWatcher>`;
+        // not dispatching, so this is the sole owner.
+        let watcher = unsafe { bun_core::heap::take(watcher) };
         if !watcher.poll.is_null() {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let psi_fd = if watcher.registered {
-                // SAFETY: `poll` is live until `deinit` below.
-                Some(unsafe { (*watcher.poll).fd })
-            } else {
-                None
-            };
-
-            // `deinit` unregisters (kqueue EV_DELETE / epoll CTL_DEL) and returns
-            // the slot to the hive; fd ownership is ours.
-            // SAFETY: `poll` is a live hive slot until this call returns.
-            unsafe { (*watcher.poll).deinit() };
-
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if let Some(fd) = psi_fd {
-                let _ = bun_sys::close(fd);
-            }
+            // SAFETY: not dispatching, so no other `&mut FilePoll` is live.
+            unsafe { deinit_poll(watcher.poll) };
         }
     }
 
@@ -246,7 +273,8 @@ mod posix {
     /// # Safety
     /// `poll` is the live `FilePoll` this dispatch is running for and
     /// `owner_ptr` is the `MemoryPressureWatcher` set via `Owner::new` in
-    /// `install`; both outlive the call (guaranteed by `__bun_run_file_poll`).
+    /// `install`; both are live on entry. `emit()` may run user JS that
+    /// reaches `uninstall`, which defers teardown to this function's tail.
     pub unsafe fn on_poll(poll: *mut FilePoll, owner_ptr: *mut core::ffi::c_void, fflags: i64) {
         let watcher = owner_ptr.cast::<MemoryPressureWatcher>();
 
@@ -260,16 +288,12 @@ mod posix {
         // SAFETY: caller contract above.
         unsafe {
             if (*poll).flags.contains(Flags::Eof) || (*poll).flags.contains(Flags::Hup) {
-                let fd = (*poll).fd;
-                (*poll).deinit();
-                let _ = bun_sys::close(fd);
+                deinit_poll(poll);
                 (*watcher).poll = ptr::null_mut();
                 (*watcher).registered = false;
                 return;
             }
         }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        let _ = poll;
 
         // SAFETY: caller contract above; `global` was captured at install time.
         let global = unsafe { &*(*watcher).global };
@@ -280,7 +304,21 @@ mod posix {
             let _ = fflags;
             super::level::CRITICAL
         };
+
+        // SAFETY: `watcher` is live; JS-thread-only write.
+        unsafe { (*watcher).dispatching = true };
         super::emit(global, lvl);
+        // `watcher` is guaranteed still live here: `uninstall` saw
+        // `dispatching` and returned without freeing. `poll == null` means
+        // it ran and deferred teardown to us.
+        // SAFETY: see above.
+        unsafe {
+            (*watcher).dispatching = false;
+            if (*watcher).poll.is_null() {
+                deinit_poll(poll);
+                bun_core::heap::destroy(watcher);
+            }
+        }
     }
 }
 

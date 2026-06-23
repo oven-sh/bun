@@ -1500,13 +1500,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 //     "use strict";
                                 //   }
                                 //
+                                // Use `recursive_set_strict_mode` rather than a
+                                // flat write so scopes already pushed for
+                                // parameter-default expressions (arrows, etc.)
+                                // are marked strict too. A flat write would
+                                // leave them sloppy, and the later
+                                // `recursive_set_strict_mode` for implicit
+                                // strictness stops at the now-strict parameter
+                                // scope. The function-body scope set above is
+                                // already strict, so recursion stops there
+                                // without revisiting it.
+                                let scope = p.current_scope;
                                 if scope.kind == js_ast::scope::Kind::FunctionBody {
                                     if let Some(mut parent) = scope.parent {
                                         if parent.kind == js_ast::scope::Kind::FunctionArgs
                                             && parent.strict_mode == StrictModeKind::SloppyMode
                                         {
-                                            parent.strict_mode = StrictModeKind::ExplicitStrictMode;
                                             parent.use_strict_loc = stmt.loc;
+                                            parent.recursive_set_strict_mode(
+                                                StrictModeKind::ExplicitStrictMode,
+                                            );
                                         }
                                     }
                                 }

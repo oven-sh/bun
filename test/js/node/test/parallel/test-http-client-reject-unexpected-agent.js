@@ -52,7 +52,8 @@ server.listen(0, baseOptions.host, common.mustCall(function() {
       {
         code: 'ERR_INVALID_ARG_TYPE',
         name: 'TypeError',
-        message: 'The "options.agent" property must be of type Agent-like Object, undefined, or false.' +
+        message: 'The "options.agent" property must be one of Agent-like ' +
+                 'Object, undefined, or false.' +
                  common.invalidArgTypeHelper(agent)
       }
     );

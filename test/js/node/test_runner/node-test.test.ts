@@ -45,8 +45,93 @@ describe("node:test", () => {
     });
   });
 
-  test("should throw NotImplementedError if you call test() or describe() inside another test()", async () => {
+  test("should run test() and describe() called inside another test() as subtests", async () => {
     const { exitCode, stderr } = await runTests(["05-test-in-test.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should run before hooks created on a running test once and validate hook options", async () => {
+    const { exitCode, stderr } = await runTests(["06-hook-semantics.js"]);
+    expect(stderr).toContain("4 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should fail tests whose hooks, bodies, or inline suite callbacks fail", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["07-failing-hooks.js"]);
+    // The subtest after the failing before hook must not run its body (Node).
+    expect(stdout).toContain("SUB_BODY_RAN=false");
+    expect(stderr).toContain("0 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("10 fail"),
+    });
+  });
+
+  test("should support done callbacks in tests and hooks", async () => {
+    const { exitCode, stderr } = await runTests(["10-done-callbacks.js"]);
+    expect(stderr).toContain("2 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should suppress runtime t.todo()/t.skip() failures and keep runner timers real under mock timers", async () => {
+    const { exitCode, stderr } = await runTests(["12-runtime-todo-and-mock-timers.js"]);
+    expect(stderr).toContain("5 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should run todo bodies under --todo instead of registering an empty function", async () => {
+    const { exitCode, stderr } = await runTests(["13-todo-bodies.js"], {}, ["--todo"]);
+    expect(stderr).toContain("2 todo");
+    expect(stderr).toContain("1 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should forward Infinity and finite timeouts so they override the runner default", async () => {
+    const { exitCode, stderr } = await runTests(["11-timeout-overrides.js"], {}, ["--timeout", "100"]);
+    expect(stderr).toContain("2 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should not leak file-level beforeEach hooks across files in one process", async () => {
+    const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
+    expect(stderr).toContain("4 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should treat only as a no-op instead of using bun:test's CI-banned only()", async () => {
+    // bun:test's only() only throws when CI is set; pin the precondition.
+    const { exitCode, stderr } = await runTests(["08-only-no-op.js"], { CI: "1" });
+    expect(stderr).toContain("4 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should serialize inline suites and await async describe callbacks like node", async () => {
+    const { exitCode, stderr } = await runTests(["09-inline-suites.js"]);
+    expect(stderr).toContain("2 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),
@@ -54,15 +139,15 @@ describe("node:test", () => {
   });
 });
 
-async function runTests(filenames: string[]) {
+async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
   const {
     exited,
     stdout: stdoutStream,
     stderr: stderrStream,
   } = spawn({
-    cmd: [bunExe(), "test", ...testPaths],
-    env: bunEnv,
+    cmd: [bunExe(), "test", ...args, ...testPaths],
+    env: { ...bunEnv, ...env },
     stderr: "pipe",
   });
   const [exitCode, stdout, stderr] = await Promise.all([

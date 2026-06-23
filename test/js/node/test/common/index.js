@@ -1310,7 +1310,9 @@ function installBunExposeInternalsShim() {
       }));
       build.module("internal/timers", () => ({
         loader: "object",
-        exports: { kTimeout: Symbol.for("::buntimeout::") },
+        // TIMEOUT_MAX mirrors Node's internal/timers (2 ** 31 - 1) so vendored
+        // tests exercising the > TIMEOUT_MAX clamp use the real threshold.
+        exports: { kTimeout: Symbol.for("::buntimeout::"), TIMEOUT_MAX: 2 ** 31 - 1 },
       }));
     },
   });

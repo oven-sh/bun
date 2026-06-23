@@ -292,13 +292,21 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
-    /// Set when `process.exit()` is called on the main thread while `--watch`
-    /// or `--hot` is active. Instead of tearing the process down (which would
-    /// kill the watcher), the exit raises a JSC termination exception to stop
-    /// the current run and this flag keeps the event loop quiet until the next
-    /// reload, mirroring how an uncaught exception keeps the watcher alive.
-    /// Cleared at the start of [`VirtualMachine::reload`] (the `--hot` path);
-    /// the `--watch` path re-execs the process, which resets it to `false`.
+    /// Set by the `bun run` watch/hot path ([`crate::hot_reloader`] install in
+    /// `run_command`) to opt this VM into keeping the watcher alive when user
+    /// code calls `process.exit()`. The bare watcher (`bun test --watch`) does
+    /// NOT set this, because its run loop does not know how to recover from the
+    /// termination exception below, so `process.exit()` there keeps exiting the
+    /// process as before.
+    pub watch_exit_keepalive: bool,
+    /// Set when `process.exit()` is called on the main thread while
+    /// `watch_exit_keepalive` is active. Instead of tearing the process down
+    /// (which would kill the watcher), the exit raises a JSC termination
+    /// exception to stop the current run and this flag keeps the event loop
+    /// quiet until the next reload, mirroring how an uncaught exception keeps
+    /// the watcher alive. Cleared at the start of [`VirtualMachine::reload`]
+    /// (the `--hot` path); the `--watch` path re-execs the process, which
+    /// resets it to `false`.
     pub watch_exit_requested: bool,
     pub entry_point_result: EntryPointResult,
 

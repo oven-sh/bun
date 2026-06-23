@@ -106,5 +106,5 @@ for (const mode of ["--watch", "--hot"] as const) {
     await reader.cancel();
     proc.kill();
     await stderrText;
-  }, 30000);
+  });
 }

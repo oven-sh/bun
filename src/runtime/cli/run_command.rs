@@ -1471,6 +1471,9 @@ impl Run {
         // ── hot-reloader enable ─────────────────────────────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
+                // Opt this run into keeping the watcher alive on `process.exit()`
+                // (the loop below recovers the VM); `bun test --watch` does not.
+                vm.watch_exit_keepalive = true;
                 // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {
@@ -1481,6 +1484,8 @@ impl Run {
                 }
             }
             cli::command::HotReload::Watch => {
+                // See the `Hot` arm above.
+                vm.watch_exit_keepalive = true;
                 // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {

@@ -177,7 +177,10 @@ mod posix {
                 ctx,
                 fd,
                 Default::default(),
-                Owner::new(poll_tag::MEMORY_PRESSURE, NonNull::<()>::dangling().as_ptr()),
+                Owner::new(
+                    poll_tag::MEMORY_PRESSURE,
+                    NonNull::<()>::dangling().as_ptr(),
+                ),
             );
             // SAFETY: `poll` is the fresh hive slot; `platform_event_loop` is the live uws loop.
             let result = unsafe {

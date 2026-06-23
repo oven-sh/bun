@@ -69,7 +69,6 @@
     "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
     "testleak": "BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=detect_leaks=1 LSAN_OPTIONS=malloc_context_size=100:print_suppressions=1:suppressions=$npm_config_local_prefix/test/leaksan.supp ./build/debug/bun-debug",
     "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
-    "banned": "bun test test/internal/ban-words.test.ts",
     "rust:check": "cargo check --workspace --keep-going",
     "rust:check-all": "bun scripts/rust-check-all.ts",
     "rust:clippy": "cargo clippy --workspace --no-deps --keep-going",

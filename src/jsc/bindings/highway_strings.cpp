@@ -1,4 +1,10 @@
 // Must be first
+// OHOS: Highway's SVE/SVE2 targets aren't fully compatible with the
+// Cortex-A53 codegen and would produce empty dispatch entries. Restrict
+// to NEON (and its sub-variants) which is always available on aarch64.
+#if defined(__OHOS__)
+#define HWY_TARGETS (HWY_NEON | HWY_NEON_BF16)
+#endif
 #include "root.h"
 #undef HWY_TARGET_INCLUDE
 // Correct path to this file relative to the build root (CMakeLists.txt)

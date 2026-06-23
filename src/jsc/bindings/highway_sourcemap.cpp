@@ -36,6 +36,10 @@
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_sourcemap.cpp"
+// OHOS: restrict to NEON targets (SVE/SVE2 not fully compatible).
+#if defined(__OHOS__)
+#define HWY_TARGETS (HWY_NEON | HWY_NEON_BF16)
+#endif
 #include <hwy/foreach_target.h> // Must come before highway.h
 
 #include <hwy/highway.h>

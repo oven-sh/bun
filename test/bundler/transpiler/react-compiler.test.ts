@@ -638,12 +638,12 @@ describe("bundler", () => {
     external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      // Bun routes the memo-cache sentinel through a `bun:wrap` runtime import
-      // (`__MEMO_CACHE_SENTINEL`), so the bundler runtime defines
-      // `Symbol.for("react.memo_cache_sentinel")` exactly once for the whole
-      // bundle (Babel/upstream emits the call inline at every memo-slot
-      // comparison). Three components with no-dep scopes ⇒ three comparisons,
-      // but only one `Symbol.for` call.
+      // Bun routes the memo-cache sentinel through `p.runtime_imports`
+      // (`__MEMO_CACHE_SENTINEL`, same mechanism as `__toESM`/`__require`),
+      // so the bundler runtime defines `Symbol.for("react.memo_cache_sentinel")`
+      // exactly once for the whole bundle (Babel/upstream emits the call inline
+      // at every memo-slot comparison). Three components with no-dep scopes ⇒
+      // three comparisons, but only one `Symbol.for` call.
       const calls = [...out.matchAll(/Symbol\.for\("react\.memo_cache_sentinel"\)/g)];
       expect(calls).toHaveLength(1);
       // The runtime export is referenced by name at each comparison. Allow the

@@ -102,6 +102,16 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         ref_
     }
 
+    fn runtime_sentinel(&mut self, early: bool) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name: &'static [u8] = if early {
+            b"__EARLY_RETURN_SENTINEL"
+        } else {
+            b"__MEMO_CACHE_SENTINEL"
+        };
+        p.runtime_identifier_ref(bun_ast::Loc::EMPTY, name)
+    }
+
     fn global_ref(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);

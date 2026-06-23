@@ -93,6 +93,14 @@ pub trait Host {
         self.new_generated(name)
     }
 
+    /// `Ref` for the `__MEMO_CACHE_SENTINEL` / `__EARLY_RETURN_SENTINEL`
+    /// runtime export, declared on the parser's `runtime_imports` table on
+    /// first use so the linker wires it to `runtime.js` exactly like
+    /// `__toESM` / `__require` (no `S::Import` AST node).
+    fn runtime_sentinel(&mut self, _early: bool) -> Ref {
+        unreachable!("runtime_sentinel requires the bun parser host")
+    }
+
     fn global_ref(&mut self, name: &[u8]) -> Ref {
         self.new_generated(name)
     }
@@ -1435,21 +1443,6 @@ pub fn finish(
     }
 
     out_stmts.append(&mut state.outlined_decls);
-
-    if let Some(r) = state.context.memo_cache_sentinel_ref {
-        state.context.register_import_with_ref(
-            crate::imports::BUN_RUNTIME_MODULE,
-            crate::codegen::MEMO_CACHE_SENTINEL_EXPORT,
-            r,
-        );
-    }
-    if let Some(r) = state.context.early_return_sentinel_ref {
-        state.context.register_import_with_ref(
-            crate::imports::BUN_RUNTIME_MODULE,
-            crate::codegen::EARLY_RETURN_SENTINEL_EXPORT,
-            r,
-        );
-    }
 
     add_imports_to_program(out_stmts, host, &state.context);
 

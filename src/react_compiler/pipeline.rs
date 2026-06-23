@@ -182,21 +182,11 @@ pub fn compile_fn(
         let memo_cache = context.add_memo_cache_import(host);
         memo_cache.name_ref
     });
-    let mut cg = Codegen::new(
-        host,
-        arena,
-        memo_seed,
-        context.memo_cache_sentinel_ref,
-        context.early_return_sentinel_ref,
-    );
+    let mut cg = Codegen::new(host, arena, memo_seed);
     let codegen_result = timed!(
         "Codegen",
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)
     );
-    (
-        context.memo_cache_sentinel_ref,
-        context.early_return_sentinel_ref,
-    ) = cg.sentinel_refs();
     let codegen_result = codegen_result?;
 
     #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
@@ -342,20 +332,9 @@ pub fn compile_outlined_fn(
         let memo_cache = context.add_memo_cache_import(host);
         memo_cache.name_ref
     });
-    let mut cg = Codegen::new(
-        host,
-        arena,
-        memo_seed,
-        context.memo_cache_sentinel_ref,
-        context.early_return_sentinel_ref,
-    );
+    let mut cg = Codegen::new(host, arena, memo_seed);
     let codegen_result =
-        codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers);
-    (
-        context.memo_cache_sentinel_ref,
-        context.early_return_sentinel_ref,
-    ) = cg.sentinel_refs();
-    let codegen_result = codegen_result?;
+        codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)?;
 
     if env.has_errors() {
         return Err(env.take_errors());

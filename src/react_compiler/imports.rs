@@ -52,9 +52,6 @@ pub struct ProgramContext {
     // Variable renames from lowering, to be applied back to the Babel AST
     pub renames: Vec<crate::hir::environment::BindingRename>,
 
-    pub memo_cache_sentinel_ref: Option<bun_ast::Ref>,
-    pub early_return_sentinel_ref: Option<bun_ast::Ref>,
-
     // Internal state
     already_compiled: IndexSet<u32>,
     known_referenced_names: IndexSet<String>,
@@ -81,8 +78,6 @@ impl ProgramContext {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: Vec::new(),
-            memo_cache_sentinel_ref: None,
-            early_return_sentinel_ref: None,
             already_compiled: IndexSet::new(),
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),
@@ -200,24 +195,6 @@ impl ProgramContext {
             .insert(specifier, binding);
 
         binding
-    }
-
-    /// Like `add_import_specifier` but binds a pre-minted `Ref` already woven into emitted AST.
-    pub fn register_import_with_ref(
-        &mut self,
-        module: &'static str,
-        specifier: &'static str,
-        name_ref: bun_ast::Ref,
-    ) {
-        self.imports
-            .entry(module)
-            .or_default()
-            .entry(specifier)
-            .or_insert(NonLocalImportSpecifier {
-                name_ref,
-                module,
-                imported: specifier,
-            });
     }
 
     /// Register a name as referenced so future uid generation avoids it.
@@ -394,8 +371,6 @@ fn is_hook_name(name: &str) -> bool {
             .get(3)
             .is_some_and(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
-
-pub(crate) const BUN_RUNTIME_MODULE: &str = "bun:wrap";
 
 /// Get the runtime module name based on the compiler target.
 ///

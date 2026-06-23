@@ -50,9 +50,6 @@ use crate::reactive_scopes::{
 
 use crate::program::{Host, JsxImportKind};
 
-pub const MEMO_CACHE_SENTINEL_EXPORT: &str = "__MEMO_CACHE_SENTINEL";
-pub const EARLY_RETURN_SENTINEL_EXPORT: &str = "__EARLY_RETURN_SENTINEL";
-
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
     pub loc: Option<DiagSourceLocation>,
@@ -125,17 +122,9 @@ pub struct Codegen<'h> {
 }
 
 impl<'h> Codegen<'h> {
-    pub fn new(
-        host: &'h mut dyn Host,
-        arena: &'h Arena,
-        memo_cache_import: Option<Ref>,
-        memo_cache_sentinel: Option<Ref>,
-        early_return_sentinel: Option<Ref>,
-    ) -> Self {
+    pub fn new(host: &'h mut dyn Host, arena: &'h Arena, memo_cache_import: Option<Ref>) -> Self {
         let mut well_known = [None; WellKnown::COUNT];
         well_known[WellKnown::UseMemoCache as usize] = memo_cache_import;
-        well_known[WellKnown::MemoCacheSentinel as usize] = memo_cache_sentinel;
-        well_known[WellKnown::EarlyReturnSentinel as usize] = early_return_sentinel;
         Codegen {
             host,
             arena,
@@ -144,13 +133,6 @@ impl<'h> Codegen<'h> {
             name_to_ref: HashMap::new(),
             label_to_ref: IdMap::new(),
         }
-    }
-
-    pub fn sentinel_refs(&self) -> (Option<Ref>, Option<Ref>) {
-        (
-            self.well_known[WellKnown::MemoCacheSentinel as usize],
-            self.well_known[WellKnown::EarlyReturnSentinel as usize],
-        )
     }
 
     fn ref_for_name(&mut self, name: StoreStr) -> Ref {
@@ -173,16 +155,18 @@ impl<'h> Codegen<'h> {
         r
     }
 
-    fn well_known_import(&mut self, w: WellKnown, name: &[u8], loc: Loc) -> Expr {
+    fn sentinel_expr(&mut self, w: WellKnown, loc: Loc) -> Expr {
         let r = if let Some(r) = self.well_known[w as usize] {
             r
         } else {
-            let r = self.host.new_import_item(name);
+            let r = self
+                .host
+                .runtime_sentinel(matches!(w, WellKnown::EarlyReturnSentinel));
             self.well_known[w as usize] = Some(r);
             r
         };
         self.host.record_usage(r);
-        Expr::init(E::ImportIdentifier::new(r, true), loc)
+        Expr::init(E::ImportIdentifier::new(r, false), loc)
     }
 
     fn well_known_global(&mut self, w: WellKnown, name: &[u8]) -> Ref {
@@ -781,9 +765,7 @@ fn codegen_reactive_scope(
             E::Binary {
                 op: OpCode::BinStrictEq,
                 left: cache_slot(first_idx),
-                right: cx
-                    .cg
-                    .well_known_import(WellKnown::MemoCacheSentinel, b"$rc_sentinel", loc),
+                right: cx.cg.sentinel_expr(WellKnown::MemoCacheSentinel, loc),
             },
             loc,
         )
@@ -883,11 +865,7 @@ fn codegen_reactive_scope(
                     E::Binary {
                         op: OpCode::BinStrictNe,
                         left: name_expr,
-                        right: cx.cg.well_known_import(
-                            WellKnown::EarlyReturnSentinel,
-                            b"$rc_early",
-                            loc,
-                        ),
+                        right: cx.cg.sentinel_expr(WellKnown::EarlyReturnSentinel, loc),
                     },
                     loc,
                 ),
@@ -1899,11 +1877,7 @@ fn codegen_base_instruction_value(
             }
             if let NonLocalKind::ModuleLocal { name } = &binding.kind {
                 if name.slice() == b"$rc_early" {
-                    return Ok(cx.cg.well_known_import(
-                        WellKnown::EarlyReturnSentinel,
-                        b"$rc_early",
-                        loc,
-                    ));
+                    return Ok(cx.cg.sentinel_expr(WellKnown::EarlyReturnSentinel, loc));
                 }
             }
             match binding.ref_() {

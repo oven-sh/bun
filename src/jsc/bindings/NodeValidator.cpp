@@ -208,7 +208,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObjec
     RETURN_IF_EXCEPTION(scope, {});
 
     if (number_num < lower_num || number_num > upper_num) {
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, lower_num, upper_num, number);
+        // Node's checkRangesOrGetDefault spells the range with "and"
+        // (lib/internal/validators.js), unlike validateInteger/validateInt32/validateUint32
+        // which use "&&".
+        WTF::StringBuilder range;
+        range.append(">= "_s);
+        range.append(lower_num);
+        range.append(" and <= "_s);
+        range.append(upper_num);
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, range.toString(), number);
     }
     return JSValue::encode(number);
 }

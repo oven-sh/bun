@@ -76,17 +76,26 @@ fn run_async<A: FsArgument>(
     let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
     slice.will_be_async = true;
 
-    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
-    // to the Task: dropped only on the early-return
-    // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `Drop for ThreadSafe<A>` when the
-    // Task completes), and `slice` is intentionally not dropped — its
-    // `Drop`-unprotect would race that.
+    // A JS-backed path buffer is rooted at parse time by `protect_eat` (so a
+    // `toString`/`valueOf` coercion while parsing a *later* argument cannot
+    // allocate and collect it — the call frame does not visit values produced
+    // after the call begins). On success the Task takes a second root via
+    // `to_thread_safe` for the async window, released by `Drop for
+    // ThreadSafe<A>` on completion; `slice`'s `Drop` then releases the
+    // parse-time root, so the buffer stays rooted continuously.
+    //
+    // The early-exit branches below release everything through
+    // `args.unprotect()` instead: besides the `protect_eat` roots it also
+    // covers parse-time roots taken *outside* `slice`'s bitset (e.g.
+    // `WriteFile.data`, protected directly when `is_async`). `slice` is left
+    // undropped on those branches so its bitset does not double-release the
+    // paths `args.unprotect()` already released.
 
     let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
         Ok(a) => a,
         Err(err) => {
-            // SAFETY: not yet dropped; only drop site for this path.
+            // `args` was never built; release any `protect_eat` roots via the
+            // bitset. SAFETY: not yet dropped; only drop site for this path.
             unsafe { ManuallyDrop::drop(&mut slice) };
             return Err(err);
         }
@@ -95,8 +104,6 @@ fn run_async<A: FsArgument>(
     if global.has_exception() {
         args.unprotect();
         drop(args);
-        // SAFETY: not yet dropped; only drop site for this path.
-        unsafe { ManuallyDrop::drop(&mut slice) };
         return Ok(JSValue::ZERO);
     }
 
@@ -110,8 +117,6 @@ fn run_async<A: FsArgument>(
                     );
                 args.unprotect();
                 drop(args);
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
                 return Ok(promise);
             }
         }
@@ -121,7 +126,11 @@ fn run_async<A: FsArgument>(
     // bindings below.
     // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, this, args, vm))
+    let result = create_task(global, this, args, vm);
+    // SAFETY: not yet dropped; only drop site for this path. Releases the
+    // parse-time root now that the Task holds the async-window root.
+    unsafe { ManuallyDrop::drop(&mut slice) };
+    Ok(result)
 }
 
 #[inline(always)]
@@ -207,7 +216,11 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(global, this, cp_args, vm))
+        let result = AsyncCpTask::create(global, this, cp_args, vm);
+        // SAFETY: not yet dropped; only drop site for this path. Releases the
+        // parse-time roots now that the Task holds the async-window roots.
+        unsafe { ManuallyDrop::drop(&mut slice) };
+        Ok(result)
     }
 
     /// `callSync(.cp)`.
@@ -256,10 +269,15 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        if rd_args.recursive {
-            return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
-        }
-        Ok(async_::Readdir::create(global, this, rd_args, vm))
+        let result = if rd_args.recursive {
+            AsyncReaddirRecursiveTask::create(global, rd_args, vm)
+        } else {
+            async_::Readdir::create(global, this, rd_args, vm)
+        };
+        // SAFETY: not yet dropped; only drop site for this path. Releases the
+        // parse-time root now that the Task holds the async-window root.
+        unsafe { ManuallyDrop::drop(&mut slice) };
+        Ok(result)
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go

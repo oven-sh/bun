@@ -78,7 +78,7 @@ fn run_async<A: FsArgument>(
 
     // A JS-backed path buffer is rooted at parse time by `protect_eat` (so a
     // `toString`/`valueOf` coercion while parsing a *later* argument cannot
-    // allocate and collect it — the call frame does not visit values produced
+    // allocate and collect it: the call frame does not visit values produced
     // after the call begins). On success the Task takes a second root via
     // `to_thread_safe` for the async window, released by `Drop for
     // ThreadSafe<A>` on completion; `slice`'s `Drop` then releases the
@@ -190,37 +190,27 @@ impl Binding {
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
-    /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
-    /// `to_thread_safe()`, so the arena is dropped with `slice`.
+    /// `callAsync(.cp)`. `AsyncCpTask::create` takes the async-window roots
+    /// via `to_thread_safe()`; `slice`'s `Drop` releases the parse-time roots.
     pub fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
+        let mut slice = ArgumentsSlice::init(vm, frame.arguments());
         slice.will_be_async = true;
 
-        let cp_args = match args::Cp::from_js(global, &mut slice) {
-            Ok(a) => a,
-            Err(err) => {
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Err(err);
-            }
-        };
+        // Every path-buffer root lives in `slice`'s bitset (no out-of-bitset
+        // roots like `run_async`'s `WriteFile.data`), so `slice`'s scope-exit
+        // `Drop` releases them on every branch, after `create` has taken the
+        // async-window roots on the success path.
+        let cp_args = args::Cp::from_js(global, &mut slice)?;
 
         if global.has_exception() {
-            drop(cp_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
             return Ok(JSValue::ZERO);
         }
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let result = AsyncCpTask::create(global, this, cp_args, vm);
-        // SAFETY: not yet dropped; only drop site for this path. Releases the
-        // parse-time roots now that the Task holds the async-window roots.
-        unsafe { ManuallyDrop::drop(&mut slice) };
-        Ok(result)
+        Ok(AsyncCpTask::create(global, this, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
@@ -248,22 +238,15 @@ impl Binding {
     pub fn readdir(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
+        let mut slice = ArgumentsSlice::init(vm, frame.arguments());
         slice.will_be_async = true;
 
-        let rd_args = match args::Readdir::from_js(global, &mut slice) {
-            Ok(a) => a,
-            Err(err) => {
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Err(err);
-            }
-        };
+        // As in `cp`, every path root lives in `slice`'s bitset, so `slice`'s
+        // scope-exit `Drop` releases them on every branch, after `create` has
+        // taken the async-window root on the success path.
+        let rd_args = args::Readdir::from_js(global, &mut slice)?;
 
         if global.has_exception() {
-            drop(rd_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
             return Ok(JSValue::ZERO);
         }
 
@@ -274,9 +257,6 @@ impl Binding {
         } else {
             async_::Readdir::create(global, this, rd_args, vm)
         };
-        // SAFETY: not yet dropped; only drop site for this path. Releases the
-        // parse-time root now that the Task holds the async-window root.
-        unsafe { ManuallyDrop::drop(&mut slice) };
         Ok(result)
     }
 

@@ -19,7 +19,7 @@ use crate::parser::{
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
-use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
+use bun_ast::{B, E, Expr, G, S, Stmt};
 
 // Named instantiations of `P<'_, TS, SCAN>`.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
@@ -2248,12 +2248,9 @@ impl<'a> Parser<'a> {
 
         // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
         #[allow(deprecated)]
-        if !p.response_ref.is_null() && {
-            // We only want to do this if the symbol is used and didn't get
-            // bound to some other value
-            let symbol: &Symbol = &p.symbols.as_slice()[p.response_ref.inner_index() as usize];
-            !symbol.has_link() && symbol.use_count_estimate > 0
-        } {
+        if !p.response_ref.is_null()
+            && p.symbols.as_slice()[p.response_ref.inner_index() as usize].use_count_estimate > 0
+        {
             p.generate_import_stmt_for_bake_response(&mut before)?;
         }
 

@@ -3709,7 +3709,6 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
-extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
 
 // `bun --print`: register the Node-style print of the eval entry point's
 // completion value (internal/eval_print.ts attaches beforeExit/exit listeners,
@@ -3778,7 +3777,6 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
                 }
             }
         }
-        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(valueToStore));
         Bun__registerEvalPrintOnExit(globalObject, JSValue::encode(valueToStore), storedAsyncCapability);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -3903,10 +3901,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
     } else if (handler == Bun__BodyValueBufferer__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onRejectStream;
-    } else if (handler == Bun__onResolveEntryPointResult) {
-        return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
-    } else if (handler == Bun__onRejectEntryPointResult) {
-        return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
     } else if (handler == Bun__NodeHTTPRequest__onResolve) {
         return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onResolve;
     } else if (handler == Bun__NodeHTTPRequest__onReject) {

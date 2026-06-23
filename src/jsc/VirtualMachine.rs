@@ -69,12 +69,6 @@ pub type ExceptionList = Vec<crate::schema_api::JsException>;
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Default)]
-pub struct EntryPointResult {
-    pub value: crate::strong::Optional, // jsc.Strong.Optional
-    pub cjs_set_value: bool,
-}
-
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
 /// Carries the cross-tier subset of `Options` that [`init`] and
 /// `RuntimeHooks::init_runtime_state` need. `transform_options`/`debugger`
@@ -292,7 +286,6 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
-    pub entry_point_result: EntryPointResult,
 
     pub auto_install_dependencies: bool,
 
@@ -4694,8 +4687,6 @@ impl VirtualMachine {
         }
 
         self.overridden_main.deinit();
-        self.entry_point_result.value.deinit();
-        self.entry_point_result.cjs_set_value = false;
         if let Some(promise) = self.pending_internal_promise {
             if self.pending_internal_promise_is_protected {
                 JSValue::from_cell(promise).unprotect();

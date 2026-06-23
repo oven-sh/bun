@@ -107,29 +107,6 @@ pub fn set_override_module_run_main_promise(
     }
 }
 
-/// Exported as `Bun__VM__setEntryPointEvalResultESM`.
-// HOST_EXPORT(Bun__VM__setEntryPointEvalResultESM, c)
-pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
-    // allow esm evaluate to set value multiple times
-    if !this.entry_point_result.cjs_set_value {
-        // `global()` returns `&'static`, decoupled from `this` for the
-        // disjoint `&mut this.entry_point_result` borrow.
-        let global = this.global();
-        this.entry_point_result.value.set(global, result);
-    }
-}
-
-/// Exported as `Bun__VM__setEntryPointEvalResultCJS`.
-// HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
-pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue) {
-    if !this.entry_point_result.value.has() {
-        // `global()` returns `&'static`, decoupled from `this` for the
-        // disjoint `&mut this.entry_point_result` borrow.
-        let global = this.global();
-        this.entry_point_result.value.set(global, value);
-        this.entry_point_result.cjs_set_value = true;
-    }
-}
 
 /// Exported as `Bun__VM__specifierIsEvalEntryPoint`.
 // HOST_EXPORT(Bun__VM__specifierIsEvalEntryPoint, c)
@@ -281,54 +258,6 @@ pub(crate) mod sql_hooks {
         blob_needs_to_read_file,
         blob_shared_view,
     };
-}
-
-// ─── entry-point promise reactions (used by `--print`) ───────────────────────
-
-// HOST_EXPORT(Bun__onResolveEntryPointResult)
-pub fn on_resolve_entry_point_result(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
-}
-
-// HOST_EXPORT(Bun__onRejectEntryPointResult)
-pub fn on_reject_entry_point_result(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
 
 // ─── bindgenv2 dispatch shims (`bindgen_*_dispatch*`) ────────────────────────

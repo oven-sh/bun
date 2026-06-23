@@ -40,6 +40,9 @@ pub(crate) const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_V
 #[path = "fetch/FetchTasklet.rs"]
 pub mod fetch_tasklet;
 
+#[path = "fetch/compress_body.rs"]
+pub mod compress_body;
+
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
@@ -420,6 +423,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut disable_timeout = false;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
+    let mut compress: Option<compress_body::CompressOption> = None;
     let mut max_redirects: Option<u8> = None;
     let mut verbose: http::HTTPVerboseLevel = if vm
         .log_ref()
@@ -659,6 +663,33 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         break 'extract_disable_decompression disable_decompression;
     };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // "compress: boolean | string | { encoding, level? }"
+    'extract_compress: {
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                if let Some(compress_value) = obj.get(global_this, "compress")? {
+                    if !compress_value.is_undefined() {
+                        compress = compress_body::from_js(global_this, compress_value)?;
+                        break 'extract_compress;
+                    }
+                }
+
+                if global_this.has_exception() {
+                    return Ok(JSValue::ZERO);
+                }
+            }
+        }
+    }
 
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
@@ -1624,7 +1655,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 Ok(fd) => fd,
             };
 
-            if proxy.is_none() && http::SendFile::is_eligible(&url) {
+            // An explicit `compress` request always wins over the sendfile
+            // heuristic — otherwise the same `Bun.file()` body would compress
+            // over https/proxy/<32 KiB/Windows but silently not over plain http.
+            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,
@@ -1729,6 +1763,32 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
         }
+    }
+
+    // Automatic request-body compression. Only buffered bodies (Blob bytes,
+    // ArrayBuffer/TypedArray, string) are handled; ReadableStream and sendfile
+    // are skipped. S3 destinations replace the header set with a signed one,
+    // so compression is skipped there too. The actual compression runs on the
+    // HTTP thread (HTTPClient::start) so it can reuse LibdeflateState's shared
+    // scratch buffer; here we only commit to it by appending Content-Encoding
+    // and forwarding the option.
+    if let Some(compress_opt) = &compress
+        && let HTTPRequestBody::AnyBlob(_) = &body
+        && !url.is_s3()
+    {
+        let already_has_encoding = headers
+            .as_ref()
+            .and_then(|h| h.get_content_encoding())
+            .is_some();
+        if !already_has_encoding && !body.slice().is_empty() {
+            headers
+                .get_or_insert_default()
+                .append(b"Content-Encoding", compress_opt.encoding.header_value());
+        } else {
+            compress = None;
+        }
+    } else {
+        compress = None;
     }
 
     if url.is_s3() {
@@ -1966,6 +2026,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         force_http3,
         force_http1,
         is_node_http_client: ALLOW_GET_BODY,
+        compress,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
             jsc::strong::Optional::empty()
         } else {

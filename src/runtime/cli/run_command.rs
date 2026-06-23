@@ -1584,14 +1584,18 @@ impl Run {
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
                 }
-                // Clear a pending termination left by `process.exit()` so the
-                // loop can keep ticking; skip the beforeExit dispatch since the
-                // run already exited (matches Node, which does not fire
+                // Skip the beforeExit dispatch if the run already exited via
+                // `process.exit()` (matches Node, which does not fire
                 // `beforeExit` on `process.exit()`).
+                if !vm.watch_exit_requested {
+                    vm.on_before_exit();
+                }
+                // Clear a pending termination left by `process.exit()` so the
+                // loop can keep ticking. Re-checked after `on_before_exit` too:
+                // a `beforeExit` handler may itself call `process.exit()`, which
+                // sets the flag only now.
                 if vm.watch_exit_requested {
                     vm.clear_watch_exit_termination();
-                } else {
-                    vm.on_before_exit();
                 }
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely

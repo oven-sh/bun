@@ -52,59 +52,68 @@ afterEach(() => {
 // killing the watcher itself. It should instead end the current run (like a
 // thrown error does) and keep the watcher waiting for the next change.
 // https://github.com/oven-sh/bun/issues/32648
+const exitScenarios = {
+  // process.exit() during top-level evaluation.
+  direct: (n: number) => `console.log("MARK:${n}");\nprocess.exit(1);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  // process.exit() from a beforeExit handler: the run ends normally, then the
+  // handler calls process.exit() while the watcher loop is dispatching
+  // beforeExit.
+  "beforeExit handler": (n: number) =>
+    `console.log("MARK:${n}");\nprocess.on("beforeExit", () => process.exit(1));\n`,
+} as const;
+
 for (const mode of ["--watch", "--hot"] as const) {
-  test(`${mode}: process.exit() keeps the watcher alive`, async () => {
-    const fixture = (n: number) =>
-      `console.log("MARK:${n}");\nprocess.exit(1);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`;
+  for (const [scenario, fixture] of Object.entries(exitScenarios)) {
+    test(`${mode}: process.exit() (${scenario}) keeps the watcher alive`, async () => {
+      using dir = tempDir("watch-process-exit", { "index.ts": fixture(0) });
+      const path = join(String(dir), "index.ts");
 
-    using dir = tempDir("watch-process-exit", { "index.ts": fixture(0) });
-    const path = join(String(dir), "index.ts");
+      await using proc = spawn({
+        cmd: [bunExe(), mode, "--no-clear-screen", "index.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
 
-    await using proc = spawn({
-      cmd: [bunExe(), mode, "--no-clear-screen", "index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
+      // Drain stderr so a full pipe never blocks the child.
+      const stderrText = proc.stderr.text();
 
-    // Drain stderr so a full pipe never blocks the child.
-    const stderrText = proc.stderr.text();
-
-    const decoder = new TextDecoder();
-    const reader = proc.stdout.getReader();
-    let out = "";
-    const waitForMark = async (n: number) => {
-      const marker = `MARK:${n}`;
-      while (!out.includes(marker)) {
-        const { done, value } = await reader.read();
-        if (done) {
-          throw new Error(
-            `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
-          );
+      const decoder = new TextDecoder();
+      const reader = proc.stdout.getReader();
+      let out = "";
+      const waitForMark = async (n: number) => {
+        const marker = `MARK:${n}`;
+        while (!out.includes(marker)) {
+          const { done, value } = await reader.read();
+          if (done) {
+            throw new Error(
+              `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
+            );
+          }
+          out += decoder.decode(value, { stream: true });
         }
-        out += decoder.decode(value, { stream: true });
+      };
+
+      // First run executes and calls process.exit().
+      await waitForMark(0);
+
+      // Each edit must reload, proving the watcher survived the previous
+      // process.exit().
+      for (let n = 1; n <= 2; n++) {
+        await writeFile(path, fixture(n));
+        await waitForMark(n);
       }
-    };
 
-    // First run executes and calls process.exit().
-    await waitForMark(0);
+      // process.exit() stops execution: the statement after it never runs.
+      expect(out).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+      // The watcher is still running (we reloaded twice after process.exit()).
+      expect(proc.exitCode).toBeNull();
 
-    // Each edit must reload, proving the watcher survived the previous
-    // process.exit().
-    for (let n = 1; n <= 2; n++) {
-      await writeFile(path, fixture(n));
-      await waitForMark(n);
-    }
-
-    // process.exit() stops execution: the statement after it never runs.
-    expect(out).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
-    // The watcher is still running (we reloaded twice after process.exit()).
-    expect(proc.exitCode).toBeNull();
-
-    await reader.cancel();
-    proc.kill();
-    await stderrText;
-  });
+      await reader.cancel();
+      proc.kill();
+      await stderrText;
+    });
+  }
 }

@@ -439,7 +439,10 @@ export function getJS2NativeDTS() {
         .filter(x => x.endsWith("cpp"))
         .map(x => JSON.stringify(basename(x)))
         .join("|"),
-    "declare type NativeFilenameZig = string;",
+    "declare type NativeFilenameZig = " +
+      Object.keys(zigIdentifierPaths)
+        .map(x => JSON.stringify(x))
+        .join("|"),
     "",
   ].join("\n");
 }

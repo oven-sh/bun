@@ -474,3 +474,169 @@ export function transformStreamDefaultSourceCancelAlgorithm(stream, reason) {
 
   return promiseCapability.promise;
 }
+
+export function createCompressionTransform(mode) {
+  const { Buffer } = require("node:buffer");
+  const { isArrayBuffer, isSharedArrayBuffer } = require("node:util/types");
+
+  const handle = new $CompressionStreamTransformer(mode);
+  const chunkSize = 16384; // node:zlib Z_DEFAULT_CHUNK — the native output granularity
+  let closed = false;
+
+  function close() {
+    if (!closed) {
+      closed = true;
+      handle.close();
+    }
+  }
+
+  // Chunks at or past this many bytes run on the work pool instead of the JS
+  // thread. Below it the synchronous path is faster (no input copy, no thread
+  // hop, no promise allocation); above it the compression work dominates and
+  // offloading keeps the main thread responsive — the previous node:zlib
+  // adapter paid a threadpool round-trip per 16KB of output regardless.
+  //
+  // For DecompressionStream the input size says nothing about the work: a
+  // sub-threshold compressed chunk can expand to arbitrary output and stall
+  // the JS thread for its whole drive loop, so the decode modes (INFLATE,
+  // GUNZIP, INFLATERAW, BROTLI_DECODE, ZSTD_DECOMPRESS) always take the async
+  // path (the previous adapter was always async here too).
+  //
+  // BROTLI_ENCODE (mode 9) is the same: at the default quality 11, PROCESS
+  // only buffers input until the encoder's ring buffer fills (~256KB) and
+  // then entropy-codes the whole metablock in one call, so a stream of
+  // sub-threshold writes would run that encode on the JS thread every time
+  // cumulative input crosses a block boundary. zlib and zstd encode
+  // compress incrementally per call, so their sync fast path is sound.
+  const isDecode = mode === 2 || mode === 4 || mode === 6 || mode === 8 || mode === 11;
+  const asyncThreshold = isDecode || mode === 9 ? 1 : 4 * chunkSize;
+
+  // node surfaces engine failures as a TypeError carrying the error code
+  // (its webstreams adapter wraps them); match the class and code but keep
+  // the engine's message, which the adapter dropped.
+  function wrapEngineError(error) {
+    const wrapped = $makeTypeError(error.message);
+    wrapped.code = error.code;
+    wrapped.errno = error.errno;
+    wrapped.cause = error;
+    return wrapped;
+  }
+
+  function enqueueOutputs(controller, outputs) {
+    for (let i = 0; i < outputs.length; i++) $transformStreamDefaultControllerEnqueue(controller, outputs[i]);
+  }
+
+  // The consume/produce loop lives in the native transformer; this wrapper
+  // only normalizes chunk types, wraps engine errors, and enqueues the
+  // returned output chunks (each an exact-size Uint8Array, ≤ chunkSize).
+  // Accepted chunk types follow node v26 (the Compression Streams spec):
+  // any BufferSource (ArrayBuffer or a view over one) is accepted;
+  // SharedArrayBuffer and SAB-backed views reject with
+  // ERR_INVALID_ARG_TYPE, null with its dedicated streams error. Strings
+  // are still accepted for compatibility with node's zlib Transform write
+  // path.
+  //
+  // Returns a promise when the chunk took the async path; the TransformStream
+  // gates the next write on it.
+  function drive(chunk, isFinish, controller) {
+    if (typeof chunk === "string") chunk = Buffer.from(chunk);
+    else if (ArrayBuffer.$isView(chunk)) {
+      if (isSharedArrayBuffer(chunk.buffer))
+        throw $ERR_INVALID_ARG_TYPE("chunk", ["ArrayBuffer", "Buffer", "TypedArray", "DataView"], chunk);
+      // A view over a detached buffer reports byteLength 0 but must reject
+      // like node (whose Buffer.from copy throws on detached buffers).
+      if (chunk.buffer.detached) throw $makeTypeError("Cannot perform Construct on a detached ArrayBuffer");
+    } else if (isArrayBuffer(chunk)) {
+      chunk = new Uint8Array(chunk);
+    } else if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
+    else throw $ERR_INVALID_ARG_TYPE("chunk", ["ArrayBuffer", "Buffer", "TypedArray", "DataView"], chunk);
+
+    if (chunk.byteLength >= asyncThreshold) {
+      return handle.transformAsync(chunk, isFinish).$then(
+        outputs => {
+          enqueueOutputs(controller, outputs);
+        },
+        error => {
+          close();
+          throw wrapEngineError(error);
+        },
+      );
+    }
+
+    let outputs;
+    try {
+      outputs = handle.transform(chunk, isFinish);
+    } catch (error) {
+      throw wrapEngineError(error);
+    }
+    enqueueOutputs(controller, outputs);
+  }
+
+  const emptyChunk = new Uint8Array(0);
+
+  return new TransformStream(
+    {
+      // Any failure (bad chunk type, engine error, enqueue on a torn-down
+      // readable) errors the stream and the transformer is never invoked
+      // again, so release the native handle on the way out.
+      transform(chunk, controller) {
+        try {
+          return drive(chunk, false, controller);
+        } catch (e) {
+          close();
+          throw e;
+        }
+      },
+      // The finish flush always takes the work pool: brotli at the default
+      // quality 11 buffers input during PROCESS and encodes the residual
+      // block (up to ~256KB) at FINISH, so the 0-byte input here says
+      // nothing about the work. For zlib/zstd the finish is just a trailer
+      // and the one thread hop is noise. close() is chained on settlement.
+      flush(controller) {
+        return handle.transformAsync(emptyChunk, true).$then(
+          outputs => {
+            // The engine is done once the outputs are extracted; close
+            // before enqueueing so a reader.cancel() that landed while
+            // the worker ran (it closes the readable and returns the
+            // already-set finishPromise without invoking cancel()) still
+            // releases the native context deterministically. The enqueue
+            // then throws on the closed readable — discard the outputs,
+            // the reader no longer wants them; sinkCloseAlgorithm sees
+            // the readable is not errored and resolves the close.
+            close();
+            try {
+              enqueueOutputs(controller, outputs);
+            } catch {}
+          },
+          error => {
+            close();
+            throw wrapEngineError(error);
+          },
+        );
+      },
+      // reader.cancel() / writer.abort() skip flush() — this is the
+      // teardown path that releases the native handle for them.
+      cancel() {
+        close();
+      },
+    },
+    undefined,
+    // The readable side buffers output before signalling backpressure; a
+    // gated write only proceeds once a reader drains the queue. Two
+    // constraints pick the budget:
+    //
+    // - With the spec-default strategy (highWaterMark 0, initial
+    //   backpressure), the first write would stall until a reader attaches.
+    //   The Node-adapter implementation this replaces resolved writes while
+    //   ~16KB of *input* was buffered — so a decompression write whose
+    //   output expands far past its input (and every write after it) still
+    //   resolved with no reader attached, and code in the wild awaits
+    //   writes before reading. A budget of one chunkSize of *output* would
+    //   deadlock the write that follows any >16KB expansion.
+    // - An unbounded queue would break producer throttling in piped flows.
+    //
+    // 64 chunkSizes (1MiB) of output covers the old input-side acceptance
+    // for typical expansion ratios while keeping piped flows bounded.
+    { highWaterMark: 64 * chunkSize, size: chunk => chunk.byteLength },
+  );
+}

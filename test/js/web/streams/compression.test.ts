@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
+import zlib from "node:zlib";
 
 describe("CompressionStream and DecompressionStream", () => {
   describe("brotli", () => {
@@ -304,8 +306,8 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     const reader = cs.readable.getReader();
 
     const writeError = writer.write(42).catch(e => e);
-    // Without the kDestroyOnSyncError handling the readable side hangs
-    // forever here.
+    // A throw in transform() errors both sides of the TransformStream, so
+    // the readable side rejects instead of hanging.
     const readError = reader.read().catch(e => e);
 
     const [we, re] = await Promise.all([writeError, readError]);
@@ -336,5 +338,704 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
       expect(e.code).toBe("ERR__ERROR_FORMAT_PADDING_2");
       expect(e.cause.code).toBe(e.code);
     }
+  });
+});
+
+describe("CompressionStream write/read ordering", () => {
+  // The implementation buffers output on the readable side: awaiting writes
+  // before any reader attaches must not deadlock. (A strictly spec-default
+  // TransformStream — readable highWaterMark 0 — would stall here; this pins
+  // Bun's long-standing buffered behavior.)
+  test("awaiting writes before reading does not deadlock", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    await writer.write(new TextEncoder().encode("hello"));
+    await writer.write(new TextEncoder().encode("world"));
+    await writer.close();
+
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of cs.readable as unknown as AsyncIterable<Uint8Array>) chunks.push(chunk);
+    const ds = new DecompressionStream("gzip");
+    const w2 = ds.writable.getWriter();
+    await w2.write(Buffer.concat(chunks));
+    await w2.close();
+    const out: Uint8Array[] = [];
+    for await (const chunk of ds.readable as unknown as AsyncIterable<Uint8Array>) out.push(chunk);
+    expect(Buffer.concat(out).toString()).toBe("helloworld");
+  });
+
+  test("writes after a chunk whose output expands past the buffer still resolve before reading", async () => {
+    // ~100 bytes of input inflating to 64KB of output blows straight through
+    // a single-chunkSize readable budget; the writes that follow must still
+    // resolve with no reader attached — the node-adapter implementation
+    // accepted ~16KB of *input* regardless of how large the buffered output
+    // grew, and this sequence resolved on it.
+    const big = zlib.gzipSync(Buffer.alloc(64 * 1024));
+    const small = zlib.gzipSync(Buffer.from("hello"));
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    await writer.write(big);
+    for (let i = 0; i < 8; i++) await writer.write(small);
+    // close() cannot settle until the reader drains the buffered output, so
+    // capture its settlement and assert it after the drain loop.
+    const closed = writer.close().then(
+      () => "resolved",
+      e => `rejected: ${e}`,
+    );
+    const out: Uint8Array[] = [];
+    for await (const chunk of ds.readable as unknown as AsyncIterable<Uint8Array>) out.push(chunk);
+    const total = Buffer.concat(out);
+    expect(total.length).toBe(64 * 1024 + 8 * 5);
+    expect(total.subarray(64 * 1024).toString()).toBe(Buffer.alloc(8 * 5, "hello").toString());
+    expect(await closed).toBe("resolved");
+  });
+
+  test("corrupt input rejects with Z_DATA_ERROR", async () => {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    writer.write(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])).catch(() => {});
+    writer.close().catch(() => {});
+    try {
+      for await (const _ of ds.readable as unknown as AsyncIterable<Uint8Array>) {
+      }
+      expect.unreachable();
+    } catch (e) {
+      expect((e as { code?: string }).code).toBe("Z_DATA_ERROR");
+    }
+  });
+});
+
+// Every behavior in this block was verified against Node v24 (except the
+// brotli/zstd cases — formats Node doesn't support — which pin Bun's
+// pre-existing behavior).
+describe("CompressionStream Node.js compatibility", () => {
+  async function collect(readable: ReadableStream<Uint8Array>): Promise<Uint8Array[]> {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of readable as unknown as AsyncIterable<Uint8Array>) chunks.push(chunk);
+    return chunks;
+  }
+
+  async function drain(
+    stream: CompressionStream | DecompressionStream,
+    inputs: Array<string | ArrayBufferView | ArrayBuffer>,
+  ): Promise<Buffer> {
+    const writer = stream.writable.getWriter();
+    const collected = collect(stream.readable);
+    try {
+      for (const input of inputs) await writer.write(input);
+      await writer.close();
+    } catch (e) {
+      // The readable rejects with the same stream error; settle it so the
+      // write/close error is the one that propagates.
+      await collected.catch(() => {});
+      throw e;
+    }
+    return Buffer.concat(await collected);
+  }
+
+  async function decompress(format: string, inputs: Array<string | ArrayBufferView | ArrayBuffer>): Promise<Buffer> {
+    return drain(new DecompressionStream(format as Bun.CompressionFormat), inputs);
+  }
+
+  async function roundTrip(format: string, inputs: Array<string | ArrayBufferView | ArrayBuffer>): Promise<Buffer> {
+    return decompress(format, [await drain(new CompressionStream(format as Bun.CompressionFormat), inputs)]);
+  }
+
+  describe("input chunk types", () => {
+    test("accepts string, ArrayBuffer, DataView, TypedArray and offset subarray like node", async () => {
+      expect(await roundTrip("gzip", ["hello"])).toEqual(Buffer.from("hello"));
+
+      const bytes = new TextEncoder().encode("hello");
+      // A plain ArrayBuffer is a valid BufferSource.
+      expect(await roundTrip("gzip", [bytes.slice().buffer])).toEqual(Buffer.from("hello"));
+
+      expect(await roundTrip("gzip", [new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)])).toEqual(
+        Buffer.from("hello"),
+      );
+
+      // A non-byte TypedArray is interpreted as its underlying bytes.
+      expect(await roundTrip("gzip", [new Uint16Array([0x6568, 0x6c6c, 0x6f])])).toEqual(
+        Buffer.from([0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x00]),
+      );
+
+      // Only the view's window, not its whole backing buffer.
+      const big = Buffer.alloc(32, 0xff);
+      big.set(bytes, 10);
+      expect(await roundTrip("gzip", [big.subarray(10, 15)])).toEqual(Buffer.from("hello"));
+    });
+
+    test.each([
+      ["SharedArrayBuffer", () => new SharedArrayBuffer(8)],
+      ["SharedArrayBuffer-backed view", () => new Uint8Array(new SharedArrayBuffer(8))],
+      ["number", () => 42],
+      ["undefined", () => undefined],
+      ["plain object", () => ({})],
+      ["Blob", () => new Blob(["hello"])],
+    ] as Array<[string, () => unknown]>)("rejects %s with ERR_INVALID_ARG_TYPE like node", async (_label, make) => {
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const collected = collect(cs.readable).catch(() => []);
+      const err = (await writer.write(make() as Uint8Array).then(
+        () => null,
+        e => e,
+      )) as { code?: string; constructor: unknown } | null;
+      expect(err).not.toBeNull();
+      expect(err!.constructor).toBe(TypeError);
+      expect(err!.code).toBe("ERR_INVALID_ARG_TYPE");
+      // The failed write errors the whole stream. (Node instead leaves the
+      // stream wedged — later writes never settle — so this pins the only
+      // sane teardown.)
+      expect(
+        (
+          await writer.closed.then(
+            () => null,
+            (e: { code?: string }) => e,
+          )
+        )?.code,
+      ).toBe("ERR_INVALID_ARG_TYPE");
+      await collected;
+    });
+
+    test("rejects null with ERR_STREAM_NULL_VALUES like node", async () => {
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const collected = collect(cs.readable).catch(() => []);
+      const err = (await writer.write(null as unknown as Uint8Array).then(
+        () => null,
+        e => e,
+      )) as { code?: string } | null;
+      expect(err?.code).toBe("ERR_STREAM_NULL_VALUES");
+      await collected;
+    });
+
+    test("rejects a view over a detached ArrayBuffer with TypeError like node", async () => {
+      const buffer = new ArrayBuffer(5);
+      const view = new Uint8Array(buffer);
+      structuredClone(buffer, { transfer: [buffer] }); // detach
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const collected = collect(cs.readable).catch(() => []);
+      const err = await writer.write(view).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(TypeError);
+      await collected;
+    });
+  });
+
+  describe("empty input", () => {
+    test("empty chunks and an empty stream still produce a valid compressed stream", async () => {
+      for (const format of ["gzip", "deflate", "deflate-raw", "brotli", "zstd"]) {
+        expect(await roundTrip(format, [new Uint8Array(0)])).toEqual(Buffer.alloc(0));
+        expect(await roundTrip(format, [])).toEqual(Buffer.alloc(0));
+      }
+    });
+
+    test("closing an empty gzip/deflate/brotli DecompressionStream rejects with Z_BUF_ERROR like node", async () => {
+      for (const format of ["gzip", "deflate", "deflate-raw", "brotli"]) {
+        const err = (await decompress(format, []).then(
+          () => null,
+          e => e,
+        )) as { code?: string } | null;
+        expect(err?.code).toBe("Z_BUF_ERROR");
+      }
+    });
+
+    test("closing an empty zstd DecompressionStream produces empty output", async () => {
+      expect(await decompress("zstd", [])).toEqual(Buffer.alloc(0));
+    });
+  });
+
+  describe("malformed compressed input", () => {
+    test("truncated gzip rejects with Z_BUF_ERROR on close like node", async () => {
+      const gzipped = zlib.gzipSync(Buffer.alloc(1000, "a"));
+      const err = (await decompress("gzip", [gzipped.subarray(0, gzipped.length - 5)]).then(
+        () => null,
+        e => e,
+      )) as { code?: string } | null;
+      expect(err?.code).toBe("Z_BUF_ERROR");
+    });
+
+    test("trailing garbage after the gzip stream rejects with Z_DATA_ERROR like node", async () => {
+      const payload = Buffer.concat([zlib.gzipSync(Buffer.from("hello")), Buffer.from("garbage!")]);
+      const err = (await decompress("gzip", [payload]).then(
+        () => null,
+        e => e,
+      )) as { code?: string } | null;
+      expect(err?.code).toBe("Z_DATA_ERROR");
+    });
+
+    test("trailing bytes the engine leaves unconsumed at stream end are discarded like node", async () => {
+      // The engine stops at stream end with the trailing bytes unconsumed
+      // and no error; node's drive loop treats leftover input with spare
+      // output as end-of-stream and discards it (lib/zlib.js
+      // processCallback) instead of re-feeding bytes the engine refuses.
+      // (gzip with NON-zero trailing bytes takes the multi-member path and
+      // rejects instead — pinned above; zero bytes are member padding.)
+      const payload = Buffer.from("hello");
+      const cases: Array<[string, Buffer]> = [
+        ["deflate", Buffer.concat([zlib.deflateSync(payload), Buffer.from([1])])],
+        ["deflate-raw", Buffer.concat([zlib.deflateRawSync(payload), Buffer.from([1, 2, 3])])],
+        ["gzip", Buffer.concat([zlib.gzipSync(payload), Buffer.alloc(8)])],
+        ["brotli", Buffer.concat([zlib.brotliCompressSync(payload), Buffer.from([1, 2, 3])])],
+        ["zstd", Buffer.concat([zlib.zstdCompressSync(payload), Buffer.from([1, 2, 3])])],
+      ];
+      for (const [format, input] of cases) {
+        expect([format, (await decompress(format, [input])).toString()]).toEqual([format, "hello"]);
+      }
+    });
+
+    test("corrupt zstd input carries the zstd error code", async () => {
+      const err = (await decompress("zstd", [new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])]).then(
+        () => null,
+        e => e,
+      )) as { code?: string } | null;
+      expect(err?.code).toBe("ZSTD_error_prefix_unknown");
+    });
+
+    test("a corrupt chunk errors pending and subsequent operations like node", async () => {
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      // (Node resolves this write — its adapter buffers the chunk before the
+      // engine sees it — where the synchronous engine rejects it; the spec
+      // propagates transform errors to the write. Don't pin the timing, pin
+      // where the error surfaces and what it carries.)
+      await writer.write(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])).catch(() => {});
+      const readErr = (await reader.read().then(
+        () => null,
+        e => e,
+      )) as { code?: string } | null;
+      expect(readErr?.constructor).toBe(TypeError);
+      expect(readErr?.code).toBe("Z_DATA_ERROR");
+      expect(
+        await writer.close().then(
+          () => "resolved",
+          () => "rejected",
+        ),
+      ).toBe("rejected");
+    });
+  });
+
+  describe("gzip specifics", () => {
+    test("concatenated gzip members decompress to the concatenated payload like node", async () => {
+      const payload = Buffer.concat([zlib.gzipSync(Buffer.from("hello")), zlib.gzipSync(Buffer.from("world"))]);
+      expect((await decompress("gzip", [payload])).toString()).toBe("helloworld");
+    });
+
+    test("decompressing byte-at-a-time yields the full payload", async () => {
+      const expected = Buffer.alloc(300, "x");
+      const gzipped = zlib.gzipSync(expected) as Buffer;
+      const inputs = Array.from(gzipped, byte => new Uint8Array([byte]));
+      expect(await decompress("gzip", inputs)).toEqual(expected);
+    });
+  });
+
+  describe("output", () => {
+    test("chunks are plain Uint8Arrays like node", async () => {
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const collected = collect(cs.readable);
+      await writer.write(Buffer.alloc(100, "a"));
+      await writer.close();
+      const chunks = await collected;
+      expect(chunks.length).toBeGreaterThan(0);
+      for (const chunk of chunks) {
+        expect(Object.getPrototypeOf(chunk)).toBe(Uint8Array.prototype);
+      }
+    });
+
+    test("chunks expose no bytes beyond their view — no recycled heap memory reachable", async () => {
+      // Each output chunk is an exact-size allocation: chunk.buffer must not
+      // reach past the view's window at all, so there is no spare region
+      // that could disclose previous heap contents.
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const collected = collect(cs.readable);
+      await writer.write(Buffer.from("hello"));
+      await writer.close();
+      const chunks = await collected;
+      for (const chunk of chunks) {
+        expect(chunk.byteOffset).toBe(0);
+        expect(chunk.buffer.byteLength).toBe(chunk.byteLength);
+      }
+    });
+
+    test("byte-at-a-time decompression yields bounded exact-size chunks", async () => {
+      // Incompressible input dribbled in byte-at-a-time makes the engine
+      // emit many small output chunks. Each is an independent exact-size
+      // allocation no larger than the native output granularity (16KB) —
+      // the native drive adopts the engine's output buffers instead of
+      // copying them into JS-side staging.
+      const payload = new Uint8Array(1024);
+      crypto.getRandomValues(payload);
+      const gzipped = zlib.gzipSync(payload) as Buffer;
+
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      const collected = collect(ds.readable);
+      for (const byte of gzipped) await writer.write(new Uint8Array([byte]));
+      await writer.close();
+      const chunks = await collected;
+
+      expect(Buffer.concat(chunks)).toEqual(Buffer.from(payload));
+      expect(chunks.length).toBeGreaterThan(1);
+      for (const chunk of chunks) {
+        expect(chunk.byteLength).toBeLessThanOrEqual(16384);
+        expect(chunk.buffer.byteLength).toBe(chunk.byteLength);
+      }
+    });
+
+    test("multi-chunk payloads round-trip for every format", async () => {
+      const incompressible = new Uint8Array(1024 * 1024);
+      crypto.getRandomValues(incompressible);
+      const compressible = Buffer.alloc(2 * 1024 * 1024, "abcdefgh");
+      for (const format of ["gzip", "deflate", "deflate-raw", "brotli", "zstd"]) {
+        expect(await roundTrip(format, [incompressible])).toEqual(Buffer.from(incompressible));
+        expect(await roundTrip(format, [compressible])).toEqual(compressible);
+      }
+    });
+
+    test("output bytes match node:zlib for gzip", async () => {
+      const payload = Buffer.alloc(100_000, "compression streams test ");
+      expect(await decompress("gzip", [zlib.gzipSync(payload)])).toEqual(payload);
+      const compressed = await drain(new CompressionStream("gzip"), [payload]);
+      expect(zlib.gunzipSync(compressed)).toEqual(payload);
+    });
+  });
+
+  describe("teardown", () => {
+    test("reader.cancel() errors the writable with the cancel reason like node", async () => {
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const reader = cs.readable.getReader();
+      await writer.write(Buffer.from("hello"));
+      await reader.cancel("because");
+      expect(
+        await writer.write(Buffer.from("world")).then(
+          () => null,
+          e => e,
+        ),
+      ).toBe("because");
+      expect(
+        await writer.closed.then(
+          () => null,
+          (e: unknown) => e,
+        ),
+      ).toBe("because");
+    });
+
+    test("writer.abort() errors pending reads with the abort reason like node", async () => {
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const reader = cs.readable.getReader();
+      await writer.write(Buffer.from("hello"));
+      const boom = new Error("boom");
+      await writer.abort(boom);
+      expect(
+        await reader.read().then(
+          () => null,
+          e => e,
+        ),
+      ).toBe(boom);
+    });
+
+    test("a fresh stream can be torn down immediately", async () => {
+      // No writes at all — cancel/abort must not trip over the engine.
+      await new CompressionStream("gzip").readable.cancel("x");
+      await new DecompressionStream("gzip").writable.abort("y");
+      const cs = new CompressionStream("zstd");
+      await Promise.all([cs.readable.cancel(), cs.writable.abort()].map(p => p.catch(() => {})));
+    });
+  });
+});
+
+describe("engine lifecycle", () => {
+  // The native transformer holds a zlib/brotli/zstd context (~256KB for
+  // deflate). These loops create far more streams than would fit in memory
+  // if any teardown path leaked the context: completed, cancelled
+  // mid-stream, aborted, and abandoned-to-GC streams must all release it.
+  const RSS_BUDGET_MB = 256;
+
+  async function rssGrowthMB(fn: () => Promise<void>): Promise<number> {
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    await fn();
+    Bun.gc(true);
+    return (process.memoryUsage.rss() - before) / 1024 / 1024;
+  }
+
+  test("completed streams release the engine", async () => {
+    const growth = await rssGrowthMB(async () => {
+      for (let i = 0; i < 500; i++) {
+        const cs = new CompressionStream("gzip");
+        const writer = cs.writable.getWriter();
+        const reads = (async () => {
+          for await (const _ of cs.readable as unknown as AsyncIterable<Uint8Array>) {
+          }
+        })();
+        await writer.write(new Uint8Array(1024));
+        await writer.close();
+        await reads;
+      }
+    });
+    expect(growth).toBeLessThan(RSS_BUDGET_MB);
+  });
+
+  test("cancelled and aborted streams release the engine", async () => {
+    const growth = await rssGrowthMB(async () => {
+      for (let i = 0; i < 500; i++) {
+        const cs = new CompressionStream(i % 2 ? "gzip" : "zstd");
+        const writer = cs.writable.getWriter();
+        await writer.write(new Uint8Array(1024)).catch(() => {});
+        if (i % 2) {
+          await cs.readable.cancel("done");
+          await writer.abort("done").catch(() => {});
+        } else {
+          await writer.abort("done").catch(() => {});
+          await cs.readable.cancel("done").catch(() => {});
+        }
+      }
+    });
+    expect(growth).toBeLessThan(RSS_BUDGET_MB);
+  });
+
+  test("abandoned streams release the engine via GC", async () => {
+    const growth = await rssGrowthMB(async () => {
+      for (let i = 0; i < 1000; i++) {
+        // No flush, no cancel — the only release path is finalization.
+        const cs = new CompressionStream("deflate");
+        const writer = cs.writable.getWriter();
+        await writer.write(new Uint8Array(64)).catch(() => {});
+        if (i % 100 === 99) Bun.gc(true);
+      }
+    });
+    expect(growth).toBeLessThan(RSS_BUDGET_MB);
+  });
+});
+
+// Chunks past createCompressionTransform's asyncThreshold (4 * 16KB) take the
+// transformAsync path: input is copied, the drive loop runs on the work pool,
+// and the write resolves once the worker completes. Output must be
+// byte-identical to the synchronous path and to node:zlib's defaults.
+describe("CompressionStream large-chunk work-pool offload", () => {
+  // Well past asyncThreshold; non-uniform so a corruption shows in the
+  // round-trip equality.
+  const big = (() => {
+    const b = new Uint8Array(256 * 1024);
+    for (let i = 0; i < b.length; i++) b[i] = (i * 131) & 0xff;
+    return b;
+  })();
+
+  async function collect(readable: ReadableStream<Uint8Array>) {
+    const chunks: Uint8Array[] = [];
+    for await (const c of readable) chunks.push(c);
+    return Buffer.concat(chunks);
+  }
+
+  async function roundTrip(format: "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd") {
+    const cs = new CompressionStream(format);
+    const w = cs.writable.getWriter();
+    w.write(big);
+    w.close();
+    const compressed = await collect(cs.readable);
+
+    const ds = new DecompressionStream(format);
+    const dw = ds.writable.getWriter();
+    dw.write(compressed);
+    dw.close();
+    const out = await collect(ds.readable);
+
+    expect(out.equals(big)).toBe(true);
+    return compressed;
+  }
+
+  for (const format of ["gzip", "deflate", "deflate-raw", "brotli", "zstd"] as const) {
+    test(`${format} round-trips a 256KB single-write chunk`, async () => {
+      await roundTrip(format);
+    });
+  }
+
+  test("gzip output is byte-identical to node:zlib's defaults", async () => {
+    const compressed = await roundTrip("gzip");
+    expect(compressed.equals(zlib.gzipSync(big))).toBe(true);
+  });
+
+  test("multiple large writes in sequence are gated and round-trip", async () => {
+    const cs = new CompressionStream("gzip");
+    const w = cs.writable.getWriter();
+    // Each write awaits the work-pool round-trip before the next starts.
+    for (let i = 0; i < 4; i++) await w.write(big);
+    await w.close();
+    const compressed = await collect(cs.readable);
+
+    const ds = new DecompressionStream("gzip");
+    const dw = ds.writable.getWriter();
+    dw.write(compressed);
+    dw.close();
+    const out = await collect(ds.readable);
+
+    expect(out.length).toBe(4 * big.length);
+    for (let i = 0; i < 4; i++) {
+      expect(out.subarray(i * big.length, (i + 1) * big.length).equals(big)).toBe(true);
+    }
+  });
+
+  test("reader.cancel() while a large write is in flight defers the engine close", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+    // The writable controller's started flag is set in a microtask; until
+    // then write() only queues the chunk and transformAsync is never
+    // reached, so pending_close would not be exercised.
+    await writer.ready;
+    // Do not await: the work-pool job is in flight when cancel runs.
+    const writePromise = writer.write(big);
+    await reader.cancel("stop");
+    // The write took the async path and the stream is now torn down. The
+    // transformer's cancel() hook closed the handle with the worker still
+    // running, so the close is deferred via pending_close and the worker's
+    // then() releases the engine. The write then settles: the worker may
+    // have resolved before the writable was errored, or the writable
+    // errors it with the cancel reason, or enqueue throws on the closed
+    // readable — what must not happen is a hang or a crash from closing
+    // the engine under the worker.
+    const outcome = await writePromise.then(
+      () => "fulfilled",
+      e => (e === "stop" ? "rejected:stop" : `rejected:${e?.constructor?.name}`),
+    );
+    expect(["fulfilled", "rejected:stop", "rejected:TypeError"]).toContain(outcome);
+    expect(
+      await writer.closed.then(
+        () => null,
+        e => e,
+      ),
+    ).toBe("stop");
+  });
+
+  test("a corrupt large chunk rejects on the async path with the engine code", async () => {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const bad = Buffer.alloc(128 * 1024, 0xff);
+    const err = await writer.write(bad).then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as any).code).toBe("Z_DATA_ERROR");
+    expect(
+      await reader.read().then(
+        () => null,
+        e => e,
+      ),
+    ).toBe(err);
+  });
+
+  // brotli at the default quality 11 only buffers input during PROCESS
+  // and encodes a whole ~256KB metablock when the ring buffer fills, so a
+  // stream of sub-64KB writes (the common pipeThrough case from network
+  // or file sources) would run that encode on the JS thread if brotli
+  // encode kept the input-size threshold. Every non-empty brotli write
+  // takes the work pool.
+  test("brotli metablock encode from small writes runs on the work pool", async () => {
+    const cs = new CompressionStream("brotli");
+    const writer = cs.writable.getWriter();
+    const drain = (async () => {
+      for await (const _ of cs.readable);
+    })();
+    await writer.ready;
+
+    // 16KB incompressible chunks: each is below the 64KB zlib/zstd
+    // threshold. The 16th write fills the 256KB ring buffer and triggers
+    // the q11 metablock encode (hundreds of ms). If that write took the
+    // sync path the event loop would not turn before its promise settles.
+    for (let i = 0; i < 15; i++) await writer.write(randomBytes(16 * 1024));
+    let eventLoopTurned = false;
+    setImmediate(() => {
+      eventLoopTurned = true;
+    });
+    await writer.write(randomBytes(16 * 1024));
+    expect(eventLoopTurned).toBe(true);
+
+    await writer.close();
+    await drain;
+  });
+
+  // brotli at the default quality 11 buffers input during PROCESS and
+  // encodes the residual block at FINISH, so the 0-byte finish chunk is
+  // where the work is. flush() must take the work-pool path so that
+  // encoding runs off the JS thread.
+  test("brotli finish-flush runs on the work pool, not the JS thread", async () => {
+    const cs = new CompressionStream("brotli");
+    const writer = cs.writable.getWriter();
+    const drain = (async () => {
+      for await (const _ of cs.readable);
+    })();
+
+    // 200KB incompressible so q11 FINISH does hundreds of ms of real
+    // encoding; < 256KB so PROCESS buffers it whole and emits nothing.
+    await writer.write(randomBytes(200 * 1024));
+
+    // If flush blocks the JS thread, the close promise settles via
+    // microtasks only and this macrotask never gets a turn before the
+    // await below resumes. If flush goes to the work pool, the close
+    // promise stays pending across the event-loop iteration that runs
+    // this callback.
+    let eventLoopTurned = false;
+    setImmediate(() => {
+      eventLoopTurned = true;
+    });
+
+    await writer.close();
+    await drain;
+
+    expect(eventLoopTurned).toBe(true);
+  });
+
+  test("an engine error on the async finish-flush rejects close with the wrapped code", async () => {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    // Valid gzip header with no body: PROCESS accepts it, FINISH fails
+    // with Z_BUF_ERROR because the stream ended prematurely.
+    await writer.write(zlib.gzipSync(Buffer.from("hello")).subarray(0, 10));
+    const closeErr = await writer.close().then(
+      () => null,
+      e => e,
+    );
+    const readErr = await reader.read().then(
+      () => null,
+      e => e,
+    );
+    expect(closeErr).toBeInstanceOf(TypeError);
+    expect((closeErr as any).code).toBe("Z_BUF_ERROR");
+    expect(readErr).toBe(closeErr);
+  });
+
+  // reader.cancel() while the finish-flush worker is in flight closes
+  // the readable and short-circuits sourceCancelAlgorithm on the
+  // already-set finishPromise, so the transformer's cancel() hook never
+  // runs. The flush fulfillment must release the engine itself and
+  // discard the outputs rather than throwing on the closed readable
+  // (which would reject both close and cancel with an internal error
+  // and skip the release).
+  test("reader.cancel() racing the async finish-flush resolves cleanly", async () => {
+    const cs = new CompressionStream("brotli");
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+    // 200KB at q11: PROCESS buffers it, FINISH encodes it on the pool,
+    // giving the cancel a wide window.
+    await writer.write(randomBytes(200 * 1024));
+    const closeP = writer.close();
+    const cancelP = reader.cancel("stop");
+    const [closeR, cancelR] = await Promise.allSettled([closeP, cancelP]);
+    // Before the fix both reject with
+    // "TypeError: TransformStream.readable cannot close or enqueue".
+    expect({ close: closeR, cancel: cancelR }).toEqual({
+      close: { status: "fulfilled", value: undefined },
+      cancel: { status: "fulfilled", value: undefined },
+    });
   });
 });

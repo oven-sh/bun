@@ -74,6 +74,18 @@ void JSVerify::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSVerify::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSVerify* thisObject = uncheckedDowncast<JSVerify>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSVerify);
+
 JSVerify* JSVerify::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject)
 {
     JSVerify* verify = new (NotNull, JSC::allocateCell<JSVerify>(vm)) JSVerify(vm, structure);
@@ -201,6 +213,11 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncInit, (JSGlobalObject * globalObject, 
 
     // Store the initialized context in the JSVerify object
     thisObject->m_mdCtx = WTF::move(mdCtx);
+
+    if (!thisObject->m_sizeForGC) {
+        thisObject->m_sizeForGC = sizeof(EVP_MD_CTX);
+        vm.heap.reportExtraMemoryAllocated(thisObject, thisObject->m_sizeForGC);
+    }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

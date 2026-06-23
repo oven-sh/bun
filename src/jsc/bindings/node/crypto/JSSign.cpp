@@ -66,6 +66,18 @@ void JSSign::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSSign::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSSign* thisObject = uncheckedDowncast<JSSign>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSSign);
+
 JSSign* JSSign::create(JSC::VM& vm, JSC::Structure* structure)
 {
     JSSign* sign = new (NotNull, JSC::allocateCell<JSSign>(vm)) JSSign(vm, structure);
@@ -195,6 +207,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncInit, (JSC::JSGlobalObject * globalObjec
 
     // Store the initialized context in the JSSign object
     thisObject->m_mdCtx = WTF::move(mdCtx);
+
+    if (!thisObject->m_sizeForGC) {
+        thisObject->m_sizeForGC = sizeof(EVP_MD_CTX);
+        vm.heap.reportExtraMemoryAllocated(thisObject, thisObject->m_sizeForGC);
+    }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

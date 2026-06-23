@@ -1553,8 +1553,13 @@ impl Run {
             Err(err) => entry_point_load_failed(vm, err),
         }
 
-        // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
+        // don't run the GC if we don't actually need to. Skip entirely on a
+        // watch exit: the run is over and a termination exception is pending,
+        // so ticking here would run the VM with it still set (the watcher loop
+        // clears it before its own ticks).
+        if !vm.watch_exit_requested
+            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena = bumpalo::Bump` has no
             // per-heap collect, so this is a no-op unless the arena type

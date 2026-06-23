@@ -1433,10 +1433,11 @@ impl VirtualMachine {
             // `bun_runtime::node::process::exit`, normally `noreturn` on the
             // main thread.
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
-            // Under `--watch`, `process_exit` returns after raising a
-            // termination exception (it keeps the watcher alive). Let that
-            // unwind the run instead of panicking on the now-reachable path.
-            if self.watch_exit_requested {
+            // `process_exit` returns instead of diverging under `--watch` (it
+            // raised a termination exception to keep the watcher alive) and in
+            // a worker (it requested worker termination). In both cases let the
+            // termination unwind the run instead of panicking.
+            if self.watch_exit_requested || self.worker_ref().is_some() {
                 return true;
             }
             panic!("Uncaught exception while handling uncaught exception");
@@ -1445,7 +1446,7 @@ impl VirtualMachine {
             self.run_error_handler(err, None);
             // SAFETY: see above.
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
-            if self.watch_exit_requested {
+            if self.watch_exit_requested || self.worker_ref().is_some() {
                 return true;
             }
             panic!("made it past process.exit()");
@@ -1748,11 +1749,12 @@ pub struct RuntimeHooks {
         fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
     /// `process.exit(global, code)`. Main-thread is `noreturn`, except under
     /// `bun run --watch` where it raises a termination exception and returns to
-    /// keep the watcher alive; in a worker it also returns. Callers that assume
-    /// `noreturn` (e.g. [`uncaught_exception`]) must re-check
-    /// `watch_exit_requested` after calling it. Lives in `bun_runtime::node`
-    /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
-    /// slot instead of the linker.
+    /// keep the watcher alive; in a worker it also returns (after requesting
+    /// worker termination). Callers that assume `noreturn` (e.g.
+    /// [`uncaught_exception`]) must, after calling it, let the termination
+    /// unwind instead of continuing when `watch_exit_requested` is set or the
+    /// VM is a worker. Lives in `bun_runtime::node` (forward-dep cycle), so
+    /// [`uncaught_exception`] reaches it through this slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
     /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
     pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),

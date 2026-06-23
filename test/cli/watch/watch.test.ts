@@ -58,7 +58,8 @@ const exitScenarios = {
   // process.exit() from a beforeExit handler: the run ends normally, then the
   // handler calls process.exit() while the watcher loop is dispatching
   // beforeExit.
-  "beforeExit handler": (n: number) => `console.log("MARK:${n}");\nprocess.on("beforeExit", () => process.exit(1));\n`,
+  "beforeExit handler": (n: number) =>
+    `console.log("MARK:${n}");\nprocess.on("beforeExit", () => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); });\n`,
 } as const;
 
 for (const mode of ["--watch"] as const) {
@@ -116,3 +117,28 @@ for (const mode of ["--watch"] as const) {
     });
   }
 }
+
+// The keepalive is scoped to --watch (it re-execs on change). --hot
+// re-evaluates in place, so process.exit() there still exits the process.
+test("--hot: process.exit() exits the process (no keepalive)", async () => {
+  using dir = tempDir("hot-process-exit", {
+    "index.ts": `console.log("HOT_RAN");\nprocess.exit(3);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("HOT_RAN");
+  expect(stdout).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+  // Exited on its own with the given code instead of staying alive as a watcher.
+  if (exitCode !== 3) console.error(stderr);
+  expect(exitCode).toBe(3);
+});

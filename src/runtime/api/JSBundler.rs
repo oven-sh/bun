@@ -3,11 +3,11 @@
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
-use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
+use crate::webcore::Blob;
 use bun_ast::Target;
-use bun_bundler::BundleV2;
 use bun_bundler::options;
+use bun_bundler::BundleV2;
 use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
@@ -115,6 +115,629 @@ pub mod js_bundler {
         Ok(this)
     }
 
+    fn js_value_to_boxed_string(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        property_name: &str,
+    ) -> JsResult<Box<[u8]>> {
+        if !value.is_string() {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("{} must be a string", property_name)));
+        }
+        let slice = value.to_slice_or_null(global_this)?;
+        let owned = Box::from(slice.slice());
+        drop(slice);
+        Ok(owned)
+    }
+
+    fn js_value_to_string_list(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        property_name: &str,
+    ) -> JsResult<Vec<Box<[u8]>>> {
+        if value.is_string() {
+            return Ok(vec![js_value_to_non_empty_boxed_string(
+                global_this,
+                value,
+                property_name,
+            )?]);
+        }
+
+        if !(value.is_cell() && value.js_type().is_array()) {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "{} must be a string or an array of strings",
+                property_name
+            )));
+        }
+
+        let mut values = Vec::new();
+        let mut iter = value.array_iterator(global_this)?;
+        while let Some(entry) = iter.next()? {
+            values.push(js_value_to_non_empty_boxed_string(
+                global_this,
+                entry,
+                property_name,
+            )?);
+        }
+        Ok(values)
+    }
+
+    fn js_value_to_non_empty_string_list(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        property_name: &str,
+    ) -> JsResult<Vec<Box<[u8]>>> {
+        let values = js_value_to_string_list(global_this, value, property_name)?;
+        if values.is_empty() {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("{} must not be empty", property_name)));
+        }
+        Ok(values)
+    }
+
+    fn js_value_to_non_empty_boxed_string(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        property_name: &str,
+    ) -> JsResult<Box<[u8]>> {
+        let value = js_value_to_boxed_string(global_this, value, property_name)?;
+        if value.is_empty() {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("{} must not be empty", property_name)));
+        }
+        Ok(value)
+    }
+
+    fn for_each_js_object_entry(
+        global_this: &JSGlobalObject,
+        object: JSValue,
+        property_name: &str,
+        mut callback: impl FnMut(Box<[u8]>, JSValue) -> JsResult<()>,
+    ) -> JsResult<()> {
+        if object.is_array() {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("{} must be an object", property_name)));
+        }
+
+        let Some(object_ptr) = object.get_object() else {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("{} must be an object", property_name)));
+        };
+
+        // SAFETY: get_object returned a non-null live JSObject* from `object`.
+        let object_ref = unsafe { &*object_ptr };
+        let mut iter = jsc::JSPropertyIterator::init(
+            global_this,
+            object_ref,
+            jsc::JSPropertyIteratorOptions {
+                skip_empty_name: true,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
+        while let Some(prop) = iter.next()? {
+            callback(prop.to_owned_slice().into(), iter.value)?;
+        }
+        Ok(())
+    }
+
+    fn parse_module_federation_manifest(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<options::ModuleFederationManifest>> {
+        if value.is_undefined_or_null() || value == JSValue::FALSE {
+            return Ok(None);
+        }
+
+        if value == JSValue::TRUE {
+            return Ok(Some(options::ModuleFederationManifest {
+                file_path: None,
+                file_name: None,
+                disable_assets_analyze: false,
+            }));
+        }
+
+        if !value.is_object() || value.is_array() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "moduleFederation.manifest must be a boolean or an object"
+            )));
+        }
+
+        let file_path = match value.get_optional_slice(global_this, b"filePath")? {
+            Some(slice) => {
+                let owned = Box::from(slice.slice());
+                drop(slice);
+                Some(owned)
+            }
+            None => None,
+        };
+        let file_name = match value.get_optional_slice(global_this, b"fileName")? {
+            Some(slice) => {
+                let owned = Box::from(slice.slice());
+                drop(slice);
+                Some(owned)
+            }
+            None => None,
+        };
+        let disable_assets_analyze = value
+            .get_boolean_loose(global_this, "disableAssetsAnalyze")?
+            .unwrap_or(false);
+
+        Ok(Some(options::ModuleFederationManifest {
+            file_path,
+            file_name,
+            disable_assets_analyze,
+        }))
+    }
+
+    fn parse_module_federation_exposes(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Vec<options::ModuleFederationExpose>> {
+        let mut exposes = Vec::new();
+        for_each_js_object_entry(
+            global_this,
+            value,
+            "moduleFederation.exposes",
+            |name, expose_value| {
+                if expose_value.is_string() || expose_value.is_array() {
+                    exposes.push(options::ModuleFederationExpose {
+                        name,
+                        import: js_value_to_non_empty_string_list(
+                            global_this,
+                            expose_value,
+                            "moduleFederation.exposes entry",
+                        )?,
+                        export_name: None,
+                    });
+                    return Ok(());
+                }
+
+                if !expose_value.is_object() || expose_value.is_array() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "moduleFederation.exposes entry must be a string, an array of strings, or an object"
+                    )));
+                }
+
+                let import_value = expose_value
+                    .get(global_this, "import")?
+                    .filter(|value| !value.is_undefined_or_null())
+                    .ok_or_else(|| {
+                        global_this.throw_invalid_arguments(format_args!(
+                            "moduleFederation.exposes entry.import is required"
+                        ))
+                    })?;
+                let export_name = match expose_value.get_optional_slice(global_this, b"name")? {
+                    Some(slice) => {
+                        let owned = Box::from(slice.slice());
+                        drop(slice);
+                        Some(owned)
+                    }
+                    None => None,
+                };
+
+                exposes.push(options::ModuleFederationExpose {
+                    name,
+                    import: js_value_to_non_empty_string_list(
+                        global_this,
+                        import_value,
+                        "moduleFederation.exposes entry.import",
+                    )?,
+                    export_name,
+                });
+                Ok(())
+            },
+        )?;
+
+        Ok(exposes)
+    }
+
+    fn parse_module_federation_remotes(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Vec<options::ModuleFederationRemote>> {
+        fn normalize_remote_external(
+            external: &[u8],
+        ) -> (
+            Option<Box<[u8]>>,
+            options::ModuleFederationRemoteType,
+            Option<Box<[u8]>>,
+        ) {
+            if let Some(at) = external.iter().position(|byte| *byte == b'@') {
+                if at > 0 && at + 1 < external.len() {
+                    return (
+                        Some(Box::from(&external[at + 1..])),
+                        options::ModuleFederationRemoteType::Script,
+                        Some(Box::from(&external[..at])),
+                    );
+                }
+            }
+
+            (
+                Some(Box::from(external)),
+                options::ModuleFederationRemoteType::Module,
+                None,
+            )
+        }
+
+        let mut remotes = Vec::new();
+        for_each_js_object_entry(
+            global_this,
+            value,
+            "moduleFederation.remotes",
+            |alias, remote_value| {
+                if remote_value.is_string() {
+                    let external = js_value_to_non_empty_boxed_string(
+                        global_this,
+                        remote_value,
+                        "moduleFederation.remotes entry",
+                    )?;
+                    let (entry, remote_type, global_name) = normalize_remote_external(&external);
+                    remotes.push(options::ModuleFederationRemote {
+                        alias,
+                        external: vec![external],
+                        entry,
+                        remote_type,
+                        global_name,
+                        share_scope: None,
+                    });
+                    return Ok(());
+                }
+
+                if !remote_value.is_object() || remote_value.is_array() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "moduleFederation.remotes entry must be a string or an object"
+                    )));
+                }
+
+                let Some(external_value) = remote_value
+                    .get(global_this, "external")?
+                    .filter(|value| !value.is_undefined_or_null())
+                else {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "moduleFederation.remotes entry.external is required"
+                    )));
+                };
+                let share_scope =
+                    match remote_value.get_optional_slice(global_this, b"shareScope")? {
+                        Some(slice) => {
+                            let owned = Box::from(slice.slice());
+                            drop(slice);
+                            Some(owned)
+                        }
+                        None => None,
+                    };
+                let external = js_value_to_non_empty_boxed_string(
+                    global_this,
+                    external_value,
+                    "moduleFederation.remotes entry.external",
+                )?;
+                let (entry, remote_type, global_name) = normalize_remote_external(&external);
+
+                remotes.push(options::ModuleFederationRemote {
+                    alias,
+                    external: vec![external],
+                    entry,
+                    remote_type,
+                    global_name,
+                    share_scope,
+                });
+                Ok(())
+            },
+        )?;
+
+        Ok(remotes)
+    }
+
+    fn parse_module_federation_shared(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Vec<options::ModuleFederationShared>> {
+        let mut shared = Vec::new();
+        for_each_js_object_entry(
+            global_this,
+            value,
+            "moduleFederation.shared",
+            |name, shared_value| {
+                if shared_value == JSValue::FALSE {
+                    shared.push(options::ModuleFederationShared {
+                        name,
+                        import: options::ModuleFederationSharedImport::Disabled,
+                        share_key: None,
+                        share_scope: None,
+                        version: None,
+                        required_version: None,
+                        singleton: false,
+                        strict_version: false,
+                        eager: false,
+                    });
+                    return Ok(());
+                }
+
+                if shared_value.is_string() {
+                    shared.push(options::ModuleFederationShared {
+                        name,
+                        import: options::ModuleFederationSharedImport::Path(
+                            js_value_to_non_empty_boxed_string(
+                                global_this,
+                                shared_value,
+                                "moduleFederation.shared entry",
+                            )?,
+                        ),
+                        share_key: None,
+                        share_scope: None,
+                        version: None,
+                        required_version: None,
+                        singleton: false,
+                        strict_version: false,
+                        eager: false,
+                    });
+                    return Ok(());
+                }
+
+                if !shared_value.is_object() || shared_value.is_array() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "moduleFederation.shared entry must be a string, false, or an object"
+                    )));
+                }
+
+                let import = match shared_value.get(global_this, "import")? {
+                    Some(import_value) if import_value == JSValue::FALSE => {
+                        options::ModuleFederationSharedImport::Disabled
+                    }
+                    Some(import_value) if !import_value.is_undefined_or_null() => {
+                        options::ModuleFederationSharedImport::Path(
+                            js_value_to_non_empty_boxed_string(
+                                global_this,
+                                import_value,
+                                "moduleFederation.shared entry.import",
+                            )?,
+                        )
+                    }
+                    _ => options::ModuleFederationSharedImport::Auto,
+                };
+
+                let share_key = match shared_value.get_optional_slice(global_this, b"shareKey")? {
+                    Some(slice) => {
+                        let owned = Box::from(slice.slice());
+                        drop(slice);
+                        Some(owned)
+                    }
+                    None => None,
+                };
+                let share_scope =
+                    match shared_value.get_optional_slice(global_this, b"shareScope")? {
+                        Some(slice) => {
+                            let owned = Box::from(slice.slice());
+                            drop(slice);
+                            Some(owned)
+                        }
+                        None => None,
+                    };
+                let version = match shared_value.get_optional_slice(global_this, b"version")? {
+                    Some(slice) => {
+                        let owned = Box::from(slice.slice());
+                        drop(slice);
+                        Some(owned)
+                    }
+                    None => None,
+                };
+                let required_version =
+                    match shared_value.get_optional_slice(global_this, b"requiredVersion")? {
+                        Some(slice) => {
+                            let owned = Box::from(slice.slice());
+                            drop(slice);
+                            Some(owned)
+                        }
+                        None => None,
+                    };
+
+                shared.push(options::ModuleFederationShared {
+                    name,
+                    import,
+                    share_key,
+                    share_scope,
+                    version,
+                    required_version,
+                    singleton: shared_value
+                        .get_boolean_loose(global_this, "singleton")?
+                        .unwrap_or(false),
+                    strict_version: shared_value
+                        .get_boolean_loose(global_this, "strictVersion")?
+                        .unwrap_or(false),
+                    eager: shared_value
+                        .get_boolean_loose(global_this, "eager")?
+                        .unwrap_or(false),
+                });
+                Ok(())
+            },
+        )?;
+
+        Ok(shared)
+    }
+
+    fn parse_module_federation_runtime_plugins(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Vec<options::ModuleFederationRuntimePlugin>> {
+        if !(value.is_cell() && value.js_type().is_array()) {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "moduleFederation.runtimePlugins must be an array"
+            )));
+        }
+
+        let mut runtime_plugins = Vec::new();
+        let mut iter = value.array_iterator(global_this)?;
+        while let Some(plugin_value) = iter.next()? {
+            if plugin_value.is_string() {
+                runtime_plugins.push(options::ModuleFederationRuntimePlugin {
+                    import: js_value_to_boxed_string(
+                        global_this,
+                        plugin_value,
+                        "moduleFederation.runtimePlugins entry",
+                    )?,
+                    options_json: None,
+                });
+                continue;
+            }
+
+            if !(plugin_value.is_cell() && plugin_value.js_type().is_array()) {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "moduleFederation.runtimePlugins entry must be a string or [string, object]"
+                )));
+            }
+
+            let length = plugin_value.get_length(global_this)?;
+            if length != 2 {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "moduleFederation.runtimePlugins tuple must be [string, object]"
+                )));
+            }
+
+            let import_value = plugin_value.get_index(global_this, 0)?;
+            let options_value = plugin_value.get_index(global_this, 1)?;
+            if !options_value.is_object() || options_value.is_array() || options_value.is_null() {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "moduleFederation.runtimePlugins tuple options must be an object"
+                )));
+            }
+            let mut options_json = BunString::default();
+            options_value.json_stringify(global_this, 0, &mut options_json)?;
+            let options_json = if options_json.is_empty() {
+                None
+            } else {
+                let slice = options_json.to_slice();
+                let owned = Box::from(slice.slice());
+                drop(slice);
+                options_json.deref();
+                Some(owned)
+            };
+
+            runtime_plugins.push(options::ModuleFederationRuntimePlugin {
+                import: js_value_to_boxed_string(
+                    global_this,
+                    import_value,
+                    "moduleFederation.runtimePlugins tuple import",
+                )?,
+                options_json,
+            });
+        }
+
+        Ok(runtime_plugins)
+    }
+
+    fn parse_module_federation_options(
+        global_this: &JSGlobalObject,
+        config: JSValue,
+    ) -> JsResult<Option<options::ModuleFederationOptions>> {
+        let Some(value) =
+            config.get_own(global_this, &BunString::static_str("moduleFederation"))?
+        else {
+            return Ok(None);
+        };
+
+        if value.is_undefined_or_null() {
+            return Ok(None);
+        }
+
+        if !value.is_object() || value.is_array() {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("moduleFederation must be an object")));
+        }
+
+        let name = match value.get_optional_slice(global_this, b"name")? {
+            Some(slice) => {
+                let owned = Box::from(slice.slice());
+                drop(slice);
+                Some(owned)
+            }
+            None => None,
+        };
+        let filename = match value.get_optional_slice(global_this, b"filename")? {
+            Some(slice) => {
+                let owned = Box::from(slice.slice());
+                drop(slice);
+                Some(owned)
+            }
+            None => None,
+        };
+
+        let exposes = match value.get(global_this, "exposes")? {
+            Some(exposes_value) if !exposes_value.is_undefined_or_null() => {
+                parse_module_federation_exposes(global_this, exposes_value)?
+            }
+            _ => Vec::new(),
+        };
+        let remotes = match value.get(global_this, "remotes")? {
+            Some(remotes_value) if !remotes_value.is_undefined_or_null() => {
+                parse_module_federation_remotes(global_this, remotes_value)?
+            }
+            _ => Vec::new(),
+        };
+        let shared = match value.get(global_this, "shared")? {
+            Some(shared_value) if !shared_value.is_undefined_or_null() => {
+                parse_module_federation_shared(global_this, shared_value)?
+            }
+            _ => Vec::new(),
+        };
+        let manifest = match value.get(global_this, "manifest")? {
+            Some(manifest_value) => parse_module_federation_manifest(global_this, manifest_value)?,
+            None => None,
+        };
+        let runtime_plugins = match value.get(global_this, "runtimePlugins")? {
+            Some(runtime_plugins_value) if !runtime_plugins_value.is_undefined_or_null() => {
+                parse_module_federation_runtime_plugins(global_this, runtime_plugins_value)?
+            }
+            _ => Vec::new(),
+        };
+        let share_strategy = match value.get_optional_slice(global_this, b"shareStrategy")? {
+            Some(strategy) => {
+                let result = match strategy.slice() {
+                    b"version-first" => options::ModuleFederationShareStrategy::VersionFirst,
+                    b"loaded-first" => options::ModuleFederationShareStrategy::LoadedFirst,
+                    _ => {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "moduleFederation.shareStrategy must be one of \"version-first\", \"loaded-first\""
+                        )));
+                    }
+                };
+                drop(strategy);
+                result
+            }
+            None => options::ModuleFederationShareStrategy::VersionFirst,
+        };
+        let experiments = match value.get(global_this, "experiments")? {
+            Some(experiments_value) if !experiments_value.is_undefined_or_null() => {
+                if !experiments_value.is_object() || experiments_value.is_array() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "moduleFederation.experiments must be an object"
+                    )));
+                }
+
+                options::ModuleFederationExperiments {
+                    async_startup: experiments_value
+                        .get_boolean_loose(global_this, "asyncStartup")?
+                        .unwrap_or(false),
+                }
+            }
+            _ => options::ModuleFederationExperiments::default(),
+        };
+
+        let module_federation = options::ModuleFederationOptions {
+            name,
+            filename,
+            exposes,
+            remotes,
+            shared,
+            manifest,
+            runtime_plugins,
+            share_strategy,
+            experiments,
+        };
+
+        Ok(Some(module_federation))
+    }
+
     pub struct Config {
         pub target: Target,
         pub entry_points: StringSet,
@@ -144,6 +767,7 @@ pub mod js_bundler {
         pub public_path: OwnedString,
         pub conditions: StringSet,
         pub packages: options::PackagesOption,
+        pub module_federation: Option<options::ModuleFederationOptions>,
         pub format: options::Format,
         pub bytecode: bool,
         pub banner: OwnedString,
@@ -210,6 +834,7 @@ pub mod js_bundler {
                 public_path: OwnedString::default(),
                 conditions: StringSet::default(),
                 packages: options::PackagesOption::Bundle,
+                module_federation: None,
                 format: options::Format::Esm,
                 bytecode: false,
                 banner: OwnedString::default(),
@@ -770,6 +1395,21 @@ pub mod js_bundler {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "format must be 'cjs' or 'esm' when bytecode is true."
                     )));
+                }
+            }
+
+            this.module_federation = parse_module_federation_options(global_this, config)?;
+            if let Some(module_federation) = &this.module_federation {
+                for shared in &module_federation.shared {
+                    match &shared.import {
+                        options::ModuleFederationSharedImport::Auto => {
+                            this.external.insert(&shared.name)?;
+                        }
+                        options::ModuleFederationSharedImport::Path(path) => {
+                            this.external.insert(path)?;
+                        }
+                        options::ModuleFederationSharedImport::Disabled => {}
+                    }
                 }
             }
 

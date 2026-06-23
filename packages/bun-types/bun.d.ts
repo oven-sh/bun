@@ -2692,6 +2692,14 @@ declare module "bun" {
      */
     allowUnresolved?: string[];
     packages?: "bundle" | "external";
+    /**
+     * Configure Module Federation for this build.
+     *
+     * Generated host and remote code imports `@module-federation/runtime`.
+     * Projects using this option must install that package alongside their app
+     * dependencies.
+     */
+    moduleFederation?: ModuleFederationOptions;
     publicPath?: string;
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
@@ -3059,6 +3067,43 @@ declare module "bun" {
      * ```
      */
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
+  }
+
+  interface ModuleFederationOptions {
+    name?: string;
+    filename?: string;
+    exposes?: Record<string, string | string[] | { import: string | string[]; name?: string }>;
+    remotes?: Record<
+      string,
+      | string
+      | {
+          external: string;
+          shareScope?: string;
+        }
+    >;
+    shared?: Record<
+      string,
+      | string
+      | false
+      | {
+          import?: string | false;
+          shareKey?: string;
+          shareScope?: string;
+          version?: string;
+          requiredVersion?: string;
+          singleton?: boolean;
+          strictVersion?: boolean;
+          eager?: boolean;
+        }
+    >;
+    manifest?: boolean | { filePath?: string; fileName?: string; disableAssetsAnalyze?: boolean };
+    /**
+     * Runtime plugins loaded before Bun registers remotes with the official
+     * `@module-federation/runtime` host runtime.
+     */
+    runtimePlugins?: (string | [string, Record<string, unknown>])[];
+    shareStrategy?: "version-first" | "loaded-first";
+    experiments?: { asyncStartup?: boolean };
   }
 
   interface CompileBuildOptions {

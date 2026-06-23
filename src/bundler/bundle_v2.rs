@@ -342,7 +342,7 @@ pub mod bv2_impl {
     use self::bake_types as bake;
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
-    use bun_ast::{ImportKind, ImportRecord};
+    use bun_ast::{ImportKind, ImportRecord, NamedImports};
     use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
     use bun_core::{Error, FeatureFlags, Output};
@@ -1374,6 +1374,27 @@ pub mod bv2_impl {
     bun_core::declare_scope!(watcher, visible);
 
     pub use bun_js_printer::MangledProps;
+
+    struct ModuleFederationExposeOutput {
+        name: Box<[u8]>,
+        source_index: IndexInt,
+    }
+
+    fn module_federation_expose_output_path(
+        expose_name: &[u8],
+        source_index: IndexInt,
+    ) -> Box<[u8]> {
+        let mut path = Vec::with_capacity(b"bun-mf-expose-".len() + expose_name.len() + 20);
+        path.extend_from_slice(b"bun-mf-expose-");
+        for &byte in expose_name {
+            path.push(match byte {
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => byte,
+                _ => b'_',
+            });
+        }
+        let _ = write!(&mut path, "-{}.js", source_index);
+        path.into_boxed_slice()
+    }
 
     // ══════════════════════════════════════════════════════════════════════════
     // CYCLEBREAK §Dispatch — vtables/hooks for T6 GENUINE deps (jsc/bake/runtime).
@@ -2684,6 +2705,111 @@ pub mod bv2_impl {
             Ok(Some(source_index.get()))
         }
 
+        fn enqueue_module_federation_host_entry_wrapper(
+            &mut self,
+            real_entry_source_index: IndexInt,
+            original_entry_name: &[u8],
+            target: options::Target,
+        ) -> Result<IndexInt, Error> {
+            let wrapper_source_index = Index::source(self.graph.input_files.len() as u32);
+            let mut path_buf = Vec::new();
+            let _ = write!(
+                &mut path_buf,
+                "/bun-mf-entry-{}-{}.js",
+                real_entry_source_index,
+                wrapper_source_index.get()
+            );
+            let path_text: &'static [u8] =
+                unsafe { interned_slice(self.arena().alloc_slice_copy(&path_buf)) };
+            let real_entry_path = self.graph.input_files.items_source()
+                [real_entry_source_index as usize]
+                .path
+                .text;
+
+            let mut source_code = bun_core::MutableString::default();
+            source_code.append_slice(
+                b"import { init } from \"@module-federation/runtime\";\n",
+            )?;
+            self.append_module_federation_runtime_init(&mut source_code, target)?;
+            source_code.append_slice(b"await import(")?;
+            bun_js_printer::quote_for_json(real_entry_path, &mut source_code, true)?;
+            source_code.append_slice(b");\n")?;
+            let source_code = source_code.to_owned_slice();
+            let source_code: &'static [u8] =
+                unsafe { interned_slice(self.arena().alloc_slice_copy(&source_code)) };
+
+            self.increment_scan_counter();
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap));
+            self.graph.input_files.append(crate::Graph::InputFile {
+                source: bun_ast::Source {
+                    path: bun_paths::fs::Path::init_with_namespace(path_text, b"bun-mf-entry"),
+                    contents: std::borrow::Cow::Borrowed(&b""[..]),
+                    index: wrapper_source_index,
+                    ..Default::default()
+                },
+                loader: Loader::Js,
+                side_effects: bun_ast::SideEffects::HasSideEffects,
+                ..Default::default()
+            })?;
+
+            let mut parse_task = ParseTask::default();
+            parse_task.path = bun_paths::fs::Path::init_with_namespace(path_text, b"bun-mf-entry");
+            parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
+            parse_task.side_effects = bun_ast::SideEffects::HasSideEffects;
+            parse_task.loader = Some(Loader::Js);
+            parse_task.jsx = self.transpiler_for_target(target).options.jsx.clone();
+            parse_task.source_index = wrapper_source_index;
+            parse_task.known_target = target;
+            parse_task.module_type = options::ModuleType::Esm;
+            parse_task.tree_shaking = self.linker.options.tree_shaking;
+            parse_task.is_entry_point = true;
+            parse_task.ctx = Some(unsafe {
+                bun_ptr::ParentRef::from_raw_mut(
+                    std::ptr::from_mut::<BundleV2>(self).cast::<BundleV2<'static>>(),
+                )
+            });
+            let parse_task = self.arena_create(parse_task);
+            self.graph.pool().schedule(parse_task);
+            self.graph.entry_points.push(wrapper_source_index);
+            let _ = self
+                .graph
+                .entry_point_original_names
+                .put(wrapper_source_index.get(), original_entry_name);
+
+            Ok(wrapper_source_index.get())
+        }
+
+        fn enqueue_module_federation_host_entry_if_needed(
+            &mut self,
+            real_entry_source_index: Option<IndexInt>,
+            original_entry_name: &[u8],
+            target: options::Target,
+        ) -> Result<(), Error> {
+            if !self
+                .transpiler
+                .options
+                .module_federation
+                .as_ref()
+                .is_some_and(|module_federation| {
+                    !module_federation.remotes.is_empty()
+                        || !module_federation.shared.is_empty()
+                        || !module_federation.runtime_plugins.is_empty()
+                })
+            {
+                return Ok(());
+            }
+            let Some(real_entry_source_index) = real_entry_source_index else {
+                return Ok(());
+            };
+            let _ = self.graph.entry_points.pop();
+            self.enqueue_module_federation_host_entry_wrapper(
+                real_entry_source_index,
+                original_entry_name,
+                target,
+            )?;
+            Ok(())
+        }
+
         /// `heap` is not freed when `deinit`ing the BundleV2
         pub fn init(
             transpiler: &'a mut Transpiler<'a>,
@@ -2946,9 +3072,14 @@ pub mod bv2_impl {
                 if let Some(file_map) = self.file_map {
                     if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
                     {
-                        let _ = self.enqueue_entry_item(
+                        let source_index = self.enqueue_entry_item(
                             &mut { file_map_result },
                             true,
+                            self.transpiler.options.target,
+                        )?;
+                        self.enqueue_module_federation_host_entry_if_needed(
+                            source_index,
+                            entry_point,
                             self.transpiler.options.target,
                         )?;
                         continue;
@@ -2975,9 +3106,135 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target)?;
+                let source_index = self.enqueue_entry_item(&mut resolved, true, target)?;
+                self.enqueue_module_federation_host_entry_if_needed(
+                    source_index,
+                    entry_point,
+                    target,
+                )?;
             }
             Ok(())
+        }
+
+        fn enqueue_module_federation_exposes(
+            &mut self,
+        ) -> Result<Vec<ModuleFederationExposeOutput>, Error> {
+            let exposes = match self.transpiler.options.module_federation.clone() {
+                Some(module_federation)
+                    if module_federation
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| !name.is_empty())
+                        && !module_federation.exposes.is_empty() =>
+                {
+                    module_federation.exposes
+                }
+                _ => return Ok(Vec::new()),
+            };
+            let original_error_count = self.transpiler.log().errors;
+
+            let mut expose_outputs = Vec::with_capacity(exposes.len());
+            self.graph.entry_points.reserve(exposes.len());
+            self.graph.input_files.ensure_unused_capacity(exposes.len())?;
+
+            for expose in exposes {
+                let Some(import) = expose.import.first() else {
+                    continue;
+                };
+
+                if self.enqueue_entry_point_on_resolve_plugin_if_needed(
+                    import,
+                    self.transpiler.options.target,
+                ) {
+                    self.transpiler.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "moduleFederation.exposes entry {} could not be resolved synchronously",
+                            bun_core::fmt::quote(&expose.name),
+                        ),
+                    );
+                    continue;
+                }
+
+                if let Some(file_map) = self.file_map {
+                    if let Some(file_map_result) = file_map.resolve(self.arena(), b"", import) {
+                        let mut file_map_result = file_map_result;
+                        let target = self.transpiler.options.target;
+                        let enqueued_source_index = self.enqueue_entry_item(
+                            &mut file_map_result,
+                            true,
+                            target,
+                        )?;
+                        if let Some(source_index) = enqueued_source_index {
+                            let output_path =
+                                module_federation_expose_output_path(&expose.name, source_index);
+                            let _ = self
+                                .graph
+                                .entry_point_original_names
+                                .put(source_index, &output_path);
+                        }
+                        let source_index = enqueued_source_index.or_else(|| {
+                            file_map_result.path_const().and_then(|path| {
+                                self.path_to_source_index_map(target).get(path.text)
+                            })
+                        });
+                        if let Some(source_index) = source_index {
+                            expose_outputs.push(ModuleFederationExposeOutput {
+                                name: expose.name,
+                                source_index,
+                            });
+                        }
+                        continue;
+                    }
+                }
+
+                let mut resolved = match self.transpiler.resolve_entry_point(import) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+
+                let target = 'brk: {
+                    let main_target = self.transpiler.options.target;
+                    if main_target.is_server_side() {
+                        if let Some(path) = resolved.path_const() {
+                            if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
+                                if loader == Loader::Html {
+                                    self.ensure_client_transpiler();
+                                    break 'brk Target::Browser;
+                                }
+                            }
+                        }
+                    }
+                    break 'brk main_target;
+                };
+                let enqueued_source_index =
+                    self.enqueue_entry_item(&mut resolved, true, target)?;
+                if let Some(source_index) = enqueued_source_index {
+                    let output_path =
+                        module_federation_expose_output_path(&expose.name, source_index);
+                    let _ = self
+                        .graph
+                        .entry_point_original_names
+                        .put(source_index, &output_path);
+                }
+                let source_index = enqueued_source_index.or_else(|| {
+                    resolved
+                        .path_const()
+                        .and_then(|path| self.path_to_source_index_map(target).get(path.text))
+                });
+                if let Some(source_index) = source_index {
+                    expose_outputs.push(ModuleFederationExposeOutput {
+                        name: expose.name,
+                        source_index,
+                    });
+                }
+            }
+
+            if self.transpiler.log().errors > original_error_count {
+                expose_outputs.clear();
+            }
+            Ok(expose_outputs)
         }
 
         pub fn enqueue_entry_points_dev_server(
@@ -4896,6 +5153,17 @@ pub mod bv2_impl {
             self.scan_for_secondary_paths();
 
             self.process_server_component_manifest_files()?;
+            let module_federation_expose_outputs = self.enqueue_module_federation_exposes()?;
+
+            // Exposes are added as extra entry points above, so wait for their
+            // parse tasks before cloning ASTs and computing the linked graph.
+            self.wait_for_parse();
+
+            if self.transpiler.log().errors > 0 {
+                return Err(bun_core::err!("BuildFailed"));
+            }
+
+            self.scan_for_secondary_paths();
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -4990,11 +5258,677 @@ pub mod bv2_impl {
                 }
             }
 
+            self.append_module_federation_remote_entry(
+                &mut output_files,
+                &module_federation_expose_outputs,
+            )?;
+            self.append_module_federation_manifest(
+                &mut output_files,
+                &module_federation_expose_outputs,
+            )?;
+
             Ok(BuildResult {
                 output_files,
                 metafile,
                 metafile_markdown,
             })
+        }
+
+        fn module_federation_remote_entry_filename(&self) -> &[u8] {
+            self.transpiler
+                .options
+                .module_federation
+                .as_ref()
+                .and_then(|module_federation| module_federation.filename.as_deref())
+                .filter(|filename| !filename.is_empty())
+                .unwrap_or(b"remoteEntry.js")
+        }
+
+        fn module_federation_remote_entry_module_filename(&self) -> Box<[u8]> {
+            let filename = self.module_federation_remote_entry_filename();
+            let mut module_filename = Vec::with_capacity(filename.len() + 4);
+            module_filename.extend_from_slice(filename);
+            module_filename.extend_from_slice(b".mjs");
+            module_filename.into_boxed_slice()
+        }
+
+        fn append_module_federation_remote_entry(
+            &self,
+            output_files: &mut Vec<options::OutputFile>,
+            expose_outputs: &[ModuleFederationExposeOutput],
+        ) -> Result<(), Error> {
+            let Some(module_federation) = &self.transpiler.options.module_federation else {
+                return Ok(());
+            };
+            if !module_federation
+                .name
+                .as_deref()
+                .is_some_and(|name| !name.is_empty())
+                || module_federation.exposes.is_empty()
+            {
+                return Ok(());
+            }
+
+            let filename = self.module_federation_remote_entry_filename();
+            let module_filename = self.module_federation_remote_entry_module_filename();
+            let code = self.generate_module_federation_remote_entry(
+                filename,
+                expose_outputs,
+                output_files,
+            )?;
+            let module_code = self.generate_module_federation_remote_entry_module(
+                filename,
+                &module_filename,
+                module_federation.name.as_deref().unwrap_or_default(),
+            )?;
+            let size = code.len();
+            let module_size = module_code.len();
+            if !self.linker.resolver().opts.output_dir.is_empty() {
+                write_module_federation_output_to_disk(
+                    &self.linker.resolver().opts.output_dir,
+                    filename,
+                    &code,
+                )?;
+                write_module_federation_output_to_disk(
+                    &self.linker.resolver().opts.output_dir,
+                    &module_filename,
+                    &module_code,
+                )?;
+                let mut remote_entry = options::OutputFile::init(crate::output_file::Options {
+                    loader: Loader::Js,
+                    input_loader: Loader::Js,
+                    input_path: Box::<[u8]>::from(b"<module-federation-remote-entry>".as_slice()),
+                    output_path: Box::<[u8]>::from(filename),
+                    data: crate::output_file::OptionsData::Buffer { data: code },
+                    output_kind: options::OutputKind::EntryPoint,
+                    is_executable: false,
+                    side: None,
+                    entry_point_index: None,
+                    ..Default::default()
+                });
+                remote_entry.value = crate::output_file::Value::Saved(Default::default());
+                remote_entry.size = size;
+                output_files.push(remote_entry);
+                let mut remote_entry_module =
+                    options::OutputFile::init(crate::output_file::Options {
+                        loader: Loader::Js,
+                        input_loader: Loader::Js,
+                        input_path: Box::<[u8]>::from(
+                            b"<module-federation-remote-entry-module>".as_slice(),
+                        ),
+                        output_path: module_filename,
+                        data: crate::output_file::OptionsData::Buffer { data: module_code },
+                        output_kind: options::OutputKind::EntryPoint,
+                        is_executable: false,
+                        side: None,
+                        entry_point_index: None,
+                        ..Default::default()
+                    });
+                remote_entry_module.value =
+                    crate::output_file::Value::Saved(Default::default());
+                remote_entry_module.size = module_size;
+                output_files.push(remote_entry_module);
+            } else {
+                output_files.push(options::OutputFile::init(crate::output_file::Options {
+                    loader: Loader::Js,
+                    input_loader: Loader::Js,
+                    input_path: Box::<[u8]>::from(b"<module-federation-remote-entry>".as_slice()),
+                    output_path: Box::<[u8]>::from(filename),
+                    data: crate::output_file::OptionsData::Buffer { data: code },
+                    output_kind: options::OutputKind::EntryPoint,
+                    is_executable: false,
+                    side: None,
+                    entry_point_index: None,
+                    ..Default::default()
+                }));
+                output_files.push(options::OutputFile::init(crate::output_file::Options {
+                    loader: Loader::Js,
+                    input_loader: Loader::Js,
+                    input_path: Box::<[u8]>::from(
+                        b"<module-federation-remote-entry-module>".as_slice(),
+                    ),
+                    output_path: module_filename,
+                    data: crate::output_file::OptionsData::Buffer { data: module_code },
+                    output_kind: options::OutputKind::EntryPoint,
+                    is_executable: false,
+                    side: None,
+                    entry_point_index: None,
+                    ..Default::default()
+                }));
+            }
+
+            Ok(())
+        }
+
+        fn append_module_federation_manifest(
+            &self,
+            output_files: &mut Vec<options::OutputFile>,
+            expose_outputs: &[ModuleFederationExposeOutput],
+        ) -> Result<(), Error> {
+            let Some(module_federation) = &self.transpiler.options.module_federation else {
+                return Ok(());
+            };
+            let Some(manifest) = &module_federation.manifest else {
+                return Ok(());
+            };
+
+            let manifest_path = module_federation_manifest_path(manifest);
+            let content = self.generate_module_federation_manifest(
+                &manifest_path,
+                expose_outputs,
+                output_files,
+            )?;
+            let size = content.len();
+            if !self.linker.resolver().opts.output_dir.is_empty() {
+                write_module_federation_output_to_disk(
+                    &self.linker.resolver().opts.output_dir,
+                    &manifest_path,
+                    &content,
+                )?;
+                let mut manifest_file =
+                    options::OutputFile::init(crate::output_file::Options {
+                        loader: Loader::Json,
+                        input_loader: Loader::Json,
+                        input_path: Box::<[u8]>::from(
+                            b"<module-federation-manifest>".as_slice(),
+                        ),
+                        output_path: manifest_path,
+                        data: crate::output_file::OptionsData::Buffer { data: content },
+                        output_kind: options::OutputKind::Asset,
+                        is_executable: false,
+                        side: None,
+                        entry_point_index: None,
+                        ..Default::default()
+                    });
+                manifest_file.value = crate::output_file::Value::Saved(Default::default());
+                manifest_file.size = size;
+                output_files.push(manifest_file);
+            } else {
+                output_files.push(options::OutputFile::init(crate::output_file::Options {
+                    loader: Loader::Json,
+                    input_loader: Loader::Json,
+                    input_path: Box::<[u8]>::from(b"<module-federation-manifest>".as_slice()),
+                    output_path: manifest_path,
+                    data: crate::output_file::OptionsData::Buffer { data: content },
+                    output_kind: options::OutputKind::Asset,
+                    is_executable: false,
+                    side: None,
+                    entry_point_index: None,
+                    ..Default::default()
+                }));
+            }
+
+            Ok(())
+        }
+
+        fn generate_module_federation_manifest(
+            &self,
+            manifest_path: &[u8],
+            expose_outputs: &[ModuleFederationExposeOutput],
+            output_files: &[options::OutputFile],
+        ) -> Result<Box<[u8]>, Error> {
+            let module_federation = self
+                .transpiler
+                .options
+                .module_federation
+                .as_ref()
+                .expect("checked by caller");
+            let mut json = bun_core::MutableString::default();
+
+            let name = module_federation.name.as_deref().unwrap_or(b"");
+            json.append_slice(b"{\n  \"id\": ")?;
+            bun_js_printer::quote_for_json(name, &mut json, true)?;
+            json.append_slice(b",\n  \"name\": ")?;
+            bun_js_printer::quote_for_json(name, &mut json, true)?;
+            json.append_slice(b",\n  \"filePath\": ")?;
+            bun_js_printer::quote_for_json(manifest_path, &mut json, true)?;
+            json.append_slice(b",\n  \"metaData\": {\n    \"name\": ")?;
+            bun_js_printer::quote_for_json(name, &mut json, true)?;
+            json.append_slice(b",\n    \"globalName\": ")?;
+            bun_js_printer::quote_for_json(name, &mut json, true)?;
+            json.append_slice(b",\n    \"type\": \"module\",\n    \"pluginVersion\": \"bun\",\n    \"publicPath\": \"auto\",\n    \"buildInfo\": {\n      \"buildName\": ")?;
+            bun_js_printer::quote_for_json(name, &mut json, true)?;
+            json.append_slice(b",\n      \"buildVersion\": \"\"\n    },\n    \"remoteEntry\": ")?;
+            if module_federation
+                .name
+                .as_deref()
+                .is_some_and(|name| !name.is_empty())
+                && !module_federation.exposes.is_empty()
+            {
+                let remote_entry_path = self.module_federation_remote_entry_module_filename();
+                json.append_slice(b"{\n      \"name\": ")?;
+                bun_js_printer::quote_for_json(&remote_entry_path, &mut json, true)?;
+                json.append_slice(b",\n      \"path\": \"\",\n      \"type\": \"module\"\n    }")?;
+            } else {
+                json.append_slice(b"null")?;
+            }
+            json.append_slice(b"\n  }")?;
+
+            json.append_slice(b",\n  \"remoteEntry\": ")?;
+            if module_federation
+                .name
+                .as_deref()
+                .is_some_and(|name| !name.is_empty())
+                && !module_federation.exposes.is_empty()
+            {
+                let remote_entry_path = self.module_federation_remote_entry_module_filename();
+                json.append_slice(b"{\n    \"name\": ")?;
+                bun_js_printer::quote_for_json(&remote_entry_path, &mut json, true)?;
+                json.append_slice(b",\n    \"path\": ")?;
+                bun_js_printer::quote_for_json(&remote_entry_path, &mut json, true)?;
+                json.append_slice(b",\n    \"type\": \"module\"\n  }")?;
+            } else {
+                json.append_slice(b"null")?;
+            }
+
+            json.append_slice(b",\n  \"exposes\": [")?;
+            let mut first_expose = true;
+            for expose in expose_outputs {
+                let Some(output_file) =
+                    self.find_output_file_for_source_index(expose.source_index, output_files)
+                else {
+                    continue;
+                };
+                if first_expose {
+                    first_expose = false;
+                    json.append_slice(b"\n")?;
+                } else {
+                    json.append_slice(b",\n")?;
+                }
+                json.append_slice(b"    {\n      \"id\": ")?;
+                bun_js_printer::quote_for_json(&expose.name, &mut json, true)?;
+                json.append_slice(b",\n      \"name\": ")?;
+                bun_js_printer::quote_for_json(&expose.name, &mut json, true)?;
+                json.append_slice(b",\n      \"path\": ")?;
+                bun_js_printer::quote_for_json(&output_file.dest_path, &mut json, true)?;
+                json.append_slice(b",\n      \"assets\": {\n        \"js\": {\n          \"sync\": [")?;
+                bun_js_printer::quote_for_json(&output_file.dest_path, &mut json, true)?;
+                json.append_slice(b"],\n          \"async\": []\n        },\n        \"css\": {\n          \"sync\": [],\n          \"async\": []\n        }\n      }\n    }")?;
+            }
+            json.append_slice(b"\n  ]")?;
+
+            json.append_slice(b",\n  \"remotes\": [")?;
+            for (index, remote) in module_federation.remotes.iter().enumerate() {
+                if index == 0 {
+                    json.append_slice(b"\n")?;
+                } else {
+                    json.append_slice(b",\n")?;
+                }
+                json.append_slice(b"    {\n      \"federationContainerName\": ")?;
+                bun_js_printer::quote_for_json(&remote.alias, &mut json, true)?;
+                json.append_slice(b",\n      \"moduleName\": ")?;
+                bun_js_printer::quote_for_json(&remote.alias, &mut json, true)?;
+                json.append_slice(b",\n      \"alias\": ")?;
+                bun_js_printer::quote_for_json(&remote.alias, &mut json, true)?;
+                json.append_slice(b",\n      \"entry\": ")?;
+                append_json_string_or_null(&mut json, remote.entry.as_deref())?;
+                json.append_slice(b",\n      \"type\": ")?;
+                bun_js_printer::quote_for_json(
+                    match remote.remote_type {
+                        options::ModuleFederationRemoteType::Module => b"module".as_slice(),
+                        options::ModuleFederationRemoteType::Script => b"global".as_slice(),
+                    },
+                    &mut json,
+                    true,
+                )?;
+                json.append_slice(b",\n      \"name\": ")?;
+                append_json_string_or_null(&mut json, remote.global_name.as_deref())?;
+                json.append_slice(b",\n      \"shareScope\": ")?;
+                append_json_string_or_null(&mut json, remote.share_scope.as_deref())?;
+                json.append_slice(b"\n    }")?;
+            }
+            json.append_slice(b"\n  ]")?;
+
+            json.append_slice(b",\n  \"shared\": [")?;
+            for (index, shared) in module_federation.shared.iter().enumerate() {
+                if index == 0 {
+                    json.append_slice(b"\n")?;
+                } else {
+                    json.append_slice(b",\n")?;
+                }
+                json.append_slice(b"    {\n      \"id\": ")?;
+                bun_js_printer::quote_for_json(&shared.name, &mut json, true)?;
+                json.append_slice(b",\n      \"name\": ")?;
+                bun_js_printer::quote_for_json(
+                    shared.share_key.as_deref().unwrap_or(shared.name.as_ref()),
+                    &mut json,
+                    true,
+                )?;
+                json.append_slice(b",\n      \"version\": ")?;
+                append_json_string_or_null(
+                    &mut json,
+                    shared.version.as_deref().or(Some(b"0".as_slice())),
+                )?;
+                json.append_slice(b",\n      \"requiredVersion\": ")?;
+                append_json_string_or_null(
+                    &mut json,
+                    shared
+                        .required_version
+                        .as_deref()
+                        .or(Some(b"*".as_slice())),
+                )?;
+                json.append_slice(b",\n      \"singleton\": ")?;
+                append_json_bool(&mut json, shared.singleton)?;
+                json.append_slice(b",\n      \"hash\": \"\",\n      \"assets\": {\n        \"js\": {\n          \"sync\": [],\n          \"async\": []\n        },\n        \"css\": {\n          \"sync\": [],\n          \"async\": []\n        }\n      }\n    }")?;
+            }
+            json.append_slice(b"\n  ]")?;
+
+            json.append_slice(b",\n  \"disableAssetsAnalyze\": ")?;
+            append_json_bool(
+                &mut json,
+                module_federation
+                    .manifest
+                    .as_ref()
+                    .map_or(false, |manifest| manifest.disable_assets_analyze),
+            )?;
+            json.append_slice(b"\n}\n")?;
+            Ok(json.to_owned_slice())
+        }
+
+        fn generate_module_federation_remote_entry(
+            &self,
+            filename: &[u8],
+            expose_outputs: &[ModuleFederationExposeOutput],
+            output_files: &[options::OutputFile],
+        ) -> Result<Box<[u8]>, Error> {
+            let mut code = bun_core::MutableString::default();
+            let original_error_count = self.transpiler.log().errors;
+            let module_federation = self
+                .transpiler
+                .options
+                .module_federation
+                .as_ref()
+                .expect("checked by caller");
+            code.append_slice(b"const __remoteEntryScript = typeof document !== \"undefined\" ? document.currentScript : undefined;\nconst __remoteEntryUrl = __remoteEntryScript?.src || \"\";\nconst __bunMFBase64 = (source) => {\n  if (typeof Buffer !== \"undefined\") return Buffer.from(source).toString(\"base64\");\n  const bytes = new TextEncoder().encode(source);\n  let binary = \"\";\n  for (const byte of bytes) binary += String.fromCharCode(byte);\n  return btoa(binary);\n};\nconst __remoteImport = async (path) => {\n  const url = __remoteEntryUrl ? new URL(path, __remoteEntryUrl).href : path;\n  if (typeof Bun !== \"undefined\" && /^https?:/.test(url)) {\n    const response = await fetch(url);\n    if (!response.ok) throw new Error(`Module Federation chunk failed to load \"${url}\": ${response.status} ${response.statusText}`);\n    const source = await response.text();\n    return import(\"data:text/javascript;base64,\" + __bunMFBase64(source));\n  }\n  return import(url);\n};\nconst createContainer = (options) => {\n  let initialized = false;\n  let initResult;\n  return {\n    get(request) {\n      request = request.startsWith(\"./\") ? request : \"./\" + request;\n      const factory = options.get(request);\n      return Promise.resolve(factory()).then(module => () => module);\n    },\n    init(shareScope, initScope, initOptions) {\n      if (initialized) return initResult;\n      initialized = true;\n      initResult = options.init?.(shareScope, initScope, initOptions);\n      return initResult;\n    },\n  };\n};\n\nconst modules = {\n")?;
+
+            for expose in expose_outputs {
+                let source_index = expose.source_index;
+                let Some(output_file) =
+                    self.find_output_file_for_source_index(source_index, output_files)
+                else {
+                    self.transpiler.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "moduleFederation.exposes entry {} did not produce an output file",
+                            bun_core::fmt::quote(&expose.name),
+                        ),
+                    );
+                    continue;
+                };
+
+                code.append_slice(b"  ")?;
+                bun_js_printer::quote_for_json(&expose.name, &mut code, true)?;
+                code.append_slice(b": () => __remoteImport(")?;
+                let import_path =
+                    module_federation_relative_import_path(filename, &output_file.dest_path);
+                bun_js_printer::quote_for_json(&import_path, &mut code, true)?;
+                code.append_slice(b"),\n")?;
+            }
+
+            if self.transpiler.log().errors > original_error_count {
+                return Err(bun_core::err!("BuildFailed"));
+            }
+
+            code.append_slice(b"};\n\nconst shared = {\n")?;
+            for shared in &module_federation.shared {
+                if matches!(
+                    shared.import,
+                    options::ModuleFederationSharedImport::Disabled
+                ) {
+                    continue;
+                }
+                code.append_slice(b"  ")?;
+                bun_js_printer::quote_for_json(
+                    shared.share_key.as_deref().unwrap_or(shared.name.as_ref()),
+                    &mut code,
+                    true,
+                )?;
+                code.append_slice(b": {\n    version: ")?;
+                append_json_string_or_null(&mut code, shared.version.as_deref())?;
+                code.append_slice(b",\n    from: ")?;
+                append_json_string_or_null(&mut code, module_federation.name.as_deref())?;
+                code.append_slice(b",\n    scope: [")?;
+                bun_js_printer::quote_for_json(
+                    shared.share_scope.as_deref().unwrap_or(b"default"),
+                    &mut code,
+                    true,
+                )?;
+                code.append_slice(b"],\n    shareConfig: {\n      singleton: ")?;
+                append_json_bool(&mut code, shared.singleton)?;
+                code.append_slice(b",\n      requiredVersion: ")?;
+                match shared.required_version.as_deref() {
+                    Some(required_version) => {
+                        append_json_string_or_null(&mut code, Some(required_version))?
+                    }
+                    None => code.append_slice(b"false")?,
+                }
+                code.append_slice(b",\n      strictVersion: ")?;
+                append_json_bool(&mut code, shared.strict_version)?;
+                code.append_slice(b",\n      eager: ")?;
+                append_json_bool(&mut code, shared.eager)?;
+                code.append_slice(b",\n    },\n    get: async () => {\n")?;
+                match &shared.import {
+                    options::ModuleFederationSharedImport::Auto => {
+                        code.append_slice(b"      const __bunMFShared = await __remoteImport(")?;
+                        bun_js_printer::quote_for_json(&shared.name, &mut code, true)?;
+                        code.append_slice(b");\n      return () => __bunMFShared;\n")?;
+                    }
+                    options::ModuleFederationSharedImport::Path(path) => {
+                        code.append_slice(b"      const __bunMFShared = await __remoteImport(")?;
+                        bun_js_printer::quote_for_json(path, &mut code, true)?;
+                        code.append_slice(b");\n      return () => __bunMFShared;\n")?;
+                    }
+                    options::ModuleFederationSharedImport::Disabled => {}
+                }
+                code.append_slice(b"    },\n    registerFallback: ")?;
+                append_json_bool(
+                    &mut code,
+                    !matches!(
+                        shared.import,
+                        options::ModuleFederationSharedImport::Disabled
+                    ),
+                )?;
+                code.append_slice(b",\n  },\n")?;
+            }
+
+            code.append_slice(b"};\n\n")?;
+            if !module_federation.shared.is_empty() {
+                code.append_slice(b"let __mfInstance;\nconst __bunMFEnsureInstance = async () => {\n  if (__mfInstance) return __mfInstance;\n  const { init: __bunMFInit } = await import(\"@module-federation/runtime\");\n  __mfInstance = __bunMFInit({\n    name: ")?;
+                append_json_string_or_null(&mut code, module_federation.name.as_deref())?;
+                code.append_slice(b",\n    shared,\n    shareStrategy: ")?;
+                bun_js_printer::quote_for_json(
+                    match module_federation.share_strategy {
+                        options::ModuleFederationShareStrategy::VersionFirst => {
+                            b"version-first".as_slice()
+                        }
+                        options::ModuleFederationShareStrategy::LoadedFirst => {
+                            b"loaded-first".as_slice()
+                        }
+                    },
+                    &mut code,
+                    true,
+                )?;
+                code.append_slice(b",\n  });\n  return __mfInstance;\n};\nconst __bunMFWrapShareScopeGet = (scope) => {\n  if (!scope || typeof scope !== \"object\") return;\n  for (const versions of Object.values(scope)) {\n    if (!versions || typeof versions !== \"object\") continue;\n    for (const shareInfo of Object.values(versions)) {\n      if (!shareInfo || typeof shareInfo !== \"object\" || typeof shareInfo.get !== \"function\" || shareInfo.__bunMFGetWrapped) continue;\n      const originalGet = shareInfo.get;\n      let loading = shareInfo.loading;\n      Object.defineProperty(shareInfo, \"__bunMFGetWrapped\", { value: true });\n      shareInfo.get = async function() {\n        if (shareInfo.lib) return shareInfo.lib;\n        if (loading) return loading;\n        const nextLoading = Promise.resolve(originalGet.call(this)).then(factory => {\n          shareInfo.loaded = true;\n          shareInfo.lib = factory;\n          return factory;\n        }, error => {\n          if (shareInfo.loading === nextLoading) shareInfo.loading = undefined;\n          if (loading === nextLoading) loading = undefined;\n          throw error;\n        });\n        loading = nextLoading;\n        shareInfo.loading = loading;\n        return loading;\n      };\n    }\n  }\n};\nconst __bunMFRegisterSharedFallbacks = () => {\n  for (const [shareKey, item] of Object.entries(shared)) {\n    if (!item.registerFallback) continue;\n    const scopes = Array.isArray(item.scope) ? item.scope : [item.scope || \"default\"];\n    for (const scopeName of scopes) {\n      const targetScope = __mfInstance.shareScopeMap?.[scopeName];\n      if (!targetScope) continue;\n      const version = item.version || \"0\";\n      targetScope[shareKey] ??= {};\n      targetScope[shareKey][version] ??= {\n        ...item,\n        version,\n        from: item.from,\n        loaded: false,\n        loading: null,\n        scope: [scopeName],\n      };\n    }\n  }\n};\n\n")?;
+            }
+
+            code.append_slice(b"const container = createContainer({\n  get(request) {\n    const factory = modules[request];\n    if (!factory) throw new Error(\"Module Federation unknown exposed module \" + request);\n    return factory;\n  },\n  init(shareScope, initScope, initOptions) {\n")?;
+            if !module_federation.shared.is_empty() {
+                code.append_slice(b"    const shareScopeMap = initOptions?.shareScopeMap;\n    return __bunMFEnsureInstance().then(() => {\n      __bunMFWrapShareScopeGet(shareScope);\n      if (shareScopeMap) for (const scope of Object.values(shareScopeMap)) __bunMFWrapShareScopeGet(scope);\n      if (shareScope) __mfInstance.initShareScopeMap(\"default\", shareScope, { hostShareScopeMap: shareScopeMap });\n      if (shareScopeMap) {\n        for (const scopeName of Object.keys(shareScopeMap)) {\n          if (scopeName !== \"default\") __mfInstance.initShareScopeMap(scopeName, shareScopeMap[scopeName], { hostShareScopeMap: shareScopeMap });\n        }\n      }\n      __bunMFRegisterSharedFallbacks();\n    });\n")?;
+            }
+            code.append_slice(b"  },\n});\nObject.defineProperties(container, {\n  get: { value: container.get, enumerable: true },\n  init: { value: container.init, enumerable: true },\n  __bunModuleFederationRemoteEntry: { value: true },\n});\n\nglobalThis[")?;
+            append_json_string_or_null(&mut code, module_federation.name.as_deref())?;
+            code.append_slice(
+                b"] = container;\n",
+            )?;
+
+            Ok(code.to_owned_slice())
+        }
+
+        fn generate_module_federation_remote_entry_module(
+            &self,
+            filename: &[u8],
+            module_filename: &[u8],
+            remote_name: &[u8],
+        ) -> Result<Box<[u8]>, Error> {
+            let mut code = bun_core::MutableString::default();
+            let import_path = module_federation_relative_import_path(module_filename, filename);
+            code.append_slice(b"await import(")?;
+            bun_js_printer::quote_for_json(&import_path, &mut code, true)?;
+            code.append_slice(b");\nconst container = globalThis[")?;
+            bun_js_printer::quote_for_json(remote_name, &mut code, true)?;
+            code.append_slice(
+                b"];\nif (!container) throw new Error(\"Module Federation remote entry did not register its global container\");\nexport const get = container.get;\nexport const init = container.init;\nexport default container;\n",
+            )?;
+            Ok(code.to_owned_slice())
+        }
+
+        fn find_output_file_for_source_index<'b>(
+            &self,
+            source_index: IndexInt,
+            output_files: &'b [options::OutputFile],
+        ) -> Option<&'b options::OutputFile> {
+            let source_path = self.graph.input_files.items_source()[source_index as usize]
+                .path
+                .text;
+
+            output_files
+                .iter()
+                .find(|output_file| {
+                    output_file.output_kind == options::OutputKind::EntryPoint
+                        && output_file.src_path.text == source_path
+                })
+                .or_else(|| {
+                    let chunk_index = self.linker.graph.files.items_entry_point_chunk_index()
+                        [source_index as usize] as usize;
+                    output_files
+                        .get(chunk_index)
+                        .filter(|output_file| !output_file.dest_path.is_empty())
+                })
+        }
+    }
+
+    fn write_module_federation_output_to_disk(
+        outdir: &[u8],
+        output_path: &[u8],
+        contents: &[u8],
+    ) -> Result<(), Error> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined = bun_paths::resolve_path::join_string_buf::<
+            bun_paths::resolve_path::platform::Auto,
+        >(&mut buf.0[..], &[outdir, output_path]);
+        let parent =
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Loose>(joined);
+        if !parent.is_empty() {
+            bun_sys::mkdir_recursive(parent)?;
+        }
+
+        let mut zbuf = bun_paths::path_buffer_pool::get();
+        let joined_z = bun_paths::resolve_path::z(joined, &mut zbuf);
+        bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, contents)?;
+        Ok(())
+    }
+
+    fn module_federation_manifest_path(
+        manifest: &options::ModuleFederationManifest,
+    ) -> Box<[u8]> {
+        let file_name = manifest
+            .file_name
+            .as_deref()
+            .filter(|file_name| !file_name.is_empty())
+            .unwrap_or(b"mf-manifest.json");
+        let file_path = manifest.file_path.as_deref().unwrap_or(b"");
+        if file_path.is_empty() {
+            return Box::from(file_name);
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined = bun_paths::resolve_path::join_string_buf::<
+            bun_paths::resolve_path::platform::Posix,
+        >(&mut buf.0[..], &[file_path, file_name]);
+        Box::from(joined)
+    }
+
+    fn append_json_string_or_null(
+        json: &mut bun_core::MutableString,
+        value: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        match value {
+            Some(value) => bun_js_printer::quote_for_json(value, json, true),
+            None => Ok(json.append_slice(b"null")?),
+        }
+    }
+
+    fn append_json_bool(json: &mut bun_core::MutableString, value: bool) -> Result<(), Error> {
+        Ok(json.append_slice(if value {
+            b"true".as_slice()
+        } else {
+            b"false".as_slice()
+        })?)
+    }
+
+    fn append_module_federation_runtime_plugin_import(
+        code: &mut bun_core::MutableString,
+        import: &[u8],
+        root_dir: &[u8],
+    ) -> Result<(), Error> {
+        if bun_resolver::is_package_path(import)
+            || bun_paths::is_absolute(import)
+            || root_dir.is_empty()
+        {
+            return Ok(bun_js_printer::quote_for_json(import, code, true)?);
+        }
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined = bun_paths::resolve_path::join_abs_string_buf::<
+            bun_paths::platform::Auto,
+        >(root_dir, &mut **buf, &[import]);
+        bun_js_printer::quote_for_json(joined, code, true)
+    }
+
+    fn append_module_federation_runtime_plugin_key(
+        code: &mut bun_core::MutableString,
+        index: usize,
+        plugin: &options::ModuleFederationRuntimePlugin,
+    ) -> Result<(), Error> {
+        let mut key = Vec::new();
+        let _ = write!(&mut key, "{}\0", index);
+        key.extend_from_slice(plugin.import.as_ref());
+        key.push(0);
+        if let Some(options_json) = plugin.options_json.as_deref() {
+            key.extend_from_slice(options_json);
+        }
+        let hash = bun_wyhash::hash(&key);
+        let mut plugin_key = Vec::new();
+        let _ = write!(&mut plugin_key, "bun-mf-runtime-plugin-{:016x}", hash);
+        bun_js_printer::quote_for_json(&plugin_key, code, true)
+    }
+
+    fn module_federation_relative_import_path(
+        remote_entry_path: &[u8],
+        exposed_output_path: &[u8],
+    ) -> Box<[u8]> {
+        let base_dir =
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Loose>(
+                remote_entry_path,
+            );
+        let mut relative = if base_dir.is_empty() {
+            exposed_output_path
+        } else {
+            bun_paths::resolve_path::relative_platform::<
+                bun_paths::platform::Posix,
+                false,
+            >(base_dir, exposed_output_path)
+        };
+        while relative.starts_with(b"/") {
+            relative = &relative[1..];
+        }
+        if relative.starts_with(b"./") || relative.starts_with(b"../") {
+            Box::from(relative)
+        } else {
+            let mut path = Vec::with_capacity(relative.len() + 2);
+            path.extend_from_slice(b"./");
+            path.extend_from_slice(relative);
+            path.into_boxed_slice()
         }
     }
 
@@ -5709,6 +6643,7 @@ pub mod bv2_impl {
             let target = result.ast.target;
             let mut resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
                 import_records: &mut result.ast.import_records,
+                named_imports: &result.ast.named_imports,
                 source: &result.source,
                 loader: result.loader,
                 target,
@@ -5767,6 +6702,7 @@ pub mod bv2_impl {
 
     pub struct ResolveImportRecordCtx<'a> {
         pub import_records: &'a mut [ImportRecord],
+        pub named_imports: &'a NamedImports,
         pub source: &'a bun_ast::Source,
         pub loader: Loader,
         pub target: options::Target,
@@ -5775,6 +6711,18 @@ pub mod bv2_impl {
     pub struct ResolveImportRecordResult {
         pub resolve_queue: ResolveQueue,
         pub last_error: Option<Error>,
+    }
+
+    #[derive(Default)]
+    struct ModuleFederationSharedImportUsage {
+        named: Vec<Box<[u8]>>,
+        needs_default: bool,
+        needs_namespace: bool,
+    }
+
+    struct ModuleFederationRemoteMatch {
+        remote: options::ModuleFederationRemote,
+        expose: Box<[u8]>,
     }
 
     impl<'a> BundleV2<'a> {
@@ -5943,7 +6891,65 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                // borrowck — `transpiler_for_target` returns `&mut Transpiler`
+                if source.path.namespace != b"bun-mf-shared" {
+                    if let Some(shared) =
+                        self.module_federation_shared_for_import(import_record.path.text).cloned()
+                    {
+                        let usage = Self::module_federation_shared_import_usage(
+                            ctx.named_imports,
+                            i as u32,
+                        );
+                        if usage.needs_namespace {
+                            self.log_for_resolution_failures(
+                                source.path.text,
+                                ctx.target.bake_graph(),
+                            )
+                            .add_range_error_fmt(
+                                Some(source),
+                                import_record.range,
+                                format_args!(
+                                    "Module Federation shared namespace imports are not supported yet"
+                                ),
+                            );
+                            continue;
+                        }
+                        if let Err(err) = self.enqueue_module_federation_shared_proxy(
+                            &mut resolve_queue,
+                            ctx.target,
+                            source.path.source_dir(),
+                            source.index.0,
+                            import_record,
+                            i as u32,
+                            &shared,
+                            usage,
+                        ) {
+                            last_error = Some(err);
+                        }
+                        continue;
+                    }
+                }
+
+                if source.path.namespace != b"bun-mf-remote" {
+                    if let Some(remote_match) =
+                        self.module_federation_remote_for_import(import_record.path.text)
+                    {
+                        if let Err(err) = self.enqueue_module_federation_remote_proxy(
+                            &mut resolve_queue,
+                            ctx.target,
+                            source.path.source_dir(),
+                            source.index.0,
+                            import_record,
+                            i as u32,
+                            &remote_match.remote,
+                            &remote_match.expose,
+                        ) {
+                            last_error = Some(err);
+                        }
+                        continue;
+                    }
+                }
+
+                // PORT NOTE: borrowck — `transpiler_for_target` returns `&mut Transpiler`
                 // tied to `&mut self`, but the underlying storage is raw `*mut Transpiler`
                 // backrefs valid for `'a` (see `init`). Compute the raw ptr first, then
                 // deref once, so the `&mut self` borrow doesn't span the rest of the loop
@@ -6450,6 +7456,529 @@ pub mod bv2_impl {
                 resolve_queue,
                 last_error,
             }
+        }
+
+        fn module_federation_shared_for_import<'mf>(
+            &'mf self,
+            import_path: &[u8],
+        ) -> Option<&'mf options::ModuleFederationShared> {
+            let module_federation = self.transpiler.options.module_federation.as_ref()?;
+            module_federation.shared.iter().find(|shared| {
+                let import_name = match &shared.import {
+                    options::ModuleFederationSharedImport::Auto => shared.name.as_ref(),
+                    options::ModuleFederationSharedImport::Path(path) => path.as_ref(),
+                    options::ModuleFederationSharedImport::Disabled => shared.name.as_ref(),
+                };
+                import_path == import_name
+            })
+        }
+
+        fn module_federation_remote_for_import(
+            &self,
+            import_path: &[u8],
+        ) -> Option<ModuleFederationRemoteMatch> {
+            let module_federation = self.transpiler.options.module_federation.as_ref()?;
+            module_federation.remotes.iter().find_map(|remote| {
+                let alias = remote.alias.as_ref();
+                if import_path.len() <= alias.len() || &import_path[..alias.len()] != alias {
+                    return None;
+                }
+                if import_path[alias.len()] != b'/' {
+                    return None;
+                }
+
+                Some(ModuleFederationRemoteMatch {
+                    remote: remote.clone(),
+                    expose: Box::from(&import_path[alias.len() + 1..]),
+                })
+            })
+        }
+
+        fn module_federation_shared_import_usage(
+            named_imports: &NamedImports,
+            import_record_index: u32,
+        ) -> ModuleFederationSharedImportUsage {
+            let mut usage = ModuleFederationSharedImportUsage::default();
+            for named_import in named_imports.values() {
+                if named_import.import_record_index != import_record_index {
+                    continue;
+                }
+
+                if named_import.alias_is_star {
+                    usage.needs_namespace = true;
+                    continue;
+                }
+
+                let Some(alias) = named_import.alias else {
+                    continue;
+                };
+                let alias = alias.slice();
+                if alias == b"default" {
+                    usage.needs_default = true;
+                } else if !usage.named.iter().any(|existing| existing.as_ref() == alias) {
+                    usage.named.push(Box::from(alias));
+                }
+            }
+            usage
+        }
+
+        fn append_module_federation_shared_proxy_export(
+            code: &mut bun_core::MutableString,
+            name: &[u8],
+        ) -> Result<(), Error> {
+            if name.iter().copied().all(|byte| {
+                byte == b'_'
+                    || byte == b'$'
+                    || byte.is_ascii_alphanumeric()
+            }) && name
+                .first()
+                .is_some_and(|byte| *byte == b'_' || *byte == b'$' || byte.is_ascii_alphabetic())
+            {
+                code.append_slice(b"export const ")?;
+                code.append_slice(name)?;
+                code.append_slice(b" = __shared[")?;
+                bun_js_printer::quote_for_json(name, code, true)?;
+                code.append_slice(b"];\n")?;
+                return Ok(());
+            }
+
+            let mut ident = Vec::new();
+            for byte in name {
+                if byte.is_ascii_alphanumeric() {
+                    ident.push(*byte);
+                } else {
+                    let _ = write!(&mut ident, "_{:02x}", byte);
+                }
+            }
+            code.append_slice(b"const __shared_")?;
+            code.append_slice(&ident)?;
+            code.append_slice(b" = __shared[")?;
+            bun_js_printer::quote_for_json(name, code, true)?;
+            code.append_slice(b"];\nexport { __shared_")?;
+            code.append_slice(&ident)?;
+            code.append_slice(b" as ")?;
+            bun_js_printer::quote_for_json(name, code, true)?;
+            code.append_slice(b" };\n")?;
+            Ok(())
+        }
+
+        fn generate_module_federation_shared_proxy(
+            &self,
+            shared: &options::ModuleFederationShared,
+            usage: &ModuleFederationSharedImportUsage,
+        ) -> Result<Box<[u8]>, Error> {
+            let mut code = bun_core::MutableString::default();
+            let host_name = self
+                .transpiler
+                .options
+                .module_federation
+                .as_ref()
+                .and_then(|module_federation| module_federation.name.as_deref())
+                .filter(|name| !name.is_empty())
+                .unwrap_or(b"bun-mf-host");
+            code.append_slice(b"import { init } from \"@module-federation/runtime\";\nconst __bunMFImportShared = (specifier) => import(specifier);\nconst __bunMFSharedConfig = {\n  version: ")?;
+            append_json_string_or_null(&mut code, shared.version.as_deref())?;
+            code.append_slice(b",\n  from: ")?;
+            bun_js_printer::quote_for_json(host_name, &mut code, true)?;
+            code.append_slice(b",\n  scope: [")?;
+            bun_js_printer::quote_for_json(
+                shared.share_scope.as_deref().unwrap_or(b"default"),
+                &mut code,
+                true,
+            )?;
+            code.append_slice(b"],\n  shareConfig: {\n    singleton: ")?;
+            append_json_bool(&mut code, shared.singleton)?;
+            code.append_slice(b",\n    requiredVersion: ")?;
+            match shared.required_version.as_deref() {
+                Some(required_version) => append_json_string_or_null(&mut code, Some(required_version))?,
+                None => code.append_slice(b"false")?,
+            }
+            code.append_slice(b",\n    strictVersion: ")?;
+            append_json_bool(&mut code, shared.strict_version)?;
+            code.append_slice(b",\n    eager: ")?;
+            append_json_bool(&mut code, shared.eager)?;
+            code.append_slice(b",\n  },\n  get: async () => {\n")?;
+            match &shared.import {
+                options::ModuleFederationSharedImport::Auto => {
+                    code.append_slice(b"    const __bunMFShared = await __bunMFImportShared(")?;
+                    bun_js_printer::quote_for_json(shared.name.as_ref(), &mut code, true)?;
+                    code.append_slice(b");\n    return () => __bunMFShared;\n")?;
+                }
+                options::ModuleFederationSharedImport::Path(path) => {
+                    code.append_slice(b"    const __bunMFShared = await __bunMFImportShared(")?;
+                    bun_js_printer::quote_for_json(path, &mut code, true)?;
+                    code.append_slice(b");\n    return () => __bunMFShared;\n")?;
+                }
+                options::ModuleFederationSharedImport::Disabled => {
+                    code.append_slice(b"    throw new Error(\"Module Federation shared fallback is disabled\");\n")?;
+                }
+            }
+            code.append_slice(b"  },\n};\nconst __bunMFShareKey = ")?;
+            bun_js_printer::quote_for_json(
+                shared.share_key.as_deref().unwrap_or(shared.name.as_ref()),
+                &mut code,
+                true,
+            )?;
+            let register_fallback = !matches!(
+                shared.import,
+                options::ModuleFederationSharedImport::Disabled
+            );
+            code.append_slice(b";\nconst __mfInstance = init({\n  name: ")?;
+            bun_js_printer::quote_for_json(host_name, &mut code, true)?;
+            code.append_slice(b",\n  shared: ")?;
+            if register_fallback {
+                code.append_slice(b"{ [__bunMFShareKey]: __bunMFSharedConfig }")?;
+            } else {
+                code.append_slice(b"{}")?;
+            }
+            code.append_slice(b",\n  shareStrategy: ")?;
+            bun_js_printer::quote_for_json(
+                match self
+                    .transpiler
+                    .options
+                    .module_federation
+                    .as_ref()
+                    .map(|module_federation| module_federation.share_strategy)
+                    .unwrap_or(options::ModuleFederationShareStrategy::VersionFirst)
+                {
+                    options::ModuleFederationShareStrategy::VersionFirst => b"version-first".as_slice(),
+                    options::ModuleFederationShareStrategy::LoadedFirst => b"loaded-first".as_slice(),
+                },
+                &mut code,
+                true,
+            )?;
+            code.append_slice(
+                b",\n});\nconst __sharedFactory = await __mfInstance.loadShare(__bunMFShareKey",
+            )?;
+            if register_fallback {
+                code.append_slice(b");\n")?;
+            } else {
+                code.append_slice(b", { customShareInfo: __bunMFSharedConfig });\n")?;
+            }
+            code.append_slice(b"if (!__sharedFactory) throw new Error(\"Module Federation shared module is not available\");\nconst __shared = await __sharedFactory();\n")?;
+
+            if usage.needs_default {
+                code.append_slice(
+                    b"export default (__shared && __shared.__esModule ? __shared.default : (__shared.default ?? __shared));\n",
+                )?;
+            }
+
+            for name in &usage.named {
+                Self::append_module_federation_shared_proxy_export(&mut code, name)?;
+            }
+
+            if usage.needs_namespace && !usage.needs_default {
+                code.append_slice(b"export default __shared;\n")?;
+            }
+
+            Ok(code.to_owned_slice())
+        }
+
+        fn enqueue_module_federation_shared_proxy(
+            &mut self,
+            resolve_queue: &mut ResolveQueue,
+            target: Target,
+            importer_source_dir: &[u8],
+            importer_source_index: u32,
+            import_record: &mut ImportRecord,
+            import_record_index: u32,
+            shared: &options::ModuleFederationShared,
+            usage: ModuleFederationSharedImportUsage,
+        ) -> Result<(), Error> {
+            let mut path_buf = Vec::new();
+            let _ = write!(
+                &mut path_buf,
+                "{}bun-mf-shared-{}-{}.js",
+                bstr::BStr::new(importer_source_dir),
+                importer_source_index,
+                import_record_index
+            );
+            let path_text: &'static [u8] =
+                unsafe { interned_slice(self.arena().alloc_slice_copy(&path_buf)) };
+            let source_code = self.generate_module_federation_shared_proxy(shared, &usage)?;
+            let source_code: &'static [u8] =
+                unsafe { interned_slice(self.arena().alloc_slice_copy(&source_code)) };
+
+            let resolve_entry = resolve_queue.get_or_put(path_text).expect("oom");
+            if !resolve_entry.found_existing {
+                let mut parse_task = ParseTask::default();
+                parse_task.path =
+                    bun_paths::fs::Path::init_with_namespace(path_text, b"bun-mf-shared");
+                parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
+                parse_task.side_effects = bun_ast::SideEffects::NoSideEffectsPureData;
+                parse_task.loader = Some(Loader::Js);
+                parse_task.jsx = self.transpiler_for_target(target).options.jsx.clone();
+                parse_task.known_target = target;
+                parse_task.module_type = options::ModuleType::Esm;
+                parse_task.tree_shaking = self.transpiler.options.tree_shaking;
+                // SAFETY: arena outlives the bundle pass.
+                *resolve_entry.value_ptr = self.arena_create(parse_task);
+            }
+
+            import_record.path = bun_paths::fs::Path::init_with_namespace(path_text, b"bun-mf-shared");
+            import_record.source_index = Index::INVALID;
+            import_record
+                .flags
+                .remove(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+            Ok(())
+        }
+
+        fn append_module_federation_runtime_init(
+            &self,
+            code: &mut bun_core::MutableString,
+            _target: Target,
+        ) -> Result<(), Error> {
+            let Some(module_federation) = self.transpiler.options.module_federation.as_ref() else {
+                return Ok(());
+            };
+            let host_name = module_federation
+                .name
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(b"bun-mf-host");
+
+            code.append_slice(b"const __bunMFImportShared = (specifier) => import(specifier);\ninit({\n  name: ")?;
+            bun_js_printer::quote_for_json(host_name, code, true)?;
+            code.append_slice(b",\n  remotes: [],\n  shared: {\n")?;
+            for shared in &module_federation.shared {
+                if matches!(
+                    shared.import,
+                    options::ModuleFederationSharedImport::Disabled
+                ) {
+                    continue;
+                }
+
+                code.append_slice(b"    ")?;
+                bun_js_printer::quote_for_json(
+                    shared.share_key.as_deref().unwrap_or(shared.name.as_ref()),
+                    code,
+                    true,
+                )?;
+                code.append_slice(b": {\n      version: ")?;
+                append_json_string_or_null(code, shared.version.as_deref())?;
+                code.append_slice(b",\n      scope: [")?;
+                bun_js_printer::quote_for_json(
+                    shared.share_scope.as_deref().unwrap_or(b"default"),
+                    code,
+                    true,
+                )?;
+            code.append_slice(b"],\n      shareConfig: {\n        singleton: ")?;
+            append_json_bool(code, shared.singleton)?;
+            code.append_slice(b",\n        requiredVersion: ")?;
+                match shared.required_version.as_deref() {
+                    Some(required_version) => {
+                        append_json_string_or_null(code, Some(required_version))?
+                    }
+                    None => code.append_slice(b"false")?,
+                }
+                code.append_slice(b",\n        strictVersion: ")?;
+                append_json_bool(code, shared.strict_version)?;
+            code.append_slice(b",\n        eager: ")?;
+            append_json_bool(code, shared.eager)?;
+                code.append_slice(b",\n      },\n      get: async () => {\n        const __bunMFShared = await __bunMFImportShared(")?;
+                let import_name = match &shared.import {
+                    options::ModuleFederationSharedImport::Auto => shared.name.as_ref(),
+                    options::ModuleFederationSharedImport::Path(path) => path.as_ref(),
+                    options::ModuleFederationSharedImport::Disabled => unreachable!(),
+                };
+                bun_js_printer::quote_for_json(import_name, code, true)?;
+                code.append_slice(b");\n        return () => __bunMFShared;\n      },\n    },\n")?;
+            }
+            code.append_slice(b"  },\n  shareStrategy: ")?;
+            bun_js_printer::quote_for_json(
+                match module_federation.share_strategy {
+                    options::ModuleFederationShareStrategy::VersionFirst => b"version-first".as_slice(),
+                    options::ModuleFederationShareStrategy::LoadedFirst => b"loaded-first".as_slice(),
+                },
+                code,
+                true,
+            )?;
+            code.append_slice(b",\n});\n")?;
+            Ok(())
+        }
+
+        fn generate_module_federation_remote_proxy(
+            &self,
+            remote: &options::ModuleFederationRemote,
+            expose: &[u8],
+            target: Target,
+        ) -> Result<Box<[u8]>, Error> {
+            let mut code = bun_core::MutableString::default();
+            let module_federation = self.transpiler.options.module_federation.as_ref();
+            let async_startup = module_federation.is_some_and(|module_federation| {
+                module_federation.experiments.async_startup
+                    && (target.is_bun() || target == Target::Browser)
+            });
+            let entry = remote.entry.as_deref().unwrap_or_else(|| {
+                remote
+                    .external
+                    .first()
+                    .map_or(b"".as_slice(), |external| external.as_ref())
+            });
+            code.append_slice(
+                b"import { getInstance, init, loadRemote, registerRemotes } from \"@module-federation/runtime\";\n",
+            )?;
+            if async_startup {
+                code.append_slice(b"const __bunMFAsyncStartup = (async () => {\n")?;
+            }
+            self.append_module_federation_runtime_init(&mut code, target)?;
+            if let Some(module_federation) = module_federation {
+                if !module_federation.runtime_plugins.is_empty() {
+                    code.append_slice(b"const __bunMFRuntimePlugins = [];\n")?;
+                }
+                for (plugin_index, plugin) in module_federation
+                    .runtime_plugins
+                    .iter()
+                    .enumerate()
+                {
+                    code.append_slice(b"{\nconst __bunMFPluginModule = await import(")?;
+                    append_module_federation_runtime_plugin_import(
+                        &mut code,
+                        plugin.import.as_ref(),
+                        self.transpiler.options.root_dir.as_ref(),
+                    )?;
+                    code.append_slice(b");\nconst __bunMFPluginFactory = __bunMFPluginModule.default ?? __bunMFPluginModule.runtimePlugin ?? __bunMFPluginModule.plugin ?? __bunMFPluginModule;\nconst __bunMFPlugin = typeof __bunMFPluginFactory === \"function\" ? __bunMFPluginFactory(")?;
+                    match plugin.options_json.as_deref() {
+                        Some(options_json) => code.append_slice(options_json)?,
+                        None => code.append_slice(b"undefined")?,
+                    }
+                    code.append_slice(b") : __bunMFPluginFactory;\nif (__bunMFPlugin && !__bunMFPlugin.name) Object.defineProperty(__bunMFPlugin, \"name\", { value: ")?;
+                    append_module_federation_runtime_plugin_key(&mut code, plugin_index, plugin)?;
+                    code.append_slice(b", configurable: true });\n__bunMFRuntimePlugins.push(__bunMFPlugin);\n}\n")?;
+                }
+                if !module_federation.runtime_plugins.is_empty() {
+                    code.append_slice(b"getInstance((instance) => !!instance).registerPlugins(__bunMFRuntimePlugins);\n")?;
+                }
+            }
+            code.append_slice(b"registerRemotes([")?;
+            code.append_slice(b"{ name: ")?;
+            bun_js_printer::quote_for_json(&remote.alias, &mut code, true)?;
+            code.append_slice(b", alias: ")?;
+            bun_js_printer::quote_for_json(&remote.alias, &mut code, true)?;
+            code.append_slice(b", entry: ")?;
+            bun_js_printer::quote_for_json(entry, &mut code, true)?;
+            code.append_slice(b", type: ")?;
+            bun_js_printer::quote_for_json(
+                match remote.remote_type {
+                    options::ModuleFederationRemoteType::Module => b"module".as_slice(),
+                    options::ModuleFederationRemoteType::Script => b"global".as_slice(),
+                },
+                &mut code,
+                true,
+            )?;
+            code.append_slice(b", shareScope: ")?;
+            bun_js_printer::quote_for_json(
+                remote.share_scope.as_deref().unwrap_or(b"default"),
+                &mut code,
+                true,
+            )?;
+            if remote.global_name.is_some() {
+                code.append_slice(b", entryGlobalName: ")?;
+                append_json_string_or_null(&mut code, remote.global_name.as_deref())?;
+            }
+            code.append_slice(b" }")?;
+            code.append_slice(b"], { force: true });\n")?;
+            if async_startup {
+                code.append_slice(b"return await loadRemote(")?;
+            } else {
+                code.append_slice(b"const __remote = await loadRemote(")?;
+            }
+            let mut specifier = Vec::with_capacity(remote.alias.len() + expose.len() + 1);
+            specifier.extend_from_slice(&remote.alias);
+            specifier.push(b'/');
+            specifier.extend_from_slice(expose);
+            bun_js_printer::quote_for_json(&specifier, &mut code, true)?;
+            if async_startup {
+                code.append_slice(b");\n})();\nconst __remote = await __bunMFAsyncStartup;\n")?;
+            } else {
+                code.append_slice(b");\n")?;
+            }
+            code.append_slice(
+                b"const __default = __remote && __remote.__esModule ? __remote.default : (__remote.default ?? __remote);\nexport default __default;\n",
+            )?;
+            Ok(code.to_owned_slice())
+        }
+
+        fn enqueue_module_federation_remote_proxy(
+            &mut self,
+            resolve_queue: &mut ResolveQueue,
+            target: Target,
+            _importer_source_dir: &[u8],
+            _importer_source_index: u32,
+            import_record: &mut ImportRecord,
+            _import_record_index: u32,
+            remote: &options::ModuleFederationRemote,
+            expose: &[u8],
+        ) -> Result<(), Error> {
+            let entry = remote.entry.as_deref().unwrap_or_else(|| {
+                remote
+                    .external
+                    .first()
+                    .map_or(b"".as_slice(), |external| external.as_ref())
+            });
+            let remote_type = match remote.remote_type {
+                options::ModuleFederationRemoteType::Module => b"module".as_slice(),
+                options::ModuleFederationRemoteType::Script => b"global".as_slice(),
+            };
+            let share_scope = remote.share_scope.as_deref().unwrap_or(b"default");
+            let global_name = remote.global_name.as_deref().unwrap_or(b"");
+            let mut key = Vec::new();
+            key.extend_from_slice(&remote.alias);
+            key.push(0);
+            key.extend_from_slice(expose);
+            key.push(0);
+            key.extend_from_slice(entry);
+            key.push(0);
+            key.extend_from_slice(remote_type);
+            key.push(0);
+            key.extend_from_slice(global_name);
+            key.push(0);
+            key.extend_from_slice(share_scope);
+            key.push(0);
+            if self
+                .transpiler
+                .options
+                .module_federation
+                .as_ref()
+                .is_some_and(|module_federation| {
+                    module_federation.experiments.async_startup
+                        && (target.is_bun() || target == Target::Browser)
+                })
+            {
+                key.extend_from_slice(b"async-startup");
+            }
+            let hash = bun_wyhash::hash(&key);
+            let mut path_buf = Vec::new();
+            let _ = write!(&mut path_buf, "/bun-mf-remote-{:016x}.js", hash);
+            let path_text: &'static [u8] =
+                unsafe { interned_slice(self.arena().alloc_slice_copy(&path_buf)) };
+            let source_code =
+                self.generate_module_federation_remote_proxy(remote, expose, target)?;
+            let source_code: &'static [u8] =
+                unsafe { interned_slice(self.arena().alloc_slice_copy(&source_code)) };
+
+            let resolve_entry = resolve_queue.get_or_put(path_text).expect("oom");
+            if !resolve_entry.found_existing {
+                let mut parse_task = ParseTask::default();
+                parse_task.path =
+                    bun_paths::fs::Path::init_with_namespace(path_text, b"bun-mf-remote");
+                parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
+                parse_task.side_effects = bun_ast::SideEffects::HasSideEffects;
+                parse_task.loader = Some(Loader::Js);
+                parse_task.jsx = self.transpiler_for_target(target).options.jsx.clone();
+                parse_task.known_target = target;
+                parse_task.module_type = options::ModuleType::Esm;
+                parse_task.tree_shaking = self.transpiler.options.tree_shaking;
+                *resolve_entry.value_ptr = self.arena_create(parse_task);
+            }
+
+            import_record.path =
+                bun_paths::fs::Path::init_with_namespace(path_text, b"bun-mf-remote");
+            import_record.source_index = Index::INVALID;
+            import_record
+                .flags
+                .remove(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+            Ok(())
         }
 
         /// Process a resolve queue: create input file slots and schedule parse tasks.

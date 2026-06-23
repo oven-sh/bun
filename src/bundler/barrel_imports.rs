@@ -325,17 +325,21 @@ fn resolve_barrel_records(
         &mut this.graph.ast.items_import_records_mut()[idx],
         bun_alloc::ArenaVec::new_in(heap),
     );
+    let barrel_named_imports =
+        core::mem::take(&mut this.graph.ast.items_named_imports_mut()[idx]);
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;
 
     let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,
+        named_imports: &barrel_named_imports,
         source: &source,
         loader,
         target,
     });
 
     this.graph.input_files.items_source_mut()[idx] = source;
+    this.graph.ast.items_named_imports_mut()[idx] = barrel_named_imports;
 
     let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
 

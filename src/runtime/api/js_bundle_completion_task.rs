@@ -917,6 +917,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.inlining = config.minify.syntax;
         transpiler.options.source_map = config.source_map;
         transpiler.options.packages = config.packages;
+        transpiler.options.module_federation = config.module_federation.clone();
         transpiler.options.allow_unresolved = match &config.allow_unresolved {
             Some(a) => options::AllowUnresolved::from_strings(
                 a.keys().to_vec().into_boxed_slice(),

@@ -1081,9 +1081,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .class
                     .class_name
                     .expect("infallible: class statement has a name");
-                // Keep a named class expression only when the class body refers
-                // to its own name; otherwise emit an anonymous class expression.
-                if shadow_ref.is_empty() {
+                // Drop the class expression name when the class body never
+                // refers to it. Keep it under `--keep-names` or when the scope
+                // contains a direct `eval` (which may reference the name
+                // dynamically), matching the class-expression path in
+                // `visit_expr`.
+                let drop_name = shadow_ref.is_empty()
+                    && !p.options.features.minify_keep_names
+                    && !p.current_scope().contains_direct_eval;
+                if drop_name {
                     sc.class.class_name = None;
                 }
                 let is_export = sc.is_export;

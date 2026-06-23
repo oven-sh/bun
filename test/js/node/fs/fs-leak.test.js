@@ -196,6 +196,11 @@ test("async fs ops with Buffer path arguments do not leak the path argument", as
       readv(vfd, [Buffer.alloc(8), Buffer.alloc(8)], 0),
     );
     fs.closeSync(vfd);
+    // readdir is a separate hand-written binding (Binding::readdir) from the
+    // generic run_async path above, so exercise its Buffer-path root too.
+    // (cp is the other hand-written binding, but its JS wrapper rejects
+    // non-string paths, so a Buffer path never reaches the native binding.)
+    deltas.readdirBufferPath = await measure("Uint8Array", i => fs.promises.readdir(Buffer.from(".")));
     if (!fs.existsSync("out-0.txt") || !fs.existsSync("out-1.txt")) {
       throw new Error("writeFile segment did not write its files");
     }
@@ -230,6 +235,7 @@ test("async fs ops with Buffer path arguments do not leak the path argument", as
     abortedWriteFileBufferPath: "ok",
     writevBuffers: "ok",
     readvBuffers: "ok",
+    readdirBufferPath: "ok",
   });
   expect(exitCode).toBe(0);
 });

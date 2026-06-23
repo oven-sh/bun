@@ -43,10 +43,18 @@ export function run(dir: string, test: string) {
     cmd: [bunExe(), "run", test],
     cwd: dir,
     stderr: "inherit",
-    stdout: "ignore",
+    // Many vendored tests report diagnostics via console.log (e.g. the
+    // "Mismatched function calls" messages emitted by common.mustCall's
+    // process-exit checker). Capture stdout so a failure carries its
+    // diagnostic instead of presenting as a bare nonzero exit code.
+    stdout: "pipe",
     stdin: "inherit",
     env,
   });
+  if (!result.success) {
+    const stdout = result.stdout.toString();
+    if (stdout.length > 0) console.error(`--- ${test} stdout ---\n${stdout}`);
+  }
   expect(result.success).toBeTrue();
   expect(result.exitCode).toBe(0);
 }

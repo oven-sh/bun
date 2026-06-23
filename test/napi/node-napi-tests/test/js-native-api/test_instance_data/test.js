@@ -17,8 +17,13 @@ if (module !== require.main) {
   assert.strictEqual(test_instance_data.increment(), 42);
 
   // Test that the instance data can be accessed from a finalizer.
-  test_instance_data.objectWithFinalizer(common.mustCall());
-  global.gc();
+  // We use IIFE for the object's scope to be compatible with non-V8 JS
+  // engines whose conservative stack scan may keep the object alive while
+  // the creating frame is still on the stack.
+  (() => {
+    test_instance_data.objectWithFinalizer(common.mustCall());
+  })();
+  for (let i = 0; i < 10; ++i) global.gc();
 } else {
   // When launched as a script, run tests in either a child process or in a
   // worker thread.

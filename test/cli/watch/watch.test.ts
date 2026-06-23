@@ -55,6 +55,10 @@ afterEach(() => {
 const exitScenarios = {
   // process.exit() during top-level evaluation.
   direct: (n: number) => `console.log("MARK:${n}");\nprocess.exit(1);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  // Callbacks queued before process.exit() must not resume while the watcher
+  // waits for the next change.
+  "pending callbacks": (n: number) =>
+    `console.log("MARK:${n}");\nsetImmediate(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"));\nsetTimeout(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"), 0);\nprocess.exit(1);\n`,
   // process.exit() from a beforeExit handler: the run ends normally, then the
   // handler calls process.exit() while the watcher loop is dispatching
   // beforeExit.

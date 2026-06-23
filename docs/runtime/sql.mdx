@@ -319,6 +319,22 @@ const rows = await sql`SELECT * FROM users`.raw();
 console.log(rows); // [[Buffer, Buffer], [Buffer, Buffer], [Buffer, Buffer]]
 ```
 
+### Column metadata
+
+Every result also carries a `.columns` array describing each column, and a `.statement` object (`{ string, columns }`) with the executed SQL. The `type` field is the wire-protocol type identifier &mdash; the `pg_type` OID on PostgreSQL, the column-type code on MySQL/MariaDB &mdash; which lets driver adapters distinguish columns that produce identical JavaScript values, such as a `jsonb` column versus a `text[]` column that both decode to an array.
+
+```ts
+const result = await sql`SELECT '["a","b"]'::jsonb AS data, ARRAY['a','b']::text[] AS tags`;
+
+result.columns;
+// PostgreSQL: [
+//   { name: "data", type: 3802, table: 0, number: 0 },   // jsonb
+//   { name: "tags", type: 1009, table: 0, number: 0 },   // text[]
+// ]
+```
+
+PostgreSQL columns expose `{ name, type, table, number }` (matching `postgres.js`); MySQL/MariaDB columns expose `{ name, type, table, length, flags }`. SQLite results do not carry column metadata (`.columns` is `null`).
+
 ---
 
 ## SQL Fragments

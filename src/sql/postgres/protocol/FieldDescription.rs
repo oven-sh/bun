@@ -2,11 +2,18 @@ use crate::postgres::any_postgres_error::AnyPostgresError;
 use crate::postgres::postgres_types::{self as types, Int4, Short};
 use crate::postgres::protocol::new_reader::NewReader;
 use crate::shared::column_identifier::ColumnIdentifier;
+use crate::shared::data::Data;
 
 pub struct FieldDescription {
+    /// Column name exactly as sent by PostgreSQL in RowDescription. Unlike
+    /// `name_or_index`, this is never rewritten to `Duplicate` and is always
+    /// the original string, so it can be surfaced to JS in result `.columns`.
+    pub name: Data,
     /// JavaScriptCore treats numeric property names differently than string property names.
     /// so we do the work to figure out if the property name is a number ahead of time.
     pub name_or_index: ColumnIdentifier,
+    pub table_oid: Int4,
+    pub column_index: Short,
     pub type_oid: Int4,
     pub binary: bool,
 }
@@ -21,17 +28,22 @@ impl FieldDescription {
     pub(crate) fn decode_internal<Container: super::new_reader::ReaderContext>(
         reader: &mut NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        let name = reader.read_z()?;
+        let raw_name = reader.read_z()?;
+
+        // Own a copy of the raw name so it survives name_or_index being
+        // rewritten to Duplicate by checkForDuplicateFields().
+        let name = Data::create(raw_name.slice()).map_err(|_| AnyPostgresError::OutOfMemory)?;
 
         // Field name (null-terminated string)
-        let field_name = ColumnIdentifier::init(name).map_err(|_| AnyPostgresError::OutOfMemory)?;
+        let field_name =
+            ColumnIdentifier::init(raw_name).map_err(|_| AnyPostgresError::OutOfMemory)?;
         // Table OID (4 bytes)
         // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
-        reader.int4()?;
+        let table_oid = reader.int4()?;
 
         // Column attribute number (2 bytes)
         // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
-        reader.short()?;
+        let column_index = reader.short()?;
 
         // Data type OID (4 bytes)
         // The object ID of the field's data type. The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
@@ -49,6 +61,9 @@ impl FieldDescription {
             _ => return Err(AnyPostgresError::UnknownFormatCode),
         };
         Ok(Self {
+            name,
+            table_oid,
+            column_index,
             type_oid,
             binary,
             name_or_index: field_name,

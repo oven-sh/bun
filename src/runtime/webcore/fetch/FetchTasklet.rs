@@ -667,7 +667,9 @@ impl FetchTasklet {
                 if let Some(bytes) = readable.ptr.bytes() {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
-                    bytes.on_data(StreamResult::Err(StreamError::JSValue(js_err)))?;
+                    bytes.on_data(StreamResult::Err(StreamError::JSValue(
+                        bun_jsc::strong::Optional::create(js_err, &global_this),
+                    )))?;
                 }
             }
             // A failure result is terminal (`to_result` forces `has_more =

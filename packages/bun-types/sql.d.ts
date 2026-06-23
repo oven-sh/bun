@@ -929,15 +929,15 @@ declare module "bun" {
      * @param channel - The channel name to listen on
      * @param onnotify - Called with the payload string each time a notification arrives
      * @param onlisten - Called each time the LISTEN command completes (initial connect and reconnects)
-     * The returned `state` object is shared across all listen() calls on this SQL
-     * instance and is mutated in place when the underlying listen connection is
-     * (re)established — a stale reference always reflects the current backend.
      *
      * @returns Promise resolving to `{ state, unlisten }`. `state.pid` is the
      * PostgreSQL backend process ID (useful with `pg_terminate_backend`),
-     * `state.secret` is the cancellation secret. Call `unlisten()` to remove this
-     * specific listener (idempotent). The subscription is also an async
-     * disposable: `await using` removes the listener on scope exit.
+     * `state.secret` is the cancellation secret. The `state` object is shared
+     * across all listen() calls on this SQL instance and is mutated in place
+     * when the underlying listen connection is (re)established, so a stale
+     * reference always reflects the current backend. Call `unlisten()` to
+     * remove this specific listener (idempotent). The subscription is also an
+     * async disposable: `await using` removes the listener on scope exit.
      *
      * @example
      * const { state, unlisten } = await sql.listen('news', payload => console.log(payload));

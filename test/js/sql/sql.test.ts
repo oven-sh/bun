@@ -14143,3 +14143,132 @@ test("non-Postgres listen/unlisten stubs reject validation errors as Promises", 
   expect(listenValid).toBeInstanceOf(Promise);
   await expect(listenValid).rejects.toThrow(/PostgreSQL only/);
 });
+
+// dispatch_notification converts the NotificationResponse channel and payload
+// byte slices to JS strings. A previous implementation used
+// `String::clone_utf8(...).to_js(global)`, which leaves the clone_utf8 +1 ref
+// orphaned (bun_core::String has no Drop), so every delivered notification
+// permanently leaked the channel-name WTFStringImpl and (when non-empty) the
+// payload WTFStringImpl. For a long-lived subscriber that is unbounded growth.
+// Runs in a subprocess so RSS is isolated from the test runner's own heap.
+test("sql.listen does not leak NotificationResponse string backing across many notifications", async () => {
+  const dir = tempDirWithFiles("pg-listen-string-leak", {
+    "fixture.ts": /* ts */ `
+import net from "node:net";
+import { SQL } from "bun";
+
+const pkt = (type: string, body: Buffer) => {
+  const header = Buffer.alloc(5);
+  header.write(type, 0);
+  header.writeInt32BE(body.length + 4, 1);
+  return Buffer.concat([header, body]);
+};
+const int32 = (n: number) => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+const cstr = (s: string) => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+const authenticationOk = pkt("R", int32(0));
+const backendKeyData = pkt("K", Buffer.concat([int32(1234), int32(5678)]));
+const readyForQuery = pkt("Z", Buffer.from("I"));
+const commandComplete = (tag: string) => pkt("C", cstr(tag));
+const notification = (channel: string, payload: string) =>
+  pkt("A", Buffer.concat([int32(1234), cstr(channel), cstr(payload)]));
+
+let theSocket: net.Socket | undefined;
+const server = net.createServer(socket => {
+  theSocket = socket;
+  let startup = true;
+  socket.on("data", data => {
+    if (startup) {
+      startup = false;
+      socket.write(Buffer.concat([authenticationOk, backendKeyData, readyForQuery]));
+      return;
+    }
+    if (data[0] !== 0x51 /* 'Q' */) return;
+    const length = data.readInt32BE(1);
+    const query = data.toString("utf8", 5, length);
+    socket.write(Buffer.concat([commandComplete(query.split(" ", 1)[0].toUpperCase()), readyForQuery]));
+  });
+  socket.on("error", () => {});
+});
+await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
+const port = (server.address() as net.AddressInfo).port;
+
+const db = new SQL({ url: \`postgres://u@127.0.0.1:\${port}/db\`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+
+// 512 KiB payload x 300 notifications = ~150 MiB of payload string backing.
+// On the leaky build each (channel, payload) pair is retained forever; on
+// the fixed build only the single in-flight JS string is live per tick and
+// GC reclaims it. One notification is written and awaited at a time so the
+// socket and receive buffers never hold more than one payload.
+const ITERATIONS = 300;
+const PAYLOAD_SIZE = 512 * 1024;
+
+let received = 0;
+let resolveOne!: () => void;
+await db.listen("leak_chan", () => {
+  received++;
+  resolveOne();
+});
+
+const sendOne = async (payload: string) => {
+  const p = new Promise<void>(r => { resolveOne = r; });
+  theSocket!.write(notification("leak_chan", payload));
+  await p;
+};
+
+// Warm-up batch to let the connection buffers, JIT, and JS wrapper caches
+// settle before the baseline RSS snapshot.
+for (let i = 0; i < 20; i++) {
+  await sendOne(Buffer.alloc(PAYLOAD_SIZE, 0x61 + (i % 26)).toString("latin1"));
+}
+for (let i = 0; i < 4; i++) { await new Promise(r => setImmediate(r)); Bun.gc(true); }
+
+received = 0;
+Bun.gc(true);
+const rssBefore = process.memoryUsage.rss();
+
+for (let i = 0; i < ITERATIONS; i++) {
+  // Unique fill byte per iteration so the strings are not deduped.
+  await sendOne(Buffer.alloc(PAYLOAD_SIZE, 0x61 + (i % 26)).toString("latin1"));
+  if ((i & 15) === 15) Bun.gc(true);
+}
+
+await db.close({ timeout: 0 }).catch(() => {});
+server.close();
+
+for (let i = 0; i < 8; i++) { await new Promise(r => setImmediate(r)); Bun.gc(true); }
+
+const rssAfter = process.memoryUsage.rss();
+const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
+console.log(JSON.stringify({ rssBefore, rssAfter, deltaMiB, received }));
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    // ASAN's freed-allocation quarantine (default 256 MB) would otherwise
+    // dominate RSS regardless of whether the strings were actually leaked;
+    // shrink it so freed payloads return to the OS before the snapshot.
+    env: { ...bunEnv, ASAN_OPTIONS: "quarantine_size_mb=8:detect_leaks=0" },
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 120_000,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  let parsed: { deltaMiB: number; received: number };
+  try {
+    parsed = JSON.parse(stdout.trim().split("\n").pop()!);
+  } catch {
+    throw new Error(`fixture did not emit JSON\nstdout:\n${stdout}\nstderr:\n${filterSpawnStderr(stderr)}`);
+  }
+  expect(filterSpawnStderr(stderr)).toBe("");
+  expect(parsed.received).toBe(300);
+  // With the leak, ~150 MiB of payload backing (plus ~300 channel-name impls)
+  // is retained after GC on top of whatever the steady state holds. With the
+  // fix the JS strings are the only owners and GC reclaims them, so growth
+  // past the warm-up baseline stays near zero.
+  expect(parsed.deltaMiB).toBeLessThan(64);
+  expect(exitCode).toBe(0);
+}, 120_000);

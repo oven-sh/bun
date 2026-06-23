@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult,
     VirtualMachine, VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
@@ -3087,13 +3087,14 @@ impl PostgresSQLConnection {
         }
         callback.ensure_still_alive();
         let global = self.global();
-        // clone_utf8 copies into a ref-counted WTFStringImpl so the JSValue is
-        // safe to use after the NotificationResponse buffers are freed.
-        let channel_js = match bun_core::String::clone_utf8(channel).to_js(global) {
+        // create_utf8_for_js copies into a fresh WTFStringImpl owned by the
+        // returned JS string (no +1 left on the Rust side), so the JSValue is
+        // safe after the NotificationResponse buffers are freed.
+        let channel_js = match crate::jsc::bun_string_jsc::create_utf8_for_js(global, channel) {
             Ok(v) => v,
             Err(e) => return global.report_active_exception_as_unhandled(e),
         };
-        let payload_js = match bun_core::String::clone_utf8(payload).to_js(global) {
+        let payload_js = match crate::jsc::bun_string_jsc::create_utf8_for_js(global, payload) {
             Ok(v) => v,
             Err(e) => return global.report_active_exception_as_unhandled(e),
         };

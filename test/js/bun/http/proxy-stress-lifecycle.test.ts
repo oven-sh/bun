@@ -293,7 +293,6 @@ describe("abort at each proxy stage", () => {
   })) {
     test.concurrent(`${proxyTls ? "https" : "http"}-proxy → https-origin, abort at '${stage}'`, async () => {
       const ac = new AbortController();
-      let stageReached = false;
       await using origin = await createAdversarialOrigin({ tls: true, body: "never" });
       // Run a transparent proxy and poll its connection record from the
       // test side: the stage is inferred from record presence /
@@ -315,7 +314,6 @@ describe("abort at each proxy stage", () => {
         while (!want(proxy.connections[0])) {
           await new Promise<void>(r => setImmediate(r));
         }
-        stageReached = true;
         ac.abort();
       })();
 
@@ -332,9 +330,10 @@ describe("abort at each proxy stage", () => {
       } catch (e) {
         code = errcode(e);
       }
+      // `await poller` resolving is itself proof the stage was reached:
+      // the IIFE's only exit sets `ac.abort()` and returns.
       await poller;
 
-      expect(stageReached).toBe(true);
       // Either the abort won (AbortError), or the request had already
       // finished failing because the proxy/origin closed first. Both are
       // fine; a resolved 200 or a hang is not.

@@ -426,16 +426,21 @@ describe("WebSocket through proxy", () => {
       } as any);
       ws.binaryType = "arraybuffer";
       let gotHello = false;
+      let settled = false;
       ws.onmessage = ev => {
         if (!gotHello) {
           gotHello = true;
           ws.send(payload);
           return;
         }
+        settled = true;
         resolve(new Uint8Array(ev.data as ArrayBuffer));
         ws.close();
       };
       ws.onerror = ev => reject(new Error("ws error: " + (ev as any).message));
+      ws.onclose = ev => {
+        if (!settled) reject(new Error(`closed early: ${ev.code} ${ev.reason}`));
+      };
       const got = await done;
       expect(got.length).toBe(payload.length);
       expect(got[0]).toBe(0xab);

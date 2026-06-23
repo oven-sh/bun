@@ -445,11 +445,12 @@ describe("memory probe (subprocess)", () => {
       // UAF there shows up as a crash, not a slow leak.
       if (!isASAN) {
         const growth = result.rssEnd / Math.max(1, result.rssStart);
-        expect({ mode, growth: Number(growth.toFixed(2)) }).toEqual({
+        // Carry `mode` + the rounded ratio in the failing diff.
+        expect({ mode, growth: Number(growth.toFixed(2)), withinBound: growth < 3.0 }).toEqual({
           mode,
           growth: expect.any(Number),
+          withinBound: true,
         });
-        expect(growth).toBeLessThan(3.0);
       }
     }, 120_000);
   }

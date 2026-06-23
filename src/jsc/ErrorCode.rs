@@ -365,353 +365,355 @@ impl ErrorCode {
     pub const MISSING_PASSPHRASE: ErrorCode = ErrorCode(153);
     /// `ERR_MISSING_PLATFORM_FOR_WORKER` (instanceof Error)
     pub const MISSING_PLATFORM_FOR_WORKER: ErrorCode = ErrorCode(154);
+    /// `ERR_MODULE_LINK_MISMATCH` (instanceof TypeError)
+    pub const MODULE_LINK_MISMATCH: ErrorCode = ErrorCode(155);
     /// `ERR_MODULE_NOT_FOUND` (instanceof Error)
-    pub const ERR_MODULE_NOT_FOUND: ErrorCode = ErrorCode(155);
+    pub const ERR_MODULE_NOT_FOUND: ErrorCode = ErrorCode(156);
     /// `ERR_MULTIPLE_CALLBACK` (instanceof Error)
-    pub const MULTIPLE_CALLBACK: ErrorCode = ErrorCode(156);
+    pub const MULTIPLE_CALLBACK: ErrorCode = ErrorCode(157);
     /// `ERR_NON_CONTEXT_AWARE_DISABLED` (instanceof Error)
-    pub const NON_CONTEXT_AWARE_DISABLED: ErrorCode = ErrorCode(157);
+    pub const NON_CONTEXT_AWARE_DISABLED: ErrorCode = ErrorCode(158);
     /// `ERR_OPERATION_FAILED` (instanceof Error)
-    pub const OPERATION_FAILED: ErrorCode = ErrorCode(158);
+    pub const OPERATION_FAILED: ErrorCode = ErrorCode(159);
     /// `ERR_OUT_OF_RANGE` (instanceof RangeError)
-    pub const OUT_OF_RANGE: ErrorCode = ErrorCode(159);
+    pub const OUT_OF_RANGE: ErrorCode = ErrorCode(160);
     /// `ERR_PARSE_ARGS_INVALID_OPTION_VALUE` (instanceof TypeError)
-    pub const PARSE_ARGS_INVALID_OPTION_VALUE: ErrorCode = ErrorCode(160);
+    pub const PARSE_ARGS_INVALID_OPTION_VALUE: ErrorCode = ErrorCode(161);
     /// `ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL` (instanceof TypeError)
-    pub const PARSE_ARGS_UNEXPECTED_POSITIONAL: ErrorCode = ErrorCode(161);
+    pub const PARSE_ARGS_UNEXPECTED_POSITIONAL: ErrorCode = ErrorCode(162);
     /// `ERR_PARSE_ARGS_UNKNOWN_OPTION` (instanceof TypeError)
-    pub const PARSE_ARGS_UNKNOWN_OPTION: ErrorCode = ErrorCode(162);
+    pub const PARSE_ARGS_UNKNOWN_OPTION: ErrorCode = ErrorCode(163);
     /// `ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2` (instanceof Error)
-    pub const POSTGRES_AUTHENTICATION_FAILED_PBKDF2: ErrorCode = ErrorCode(163);
+    pub const POSTGRES_AUTHENTICATION_FAILED_PBKDF2: ErrorCode = ErrorCode(164);
     /// `ERR_POSTGRES_CONNECTION_CLOSED` (instanceof Error)
-    pub const POSTGRES_CONNECTION_CLOSED: ErrorCode = ErrorCode(164);
+    pub const POSTGRES_CONNECTION_CLOSED: ErrorCode = ErrorCode(165);
     /// `ERR_POSTGRES_CONNECTION_TIMEOUT` (instanceof Error)
-    pub const POSTGRES_CONNECTION_TIMEOUT: ErrorCode = ErrorCode(165);
+    pub const POSTGRES_CONNECTION_TIMEOUT: ErrorCode = ErrorCode(166);
     /// `ERR_POSTGRES_EXPECTED_REQUEST` (instanceof Error)
-    pub const POSTGRES_EXPECTED_REQUEST: ErrorCode = ErrorCode(166);
+    pub const POSTGRES_EXPECTED_REQUEST: ErrorCode = ErrorCode(167);
     /// `ERR_POSTGRES_EXPECTED_STATEMENT` (instanceof Error)
-    pub const POSTGRES_EXPECTED_STATEMENT: ErrorCode = ErrorCode(167);
+    pub const POSTGRES_EXPECTED_STATEMENT: ErrorCode = ErrorCode(168);
     /// `ERR_POSTGRES_IDLE_TIMEOUT` (instanceof Error)
-    pub const POSTGRES_IDLE_TIMEOUT: ErrorCode = ErrorCode(168);
+    pub const POSTGRES_IDLE_TIMEOUT: ErrorCode = ErrorCode(169);
     /// `ERR_POSTGRES_INVALID_BACKEND_KEY_DATA` (instanceof TypeError)
-    pub const POSTGRES_INVALID_BACKEND_KEY_DATA: ErrorCode = ErrorCode(169);
+    pub const POSTGRES_INVALID_BACKEND_KEY_DATA: ErrorCode = ErrorCode(170);
     /// `ERR_POSTGRES_INVALID_BINARY_DATA` (instanceof TypeError)
-    pub const POSTGRES_INVALID_BINARY_DATA: ErrorCode = ErrorCode(170);
+    pub const POSTGRES_INVALID_BINARY_DATA: ErrorCode = ErrorCode(171);
     /// `ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING` (instanceof TypeError)
-    pub const POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING: ErrorCode = ErrorCode(171);
+    pub const POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING: ErrorCode = ErrorCode(172);
     /// `ERR_POSTGRES_INVALID_BYTE_SEQUENCE` (instanceof TypeError)
-    pub const POSTGRES_INVALID_BYTE_SEQUENCE: ErrorCode = ErrorCode(172);
+    pub const POSTGRES_INVALID_BYTE_SEQUENCE: ErrorCode = ErrorCode(173);
     /// `ERR_POSTGRES_INVALID_CHARACTER` (instanceof TypeError)
-    pub const POSTGRES_INVALID_CHARACTER: ErrorCode = ErrorCode(173);
+    pub const POSTGRES_INVALID_CHARACTER: ErrorCode = ErrorCode(174);
     /// `ERR_POSTGRES_INVALID_MESSAGE_LENGTH` (instanceof Error)
-    pub const POSTGRES_INVALID_MESSAGE_LENGTH: ErrorCode = ErrorCode(174);
+    pub const POSTGRES_INVALID_MESSAGE_LENGTH: ErrorCode = ErrorCode(175);
     /// `ERR_POSTGRES_INVALID_MESSAGE` (instanceof Error)
-    pub const POSTGRES_INVALID_MESSAGE: ErrorCode = ErrorCode(175);
+    pub const POSTGRES_INVALID_MESSAGE: ErrorCode = ErrorCode(176);
     /// `ERR_POSTGRES_INVALID_QUERY_BINDING` (instanceof Error)
-    pub const POSTGRES_INVALID_QUERY_BINDING: ErrorCode = ErrorCode(176);
+    pub const POSTGRES_INVALID_QUERY_BINDING: ErrorCode = ErrorCode(177);
     /// `ERR_POSTGRES_INVALID_SERVER_KEY` (instanceof Error)
-    pub const POSTGRES_INVALID_SERVER_KEY: ErrorCode = ErrorCode(177);
+    pub const POSTGRES_INVALID_SERVER_KEY: ErrorCode = ErrorCode(178);
     /// `ERR_POSTGRES_INVALID_SERVER_SIGNATURE` (instanceof Error)
-    pub const POSTGRES_INVALID_SERVER_SIGNATURE: ErrorCode = ErrorCode(178);
+    pub const POSTGRES_INVALID_SERVER_SIGNATURE: ErrorCode = ErrorCode(179);
     /// `ERR_POSTGRES_INVALID_TRANSACTION_STATE` (instanceof Error)
-    pub const POSTGRES_INVALID_TRANSACTION_STATE: ErrorCode = ErrorCode(179);
+    pub const POSTGRES_INVALID_TRANSACTION_STATE: ErrorCode = ErrorCode(180);
     /// `ERR_POSTGRES_LIFETIME_TIMEOUT` (instanceof Error)
-    pub const POSTGRES_LIFETIME_TIMEOUT: ErrorCode = ErrorCode(180);
+    pub const POSTGRES_LIFETIME_TIMEOUT: ErrorCode = ErrorCode(181);
     /// `ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET` (instanceof Error)
-    pub const POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET: ErrorCode = ErrorCode(181);
+    pub const POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET: ErrorCode = ErrorCode(182);
     /// `ERR_POSTGRES_NOT_TAGGED_CALL` (instanceof Error)
-    pub const POSTGRES_NOT_TAGGED_CALL: ErrorCode = ErrorCode(182);
+    pub const POSTGRES_NOT_TAGGED_CALL: ErrorCode = ErrorCode(183);
     /// `ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET` (instanceof Error)
-    pub const POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET: ErrorCode = ErrorCode(183);
+    pub const POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET: ErrorCode = ErrorCode(184);
     /// `ERR_POSTGRES_OVERFLOW` (instanceof TypeError)
-    pub const POSTGRES_OVERFLOW: ErrorCode = ErrorCode(184);
+    pub const POSTGRES_OVERFLOW: ErrorCode = ErrorCode(185);
     /// `ERR_POSTGRES_QUERY_CANCELLED` (instanceof Error)
-    pub const POSTGRES_QUERY_CANCELLED: ErrorCode = ErrorCode(185);
+    pub const POSTGRES_QUERY_CANCELLED: ErrorCode = ErrorCode(186);
     /// `ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64` (instanceof Error)
-    pub const POSTGRES_SASL_SIGNATURE_INVALID_BASE64: ErrorCode = ErrorCode(186);
+    pub const POSTGRES_SASL_SIGNATURE_INVALID_BASE64: ErrorCode = ErrorCode(187);
     /// `ERR_POSTGRES_SASL_SIGNATURE_MISMATCH` (instanceof Error)
-    pub const POSTGRES_SASL_SIGNATURE_MISMATCH: ErrorCode = ErrorCode(187);
+    pub const POSTGRES_SASL_SIGNATURE_MISMATCH: ErrorCode = ErrorCode(188);
     /// `ERR_POSTGRES_SERVER_ERROR` (instanceof Error)
-    pub const POSTGRES_SERVER_ERROR: ErrorCode = ErrorCode(188);
+    pub const POSTGRES_SERVER_ERROR: ErrorCode = ErrorCode(189);
     /// `ERR_POSTGRES_SYNTAX_ERROR` (instanceof SyntaxError)
-    pub const POSTGRES_SYNTAX_ERROR: ErrorCode = ErrorCode(189);
+    pub const POSTGRES_SYNTAX_ERROR: ErrorCode = ErrorCode(190);
     /// `ERR_POSTGRES_TLS_NOT_AVAILABLE` (instanceof Error)
-    pub const POSTGRES_TLS_NOT_AVAILABLE: ErrorCode = ErrorCode(190);
+    pub const POSTGRES_TLS_NOT_AVAILABLE: ErrorCode = ErrorCode(191);
     /// `ERR_POSTGRES_TLS_UPGRADE_FAILED` (instanceof Error)
-    pub const POSTGRES_TLS_UPGRADE_FAILED: ErrorCode = ErrorCode(191);
+    pub const POSTGRES_TLS_UPGRADE_FAILED: ErrorCode = ErrorCode(192);
     /// `ERR_POSTGRES_UNEXPECTED_MESSAGE` (instanceof Error)
-    pub const POSTGRES_UNEXPECTED_MESSAGE: ErrorCode = ErrorCode(192);
+    pub const POSTGRES_UNEXPECTED_MESSAGE: ErrorCode = ErrorCode(193);
     /// `ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD` (instanceof Error)
-    pub const POSTGRES_UNKNOWN_AUTHENTICATION_METHOD: ErrorCode = ErrorCode(193);
+    pub const POSTGRES_UNKNOWN_AUTHENTICATION_METHOD: ErrorCode = ErrorCode(194);
     /// `ERR_POSTGRES_UNKNOWN_FORMAT_CODE` (instanceof Error)
-    pub const POSTGRES_UNKNOWN_FORMAT_CODE: ErrorCode = ErrorCode(194);
+    pub const POSTGRES_UNKNOWN_FORMAT_CODE: ErrorCode = ErrorCode(195);
     /// `ERR_POSTGRES_UNSAFE_TRANSACTION` (instanceof Error)
-    pub const POSTGRES_UNSAFE_TRANSACTION: ErrorCode = ErrorCode(195);
+    pub const POSTGRES_UNSAFE_TRANSACTION: ErrorCode = ErrorCode(196);
     /// `ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT` (instanceof TypeError)
-    pub const POSTGRES_UNSUPPORTED_ARRAY_FORMAT: ErrorCode = ErrorCode(196);
+    pub const POSTGRES_UNSUPPORTED_ARRAY_FORMAT: ErrorCode = ErrorCode(197);
     /// `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD` (instanceof Error)
-    pub const POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD: ErrorCode = ErrorCode(197);
+    pub const POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD: ErrorCode = ErrorCode(198);
     /// `ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT` (instanceof TypeError)
-    pub const POSTGRES_UNSUPPORTED_BYTEA_FORMAT: ErrorCode = ErrorCode(198);
+    pub const POSTGRES_UNSUPPORTED_BYTEA_FORMAT: ErrorCode = ErrorCode(199);
     /// `ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE` (instanceof TypeError)
-    pub const POSTGRES_UNSUPPORTED_INTEGER_SIZE: ErrorCode = ErrorCode(199);
+    pub const POSTGRES_UNSUPPORTED_INTEGER_SIZE: ErrorCode = ErrorCode(200);
     /// `ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT` (instanceof TypeError)
-    pub const POSTGRES_UNSUPPORTED_NUMERIC_FORMAT: ErrorCode = ErrorCode(200);
+    pub const POSTGRES_UNSUPPORTED_NUMERIC_FORMAT: ErrorCode = ErrorCode(201);
     /// `ERR_PROXY_INVALID_CONFIG` (instanceof Error)
-    pub const PROXY_INVALID_CONFIG: ErrorCode = ErrorCode(201);
+    pub const PROXY_INVALID_CONFIG: ErrorCode = ErrorCode(202);
     /// `ERR_MYSQL_CONNECTION_CLOSED` (instanceof Error)
-    pub const MYSQL_CONNECTION_CLOSED: ErrorCode = ErrorCode(202);
+    pub const MYSQL_CONNECTION_CLOSED: ErrorCode = ErrorCode(203);
     /// `ERR_MYSQL_CONNECTION_TIMEOUT` (instanceof Error)
-    pub const MYSQL_CONNECTION_TIMEOUT: ErrorCode = ErrorCode(203);
+    pub const MYSQL_CONNECTION_TIMEOUT: ErrorCode = ErrorCode(204);
     /// `ERR_MYSQL_IDLE_TIMEOUT` (instanceof Error)
-    pub const MYSQL_IDLE_TIMEOUT: ErrorCode = ErrorCode(204);
+    pub const MYSQL_IDLE_TIMEOUT: ErrorCode = ErrorCode(205);
     /// `ERR_MYSQL_LIFETIME_TIMEOUT` (instanceof Error)
-    pub const MYSQL_LIFETIME_TIMEOUT: ErrorCode = ErrorCode(205);
+    pub const MYSQL_LIFETIME_TIMEOUT: ErrorCode = ErrorCode(206);
     /// `ERR_UNHANDLED_REJECTION` (instanceof Error)
-    pub const UNHANDLED_REJECTION: ErrorCode = ErrorCode(206);
+    pub const UNHANDLED_REJECTION: ErrorCode = ErrorCode(207);
     /// `ERR_REQUIRE_ASYNC_MODULE` (instanceof Error)
-    pub const REQUIRE_ASYNC_MODULE: ErrorCode = ErrorCode(207);
+    pub const REQUIRE_ASYNC_MODULE: ErrorCode = ErrorCode(208);
     /// `ERR_S3_INVALID_ENDPOINT` (instanceof Error)
-    pub const S3_INVALID_ENDPOINT: ErrorCode = ErrorCode(208);
+    pub const S3_INVALID_ENDPOINT: ErrorCode = ErrorCode(209);
     /// `ERR_S3_INVALID_METHOD` (instanceof Error)
-    pub const S3_INVALID_METHOD: ErrorCode = ErrorCode(209);
+    pub const S3_INVALID_METHOD: ErrorCode = ErrorCode(210);
     /// `ERR_S3_INVALID_PATH` (instanceof Error)
-    pub const S3_INVALID_PATH: ErrorCode = ErrorCode(210);
+    pub const S3_INVALID_PATH: ErrorCode = ErrorCode(211);
     /// `ERR_S3_INVALID_SESSION_TOKEN` (instanceof Error)
-    pub const S3_INVALID_SESSION_TOKEN: ErrorCode = ErrorCode(211);
+    pub const S3_INVALID_SESSION_TOKEN: ErrorCode = ErrorCode(212);
     /// `ERR_S3_INVALID_SIGNATURE` (instanceof Error)
-    pub const S3_INVALID_SIGNATURE: ErrorCode = ErrorCode(212);
+    pub const S3_INVALID_SIGNATURE: ErrorCode = ErrorCode(213);
     /// `ERR_S3_MISSING_CREDENTIALS` (instanceof Error)
-    pub const S3_MISSING_CREDENTIALS: ErrorCode = ErrorCode(213);
+    pub const S3_MISSING_CREDENTIALS: ErrorCode = ErrorCode(214);
     /// `ERR_SCRIPT_EXECUTION_INTERRUPTED` (instanceof Error)
-    pub const SCRIPT_EXECUTION_INTERRUPTED: ErrorCode = ErrorCode(214);
+    pub const SCRIPT_EXECUTION_INTERRUPTED: ErrorCode = ErrorCode(215);
     /// `ERR_SCRIPT_EXECUTION_TIMEOUT` (instanceof Error)
-    pub const SCRIPT_EXECUTION_TIMEOUT: ErrorCode = ErrorCode(215);
+    pub const SCRIPT_EXECUTION_TIMEOUT: ErrorCode = ErrorCode(216);
     /// `ERR_SERVER_ALREADY_LISTEN` (instanceof Error)
-    pub const SERVER_ALREADY_LISTEN: ErrorCode = ErrorCode(216);
+    pub const SERVER_ALREADY_LISTEN: ErrorCode = ErrorCode(217);
     /// `ERR_SERVER_NOT_RUNNING` (instanceof Error)
-    pub const SERVER_NOT_RUNNING: ErrorCode = ErrorCode(217);
+    pub const SERVER_NOT_RUNNING: ErrorCode = ErrorCode(218);
     /// `ERR_SOCKET_ALREADY_BOUND` (instanceof Error)
-    pub const SOCKET_ALREADY_BOUND: ErrorCode = ErrorCode(218);
+    pub const SOCKET_ALREADY_BOUND: ErrorCode = ErrorCode(219);
     /// `ERR_SOCKET_BAD_BUFFER_SIZE` (instanceof TypeError)
-    pub const SOCKET_BAD_BUFFER_SIZE: ErrorCode = ErrorCode(219);
+    pub const SOCKET_BAD_BUFFER_SIZE: ErrorCode = ErrorCode(220);
     /// `ERR_SOCKET_BAD_PORT` (instanceof RangeError)
-    pub const SOCKET_BAD_PORT: ErrorCode = ErrorCode(220);
+    pub const SOCKET_BAD_PORT: ErrorCode = ErrorCode(221);
     /// `ERR_SOCKET_BAD_TYPE` (instanceof TypeError)
-    pub const SOCKET_BAD_TYPE: ErrorCode = ErrorCode(221);
+    pub const SOCKET_BAD_TYPE: ErrorCode = ErrorCode(222);
     /// `ERR_SOCKET_CLOSED_BEFORE_CONNECTION` (instanceof Error)
-    pub const SOCKET_CLOSED_BEFORE_CONNECTION: ErrorCode = ErrorCode(222);
+    pub const SOCKET_CLOSED_BEFORE_CONNECTION: ErrorCode = ErrorCode(223);
     /// `ERR_SOCKET_CLOSED` (instanceof Error)
-    pub const SOCKET_CLOSED: ErrorCode = ErrorCode(223);
+    pub const SOCKET_CLOSED: ErrorCode = ErrorCode(224);
     /// `ERR_SOCKET_CONNECTION_TIMEOUT` (instanceof Error)
-    pub const SOCKET_CONNECTION_TIMEOUT: ErrorCode = ErrorCode(224);
+    pub const SOCKET_CONNECTION_TIMEOUT: ErrorCode = ErrorCode(225);
     /// `ERR_SOCKET_DGRAM_IS_CONNECTED` (instanceof Error)
-    pub const SOCKET_DGRAM_IS_CONNECTED: ErrorCode = ErrorCode(225);
+    pub const SOCKET_DGRAM_IS_CONNECTED: ErrorCode = ErrorCode(226);
     /// `ERR_SOCKET_DGRAM_NOT_CONNECTED` (instanceof Error)
-    pub const SOCKET_DGRAM_NOT_CONNECTED: ErrorCode = ErrorCode(226);
+    pub const SOCKET_DGRAM_NOT_CONNECTED: ErrorCode = ErrorCode(227);
     /// `ERR_SOCKET_DGRAM_NOT_RUNNING` (instanceof Error)
-    pub const SOCKET_DGRAM_NOT_RUNNING: ErrorCode = ErrorCode(227);
+    pub const SOCKET_DGRAM_NOT_RUNNING: ErrorCode = ErrorCode(228);
     /// `ERR_SSR_RESPONSE_EXPECTED` (instanceof Error)
-    pub const SSR_RESPONSE_EXPECTED: ErrorCode = ErrorCode(228);
+    pub const SSR_RESPONSE_EXPECTED: ErrorCode = ErrorCode(229);
     /// `ERR_STREAM_ALREADY_FINISHED` (instanceof Error)
-    pub const STREAM_ALREADY_FINISHED: ErrorCode = ErrorCode(229);
+    pub const STREAM_ALREADY_FINISHED: ErrorCode = ErrorCode(230);
     /// `ERR_STREAM_CANNOT_PIPE` (instanceof Error)
-    pub const STREAM_CANNOT_PIPE: ErrorCode = ErrorCode(230);
+    pub const STREAM_CANNOT_PIPE: ErrorCode = ErrorCode(231);
     /// `ERR_STREAM_DESTROYED` (instanceof Error)
-    pub const STREAM_DESTROYED: ErrorCode = ErrorCode(231);
+    pub const STREAM_DESTROYED: ErrorCode = ErrorCode(232);
     /// `ERR_STREAM_ITER_MISSING_FLAG` (instanceof TypeError)
-    pub const STREAM_ITER_MISSING_FLAG: ErrorCode = ErrorCode(232);
+    pub const STREAM_ITER_MISSING_FLAG: ErrorCode = ErrorCode(233);
     /// `ERR_STREAM_NULL_VALUES` (instanceof TypeError)
-    pub const STREAM_NULL_VALUES: ErrorCode = ErrorCode(233);
+    pub const STREAM_NULL_VALUES: ErrorCode = ErrorCode(234);
     /// `ERR_STREAM_PREMATURE_CLOSE` (instanceof Error)
-    pub const STREAM_PREMATURE_CLOSE: ErrorCode = ErrorCode(234);
+    pub const STREAM_PREMATURE_CLOSE: ErrorCode = ErrorCode(235);
     /// `ERR_STREAM_PUSH_AFTER_EOF` (instanceof Error)
-    pub const STREAM_PUSH_AFTER_EOF: ErrorCode = ErrorCode(235);
+    pub const STREAM_PUSH_AFTER_EOF: ErrorCode = ErrorCode(236);
     /// `ERR_STREAM_RELEASE_LOCK` (instanceof Error)
-    pub const STREAM_RELEASE_LOCK: ErrorCode = ErrorCode(236);
+    pub const STREAM_RELEASE_LOCK: ErrorCode = ErrorCode(237);
     /// `ERR_STREAM_UNABLE_TO_PIPE` (instanceof Error)
-    pub const STREAM_UNABLE_TO_PIPE: ErrorCode = ErrorCode(237);
+    pub const STREAM_UNABLE_TO_PIPE: ErrorCode = ErrorCode(238);
     /// `ERR_STREAM_UNSHIFT_AFTER_END_EVENT` (instanceof Error)
-    pub const STREAM_UNSHIFT_AFTER_END_EVENT: ErrorCode = ErrorCode(238);
+    pub const STREAM_UNSHIFT_AFTER_END_EVENT: ErrorCode = ErrorCode(239);
     /// `ERR_STREAM_WRAP` (instanceof Error)
-    pub const STREAM_WRAP: ErrorCode = ErrorCode(239);
+    pub const STREAM_WRAP: ErrorCode = ErrorCode(240);
     /// `ERR_STREAM_WRITE_AFTER_END` (instanceof Error)
-    pub const STREAM_WRITE_AFTER_END: ErrorCode = ErrorCode(240);
+    pub const STREAM_WRITE_AFTER_END: ErrorCode = ErrorCode(241);
     /// `ERR_STRING_TOO_LONG` (instanceof Error)
-    pub const STRING_TOO_LONG: ErrorCode = ErrorCode(241);
+    pub const STRING_TOO_LONG: ErrorCode = ErrorCode(242);
     /// `ERR_TLS_CERT_ALTNAME_FORMAT` (instanceof SyntaxError)
-    pub const TLS_CERT_ALTNAME_FORMAT: ErrorCode = ErrorCode(242);
+    pub const TLS_CERT_ALTNAME_FORMAT: ErrorCode = ErrorCode(243);
     /// `ERR_TLS_CERT_ALTNAME_INVALID` (instanceof Error)
-    pub const TLS_CERT_ALTNAME_INVALID: ErrorCode = ErrorCode(243);
+    pub const TLS_CERT_ALTNAME_INVALID: ErrorCode = ErrorCode(244);
     /// `ERR_TLS_HANDSHAKE_TIMEOUT` (instanceof Error)
-    pub const TLS_HANDSHAKE_TIMEOUT: ErrorCode = ErrorCode(244);
+    pub const TLS_HANDSHAKE_TIMEOUT: ErrorCode = ErrorCode(245);
     /// `ERR_TLS_INVALID_PROTOCOL_METHOD` (instanceof TypeError)
-    pub const TLS_INVALID_PROTOCOL_METHOD: ErrorCode = ErrorCode(245);
+    pub const TLS_INVALID_PROTOCOL_METHOD: ErrorCode = ErrorCode(246);
     /// `ERR_TLS_INVALID_PROTOCOL_VERSION` (instanceof TypeError)
-    pub const TLS_INVALID_PROTOCOL_VERSION: ErrorCode = ErrorCode(246);
+    pub const TLS_INVALID_PROTOCOL_VERSION: ErrorCode = ErrorCode(247);
     /// `ERR_TLS_PROTOCOL_VERSION_CONFLICT` (instanceof TypeError)
-    pub const TLS_PROTOCOL_VERSION_CONFLICT: ErrorCode = ErrorCode(247);
+    pub const TLS_PROTOCOL_VERSION_CONFLICT: ErrorCode = ErrorCode(248);
     /// `ERR_TLS_PSK_SET_IDENTITY_HINT_FAILED` (instanceof Error)
-    pub const TLS_PSK_SET_IDENTITY_HINT_FAILED: ErrorCode = ErrorCode(248);
+    pub const TLS_PSK_SET_IDENTITY_HINT_FAILED: ErrorCode = ErrorCode(249);
     /// `ERR_TLS_RENEGOTIATION_DISABLED` (instanceof Error)
-    pub const TLS_RENEGOTIATION_DISABLED: ErrorCode = ErrorCode(249);
+    pub const TLS_RENEGOTIATION_DISABLED: ErrorCode = ErrorCode(250);
     /// `ERR_TLS_RENEGOTIATION_UNSUPPORTED` (instanceof Error)
-    pub const TLS_RENEGOTIATION_UNSUPPORTED: ErrorCode = ErrorCode(250);
+    pub const TLS_RENEGOTIATION_UNSUPPORTED: ErrorCode = ErrorCode(251);
     /// `ERR_TLS_SNI_FROM_SERVER` (instanceof Error)
-    pub const TLS_SNI_FROM_SERVER: ErrorCode = ErrorCode(251);
+    pub const TLS_SNI_FROM_SERVER: ErrorCode = ErrorCode(252);
     /// `ERR_TLS_INVALID_STATE` (instanceof Error)
-    pub const TLS_INVALID_STATE: ErrorCode = ErrorCode(252);
+    pub const TLS_INVALID_STATE: ErrorCode = ErrorCode(253);
     /// `ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS` (instanceof TypeError)
-    pub const TLS_ALPN_CALLBACK_WITH_PROTOCOLS: ErrorCode = ErrorCode(253);
+    pub const TLS_ALPN_CALLBACK_WITH_PROTOCOLS: ErrorCode = ErrorCode(254);
     /// `ERR_SSL_NO_CIPHER_MATCH` (instanceof Error)
-    pub const SSL_NO_CIPHER_MATCH: ErrorCode = ErrorCode(254);
+    pub const SSL_NO_CIPHER_MATCH: ErrorCode = ErrorCode(255);
     /// `ERR_UNAVAILABLE_DURING_EXIT` (instanceof Error)
-    pub const UNAVAILABLE_DURING_EXIT: ErrorCode = ErrorCode(255);
+    pub const UNAVAILABLE_DURING_EXIT: ErrorCode = ErrorCode(256);
     /// `ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET` (instanceof Error)
-    pub const UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET: ErrorCode = ErrorCode(256);
+    pub const UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET: ErrorCode = ErrorCode(257);
     /// `ERR_UNESCAPED_CHARACTERS` (instanceof TypeError)
-    pub const UNESCAPED_CHARACTERS: ErrorCode = ErrorCode(257);
+    pub const UNESCAPED_CHARACTERS: ErrorCode = ErrorCode(258);
     /// `ERR_UNHANDLED_ERROR` (instanceof Error)
-    pub const UNHANDLED_ERROR: ErrorCode = ErrorCode(258);
+    pub const UNHANDLED_ERROR: ErrorCode = ErrorCode(259);
     /// `ERR_UNKNOWN_CREDENTIAL` (instanceof Error)
-    pub const UNKNOWN_CREDENTIAL: ErrorCode = ErrorCode(259);
+    pub const UNKNOWN_CREDENTIAL: ErrorCode = ErrorCode(260);
     /// `ERR_UNKNOWN_ENCODING` (instanceof TypeError)
-    pub const UNKNOWN_ENCODING: ErrorCode = ErrorCode(260);
+    pub const UNKNOWN_ENCODING: ErrorCode = ErrorCode(261);
     /// `ERR_UNKNOWN_SIGNAL` (instanceof TypeError)
-    pub const UNKNOWN_SIGNAL: ErrorCode = ErrorCode(261);
+    pub const UNKNOWN_SIGNAL: ErrorCode = ErrorCode(262);
     /// `ERR_ZSTD_INVALID_PARAM` (instanceof RangeError)
-    pub const ZSTD_INVALID_PARAM: ErrorCode = ErrorCode(262);
+    pub const ZSTD_INVALID_PARAM: ErrorCode = ErrorCode(263);
     /// `ERR_USE_AFTER_CLOSE` (instanceof Error)
-    pub const USE_AFTER_CLOSE: ErrorCode = ErrorCode(263);
+    pub const USE_AFTER_CLOSE: ErrorCode = ErrorCode(264);
     /// `ERR_WASI_NOT_STARTED` (instanceof Error)
-    pub const WASI_NOT_STARTED: ErrorCode = ErrorCode(264);
+    pub const WASI_NOT_STARTED: ErrorCode = ErrorCode(265);
     /// `ERR_WEBASSEMBLY_RESPONSE` (instanceof TypeError)
-    pub const WEBASSEMBLY_RESPONSE: ErrorCode = ErrorCode(265);
+    pub const WEBASSEMBLY_RESPONSE: ErrorCode = ErrorCode(266);
     /// `ERR_WORKER_INIT_FAILED` (instanceof Error)
-    pub const WORKER_INIT_FAILED: ErrorCode = ErrorCode(266);
+    pub const WORKER_INIT_FAILED: ErrorCode = ErrorCode(267);
     /// `ERR_WORKER_NOT_RUNNING` (instanceof Error)
-    pub const WORKER_NOT_RUNNING: ErrorCode = ErrorCode(267);
+    pub const WORKER_NOT_RUNNING: ErrorCode = ErrorCode(268);
     /// `ERR_WORKER_UNSUPPORTED_OPERATION` (instanceof TypeError)
-    pub const WORKER_UNSUPPORTED_OPERATION: ErrorCode = ErrorCode(268);
+    pub const WORKER_UNSUPPORTED_OPERATION: ErrorCode = ErrorCode(269);
     /// `ERR_ZLIB_INITIALIZATION_FAILED` (instanceof Error)
-    pub const ZLIB_INITIALIZATION_FAILED: ErrorCode = ErrorCode(269);
+    pub const ZLIB_INITIALIZATION_FAILED: ErrorCode = ErrorCode(270);
     /// `MODULE_NOT_FOUND` (instanceof Error)
-    pub const MODULE_NOT_FOUND: ErrorCode = ErrorCode(270);
+    pub const MODULE_NOT_FOUND: ErrorCode = ErrorCode(271);
     /// `ERR_INTERNAL_ASSERTION` (instanceof Error)
-    pub const INTERNAL_ASSERTION: ErrorCode = ErrorCode(271);
+    pub const INTERNAL_ASSERTION: ErrorCode = ErrorCode(272);
     /// `ERR_OSSL_EVP_INVALID_DIGEST` (instanceof Error)
-    pub const OSSL_EVP_INVALID_DIGEST: ErrorCode = ErrorCode(272);
+    pub const OSSL_EVP_INVALID_DIGEST: ErrorCode = ErrorCode(273);
     /// `ERR_KEY_GENERATION_JOB_FAILED` (instanceof Error)
-    pub const KEY_GENERATION_JOB_FAILED: ErrorCode = ErrorCode(273);
+    pub const KEY_GENERATION_JOB_FAILED: ErrorCode = ErrorCode(274);
     /// `ERR_MISSING_OPTION` (instanceof TypeError)
-    pub const MISSING_OPTION: ErrorCode = ErrorCode(274);
+    pub const MISSING_OPTION: ErrorCode = ErrorCode(275);
     /// `ERR_REDIS_AUTHENTICATION_FAILED` (instanceof Error)
-    pub const REDIS_AUTHENTICATION_FAILED: ErrorCode = ErrorCode(275);
+    pub const REDIS_AUTHENTICATION_FAILED: ErrorCode = ErrorCode(276);
     /// `ERR_REDIS_CONNECTION_CLOSED` (instanceof Error)
-    pub const REDIS_CONNECTION_CLOSED: ErrorCode = ErrorCode(276);
+    pub const REDIS_CONNECTION_CLOSED: ErrorCode = ErrorCode(277);
     /// `ERR_REDIS_CONNECTION_TIMEOUT` (instanceof Error)
-    pub const REDIS_CONNECTION_TIMEOUT: ErrorCode = ErrorCode(277);
+    pub const REDIS_CONNECTION_TIMEOUT: ErrorCode = ErrorCode(278);
     /// `ERR_REDIS_IDLE_TIMEOUT` (instanceof Error)
-    pub const REDIS_IDLE_TIMEOUT: ErrorCode = ErrorCode(278);
+    pub const REDIS_IDLE_TIMEOUT: ErrorCode = ErrorCode(279);
     /// `ERR_REDIS_INVALID_ARGUMENT` (instanceof Error)
-    pub const REDIS_INVALID_ARGUMENT: ErrorCode = ErrorCode(279);
+    pub const REDIS_INVALID_ARGUMENT: ErrorCode = ErrorCode(280);
     /// `ERR_REDIS_INVALID_ARRAY` (instanceof Error)
-    pub const REDIS_INVALID_ARRAY: ErrorCode = ErrorCode(280);
+    pub const REDIS_INVALID_ARRAY: ErrorCode = ErrorCode(281);
     /// `ERR_REDIS_INVALID_BULK_STRING` (instanceof Error)
-    pub const REDIS_INVALID_BULK_STRING: ErrorCode = ErrorCode(281);
+    pub const REDIS_INVALID_BULK_STRING: ErrorCode = ErrorCode(282);
     /// `ERR_REDIS_INVALID_COMMAND` (instanceof Error)
-    pub const REDIS_INVALID_COMMAND: ErrorCode = ErrorCode(282);
+    pub const REDIS_INVALID_COMMAND: ErrorCode = ErrorCode(283);
     /// `ERR_REDIS_INVALID_DATABASE` (instanceof Error)
-    pub const REDIS_INVALID_DATABASE: ErrorCode = ErrorCode(283);
+    pub const REDIS_INVALID_DATABASE: ErrorCode = ErrorCode(284);
     /// `ERR_REDIS_INVALID_ERROR_STRING` (instanceof Error)
-    pub const REDIS_INVALID_ERROR_STRING: ErrorCode = ErrorCode(284);
+    pub const REDIS_INVALID_ERROR_STRING: ErrorCode = ErrorCode(285);
     /// `ERR_REDIS_INVALID_INTEGER` (instanceof Error)
-    pub const REDIS_INVALID_INTEGER: ErrorCode = ErrorCode(285);
+    pub const REDIS_INVALID_INTEGER: ErrorCode = ErrorCode(286);
     /// `ERR_REDIS_INVALID_PASSWORD` (instanceof Error)
-    pub const REDIS_INVALID_PASSWORD: ErrorCode = ErrorCode(286);
+    pub const REDIS_INVALID_PASSWORD: ErrorCode = ErrorCode(287);
     /// `ERR_REDIS_INVALID_RESPONSE` (instanceof Error)
-    pub const REDIS_INVALID_RESPONSE: ErrorCode = ErrorCode(287);
+    pub const REDIS_INVALID_RESPONSE: ErrorCode = ErrorCode(288);
     /// `ERR_REDIS_INVALID_RESPONSE_TYPE` (instanceof Error)
-    pub const REDIS_INVALID_RESPONSE_TYPE: ErrorCode = ErrorCode(288);
+    pub const REDIS_INVALID_RESPONSE_TYPE: ErrorCode = ErrorCode(289);
     /// `ERR_REDIS_INVALID_SIMPLE_STRING` (instanceof Error)
-    pub const REDIS_INVALID_SIMPLE_STRING: ErrorCode = ErrorCode(289);
+    pub const REDIS_INVALID_SIMPLE_STRING: ErrorCode = ErrorCode(290);
     /// `ERR_REDIS_INVALID_STATE` (instanceof Error)
-    pub const REDIS_INVALID_STATE: ErrorCode = ErrorCode(290);
+    pub const REDIS_INVALID_STATE: ErrorCode = ErrorCode(291);
     /// `ERR_REDIS_INVALID_USERNAME` (instanceof Error)
-    pub const REDIS_INVALID_USERNAME: ErrorCode = ErrorCode(291);
+    pub const REDIS_INVALID_USERNAME: ErrorCode = ErrorCode(292);
     /// `ERR_REDIS_TLS_NOT_AVAILABLE` (instanceof Error)
-    pub const REDIS_TLS_NOT_AVAILABLE: ErrorCode = ErrorCode(292);
+    pub const REDIS_TLS_NOT_AVAILABLE: ErrorCode = ErrorCode(293);
     /// `ERR_REDIS_TLS_UPGRADE_FAILED` (instanceof Error)
-    pub const REDIS_TLS_UPGRADE_FAILED: ErrorCode = ErrorCode(293);
+    pub const REDIS_TLS_UPGRADE_FAILED: ErrorCode = ErrorCode(294);
     /// `HPE_UNEXPECTED_CONTENT_LENGTH` (instanceof Error)
-    pub const HPE_UNEXPECTED_CONTENT_LENGTH: ErrorCode = ErrorCode(294);
+    pub const HPE_UNEXPECTED_CONTENT_LENGTH: ErrorCode = ErrorCode(295);
     /// `HPE_INVALID_TRANSFER_ENCODING` (instanceof Error)
-    pub const HPE_INVALID_TRANSFER_ENCODING: ErrorCode = ErrorCode(295);
+    pub const HPE_INVALID_TRANSFER_ENCODING: ErrorCode = ErrorCode(296);
     /// `HPE_INVALID_EOF_STATE` (instanceof Error)
-    pub const HPE_INVALID_EOF_STATE: ErrorCode = ErrorCode(296);
+    pub const HPE_INVALID_EOF_STATE: ErrorCode = ErrorCode(297);
     /// `HPE_INVALID_METHOD` (instanceof Error)
-    pub const HPE_INVALID_METHOD: ErrorCode = ErrorCode(297);
+    pub const HPE_INVALID_METHOD: ErrorCode = ErrorCode(298);
     /// `HPE_INTERNAL` (instanceof Error)
-    pub const HPE_INTERNAL: ErrorCode = ErrorCode(298);
+    pub const HPE_INTERNAL: ErrorCode = ErrorCode(299);
     /// `ERR_VM_MODULE_STATUS` (instanceof Error)
-    pub const VM_MODULE_STATUS: ErrorCode = ErrorCode(299);
+    pub const VM_MODULE_STATUS: ErrorCode = ErrorCode(300);
     /// `ERR_VM_MODULE_ALREADY_LINKED` (instanceof Error)
-    pub const VM_MODULE_ALREADY_LINKED: ErrorCode = ErrorCode(300);
+    pub const VM_MODULE_ALREADY_LINKED: ErrorCode = ErrorCode(301);
     /// `ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA` (instanceof Error)
-    pub const VM_MODULE_CANNOT_CREATE_CACHED_DATA: ErrorCode = ErrorCode(301);
+    pub const VM_MODULE_CANNOT_CREATE_CACHED_DATA: ErrorCode = ErrorCode(302);
     /// `ERR_VM_MODULE_NOT_MODULE` (instanceof Error)
-    pub const VM_MODULE_NOT_MODULE: ErrorCode = ErrorCode(302);
+    pub const VM_MODULE_NOT_MODULE: ErrorCode = ErrorCode(303);
     /// `ERR_VM_MODULE_DIFFERENT_CONTEXT` (instanceof Error)
-    pub const VM_MODULE_DIFFERENT_CONTEXT: ErrorCode = ErrorCode(303);
+    pub const VM_MODULE_DIFFERENT_CONTEXT: ErrorCode = ErrorCode(304);
     /// `ERR_VM_MODULE_LINK_FAILURE` (instanceof Error)
-    pub const VM_MODULE_LINK_FAILURE: ErrorCode = ErrorCode(304);
+    pub const VM_MODULE_LINK_FAILURE: ErrorCode = ErrorCode(305);
     /// `ERR_VM_MODULE_CACHED_DATA_REJECTED` (instanceof Error)
-    pub const VM_MODULE_CACHED_DATA_REJECTED: ErrorCode = ErrorCode(305);
+    pub const VM_MODULE_CACHED_DATA_REJECTED: ErrorCode = ErrorCode(306);
     /// `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING` (instanceof TypeError)
-    pub const VM_DYNAMIC_IMPORT_CALLBACK_MISSING: ErrorCode = ErrorCode(306);
+    pub const VM_DYNAMIC_IMPORT_CALLBACK_MISSING: ErrorCode = ErrorCode(307);
     /// `HPE_INVALID_HEADER_TOKEN` (instanceof Error)
-    pub const HPE_INVALID_HEADER_TOKEN: ErrorCode = ErrorCode(307);
+    pub const HPE_INVALID_HEADER_TOKEN: ErrorCode = ErrorCode(308);
     /// `HPE_HEADER_OVERFLOW` (instanceof Error)
-    pub const HPE_HEADER_OVERFLOW: ErrorCode = ErrorCode(308);
+    pub const HPE_HEADER_OVERFLOW: ErrorCode = ErrorCode(309);
     /// `ERR_SECRETS_NOT_AVAILABLE` (instanceof Error)
-    pub const SECRETS_NOT_AVAILABLE: ErrorCode = ErrorCode(309);
+    pub const SECRETS_NOT_AVAILABLE: ErrorCode = ErrorCode(310);
     /// `ERR_SECRETS_NOT_FOUND` (instanceof Error)
-    pub const SECRETS_NOT_FOUND: ErrorCode = ErrorCode(310);
+    pub const SECRETS_NOT_FOUND: ErrorCode = ErrorCode(311);
     /// `ERR_SECRETS_ACCESS_DENIED` (instanceof Error)
-    pub const SECRETS_ACCESS_DENIED: ErrorCode = ErrorCode(311);
+    pub const SECRETS_ACCESS_DENIED: ErrorCode = ErrorCode(312);
     /// `ERR_SECRETS_PLATFORM_ERROR` (instanceof Error)
-    pub const SECRETS_PLATFORM_ERROR: ErrorCode = ErrorCode(312);
+    pub const SECRETS_PLATFORM_ERROR: ErrorCode = ErrorCode(313);
     /// `ERR_SECRETS_USER_CANCELED` (instanceof Error)
-    pub const SECRETS_USER_CANCELED: ErrorCode = ErrorCode(313);
+    pub const SECRETS_USER_CANCELED: ErrorCode = ErrorCode(314);
     /// `ERR_SECRETS_INTERACTION_NOT_ALLOWED` (instanceof Error)
-    pub const SECRETS_INTERACTION_NOT_ALLOWED: ErrorCode = ErrorCode(314);
+    pub const SECRETS_INTERACTION_NOT_ALLOWED: ErrorCode = ErrorCode(315);
     /// `ERR_SECRETS_AUTH_FAILED` (instanceof Error)
-    pub const SECRETS_AUTH_FAILED: ErrorCode = ErrorCode(315);
+    pub const SECRETS_AUTH_FAILED: ErrorCode = ErrorCode(316);
     /// `ERR_SECRETS_INTERACTION_REQUIRED` (instanceof Error)
-    pub const SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode(316);
+    pub const SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode(317);
     /// `ERR_POSTGRES_CONNECTION_FAILED` (instanceof Error)
-    pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(317);
+    pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(318);
     /// `ERR_MYSQL_CONNECTION_FAILED` (instanceof Error)
-    pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(318);
+    pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(319);
     /// `ERR_POSTGRES_CONNECTION_REFUSED` (instanceof Error)
-    pub const POSTGRES_CONNECTION_REFUSED: ErrorCode = ErrorCode(319);
+    pub const POSTGRES_CONNECTION_REFUSED: ErrorCode = ErrorCode(320);
     /// `ERR_MYSQL_CONNECTION_REFUSED` (instanceof Error)
-    pub const MYSQL_CONNECTION_REFUSED: ErrorCode = ErrorCode(320);
+    pub const MYSQL_CONNECTION_REFUSED: ErrorCode = ErrorCode(321);
     /// `ERR_HTTP2_GOAWAY_SESSION` (instanceof Error)
-    pub const HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode(321);
+    pub const HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode(322);
     /// `ERR_TLS_ALPN_CALLBACK_INVALID_RESULT` (instanceof TypeError)
-    pub const TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode = ErrorCode(322);
+    pub const TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode = ErrorCode(323);
     /// `ERR_PROXY_TUNNEL` (instanceof Error)
-    pub const PROXY_TUNNEL: ErrorCode = ErrorCode(323);
+    pub const PROXY_TUNNEL: ErrorCode = ErrorCode(324);
     /// `ERR_FS_CP_EEXIST` (instanceof Error)
-    pub const FS_CP_EEXIST: ErrorCode = ErrorCode(324);
+    pub const FS_CP_EEXIST: ErrorCode = ErrorCode(325);
     /// `ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY` (instanceof Error)
-    pub const FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode(325);
+    pub const FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode(326);
     /// `ERR_DIR_CONCURRENT_OPERATION` (instanceof Error)
-    pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(326);
+    pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(327);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 327;
+    pub const COUNT: u16 = 328;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -891,6 +893,7 @@ impl ErrorCode {
     pub const ERR_MISSING_ARGS: ErrorCode = ErrorCode::MISSING_ARGS;
     pub const ERR_MISSING_PASSPHRASE: ErrorCode = ErrorCode::MISSING_PASSPHRASE;
     pub const ERR_MISSING_PLATFORM_FOR_WORKER: ErrorCode = ErrorCode::MISSING_PLATFORM_FOR_WORKER;
+    pub const ERR_MODULE_LINK_MISMATCH: ErrorCode = ErrorCode::MODULE_LINK_MISMATCH;
     pub const ERR_MULTIPLE_CALLBACK: ErrorCode = ErrorCode::MULTIPLE_CALLBACK;
     pub const ERR_NON_CONTEXT_AWARE_DISABLED: ErrorCode = ErrorCode::NON_CONTEXT_AWARE_DISABLED;
     pub const ERR_OUT_OF_RANGE: ErrorCode = ErrorCode::OUT_OF_RANGE;
@@ -1253,6 +1256,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_MISSING_ARGS",
     "ERR_MISSING_PASSPHRASE",
     "ERR_MISSING_PLATFORM_FOR_WORKER",
+    "ERR_MODULE_LINK_MISMATCH",
     "ERR_MODULE_NOT_FOUND",
     "ERR_MULTIPLE_CALLBACK",
     "ERR_NON_CONTEXT_AWARE_DISABLED",

@@ -321,3 +321,7 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
 export var __promiseAll = args => Promise.all(args);
+
+// React Compiler memo-cache slot sentinels.
+export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
+export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");

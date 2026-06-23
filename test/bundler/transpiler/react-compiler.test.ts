@@ -451,6 +451,45 @@ describe("bundler", () => {
     });
   }
 
+  // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
+  // component body scope must not capture the automatic JSX runtime import
+  // when the React Compiler rewrites the component.
+  itBundled("react-compiler/AutomaticLocalShadow", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ a, b }) {
+          let jsx = a
+          let jsxs = b
+          let jsxDEV = a
+          let Fragment = b
+          return <><span>{jsx}</span><span>{jsxs}{jsxDEV}{Fragment}</span></>
+        }
+        console.log(JSON.stringify(Comp({ a: "A", b: "B" })))
+      `,
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = function (n) { return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };
+      `,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `
+        exports.jsx = (type, props) => ({ $: "jsx", type: typeof type === "symbol" ? "Fragment" : type, props });
+        exports.jsxs = (type, props) => ({ $: "jsxs", type: typeof type === "symbol" ? "Fragment" : type, props });
+        exports.Fragment = Symbol.for("fragment");
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `
+        exports.jsxDEV = (type, props) => ({ $: "jsxDEV", type: typeof type === "symbol" ? "Fragment" : type, props });
+        exports.Fragment = Symbol.for("fragment");
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: {
+      stdout:
+        '{"$":"jsxDEV","type":"Fragment","props":{"children":[{"$":"jsxDEV","type":"span","props":{"children":"A"}},{"$":"jsxDEV","type":"span","props":{"children":["B","A","B"]}}]}}',
+    },
+  });
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -470,6 +509,293 @@ describe("bundler", () => {
       // No memo cache import or call should be emitted for a non-component.
       expect(out).not.toContain("react/compiler-runtime");
       expect(out).not.toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
+  // Stub react packages shared by the unbound-ref regression tests below.
+  const stubReact = {
+    "/node_modules/react/index.js": /* js */ `
+      exports.useState = i => [i, () => {}];
+      exports.createElement = () => null;
+      exports.default = exports;
+    `,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+    "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+
+  // Regression: native RC codegen minted refs for `_c` / `jsx` / `jsxs` via
+  // `Host::new_generated` (Kind::Other, not in `is_import_item`) and emitted
+  // call sites as `EIdentifier`. The printer's namespace-alias rewrite is only
+  // in the `EImportIdentifier` branch, so the bundle had
+  // `var react_compiler_runtimeN = __toESM(require_compiler_runtime())` but
+  // bare `_cN(...)` with no decl -> ReferenceError at runtime.
+  itBundled("react-compiler/CJSBindsMemoCacheImport", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        function Counter({ label }: { label: string }) {
+          const [n] = useState(0);
+          return <div>{label}: {n}</div>;
+        }
+        console.log(JSON.stringify(Counter({ label: "hi" })));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    format: "cjs",
+    backend: "api",
+    run: { stdout: '{"t":"div","p":{"children":["hi",": ",0]}}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const compBody = out.slice(out.indexOf("function Counter("));
+      // The memo-cache call must be a property access on the wrapped CJS
+      // namespace (or otherwise bound), never a bare `_c(` / `jsx(`.
+      expect(compBody).not.toMatch(/(?<![.\w])_c\d*\s*\(/);
+      expect(compBody).not.toMatch(/(?<![.\w])jsxs?\s*\(/);
+      new Bun.Transpiler({ loader: "js" }).transformSync(out);
+    },
+  });
+
+  itBundled("react-compiler/ESMBindsMemoCacheImport", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        function Counter({ label }: { label: string }) {
+          const [n] = useState(0);
+          return <div>{label}: {n}</div>;
+        }
+        console.log(JSON.stringify(Counter({ label: "hi" })));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    format: "esm",
+    backend: "api",
+    run: { stdout: '{"t":"div","p":{"children":["hi",": ",0]}}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      const compBody = out.slice(out.indexOf("function Counter("));
+      expect(compBody).not.toMatch(/(?<![.\w])_c\d*\s*\(/);
+      expect(compBody).not.toMatch(/(?<![.\w])jsxs?\s*\(/);
+      new Bun.Transpiler({ loader: "js" }).transformSync(out);
+    },
+  });
+
+  // Regression: `codegen.rs well_known()` minted fresh `Kind::Other` symbols
+  // for `Symbol` / `NaN` / `Infinity`. The renamer treated them as renameable
+  // locals, so minified bundles had `tQE.for("react.memo_cache_sentinel")`
+  // where `tQE` is renamed-but-never-declared `Symbol`.
+  itBundled("react-compiler/WellKnownGlobalsNotRenamed", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        function Counter({ label }: { label: string }) {
+          const [n] = useState(0);
+          return <div>{label}: {n}</div>;
+        }
+        console.log(JSON.stringify(Counter({ label: "hi" })));
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    format: "cjs",
+    minifyIdentifiers: true,
+    backend: "api",
+    run: { stdout: '{"t":"div","p":{"children":["hi",": ",0]}}' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // RC emits `Symbol.for("react.memo_cache_sentinel")` for the slot init
+      // guard; the only `.for("react.memo_cache_sentinel")` callee in the
+      // bundle must be the literal global `Symbol`.
+      const callees = [...out.matchAll(/([A-Za-z_$][\w$]*)\.for\("react\.memo_cache_sentinel"\)/g)].map(m => m[1]);
+      expect(callees.length).toBeGreaterThan(0);
+      expect(new Set(callees)).toEqual(new Set(["Symbol"]));
+      new Bun.Transpiler({ loader: "js" }).transformSync(out);
+    },
+  });
+
+  itBundled("react-compiler/HoistsMemoCacheSentinel", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function A() {
+          return <div>a</div>;
+        }
+        export function B() {
+          return <span>b</span>;
+        }
+        export function C() {
+          return <p>c</p>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Bun routes the memo-cache sentinel through `p.runtime_imports`
+      // (`__MEMO_CACHE_SENTINEL`, same mechanism as `__toESM`/`__require`),
+      // so the bundler runtime defines `Symbol.for("react.memo_cache_sentinel")`
+      // exactly once for the whole bundle (Babel/upstream emits the call inline
+      // at every memo-slot comparison). Three components with no-dep scopes ⇒
+      // three comparisons, but only one `Symbol.for` call.
+      const calls = [...out.matchAll(/Symbol\.for\("react\.memo_cache_sentinel"\)/g)];
+      expect(calls).toHaveLength(1);
+      // The runtime export is referenced by name at each comparison. Allow the
+      // `/* @__PURE__ */` annotation between `=` and `Symbol.for`, and accept a
+      // mid-declarator (`, name =`) match since the runtime is printed as one
+      // collapsed `var` statement.
+      const decl = out.match(
+        /[,\s]([A-Za-z_$][\w$]*)\s*=\s*(?:\/\*\s*@__PURE__\s*\*\/\s*)?Symbol\.for\("react\.memo_cache_sentinel"\)/,
+      );
+      expect(decl).not.toBeNull();
+      const sentinel = decl![1];
+      const refs = [...out.matchAll(new RegExp(String.raw`\$\[\d+\]\s*===\s*` + sentinel.replace(/\$/g, "\\$"), "g"))];
+      expect(refs).toHaveLength(3);
+    },
+  });
+
+  // `import()` lowers as a CallExpression whose callee carries the original
+  // `EImport` (with `import_record_index`) as a BunOpaque LoadGlobal; codegen
+  // reconstructs `E::Import` so the bundler's chunk linkage is preserved.
+  // Previously the callee was `UnsupportedNode("Import")`, which bailed at codegen.
+  itBundled("react-compiler/DynamicImportInRender", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { use } from "react";
+        export function Comp() {
+          const M = use(import("./mod"));
+          return <div>{M.x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime", "./mod"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toMatch(/\bimport\("\.\/mod"\)/);
+    },
+  });
+
+  itBundled("react-compiler/DynamicImportInEffectClosure", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useEffect } from "react";
+        export function Comp({ x }) {
+          useEffect(() => { import("./mod").then(m => m.init()); }, []);
+          return <div>{x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime", "./mod"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toMatch(/\bimport\("\.\/mod"\)/);
+    },
+  });
+
+  itBundled("react-compiler/DynamicImportPreservesImportRecord", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { use } from "react";
+        export function Comp() {
+          const M = use(import("./mod.js"));
+          return <div>{M.x}</div>;
+        }
+      `,
+      "/mod.js": `export const x = 42;`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    splitting: true,
+    outdir: "/out",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      // The bundler chunked /mod.js and rewrote the specifier; if RC dropped
+      // `import_record_index`, the rewrite wouldn't apply and the literal
+      // "./mod.js" would survive (or the chunk wouldn't be emitted at all).
+      expect(out).not.toMatch(/import\("\.\/mod\.js"\)/);
+      const m = out.match(/import\("(\.\/[\w-]+\.js)"\)/);
+      expect(m).not.toBeNull();
+      api.assertFileExists("/out/" + m![1].slice(2));
+    },
+  });
+
+  // prune_non_escaping_scopes treats `arr.push(jsx)` args as escaping so the
+  // per-element JSX scope isn't merged into the outer mutation scope; this
+  // asserts the Fragment's `key` survives the round-trip when the JSX temp is
+  // captured into a mutable array inside a wider mutation scope.
+  itBundled("react-compiler/KeyedFragmentAsArrayPushArg", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { Fragment } from "react";
+        export function Comp({ keys }) {
+          const parts = [];
+          for (const k of keys) {
+            parts.push(<Fragment key={k}><span>{k}</span></Fragment>);
+          }
+          return <>{parts}</>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      // jsx/jsxDEV(Fragment, props, key, ...) — `k` must be the third arg of
+      // the inner Fragment call (the only `Fragment,` callee; the outer is
+      // `Fragment2,`). The props object closes on its own line so anchor on
+      // `\n      }, k`.
+      expect(out).toMatch(/jsx(?:DEV|s)?\(Fragment, \{\n[\s\S]*?\n {6}\}, k\b/);
+    },
+  });
+
+  // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
+  // (no operand is reactive, callee isn't a hook), so its scope's deps prune
+  // to empty and it becomes a sentinel-only block. Babel does the same; this
+  // is React Compiler's purity assumption (module-level functions are pure
+  // w.r.t. props/state).
+  itBundled("react-compiler/ZeroArgGlobalCallMatchesBabel", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { globalFn } from "./mod";
+        export function Comp() {
+          const x = globalFn();
+          return <div>{x}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime", "./mod"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      // Parity with Babel: `globalFn()` is inside the sentinel-only block.
+      const m = out.match(/\b_c\((\d+)\)/);
+      expect(m).not.toBeNull();
+      expect(m![1]).toBe("1");
+      expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
     },
   });
 });

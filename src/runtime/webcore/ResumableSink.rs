@@ -200,11 +200,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                     let err: Option<JSValue> = 'brk_err: {
                         let pending = &byte_stream.pending.get().result;
                         if let StreamResult::Err(e) = pending {
-                            let (js_err, was_strong) = e.to_js_weak(global_this);
+                            let js_err = e.to_js(global_this);
                             js_err.ensure_still_alive();
-                            if was_strong == crate::webcore::streams::WasStrong::Strong {
-                                js_err.unprotect();
-                            }
                             break 'brk_err Some(js_err);
                         }
                         None
@@ -483,11 +480,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         if is_done {
             let err: Option<JSValue> = 'brk_err: {
                 if let StreamResult::Err(e) = &stream {
-                    let (js_err, was_strong) = e.to_js_weak(self.global_this.get());
+                    let js_err = e.to_js(self.global_this.get());
                     js_err.ensure_still_alive();
-                    if was_strong == crate::webcore::streams::WasStrong::Strong {
-                        js_err.unprotect();
-                    }
                     break 'brk_err Some(js_err);
                 }
                 None

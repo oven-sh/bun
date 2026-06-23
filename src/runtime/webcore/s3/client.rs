@@ -798,10 +798,7 @@ pub fn upload_stream(
                     result: crate::webcore::streams::StreamResult::Done,
                     ..Default::default()
                 });
-                let (js_err, was_strong) = err.to_js_weak(global_this);
-                if was_strong == crate::webcore::streams::WasStrong::Strong {
-                    js_err.unprotect();
-                }
+                let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
                 credentials.deref();
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
@@ -826,10 +823,7 @@ pub fn upload_stream(
                     result: crate::webcore::streams::StreamResult::Done,
                     ..Default::default()
                 });
-                let (js_err, was_strong) = err.to_js_weak(global_this);
-                if was_strong == crate::webcore::streams::WasStrong::Strong {
-                    js_err.unprotect();
-                }
+                let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
                 credentials.deref();
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
@@ -1153,11 +1147,12 @@ pub fn readable_stream(
                 if let Some(bytes) = readable.ptr.bytes() {
                     if let Some(err) = request_err {
                         bytes.on_data(crate::webcore::streams::StreamResult::Err(
-                            crate::webcore::streams::StreamError::JSValue(s3_error_to_js(
-                                &err,
-                                &self_.global,
-                                Some(&self_.path),
-                            )),
+                            crate::webcore::streams::StreamError::JSValue(
+                                bun_jsc::strong::Optional::create(
+                                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
+                                    &self_.global,
+                                ),
+                            ),
                         ))?;
                         return Ok(());
                     }

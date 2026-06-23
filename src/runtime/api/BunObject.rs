@@ -2530,18 +2530,10 @@ pub mod JSZlib {
                 }
             }
             Library::Libdeflate => {
-                let decompressor_ptr = bun_libdeflate::Decompressor::alloc();
-                if decompressor_ptr.is_null() {
+                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
                     drop(list);
                     return Err(global_this.throw_out_of_memory());
-                }
-                // SAFETY: non-null per check above; freed via the scopeguard below.
-                let decompressor = unsafe { &mut *decompressor_ptr };
-                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| {
-                    // SAFETY: `p` is the non-null `Decompressor::alloc` pointer
-                    // checked above; this guard is its sole owner and runs once.
-                    unsafe { bun_libdeflate::Decompressor::destroy(p) }
-                });
+                };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {
@@ -2691,17 +2683,10 @@ pub mod JSZlib {
                 }
             }
             Library::Libdeflate => {
-                let compressor_ptr = bun_libdeflate::Compressor::alloc(level.unwrap_or(6));
-                if compressor_ptr.is_null() {
+                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
+                else {
                     return Err(global_this.throw_out_of_memory());
-                }
-                // SAFETY: non-null per check above; freed via the scopeguard below.
-                let compressor = unsafe { &mut *compressor_ptr };
-                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| {
-                    // SAFETY: `p` is the non-null `Compressor::alloc` pointer
-                    // checked above; this guard is its sole owner and runs once.
-                    unsafe { bun_libdeflate::Compressor::destroy(p) }
-                });
+                };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {

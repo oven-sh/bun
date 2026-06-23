@@ -249,15 +249,27 @@ pub(crate) fn lower_expression(
             })?;
             Ok(unsupported_node("Super", loc))
         }
-        Data::EImport(_) => {
-            builder.record_error(CompilerErrorDetail {
-                category: ErrorCategory::Todo,
-                reason: "(BuildHIR::lowerExpression) Handle Import expressions".to_string(),
-                description: None,
-                loc,
-                suggestions: None,
-            })?;
-            Ok(unsupported_node("Import", loc))
+        Data::EImport(i) => {
+            let callee = lower_value_to_temporary(
+                builder,
+                InstructionValue::LoadGlobal {
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::BunOpaque(*expr),
+                    },
+                    loc,
+                },
+            )?;
+            let mut args: HirVec<PlaceOrSpread> = AstAlloc::vec();
+            args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
+                builder, &i.expr,
+            )?));
+            if !matches!(i.options.data, Data::EMissing(_)) {
+                args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
+                    builder, &i.options,
+                )?));
+            }
+            Ok(InstructionValue::CallExpression { callee, args, loc })
         }
         Data::EThis(_) => {
             builder.record_error(CompilerErrorDetail {

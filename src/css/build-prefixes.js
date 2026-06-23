@@ -458,7 +458,6 @@ let prefixMapping = {
   o: "o",
 };
 
-
 const allBrowsers = ["android", "chrome", "edge", "firefox", "ie", "ios_saf", "opera", "safari", "samsung"];
 
 let flags = [
@@ -570,9 +569,7 @@ async function rustfmt(path) {
           inner.push(`                    if ${cond} {\n                        ${add}\n                    }`);
         }
       }
-      body.push(
-        `                if let Some(version) = browsers.${name} {\n${inner.join("\n")}\n                }`,
-      );
+      body.push(`                if let Some(version) = browsers.${name} {\n${inner.join("\n")}\n                }`);
     }
     arms.push(`            ${pats} => {\n${body.join("\n")}\n            }`);
   }

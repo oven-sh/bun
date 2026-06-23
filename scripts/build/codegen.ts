@@ -45,7 +45,6 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 
-
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
 interface Ctx {
@@ -229,7 +228,6 @@ export interface CodegenOutputs {
 
   /** The bindgenv2 .cpp outputs (compiled separately from handwritten C++). */
   bindgenV2Cpp: string[];
-
 
   /**
    * Stamp output from `bun install` at repo root.
@@ -565,10 +563,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.h"),
   ];
 
-  const outputs = [
-    resolve(cfg.codegenDir, "ErrorCode+List.h"),
-    resolve(cfg.codegenDir, "ErrorCode+Data.h"),
-  ];
+  const outputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
 
   n.build({
     outputs,
@@ -713,7 +708,6 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(outputRs);
 }
 
-
 function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
 
@@ -723,7 +717,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
   // stale error numbers in the JS bundles while the C++ enum regenerates.
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
-
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),

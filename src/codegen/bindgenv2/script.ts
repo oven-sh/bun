@@ -116,7 +116,6 @@ function generate(): void {
       helpers.writeIfNotChanged(cppSourcePath(type), cppSource);
     }
   }
-
 }
 
 function main(): void {

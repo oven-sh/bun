@@ -2,10 +2,10 @@
 // `expect.assertions(n)` / `expect.hasAssertions()` work. Matchers either call
 // `increment_expect_call_counter()` directly or route through one of the
 // shared prologues that call it.
-import { test, expect } from "bun:test";
 import { Glob } from "bun";
+import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { join, basename } from "path";
+import { basename, join } from "path";
 
 const MATCHER_DIR = join(import.meta.dir, "../../src/runtime/test_runner/expect");
 

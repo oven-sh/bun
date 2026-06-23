@@ -146,11 +146,7 @@ To use [WebIDL's enumeration](https://webidl.spec.whatwg.org/#idl-enums) type, u
 An example of `stringEnum` as used in `fmt_jsc.bind.ts` / `bun:internal-for-testing`:
 
 ```ts
-export const Formatter = t.stringEnum(
-  "highlight-javascript",
-  "highlight-javascript-redacted",
-  "escape-powershell",
-);
+export const Formatter = t.stringEnum("highlight-javascript", "highlight-javascript-redacted", "escape-powershell");
 
 export const fmtString = fn({
   implNamespace: "js_bindings",

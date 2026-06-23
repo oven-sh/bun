@@ -3374,7 +3374,6 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
   `.trim();
 }
 
-
 const classes: ClassDefinition[] = [];
 {
   let errors = [];
@@ -3525,7 +3524,6 @@ function writeCppSerializers() {
     `generated_classes.rs: ${rustClasses.length} classes (${resolved} resolved), ${totalSyms} exported symbols`,
   );
 }
-
 
 if (!process.env.ONLY_ZIG) {
   const allHeaders = classes.map(a => generateHeader(a.name, a));

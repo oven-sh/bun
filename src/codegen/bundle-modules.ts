@@ -477,7 +477,6 @@ writeIfNotChanged(
 
 writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCPP());
 
-
 // Rust sibling: include!()'d by src/runtime/generated_js2native.rs
 writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());
 

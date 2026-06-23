@@ -591,8 +591,9 @@ export function writableStreamDefaultControllerStart(controller) {
   // startAlgorithm() returns one (as TransformStream's does), the assimilation
   // hop is observable in the spec's microtask ordering. Promise.$resolve would
   // return the input promise unchanged and skip that hop.
-  const startResult = startAlgorithm.$call();
-  return new Promise(resolve => resolve(startResult)).$then(
+  // $shieldingPromiseResolve takes the hop via .$then so a monkey-patched
+  // Promise.prototype.then is not reached during assimilation.
+  return $shieldingPromiseResolve(startAlgorithm.$call()).$then(
     () => {
       const state = $getByIdDirectPrivate(stream, "state");
       $assert(state === "writable" || state === "erroring");

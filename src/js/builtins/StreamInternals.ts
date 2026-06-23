@@ -36,9 +36,28 @@ export function markPromiseAsHandled(promise: Promise<unknown>) {
 // ordering). Promise.$resolve would return x unchanged when x is already a
 // native Promise and skip that hop; the streams ref-impl explicitly avoids
 // Promise.resolve here for the same reason.
+//
+// $resolvePromise performs thenable assimilation via Get(x, "then") and
+// invokes it when it differs from the builtin, so a monkey-patched
+// Promise.prototype.then is reached. For native promises replicate the
+// PromiseResolveThenableJob timing — queue a job that chains the reaction
+// — through the intrinsic .$then: same two-hop microtask ordering,
+// tamper-proof.
 export function shieldingPromiseResolve(result) {
   const promise = $newPromise();
-  $resolvePromise(promise, result);
+  if ($isPromise(result)) {
+    $enqueueJob(
+      (p, r) =>
+        r.$then(
+          v => $resolvePromise(p, v),
+          e => $rejectPromise(p, e),
+        ),
+      promise,
+      result,
+    );
+  } else {
+    $resolvePromise(promise, result);
+  }
   return promise;
 }
 

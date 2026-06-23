@@ -109,7 +109,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         } else {
             b"__MEMO_CACHE_SENTINEL"
         };
-        p.runtime_identifier_ref(bun_ast::Loc::EMPTY, name)
+        p.runtime_identifier_ref(name)
     }
 
     fn global_ref(&mut self, name: &[u8]) -> js_ast::Ref {

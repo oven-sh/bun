@@ -1,22 +1,25 @@
-// Exercises the no-promise fallback path in doRenderStream().
-//
-// A direct ReadableStream whose pull() writes synchronously and returns a
-// non-promise value falls through to the "is in progress, but did not return
-// a Promise" branch. That branch must destroy the heap-allocated
-// HTTPServerWritable/JSSink it created a few lines earlier; otherwise each
-// request leaks the struct plus its buffer.
+// Exercises sink teardown for a direct ReadableStream whose pull() writes
+// synchronously and returns a non-promise without ending the sink. The server
+// keeps the response open until controller.end(); each request allocates a
+// heap HTTPServerWritable/JSSink plus the promise plumbing used to wait for
+// the close, and all of it must be released when end() completes the
+// response; otherwise each request leaks the struct plus its buffer.
 import { memoryUsage } from "bun:jsc";
+
+let controller: any;
+let pulled: { promise: Promise<void>; resolve: () => void };
 
 const server = Bun.serve({
   port: 0,
   fetch() {
     const stream = new ReadableStream({
       type: "direct",
-      pull(controller: any) {
+      pull(c: any) {
         // Less than highWaterMark so it buffers instead of sending. pull()
-        // returns undefined (not a promise), so assignToStream() also returns
-        // undefined and doRenderStream drops into its no-promise fallback.
-        controller.write("x");
+        // returns undefined (not a promise), so the request waits for end().
+        c.write("x");
+        controller = c;
+        pulled.resolve();
       },
     } as any);
     return new Response(stream);
@@ -26,7 +29,11 @@ const server = Bun.serve({
 const url = server.url.href;
 
 async function once() {
-  const res = await fetch(url);
+  pulled = Promise.withResolvers();
+  const resPromise = fetch(url);
+  await pulled.promise;
+  controller.end();
+  const res = await resPromise;
   await res.arrayBuffer();
 }
 

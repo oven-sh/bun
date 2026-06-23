@@ -342,10 +342,10 @@ crypto_exports.randomUUIDv7 = function randomUUIDv7(options) {
 
 // Node only provides Argon2 when built against OpenSSL >= 3.2; BoringSSL has no
 // Argon2, so these throw the same error an unsupported Node build throws.
-crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
+crypto_exports.argon2 = function argon2(_algorithm, _parameters, _callback) {
   throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
 };
-crypto_exports.argon2Sync = function argon2Sync(algorithm, parameters) {
+crypto_exports.argon2Sync = function argon2Sync(_algorithm, _parameters) {
   throw $ERR_CRYPTO_ARGON2_NOT_SUPPORTED("Argon2 algorithm not supported");
 };
 

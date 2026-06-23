@@ -774,9 +774,7 @@ describe("bundler", () => {
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune
   // to empty and it becomes a sentinel-only block. Babel does the same; this
   // is React Compiler's purity assumption (module-level functions are pure
-  // w.r.t. props/state). NotificationContent's behavior change is because
-  // Bun folds `feature()` before RC runs, so native compiles a component
-  // Babel bails on for an unrelated reason (conditional hook in source).
+  // w.r.t. props/state).
   itBundled("react-compiler/ZeroArgGlobalCallMatchesBabel", {
     files: {
       "/entry.jsx": /* jsx */ `

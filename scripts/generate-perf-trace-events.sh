@@ -3,7 +3,7 @@
 #
 # Scans for both call shapes:
 #   - bun_core::perf::trace("Event.name")          (string-literal form)
-#   - bun_perf::trace(PerfEvent::VariantName)      (enum form)
+#   - bun_perf::trace(PerfEvent::VariantName)      (enum form, any qualifier)
 #
 # and emits:
 #   - src/jsc/bindings/generated_perf_trace_events.h  (X-macro, sorted, 0-indexed)
@@ -14,24 +14,43 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-LITERAL_EVENTS=$(rg 'bun_core::perf::trace\("([^"]+)"\)' -t rust -o -r '$1' src/ | sort -u)
+# rg exits 1 on zero matches; each form is allowed to be empty so long as the
+# combined set isn't. -I/--no-filename: rg prints path prefixes when searching
+# a directory and we only want the captured group.
+LITERAL_EVENTS=$(rg 'bun_core::perf::trace\("([^"]+)"\)' -t rust -I -o -r '$1' src/ | sort -u || true)
 
-# For PerfEvent::X call sites, map the variant back to its dotted name via the
-# current as_cstr() table (so re-running preserves the existing id↔name map).
-ENUM_VARIANTS=$(rg 'bun_perf::trace\(PerfEvent::([A-Za-z0-9_]+)\)' -t rust -o -r '$1' src/ | sort -u)
-ENUM_EVENTS=""
+# Enum form: accept any of PerfEvent::X, bun_perf::PerfEvent::X, ::bun_perf::PerfEvent::X.
+ENUM_VARIANTS=$(rg '(?:::)?bun_perf::trace\((?:::)?(?:bun_perf::)?PerfEvent::([A-Za-z0-9_]+)\)' \
+    -t rust -I -o -r '$1' src/ | sort -u || true)
+
+# Build "dotted\tvariant" pairs. For literal-form callers the variant name is
+# derived from the literal (non-alnum stripped, first of each segment
+# uppercased). For enum-form callers the variant is what the caller wrote and
+# the dotted name is looked up in the current as_cstr() table so re-running
+# preserves existing names; rustfmt wraps long arms across lines so match with -U.
+PAIRS=""
+
+while IFS= read -r ev; do
+    [ -z "$ev" ] && continue
+    variant=$(echo "$ev" | sed -E 's/(^|[^A-Za-z0-9])([a-z])/\1\u\2/g; s/[^A-Za-z0-9]//g')
+    PAIRS="$PAIRS"$'\n'"$ev"$'\t'"$variant"
+done <<< "$LITERAL_EVENTS"
+
 for v in $ENUM_VARIANTS; do
-    name=$(rg "PerfEvent::${v}\s*=>\s*c\"([^\"]+)\"" src/perf/generated_perf_trace_events.rs -o -r '$1' || true)
+    name=$(rg -U "PerfEvent::${v}\b\s*=>\s*\{?\s*c\"([^\"]+)\"" \
+        src/perf/generated_perf_trace_events.rs -o -r '$1' || true)
     if [ -z "$name" ]; then
         # New variant without a cstr mapping yet: synthesize Foo.Bar from FooBar.
         name=$(echo "$v" | sed -E 's/([a-z])([A-Z])/\1.\2/g; s/^_//')
     fi
-    ENUM_EVENTS="$ENUM_EVENTS"$'\n'"$name"
+    PAIRS="$PAIRS"$'\n'"$name"$'\t'"$v"
 done
 
-ALL_EVENTS=$(printf '%s\n%s\n' "$LITERAL_EVENTS" "$ENUM_EVENTS" | grep -v '^$' | sort -u)
+# Sort by dotted name (stable ids across runs); dedup by variant (last wins,
+# so an enum-form caller's spelling overrides a literal-derived one).
+PAIRS=$(echo "$PAIRS" | grep -v '^$' | sort -t$'\t' -k1,1 -u)
 
-if [ -z "$ALL_EVENTS" ]; then
+if [ -z "$PAIRS" ]; then
     echo "error: no perf::trace() call sites found under src/" >&2
     exit 1
 fi
@@ -42,10 +61,10 @@ H_OUT=src/jsc/bindings/generated_perf_trace_events.h
     echo "// clang-format off"
     echo "#define FOR_EACH_TRACE_EVENT(macro) \\"
     i=0
-    while IFS= read -r ev; do
-        echo "  macro($ev, $i) \\"
+    while IFS=$'\t' read -r dotted variant; do
+        echo "  macro($dotted, $i) \\"
         i=$((i + 1))
-    done <<< "$ALL_EVENTS"
+    done <<< "$PAIRS"
     echo "  // end"
 } > "$H_OUT"
 echo "Generated $H_OUT"
@@ -65,20 +84,18 @@ RS_OUT=src/perf/generated_perf_trace_events.rs
     echo "#[derive(Copy, Clone, Eq, PartialEq)]"
     echo "pub enum PerfEvent {"
     i=0
-    while IFS= read -r ev; do
-        variant=$(echo "$ev" | sed 's/[^A-Za-z0-9]//g')
+    while IFS=$'\t' read -r dotted variant; do
         echo "    $variant = $i,"
         i=$((i + 1))
-    done <<< "$ALL_EVENTS"
+    done <<< "$PAIRS"
     echo "}"
     echo
     echo "impl PerfEvent {"
     echo "    pub fn as_cstr(self) -> &'static CStr {"
     echo "        match self {"
-    while IFS= read -r ev; do
-        variant=$(echo "$ev" | sed 's/[^A-Za-z0-9]//g')
-        echo "            PerfEvent::$variant => c\"$ev\","
-    done <<< "$ALL_EVENTS"
+    while IFS=$'\t' read -r dotted variant; do
+        echo "            PerfEvent::$variant => c\"$dotted\","
+    done <<< "$PAIRS"
     echo "        }"
     echo "    }"
     echo "}"

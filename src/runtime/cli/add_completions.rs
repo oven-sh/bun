@@ -3252,8 +3252,9 @@ fn build_table() -> Table {
         .expect("add_completions: zstd decompress failed");
     debug_assert_eq!(decompressed.len(), UNCOMPRESSED_SIZE);
 
-    // The decompressed buffer lives for the process lifetime inside the
-    // Once<Table>; package slices borrow it, so lifetime-extend to 'static.
+    // SAFETY: the decompressed Vec is moved into TABLE (a process-lifetime
+    // Once) and never dropped or reallocated, so its storage is valid for
+    // 'static. The package slices below borrow this storage.
     let data: &'static [u8] =
         unsafe { core::slice::from_raw_parts(decompressed.as_ptr(), decompressed.len()) };
 

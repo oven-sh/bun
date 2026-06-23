@@ -417,10 +417,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
     rustflags.push("-Crelocation-model=static");
   }
-  // Keep frame pointers — matches Zig's `omit_frame_pointer = false`
-  // and the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
-  // (flags.ts:293-301). Needed so profilers and crash backtraces walk Rust
-  // frames the same as the Zig binary did.
+  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
+  // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)

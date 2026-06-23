@@ -426,7 +426,17 @@ impl EventLoop {
 
     fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> u32 {
         let mut counter: u32 = 0;
-        let _ = tick_queue_with_count(self, virtual_machine, &mut counter);
+        // On `JsTerminated`, report 0 so the `while tick_with_count() > 0`
+        // drain loops in `tick()` / `tick_tasks_only()` stop immediately. The
+        // termination exception is left on the VM (`tryClearException` never
+        // clears it), so continuing to drain would re-enter
+        // `executeCallImpl` with an exception pending and trip its
+        // `scope.assertNoException()` RELEASE_ASSERT. `tick()` observes the
+        // pending exception via `scope.has_exception()` on the next line and
+        // returns.
+        if tick_queue_with_count(self, virtual_machine, &mut counter).is_err() {
+            return 0;
+        }
         counter
     }
 

@@ -2067,7 +2067,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     /// uses to turn the lifetime-erased slice into a `Static` key.
     ///
     /// This is the hot path for `Scope::members` (one call per declared
-    /// identifier in `declare_symbol_maybe_generated` / scope hoisting), where
+    /// identifier in `declare_symbol` / scope hoisting), where
     /// the previous owning shape was the parser's single largest
     /// `mi_heap_malloc` source.
     ///

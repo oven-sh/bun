@@ -115,8 +115,9 @@ fn compress_libdeflate_fast(
     // pinned to DEFAULT_DEFLATE_LEVEL.
     let mut tmp: Option<OwnedCompressor> = None;
     let compressor: &mut Compressor = match level {
-        Some(l) if l != DEFAULT_DEFLATE_LEVEL => tmp
-            .insert(OwnedCompressor::new(l).unwrap_or_else(|| bun_core::out_of_memory())),
+        Some(l) if l != DEFAULT_DEFLATE_LEVEL => {
+            tmp.insert(OwnedCompressor::new(l).unwrap_or_else(|| bun_core::out_of_memory()))
+        }
         _ => cached,
     };
 

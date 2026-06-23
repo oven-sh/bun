@@ -123,8 +123,9 @@ impl PerMessageDeflate {
         .map_err(|_| bun_core::err!("DeflateInitFailed"))?;
 
         // Initialize decompressor (inflate)
-        let decompress_stream = zlib::InflateDecoder::new(-(params.server_max_window_bits as c_int))
-            .map_err(|_| bun_core::err!("InflateInitFailed"))?;
+        let decompress_stream =
+            zlib::InflateDecoder::new(-(params.server_max_window_bits as c_int))
+                .map_err(|_| bun_core::err!("InflateInitFailed"))?;
 
         Ok(Box::new(Self {
             params,

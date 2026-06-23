@@ -298,14 +298,11 @@ impl LibdeflateState {
     /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
     /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut(
-        &mut self,
-    ) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
         self.decompressor
             .as_deref_mut()
             .expect("set in HttpThread::deflater()")
     }
-
 }
 
 pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;

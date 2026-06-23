@@ -219,11 +219,7 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
             env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect({ stdout, stderr, exitCode }).toEqual({
             stdout: expected,
             stderr: "",

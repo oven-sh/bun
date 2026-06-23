@@ -136,13 +136,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.record_declared_symbol(data.namespace_ref);
 
         if let Some(default_name) = data.default_name {
-            p.record_declared_symbol(default_name.ref_.expect("infallible: ref bound"));
+            p.record_declared_symbol(default_name.ref_);
         }
 
         let items = data.items.slice();
         if !items.is_empty() {
             for item in items.iter() {
-                p.record_declared_symbol(item.name.ref_.expect("infallible: ref bound"));
+                p.record_declared_symbol(item.name.ref_);
             }
         }
 
@@ -179,7 +179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut any_replaced = false;
         if p.options.features.replace_exports.count() > 0 {
             for i in 0..items_len {
-                let name = p.load_name_from_ref(items[i].name.ref_.expect("infallible: ref bound"));
+                let name = p.load_name_from_ref(items[i].name.ref_);
                 let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
@@ -212,7 +212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
 
-                items[i].name.ref_ = Some(ref_);
+                items[i].name.ref_ = ref_;
                 // Compaction: items[..end] is the kept prefix; items[i] is dead
                 // after this iteration and the slice is truncated to `end` below.
                 items.swap(end, i);
@@ -220,7 +220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         } else {
             for i in 0..items_len {
-                let name = p.load_name_from_ref(items[i].name.ref_.expect("infallible: ref bound"));
+                let name = p.load_name_from_ref(items[i].name.ref_);
                 let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
@@ -243,7 +243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
 
-                items[i].name.ref_ = Some(ref_);
+                items[i].name.ref_ = ref_;
                 // Compaction: items[..end] is the kept prefix; items[i] is dead
                 // after this iteration and the slice is truncated to `end` below.
                 items.swap(end, i);
@@ -283,7 +283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut j: usize = 0;
             // This is a re-export and the symbols created here are used to reference
             for i in 0..items.len() {
-                let old_ref = items[i].name.ref_.expect("infallible: ref bound");
+                let old_ref = items[i].name.ref_;
 
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
                 let alias = items[i].alias.slice();
@@ -300,7 +300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Compaction: items[..j] is the kept prefix; items[i] is dead
                 // after this iteration and the slice is truncated to `j` below.
                 items.swap(j, i);
-                items[j].name.ref_ = Some(ref_);
+                items[j].name.ref_ = ref_;
                 j += 1;
             }
 
@@ -309,11 +309,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {
-                let _name = p.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
+                let _name = p.load_name_from_ref(item.name.ref_);
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
                 VecExt::append(&mut p.cur_scope().generated, ref_);
                 p.record_declared_symbol(ref_);
-                item.name.ref_ = Some(ref_);
+                item.name.ref_ = ref_;
             }
         }
 
@@ -372,7 +372,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // closure invoked at every return site below.
         macro_rules! record_on_exit {
             () => {
-                if let Some(ref_) = data.default_name.ref_ {
+                if let Some(ref_) = data.default_name.ref_.to_nullable() {
                     p.record_declared_symbol(ref_);
                 }
             };
@@ -411,7 +411,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
+                if p.react_compiler.is_some()
+                    && let Some(in_hoc) = p.react_compiler_candidate_expr(expr)
+                {
+                    p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
+                    p.react_compiler_in_react_hoc = in_hoc;
+                }
                 p.visit_expr(expr);
+                p.react_compiler_candidate_name = None;
+                p.react_compiler_in_react_hoc = false;
                 p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
@@ -437,7 +445,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if p.local_type_names.get(original_name).copied() == Some(true) {
                                     // the name points to a type — don't try to declare
                                     // this symbol, drop the statement.
-                                    data.default_name.ref_ = None;
+                                    data.default_name.ref_ = Ref::NONE;
                                     restore_dead!();
                                     record_on_exit!();
                                     return Ok(());
@@ -447,12 +455,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if data
-                    .default_name
-                    .ref_
-                    .expect("infallible: ref bound")
-                    .is_source_contents_slice()
-                {
+                if data.default_name.ref_.is_source_contents_slice() {
                     data.default_name = p.create_default_name(expr.loc).expect("unreachable");
                 }
 
@@ -513,7 +516,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         G::Decl {
                             binding: p.b(
                                 B::Identifier {
-                                    r#ref: data.default_name.ref_.expect("infallible: ref bound"),
+                                    r#ref: data.default_name.ref_,
                                 },
                                 data.default_name.loc,
                             ),
@@ -577,7 +580,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     StmtData::SFunction(mut func_ref) => {
                         let func: &mut S::Function = &mut *func_ref;
                         let name: &'a [u8] = if let Some(func_loc) = func.func.name {
-                            p.load_name_from_ref(func_loc.ref_.expect("infallible: ref bound"))
+                            p.load_name_from_ref(func_loc.ref_)
                         } else {
                             func.func.name = Some(data.default_name);
                             js_ast::ClauseItem::DEFAULT_ALIAS
@@ -588,8 +591,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.react_refresh.hook_ctx_storage =
                             Some(core::ptr::NonNull::from(&mut react_hook_data));
 
+                        if p.react_compiler.is_some() {
+                            p.react_compiler_candidate_name = Some(
+                                func.func
+                                    .name
+                                    .filter(|_| name != js_ast::ClauseItem::DEFAULT_ALIAS)
+                                    .map(|n| n.ref_)
+                                    .unwrap_or(js_ast::Ref::NONE),
+                            );
+                        }
                         let open_parens_loc = func.func.open_parens_loc;
                         func.func = p.visit_func(core::mem::take(&mut func.func), open_parens_loc);
+                        p.react_compiler_candidate_name = None;
 
                         if p.is_control_flow_dead {
                             p.react_refresh.hook_ctx_storage = prev;
@@ -598,12 +611,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Ok(());
                         }
 
-                        if data
-                            .default_name
-                            .ref_
-                            .expect("infallible: ref bound")
-                            .is_source_contents_slice()
-                        {
+                        if data.default_name.ref_.is_source_contents_slice() {
                             data.default_name =
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
@@ -680,7 +688,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             //
                                             //  const Foo = _s(function Foo() {})
                                             //  export default Foo;
-                                            if let Some(r) = loc_ref.ref_ {
+                                            if let Some(r) = loc_ref.ref_.to_nullable() {
                                                 break 'brk r;
                                             }
                                         }
@@ -713,7 +721,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     break 'emit_temp_var ref_to_use;
                                 }
                             } else {
-                                data.default_name.ref_.expect("infallible: ref bound")
+                                data.default_name.ref_
                             };
 
                             if p.options.features.server_components.wraps_exports() {
@@ -764,11 +772,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
-                        let _ = p.visit_class(
-                            s2_loc,
-                            &mut class.class,
-                            data.default_name.ref_.expect("infallible: ref bound"),
-                        );
+                        let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_);
 
                         if p.is_control_flow_dead {
                             restore_dead!();
@@ -802,12 +806,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        if data
-                            .default_name
-                            .ref_
-                            .expect("infallible: ref bound")
-                            .is_source_contents_slice()
-                        {
+                        if data.default_name.ref_.is_source_contents_slice() {
                             data.default_name =
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
@@ -820,7 +819,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             || class.class.should_lower_standard_decorators
                         {
                             if class.class.class_name.is_none()
-                                || class.class.class_name.unwrap().ref_.is_none()
+                                || class.class.class_name.unwrap().ref_.is_empty()
                             {
                                 class.class.class_name = Some(data.default_name);
                             }
@@ -888,13 +887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.func.flags.contains(flags::Function::IsExport)
             && p.options.features.replace_exports.count() > 0
-            && p.is_export_to_eliminate(
-                data.func
-                    .name
-                    .expect("infallible: name checked")
-                    .ref_
-                    .expect("infallible: ref bound"),
-            );
+            && p.is_export_to_eliminate(data.func.name.expect("infallible: name checked").ref_);
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {
@@ -908,19 +901,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
+        if p.react_compiler.is_some() && p.current_scope == p.module_scope {
+            p.react_compiler_candidate_name = data.func.name.map(|n| n.ref_);
+        }
         let open_parens_loc = data.func.open_parens_loc;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);
+        p.react_compiler_candidate_name = None;
 
-        let name_ref = data
-            .func
-            .name
-            .expect("infallible: name checked")
-            .ref_
-            .expect("infallible: ref bound");
+        let name_ref = data.func.name.expect("infallible: name checked").ref_;
         debug_assert!(name_ref.is_symbol());
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         let original_name: &'a [u8] = name_symbol.original_name.slice();
-        let remove_overwritten = name_symbol.remove_overwritten_function_declaration;
+        let remove_overwritten = name_symbol.remove_overwritten_function_declaration();
 
         // Handle exporting this function from a namespace
         if data.func.flags.contains(flags::Function::IsExport)
@@ -944,10 +936,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     stmt.loc,
                 ),
-                Expr::init_identifier(
-                    func_name.ref_.expect("infallible: ref bound"),
-                    func_name.loc,
-                ),
+                Expr::init_identifier(func_name.ref_, func_name.loc),
             ));
         } else if !mark_as_dead {
             if remove_overwritten {
@@ -1057,8 +1046,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 data.class
                     .class_name
                     .expect("infallible: name checked")
-                    .ref_
-                    .expect("infallible: ref bound"),
+                    .ref_,
             );
         let original_is_dead = p.is_control_flow_dead;
 
@@ -1085,8 +1073,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .class
                 .class_name
                 .expect("infallible: name checked")
-                .ref_
-                .expect("infallible: ref bound");
+                .ref_;
             let name = p.load_name_from_ref(ref_);
             if let Some(replacement) = p.options.features.replace_exports.get_ptr(name).cloned() {
                 if p.inject_replacement_export(
@@ -1103,7 +1090,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Handle exporting this class from a namespace
         if was_export_inside_namespace {
             let class_name = data.class.class_name.expect("infallible: name checked");
-            let class_name_ref = class_name.ref_.expect("infallible: ref bound");
+            let class_name_ref = class_name.ref_;
             let original_name = p.symbols[class_name_ref.inner_index() as usize]
                 .original_name
                 .slice();
@@ -1220,6 +1207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         data.kind = kind;
+
         stmts.push(*stmt);
 
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
@@ -1287,17 +1275,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Break,
     ) -> Result<(), Error> {
         if let Some(label) = &mut data.label {
-            let r = label.ref_.unwrap_or_else(|| {
-                p.panic_loc(
-                    "Expected label to have a ref",
-                    format_args!(""),
-                    Some(label.loc),
-                )
-            });
-            let name = p.load_name_from_ref(r);
+            let name = p.load_name_from_ref(label.ref_);
             let res = p.find_label_symbol(label.loc, name);
             if res.found {
-                label.ref_ = Some(res.r#ref);
+                label.ref_ = res.r#ref;
             } else {
                 data.label = None;
             }
@@ -1320,16 +1301,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Continue,
     ) -> Result<(), Error> {
         if let Some(label) = &mut data.label {
-            let r = label.ref_.unwrap_or_else(|| {
-                p.panic_loc(
-                    "Expected continue label to have a ref",
-                    format_args!(""),
-                    Some(label.loc),
-                )
-            });
-            let name = p.load_name_from_ref(r);
+            let name = p.load_name_from_ref(label.ref_);
             let res = p.find_label_symbol(label.loc, name);
-            label.ref_ = Some(res.r#ref);
+            label.ref_ = res.r#ref;
             if res.found && !res.is_loop {
                 let r = js_lexer::range_of_identifier(p.source, stmt.loc);
                 p.log().add_range_error_fmt(
@@ -1356,12 +1330,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
-        let name = p.load_name_from_ref(data.name.ref_.expect("infallible: ref bound"));
+        let name = p.load_name_from_ref(data.name.ref_);
         let ref_ = p
             .new_symbol(js_ast::symbol::Kind::Label, name)
             .expect("unreachable");
-        data.name.ref_ = Some(ref_);
-        p.cur_scope().label_ref = Some(ref_);
+        data.name.ref_ = ref_;
+        p.cur_scope().label_ref = ref_;
         match data.stmt.data {
             StmtData::SFor(_)
             | StmtData::SForIn(_)
@@ -1399,7 +1373,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
+        if is_top_level
+            && p.react_compiler.is_some()
+            && let Some(in_hoc) = p.react_compiler_candidate_expr(&data.value)
+        {
+            p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
+            p.react_compiler_in_react_hoc = in_hoc;
+        }
         p.visit_expr(&mut data.value);
+        p.react_compiler_candidate_name = None;
+        p.react_compiler_in_react_hoc = false;
 
         // `p.stmt_expr_value` is reset to EMissing at every return below.
         macro_rules! restore_stmt_expr {
@@ -1482,7 +1465,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         alias: js_ast::StoreStr::new(key),
                                         alias_loc: bin.left.loc,
                                         name: js_ast::LocRef {
-                                            ref_: Some(ref_),
+                                            ref_,
                                             loc: last_loc,
                                         },
                                         ..Default::default()
@@ -2168,11 +2151,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // maps. We are avoiding that to reduce memory usage, since
         // enum inlining already uses alot of hash maps.
         if p.current_scope == p.module_scope && p.options.bundle {
-            p.top_level_enums
-                .push(data.name.ref_.expect("infallible: ref bound"));
+            p.top_level_enums.push(data.name.ref_);
         }
 
-        p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
+        p.record_declared_symbol(data.name.ref_);
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)?;
         p.record_declared_symbol(data.arg);
 
@@ -2230,12 +2212,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 match underlying_value.data {
                     js_ast::ExprData::ENumber(num) => {
                         exported_members.get_ptr_mut(name).unwrap().data =
-                            js_ast::ts::Data::EnumNumber(num.value);
+                            js_ast::ts::Data::EnumNumber(num.value());
 
                         p.ref_to_ts_namespace_member
-                            .insert(value.ref_, js_ast::ts::Data::EnumNumber(num.value));
+                            .insert(value.ref_, js_ast::ts::Data::EnumNumber(num.value()));
 
-                        next_numeric_value = Some(num.value + 1.0);
+                        next_numeric_value = Some(num.value() + 1.0);
                     }
                     js_ast::ExprData::EString(str_) => {
                         has_string_value = true;
@@ -2257,7 +2239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             } else if let Some(num) = next_numeric_value {
-                value.value = Some(p.new_expr(E::Number { value: num }, value.loc));
+                value.value = Some(p.new_expr(E::Number::new(num), value.loc));
 
                 next_numeric_value = Some(num + 1.0);
 
@@ -2350,7 +2332,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmt.loc,
             data.is_export,
             data.name.loc,
-            data.name.ref_.expect("infallible: ref bound"),
+            data.name.ref_,
             data.arg,
             value_stmts.into_bump_slice_mut(),
             all_values_are_pure,
@@ -2365,7 +2347,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Namespace,
     ) -> Result<(), Error> {
-        p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
+        p.record_declared_symbol(data.name.ref_);
 
         // Scan ahead for any variables inside this namespace. This must be done
         // ahead of time before visiting any statements inside the namespace
@@ -2400,7 +2382,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmt.loc,
             data.is_export,
             data.name.loc,
-            data.name.ref_.expect("infallible: ref bound"),
+            data.name.ref_,
             data.arg,
             prepend_list.into_bump_slice_mut(),
             false,

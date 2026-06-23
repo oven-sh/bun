@@ -179,20 +179,8 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         break 'blk valuef as u32;
     };
 
-    // crc32 returns a uLong (c_ulong) but the data will always be within a u32 range so the outer cast is always safe.
-    let slice_u8 = data.slice();
-    // SAFETY: `crc32` is a pure FFI hash over `(ptr, len)`; `slice_u8` is valid
-    // for the call (borrowed from `data`, which lives to end of scope).
-    let crc = unsafe {
-        bun_zlib::crc32(
-            bun_zlib::uLong::from(value),
-            slice_u8.as_ptr(),
-            u32::try_from(slice_u8.len()).expect("int cast"),
-        )
-    };
-    Ok(JSValue::js_number(f64::from(
-        u32::try_from(crc).expect("int cast"),
-    )))
+    let crc = bun_zlib::crc32_bytes(value, data.slice());
+    Ok(JSValue::js_number(f64::from(crc)))
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────

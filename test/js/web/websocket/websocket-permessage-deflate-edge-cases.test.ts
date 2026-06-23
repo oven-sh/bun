@@ -221,6 +221,10 @@ test("WebSocket client rejects decompression bombs", async () => {
   const port = await serverReady;
 
   tcpServer.on("connection", socket => {
+    // Raw test server: tolerate client aborts, surface anything unexpected.
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
+    });
     let buffer = Buffer.alloc(0);
 
     socket.on("data", data => {

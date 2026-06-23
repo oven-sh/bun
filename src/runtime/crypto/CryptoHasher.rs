@@ -93,7 +93,7 @@ impl CryptoHasher {
             return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
         }
 
-        let algorithm = evp::lookup(name)?;
+        let algorithm = evp::lookup_ignore_case(name)?;
 
         match algorithm {
             evp::Algorithm::Ripemd160
@@ -506,10 +506,10 @@ impl CryptoHasher {
             if let Some(key) = &hmac_key {
                 // Inlined `JSValue::to_enum_from_map` (the `is_string` guard
                 // already ran above) so the lookup goes through the
-                // length-gated `evp::lookup` directly.
+                // length-gated `evp::lookup_ignore_case` directly.
                 let chosen_algorithm: evp::Algorithm = {
                     let slice = algorithm_name.to_slice(global)?;
-                    match evp::lookup(slice.slice()) {
+                    match evp::lookup_ignore_case(slice.slice()) {
                         Some(v) => v,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -796,7 +796,6 @@ pub struct CryptoHasherZig {
 /// Trait for the non-BoringSSL hash algorithms used by `CryptoHasherZig`.
 /// Implemented for each algo in `zig_crypto_algos` below.
 pub trait ZigHashAlgo: Default + Clone + 'static {
-    const NAME: &'static [u8];
     const ALGORITHM: evp::Algorithm;
     /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
@@ -825,9 +824,8 @@ mod zig_crypto_algos {
     /// Fixed-digest Keccak/BLAKE2 — `final_` writes exactly `DIGEST_LENGTH`
     /// bytes via `FixedOutputReset`.
     macro_rules! impl_fixed {
-        ($ty:ty, $name:literal, $variant:ident, $len:expr) => {
+        ($ty:ty, $variant:ident, $len:expr) => {
             impl ZigHashAlgo for $ty {
-                const NAME: &'static [u8] = $name;
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
                 fn update(&mut self, bytes: &[u8]) {
@@ -847,9 +845,8 @@ mod zig_crypto_algos {
     /// SHAKE XOF — default digest lengths: Shake128 = 16, Shake256 = 32;
     /// `final_` squeezes exactly `out.len` bytes.
     macro_rules! impl_xof {
-        ($ty:ty, $name:literal, $variant:ident, $len:expr) => {
+        ($ty:ty, $variant:ident, $len:expr) => {
             impl ZigHashAlgo for $ty {
-                const NAME: &'static [u8] = $name;
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
                 fn update(&mut self, bytes: &[u8]) {
@@ -864,25 +861,25 @@ mod zig_crypto_algos {
         };
     }
 
-    impl_fixed!(Sha3_224, b"sha3-224", Sha3_224, 28);
-    impl_fixed!(Sha3_256, b"sha3-256", Sha3_256, 32);
-    impl_fixed!(Sha3_384, b"sha3-384", Sha3_384, 48);
-    impl_fixed!(Sha3_512, b"sha3-512", Sha3_512, 64);
-    impl_xof!(Shake128, b"shake128", Shake128, 16);
-    impl_xof!(Shake256, b"shake256", Shake256, 32);
-    impl_fixed!(Blake2s256, b"blake2s256", Blake2s256, 32);
+    impl_fixed!(Sha3_224, Sha3_224, 28);
+    impl_fixed!(Sha3_256, Sha3_256, 32);
+    impl_fixed!(Sha3_384, Sha3_384, 48);
+    impl_fixed!(Sha3_512, Sha3_512, 64);
+    impl_xof!(Shake128, Shake128, 16);
+    impl_xof!(Shake256, Shake256, 32);
+    impl_fixed!(Blake2s256, Blake2s256, 32);
 }
 
-/// Expands the macro once per supported `(name_literal, Type)` pair.
+/// Expands the macro once per supported `ZigHashAlgo` type.
 macro_rules! for_each_zig_algo {
     ($mac:ident $(, $($args:tt)*)?) => {
-        $mac!(b"sha3-224",   Sha3_224   $(, $($args)*)?);
-        $mac!(b"sha3-256",   Sha3_256   $(, $($args)*)?);
-        $mac!(b"sha3-384",   Sha3_384   $(, $($args)*)?);
-        $mac!(b"sha3-512",   Sha3_512   $(, $($args)*)?);
-        $mac!(b"shake128",   Shake128   $(, $($args)*)?);
-        $mac!(b"shake256",   Shake256   $(, $($args)*)?);
-        $mac!(b"blake2s256", Blake2s256 $(, $($args)*)?);
+        $mac!(Sha3_224   $(, $($args)*)?);
+        $mac!(Sha3_256   $(, $($args)*)?);
+        $mac!(Sha3_384   $(, $($args)*)?);
+        $mac!(Sha3_512   $(, $($args)*)?);
+        $mac!(Shake128   $(, $($args)*)?);
+        $mac!(Shake256   $(, $($args)*)?);
+        $mac!(Blake2s256 $(, $($args)*)?);
     };
 }
 
@@ -893,14 +890,18 @@ impl CryptoHasherZig {
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<Option<JSValue>> {
+        let name = algorithm.to_slice();
+        let Some(algo) = evp::lookup_ignore_case(name.slice()) else {
+            return Ok(None);
+        };
         macro_rules! arm {
-            ($name:literal, $ty:ty, $g:expr, $alg:expr, $in:expr, $out:expr) => {
-                if $alg.eql_comptime($name) {
+            ($ty:ty, $g:expr, $alg:expr, $in:expr, $out:expr) => {
+                if $alg == <$ty as ZigHashAlgo>::ALGORITHM {
                     return Ok(Some(Self::hash_by_name_inner::<$ty>($g, $in, $out)?));
                 }
             };
         }
-        for_each_zig_algo!(arm, global, algorithm, input, output);
+        for_each_zig_algo!(arm, global, algo, input, output);
         Ok(None)
     }
 
@@ -1006,27 +1007,16 @@ impl CryptoHasherZig {
     }
 
     fn constructor(algorithm: &ZigString) -> Option<Box<CryptoHasher>> {
-        macro_rules! arm {
-            ($name:literal, $ty:ty, $alg:expr) => {
-                if $alg.eql_comptime($name) {
-                    return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(
-                        CryptoHasherZig {
-                            algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
-                            state: Box::new(<$ty as ZigHashAlgo>::init()),
-                            digest_length: <$ty as ZigHashAlgo>::DIGEST_LENGTH,
-                        },
-                    ))));
-                }
-            };
-        }
-        for_each_zig_algo!(arm, algorithm);
-        None
+        let name = algorithm.to_slice();
+        Self::init(name.slice())
+            .map(|inner| CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))))
     }
 
-    pub fn init(algorithm: &[u8]) -> Option<CryptoHasherZig> {
+    pub fn init(name: &[u8]) -> Option<CryptoHasherZig> {
+        let algorithm = evp::lookup_ignore_case(name)?;
         macro_rules! arm {
-            ($name:literal, $ty:ty, $alg:expr) => {
-                if $alg == $name {
+            ($ty:ty, $alg:expr) => {
+                if $alg == <$ty as ZigHashAlgo>::ALGORITHM {
                     let handle = CryptoHasherZig {
                         algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
                         state: Box::new(<$ty as ZigHashAlgo>::init()),
@@ -1042,7 +1032,7 @@ impl CryptoHasherZig {
 
     fn update(&mut self, bytes: &[u8]) {
         macro_rules! arm {
-            ($name:literal, $ty:ty, $self:expr, $bytes:expr) => {
+            ($ty:ty, $self:expr, $bytes:expr) => {
                 if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
                     // SAFETY: tag matches type stored in `state` (set in init/constructor).
                     let state = $self.state.downcast_mut::<$ty>().expect("unreachable");
@@ -1056,7 +1046,7 @@ impl CryptoHasherZig {
 
     fn copy(&self) -> CryptoHasherZig {
         macro_rules! arm {
-            ($name:literal, $ty:ty, $self:expr) => {
+            ($ty:ty, $self:expr) => {
                 if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
                     let state = $self.state.downcast_ref::<$ty>().expect("unreachable");
                     return CryptoHasherZig {
@@ -1077,7 +1067,7 @@ impl CryptoHasherZig {
         res_len: usize,
     ) -> &'a mut [u8] {
         macro_rules! arm {
-            ($name:literal, $ty:ty, $self:expr, $out:expr, $len:expr) => {
+            ($ty:ty, $self:expr, $out:expr, $len:expr) => {
                 if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
                     let state = $self.state.downcast_mut::<$ty>().expect("unreachable");
                     <$ty as ZigHashAlgo>::final_(state, $out);

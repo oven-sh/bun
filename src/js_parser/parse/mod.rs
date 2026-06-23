@@ -417,7 +417,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut arrow_arg_errors = DeferredArrowArgErrors::default();
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
-        let mut comma_after_spread: Option<bun_ast::Loc> = None;
+        let mut comma_after_spread = bun_ast::Loc::EMPTY;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -482,7 +482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Spread arguments must come last. If there's a spread argument followed
             if is_spread {
-                comma_after_spread = Some(p.lexer.loc());
+                comma_after_spread = p.lexer.loc();
             }
 
             // Eat the comma token
@@ -641,7 +641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let name = LocRef {
             loc: p.lexer.loc(),
-            ref_: Some(p.store_name_in_ref(p.lexer.identifier)?),
+            ref_: p.store_name_in_ref(p.lexer.identifier)?,
         };
         p.lexer.next()?;
         Ok(Some(name))
@@ -692,13 +692,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             name = Some(LocRef {
                 loc: name_loc,
-                ref_: None,
+                ref_: js_ast::Ref::NONE,
             });
             if !opts.is_typescript_declare {
-                name.as_mut().unwrap().ref_ = Some(
-                    p.declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
-                        .expect("unreachable"),
-                );
+                name.as_mut().unwrap().ref_ = p
+                    .declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
+                    .expect("unreachable");
             }
         }
 
@@ -1171,12 +1170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
             T::TNumericLiteral => {
-                key = p.new_expr(
-                    E::Number {
-                        value: p.lexer.number,
-                    },
-                    p.lexer.loc(),
-                );
+                key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
                 // check for legacy octal literal
                 p.lexer.next()?;
             }

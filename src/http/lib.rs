@@ -5,6 +5,7 @@
 pub mod async_http;
 #[path = "CertificateInfo.rs"]
 pub mod certificate_info;
+pub mod compress_body;
 #[path = "Decompressor.rs"]
 pub mod decompressor;
 #[path = "H2Client.rs"]
@@ -47,7 +48,7 @@ pub mod websocket_http_client;
 #[path = "zlib.rs"]
 pub mod zlib;
 
-// ── crate-root re-exports (real types from un-gated modules) ──
+// ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
@@ -650,6 +651,19 @@ pub struct HTTPClient<'a> {
     pub async_http_id: u32,
     pub hostname: Option<&'a [u8]>,
     pub unix_socket_path: ZigStringSlice,
+    /// `fetch({ compress })` — when set, the body is compressed lazily at
+    /// write time (h1: `send_initial_request_payload`; h2/h3: at attach) so
+    /// the output can borrow `LibdeflateState::shared_buffer`. Persists across
+    /// redirects/retries so each hop re-compresses from the original
+    /// `state.original_request_body`.
+    pub compress: Option<compress_body::CompressOption>,
+    /// Backing storage for the compressed body when it must outlive a single
+    /// synchronous write (output > shared buffer, partial h1 write, or h2/h3
+    /// frame encoding). Empty in the common one-write h1 case.
+    pub compressed_request_body: Vec<u8>,
+    /// Compressed length for `Content-Length`; 0 when `compress` is None or
+    /// the body hasn't been compressed yet.
+    pub compressed_body_len: usize,
 }
 
 impl<'a> HTTPClient<'a> {
@@ -1319,6 +1333,22 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
 // These helpers centralize the unsafe deref of the `Option<NonNull<_>>`
 // fields so the state-machine bodies stay readable.
 impl<'a> HTTPClient<'a> {
+    #[inline]
+    /// Whether closing this socket gracefully would queue our FIN behind
+    /// request-body bytes that have not yet been handed to the kernel - the
+    /// case where the peer (which may have stopped reading the body) would
+    /// never observe the connection closing.
+    pub fn has_unsent_request_body(&self) -> bool {
+        if self.state.request_stage == RequestStage::Done {
+            return false;
+        }
+        if self.flags.is_streaming_request_body {
+            // More body chunks may still be produced by JS.
+            return true;
+        }
+        !self.request_body().is_empty()
+    }
+
     #[inline]
     fn request_body(&self) -> &[u8] {
         // `request_body` is a `RawSlice` into `original_request_body` (sibling
@@ -2573,6 +2603,86 @@ impl<'a> HTTPClient<'a> {
         self.complete_connecting_process();
     }
 
+    /// Body length for `Content-Length` — the compressed length once
+    /// [`compress_body_for_send`] has run, otherwise the original.
+    #[inline]
+    pub fn body_len_for_send(&self) -> usize {
+        if self.state.flags.body_compressed {
+            self.compressed_body_len
+        } else {
+            self.state.original_request_body.len()
+        }
+    }
+
+    /// Lazy one-shot request-body compression at write time. Re-seats
+    /// `state.request_body` (the send cursor) to the compressed bytes;
+    /// `state.original_request_body` stays as the original uncompressed slice
+    /// so redirects/retries can re-compress from it. When `into_shared` and
+    /// the bound fits, the cursor borrows `LibdeflateState::shared_buffer` —
+    /// callers must [`spill_compressed_body`] before returning to the event
+    /// loop with bytes left to send. Idempotent per attempt via
+    /// `state.flags.body_compressed`.
+    ///
+    /// [`spill_compressed_body`]: Self::spill_compressed_body
+    pub fn compress_body_for_send(&mut self, into_shared: bool) -> Result<(), bun_core::Error> {
+        let Some(opt) = self.compress else {
+            return Ok(());
+        };
+        if self.state.flags.body_compressed {
+            return Ok(());
+        }
+        let HTTPRequestBody::Bytes(input) = self.state.original_request_body else {
+            return Ok(());
+        };
+        if input.is_empty() {
+            return Ok(());
+        }
+
+        let deflater = http_thread().deflater();
+        let out =
+            compress_body::compress_into(deflater, input, &opt, &mut self.compressed_request_body)?;
+        let slice: &[u8] = match out {
+            compress_body::CompressOutput::Shared(n) if into_shared => &deflater.shared_buffer[..n],
+            compress_body::CompressOutput::Shared(n) => {
+                self.compressed_request_body
+                    .extend_from_slice(&deflater.shared_buffer[..n]);
+                self.compressed_request_body.as_slice()
+            }
+            compress_body::CompressOutput::Spilled => self.compressed_request_body.as_slice(),
+        };
+        self.compressed_body_len = slice.len();
+        // SAFETY: `slice` borrows either `LibdeflateState::shared_buffer`
+        // (HTTP-thread singleton, valid for the current synchronous callback —
+        // caller spills before yielding) or `self.compressed_request_body`
+        // (lives on `self`, only mutated by this function via `clear()` on the
+        // next attempt after `state.reset()`). `state.request_body` is a
+        // `RawSlice` cursor; this is the same erasure pattern
+        // `InternalState::init` uses for `original_request_body`.
+        self.state.request_body =
+            bun_ptr::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(slice) });
+        self.state.flags.body_compressed = true;
+        Ok(())
+    }
+
+    /// Copy any unsent compressed bytes still borrowing `shared_buffer` into
+    /// `compressed_request_body` and re-seat the cursor. No-op when the cursor
+    /// already points at the Vec (or is empty).
+    fn spill_compressed_body(&mut self) {
+        if !self.state.flags.body_compressed
+            || !self.compressed_request_body.is_empty()
+            || self.state.request_body.is_empty()
+        {
+            return;
+        }
+        self.compressed_request_body
+            .extend_from_slice(self.state.request_body.slice());
+        // SAFETY: `compressed_request_body` lives on `self`; same erasure as
+        // `compress_body_for_send`.
+        self.state.request_body = bun_ptr::RawSlice::new(unsafe {
+            &*core::ptr::from_ref::<[u8]>(self.compressed_request_body.as_slice())
+        });
+    }
+
     fn estimated_request_header_byte_length(&self) -> usize {
         let sliced = self.header_entries.slice();
         let mut count: usize = 0;
@@ -2591,6 +2701,8 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         socket: HttpSocket<IS_SSL>,
     ) -> Result<InitialRequestPayloadResult, bun_core::Error> {
+        self.compress_body_for_send(true)?;
+
         let mut request_body_buffer = self.get_request_body_send_buffer();
         // request_body_buffer drops at scope exit (was `defer .deinit()`)
         let mut temporary_send_buffer = request_body_buffer.to_array_list();
@@ -2598,7 +2710,7 @@ impl<'a> HTTPClient<'a> {
 
         let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
 
-        let request = self.build_request(self.state.original_request_body.len());
+        let request = self.build_request(self.body_len_for_send());
 
         if self.http_proxy.is_some() {
             if self.url.is_https() {
@@ -2628,14 +2740,21 @@ impl<'a> HTTPClient<'a> {
         }
 
         let to_send = &temporary_send_buffer[self.state.request_sent_len..];
-        if cfg!(debug_assertions) {
-            debug_assert!(!socket.is_shutdown());
-            debug_assert!(!socket.is_closed());
+        // The socket can be dead here: on_handshake → on_writable runs while
+        // draining buffered TLS bytes, and a write on the outer connection in
+        // proxy.on_writable (or a close fired from the SSL wrapper's flush)
+        // can mark the socket closed/shut down before we reach this point.
+        // Writing to it would return 0 and the request would hang at
+        // Headers forever. Surface ConnectionClosed so the caller's
+        // close_and_fail runs.
+        if socket.is_closed() || socket.is_shutdown() {
+            return Err(err!(ConnectionClosed));
         }
         let amount = write_to_socket::<IS_SSL>(socket, to_send)?;
         if IS_FIRST_CALL {
             if amount == 0 {
                 // don't worry about it
+                self.spill_compressed_body();
                 return Ok(InitialRequestPayloadResult {
                     has_sent_headers: self.state.request_sent_len >= headers_len,
                     has_sent_body: false,
@@ -2670,6 +2789,8 @@ impl<'a> HTTPClient<'a> {
         } else {
             false
         };
+
+        self.spill_compressed_body();
 
         Ok(InitialRequestPayloadResult {
             has_sent_headers,
@@ -2996,10 +3117,16 @@ impl<'a> HTTPClient<'a> {
                     // `proxy_tunnel::raw_as_mut` INVARIANT).
                     let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     self.set_timeout(&socket);
+                    // Proxy-tunnel writes can be partial across event-loop ticks
+                    // — compress straight into the Vec.
+                    if let Err(e) = self.compress_body_for_send(false) {
+                        self.close_and_fail::<IS_SSL>(e, socket);
+                        return;
+                    }
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
                     let writer = &mut temporary_send_buffer;
 
-                    let request = self.build_request(self.request_body().len());
+                    let request = self.build_request(self.body_len_for_send());
                     if write_request(writer, &request).is_err() {
                         self.close_and_fail::<IS_SSL>(err!(OutOfMemory), socket);
                         return;
@@ -3016,9 +3143,15 @@ impl<'a> HTTPClient<'a> {
                     }
 
                     let to_send = &temporary_send_buffer[self.state.request_sent_len..];
-                    if cfg!(debug_assertions) {
-                        debug_assert!(!socket.is_shutdown());
-                        debug_assert!(!socket.is_closed());
+                    // Same reasoning as send_initial_request_payload: the
+                    // inner TLS handshake can complete from buffered bytes
+                    // after the outer proxy socket is already gone (or
+                    // proxy.on_writable above marked it dead). Writing into
+                    // the tunnel would succeed at the SSL layer and buffer
+                    // forever on a dead outer socket.
+                    if socket.is_closed() || socket.is_shutdown() {
+                        self.close_and_fail::<IS_SSL>(err!(ConnectionClosed), socket);
+                        return;
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
                     let Ok(amount) = ProxyTunnel::write(proxy, to_send) else {

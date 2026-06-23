@@ -34,6 +34,31 @@ bool Value::IsUndefined() const
     return localToJSValue().isUndefined();
 }
 
+// The QuickIs* functions are V8_INLINE with out-of-class bodies in
+// v8-value.h. MSVC debug builds (/Ob0) import such members of a dllimport
+// class instead of emitting them, so addons compiled --debug on Windows
+// need them as real exports. Semantically they are the corresponding Is*
+// checks (the "quick" part only matters for real V8's object layout).
+bool Value::QuickIsUndefined() const
+{
+    return localToJSValue().isUndefined();
+}
+
+bool Value::QuickIsNull() const
+{
+    return localToJSValue().isNull();
+}
+
+bool Value::QuickIsNullOrUndefined() const
+{
+    return localToJSValue().isUndefinedOrNull();
+}
+
+bool Value::QuickIsString() const
+{
+    return localToJSValue().isString();
+}
+
 bool Value::IsNull() const
 {
     return localToJSValue().isNull();

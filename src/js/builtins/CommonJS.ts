@@ -15,7 +15,26 @@ export function require(this: JSCommonJSModule, _: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
+export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] }) {
+  // Node wraps Module._load in the "module.require" tracing channel
+  // (wrapModuleLoad). The channel only exists once node:diagnostics_channel
+  // has been loaded, so a process that never loads it skips this entirely.
+  const onRequire = require("internal/require_tracing").channel;
+  if (onRequire !== undefined && onRequire.hasSubscribers) {
+    return onRequire.traceSync(
+      $overridableRequireImpl,
+      { __proto__: null, parentFilename: this.filename, id: originalId },
+      this,
+      originalId,
+      options,
+    );
+  }
+  return $overridableRequireImpl.$apply(this, arguments);
+}
+
+$overriddenName = "require";
+$visibility = "Private";
+export function overridableRequireImpl(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
   if (id.startsWith("node:")) {
     if (id !== originalId) {

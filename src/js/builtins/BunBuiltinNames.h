@@ -146,6 +146,7 @@ using namespace JSC;
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
+    macro(overridableRequireImpl) \
     macro(ownerReadableStream) \
     macro(parse) \
     macro(partitioned) \

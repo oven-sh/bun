@@ -654,6 +654,11 @@ function tracingChannel(nameOrChannels) {
   return new TracingChannel(nameOrChannels);
 }
 
+// The CommonJS require path cannot afford to load this module just to discover
+// that nobody subscribed, so hand it the "module.require" tracing channel once
+// this module is loaded (in Node the CJS loader owns this channel instead).
+require("internal/require_tracing").channel = tracingChannel("module.require");
+
 export default {
   channel,
   hasSubscribers,

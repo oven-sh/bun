@@ -713,9 +713,8 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
 
 void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
 {
-    auto& vm = state.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
+    // No ThrowScope here, like encrypt(): a JS exception thrown while normalizing the algorithm
+    // parameters is reported through the rejected promise and propagates to the binding layer.
     addAuthenticatedEncryptionWarningIfNecessary(key.algorithmIdentifier());
 
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Decrypt);

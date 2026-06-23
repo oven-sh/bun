@@ -13703,7 +13703,7 @@ test("process survives the reconnect backoff window and gets notifications after
 test("close() during a listen handshake aborts it instead of leaving the socket ref'd", async () => {
   // Accepts the TCP connection but never writes the AuthenticationOk, so
   // the PG handshake never completes and onConnected never fires.
-  const { port, server, accepted } = await neverAnsweringServer();
+  const { port, server } = await neverAnsweringServer();
   try {
     await using proc = Bun.spawn({
       cmd: [
@@ -13748,13 +13748,60 @@ test("close() during a listen handshake aborts it instead of leaving the socket 
     // the process open past the spawn timeout.
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);
-    // The server saw the connection and then saw it close (the child
-    // aborted the handshake on sql.close()).
-    await accepted;
+    // The server's accept is not awaited here: on fast release builds the
+    // child can close the native handle before the kernel completes the
+    // TCP handshake, so the node:net server may never see the connection.
+    // The child exiting 0 without being SIGKILLed is the property under
+    // test.
   } finally {
     server.close();
   }
 }, 30_000);
+
+// The handshake-abort path above (aborting #listenConnectingHandle from
+// #closeListen on sql.close()) must NOT apply to #closeListenConnectionIfIdle
+// (the last-subscription-removed path from unlisten): an in-flight listen()
+// IIFE is awaiting that handshake via #listenConnectPromise and expects to
+// resolve as a no-op once it sees the channel is gone; aborting the
+// handshake rejects the IIFE and makes listen() throw
+// ERR_POSTGRES_CONNECTION_CLOSED instead. Mock sibling of the docker-gated
+// "unlisten racing an in-flight listen resolves cleanly and skips onlisten".
+test("unlisten of the only channel before the handshake completes lets the raced listen() resolve", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  let onlistenFired = false;
+  // First listen on this adapter: the handshake starts here. Not awaited.
+  const listenP = db.listen(
+    "first_raced",
+    () => {},
+    () => {
+      onlistenFired = true;
+    },
+  );
+  // Same-tick unlisten drains #listenChannels to 0 before the handshake
+  // completes; #closeListenConnectionIfIdle runs with #listenConnection
+  // still null. The handshake must be left to complete so the IIFE can
+  // see the channel is gone and resolve cleanly.
+  await db.unlisten("first_raced");
+
+  const sub = await listenP;
+  expect(onlistenFired).toBe(false);
+  expect(typeof sub.unlisten).toBe("function");
+
+  // The channel is still usable by a fresh subscription afterwards.
+  const { promise: got, resolve: resolveGot } = Promise.withResolvers<string>();
+  await db.listen("first_raced", p => resolveGot(p));
+  mock.notify("first_raced", "fresh");
+  expect(await got).toBe("fresh");
+
+  await db.unlisten("first_raced");
+});
 
 // The scoped handles returned by reserve() and begin() inherit
 // listen/unlisten/notify from SQL in the type declarations, so the runtime

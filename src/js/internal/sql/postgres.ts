@@ -689,13 +689,18 @@ class PostgresAdapter
     ).then(
       handle => {
         // The native handle is available before the handshake completes.
-        // Store it so #closeListen can abort a mid-handshake connect instead
-        // of leaving the socket ref'd until the handshake finishes or the
-        // connectionTimeout fires. onConnected/onClose clear it; if either
-        // has already fired (fast loopback) or the adapter is already gone,
-        // there is nothing to store.
+        // Store it so #closeListen (from sql.close()) can abort a
+        // mid-handshake connect instead of leaving the socket ref'd until
+        // the handshake finishes or connectionTimeout fires.
+        // onConnected/onClose clear it; if either has already fired (fast
+        // loopback) or the adapter is already closed, there is nothing to
+        // store. Do NOT close the handle on #listenChannels.size === 0
+        // here: an in-flight listen() IIFE is awaiting this same handshake
+        // via #listenConnectPromise and will close the connection itself
+        // once it sees the channel is gone; aborting here would make that
+        // listen() reject instead of resolving as a no-op.
         if (!handle || connected) return;
-        if (this.closed || this.#listenChannels.size === 0) {
+        if (this.closed) {
           try {
             handle.close();
           } catch {}
@@ -1079,19 +1084,18 @@ class PostgresAdapter
     }
     const conn = this.#listenConnection;
     this.#listenConnection = null;
-    const connecting = this.#listenConnectingHandle;
-    this.#listenConnectingHandle = null;
     this.#listenRegisteredChannels.clear();
     if (conn) {
       try {
         conn.close();
       } catch {}
     }
-    if (connecting && connecting !== conn) {
-      try {
-        connecting.close();
-      } catch {}
-    }
+    // Intentionally NOT aborting #listenConnectingHandle here: an in-flight
+    // listen() IIFE may be awaiting that handshake via #listenConnectPromise
+    // and expects to resolve as a no-op (its post-connect channel check then
+    // closes the live connection). Aborting the handshake rejects the IIFE
+    // and makes listen() throw instead. #closeListen (from sql.close()) is
+    // the only path that aborts a mid-handshake connect.
   }
 }
 

@@ -1,11 +1,10 @@
 // Must be first
-// OHOS: Highway's SVE/SVE2 targets aren't fully compatible with the
-// Cortex-A53 codegen and would produce empty dispatch entries. Restrict
-// to NEON (and its sub-variants) which is always available on aarch64.
-// TODO(ohos): remove this restriction when highway_strings.cpp has proper
-// SVE/SVE2 implementations (track upstream: bun#31553).
+// OHOS: Highway detects SVE support from compiler predefined macros even
+// with -march=armv8-a. Restrict to NEON-only to exclude SVE/SVE2 targets
+// which highway_strings.cpp doesn't fully implement.
+// TODO(ohos): remove when upstream adds SVE paths (track: bun#31553).
 #if defined(__OHOS__)
-#define HWY_TARGETS (HWY_NEON | HWY_NEON_BF16)
+#define HWY_TARGETS (HWY_NEON)
 #endif
 #include "root.h"
 #undef HWY_TARGET_INCLUDE
@@ -37,12 +36,16 @@ using D8 = hn::ScalableTag<uint8_t>;
 size_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
+#if defined(__OHOS__)
+    // memchr avoids find-inl.h toggle guard issues when Highway is restricted to
+    // a single HWY target.
+    auto* found = static_cast<const uint8_t*>(memchr(haystack, needle, haystack_len));
+    return found ? static_cast<size_t>(found - haystack) : haystack_len;
+#else
     D8 d;
-    // Use the Find function from find-inl.h which handles both vectorized and scalar cases
     const size_t pos = hn::Find<D8>(d, needle, haystack, haystack_len);
-
-    // Convert to int64_t and return -1 if not found
     return (pos < haystack_len) ? pos : haystack_len;
+#endif
 }
 
 // --- Implementation Details ---

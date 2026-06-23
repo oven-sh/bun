@@ -174,10 +174,12 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     }
   });
 
-  // Chunked transfer disables the libdeflate one-shot fast path, so the body
-  // is fed through the streaming Decompressor one 17-byte chunk at a time.
-  // Runs twice per encoding so the decoder's persistent state is exercised
-  // across both first-chunk init and subsequent re-seating.
+  // The subprocess reads via `res.body` (ReadableStream) so the
+  // ResponseBodyStreaming signal is set, which makes the chunked-encoding
+  // handler call `decompress_chunk` per on_data instead of buffering the
+  // whole body first. Server writes yield to the event loop between chunks
+  // so they arrive in separate TCP segments / on_data callbacks, driving
+  // the decoder across multiple calls.
   describe.each(["gzip", "deflate", "br", "zstd"] as const)(
     "streaming %s decompression over multiple chunks",
     encoding => {
@@ -189,6 +191,7 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
         const compress = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync, zstd: zstdCompressSync };
         const compressed = compress[encoding](expected);
         const server = createNetServer(socket => {
+          socket.setNoDelay(true);
           socket.write(
             "HTTP/1.1 200 OK\r\n" +
               `Content-Encoding: ${encoding}\r\n` +
@@ -196,13 +199,16 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
               "Content-Type: application/json\r\n" +
               "Connection: close\r\n\r\n",
           );
-          for (let i = 0; i < compressed.length; i += 17) {
-            const chunk = compressed.subarray(i, i + 17);
-            socket.write(chunk.length.toString(16) + "\r\n");
-            socket.write(chunk);
-            socket.write("\r\n");
-          }
-          socket.end("0\r\n\r\n");
+          (async () => {
+            for (let i = 0; i < compressed.length; i += 17) {
+              const chunk = compressed.subarray(i, i + 17);
+              socket.write(chunk.length.toString(16) + "\r\n");
+              socket.write(chunk);
+              socket.write("\r\n");
+              await new Promise(r => setImmediate(r));
+            }
+            socket.end("0\r\n\r\n");
+          })().catch(() => socket.destroy());
         });
         await once(server.listen(0), "listening");
         try {
@@ -213,7 +219,9 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
               "-e",
               `const res = await fetch(process.argv[1]);
                if (res.status !== 200) throw new Error("status " + res.status);
-               process.stdout.write(await res.text());`,
+               const chunks = [];
+               for await (const c of res.body) chunks.push(c);
+               process.stdout.write(Buffer.concat(chunks).toString("utf8"));`,
               `http://127.0.0.1:${port}/`,
             ],
             env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },

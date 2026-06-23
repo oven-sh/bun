@@ -1359,9 +1359,8 @@ fn step(
     let rc = unsafe { op(&raw mut *strm, flush) };
 
     let produced = out_len - strm.avail_out as usize;
-    // SAFETY: zlib has initialized `produced` bytes at the start of spare;
-    // new len is within capacity.
-    unsafe { out.set_len(out.len() + produced) };
+    // SAFETY: zlib has initialized `produced` bytes at the start of spare.
+    unsafe { bun_core::vec::commit_spare(out, produced) };
     let consumed = in_len - strm.avail_in as usize;
     (consumed, rc)
 }

@@ -490,6 +490,49 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
         raw.push((va, 0, p.name.to_string().into_owned()));
     }
 
+    // ---- DBI section contributions ----
+    // One record per (output section, source object) pair: "module M contributed
+    // bytes [offset, offset+size) of section S". This is the linker-map data in
+    // structured form — it tells you which .obj/.lib every byte came from, even
+    // when that .obj shipped no per-function symbols (stripped CRT, Rust
+    // staticlib std helpers that LTO anonymized).
+    //
+    // Collected here (before synthesizing zero-size symbol ends) so a
+    // size-less S_PUB32 asm label can be clamped to its own .obj's
+    // contribution boundary below. Otherwise a label like `llint_entry`
+    // (hand-written asm, no PROC/.ENDP frame) extends to the next *named*
+    // symbol, which is whatever the linker happened to place after
+    // LowLevelInterpreter.obj — and absorbs that .obj's instructions.
+    let mut contrib_ranges: Vec<(u64, u64, usize)> = Vec::new();
+    {
+        let mut contribs = dbi
+            .section_contributions()
+            .map_err(|e| format!("pdb section_contributions: {e}"))?;
+        while let Some(c) = contribs
+            .next()
+            .map_err(|e| format!("pdb contrib iter: {e}"))?
+        {
+            let Some(rva) = c.offset.to_rva(&address_map) else {
+                continue;
+            };
+            let begin = image_base + u64::from(rva.0);
+            let end = begin + u64::from(c.size);
+            if c.size == 0 || !in_text(begin) {
+                continue;
+            }
+            contrib_ranges.push((begin, end, c.module));
+        }
+    }
+    contrib_ranges.sort_by_key(|&(b, _, _)| b);
+    let contrib_end_for = |addr: u64| -> u64 {
+        let i = contrib_ranges.partition_point(|&(b, _, _)| b <= addr);
+        if i == 0 {
+            return u64::MAX;
+        }
+        let (b, e, _) = contrib_ranges[i - 1];
+        if addr >= b && addr < e { e } else { u64::MAX }
+    };
+
     // Finalize the PDB-named symbols FIRST, without .pdata entries in the mix.
     // Zero-size S_PUB32 markers for hand-written asm need their synthetic end
     // to reach the next *named* symbol. A .pdata entry nested inside such a
@@ -514,20 +557,17 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
                 .copied()
                 .find(|&e| e > addr)
                 .unwrap_or(u64::MAX);
-            next_sym.min(sec_end)
+            // Clamp to the .obj contribution containing this label so a
+            // size-less asm symbol never spills into the neighbouring .obj.
+            let contrib_end = contrib_end_for(addr);
+            next_sym.min(sec_end).min(contrib_end)
         };
         if end > addr {
             syms.push(Sym { addr, end, name });
         }
     }
 
-    // ---- Pass 3: DBI section contributions — ONLY where nothing above reaches ----
-    // One record per (output section, source object) pair: "module M contributed
-    // bytes [offset, offset+size) of section S". This is the linker-map data in
-    // structured form — it tells you which .obj/.lib every byte came from, even
-    // when that .obj shipped no per-function symbols (stripped CRT, Rust
-    // staticlib std helpers that LTO anonymized).
-    //
+    // ---- Pass 3: <lib:...> gap-filling from section contributions ----
     // Attribution is by library basename: <lib:foo.lib>. That name is stable
     // across link reorderings and unrelated code changes — it only moves if
     // the archive itself gets renamed.
@@ -539,21 +579,7 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
     // on the sorted pass-1/2 table. Pushing directly into `syms` mid-iteration
     // would break the binary search invariant.
     let mut gap_fillers: Vec<Sym> = Vec::new();
-    let mut contribs = dbi
-        .section_contributions()
-        .map_err(|e| format!("pdb section_contributions: {e}"))?;
-    while let Some(c) = contribs
-        .next()
-        .map_err(|e| format!("pdb contrib iter: {e}"))?
-    {
-        let Some(rva) = c.offset.to_rva(&address_map) else {
-            continue;
-        };
-        let begin = image_base + u64::from(rva.0);
-        let end = begin + u64::from(c.size);
-        if c.size == 0 || !in_text(begin) {
-            continue;
-        }
+    for &(begin, end, module) in &contrib_ranges {
         // Already covered by a named symbol? symbol_for() is the same lookup
         // the scan loop uses, so this is exactly "would this address get a
         // real name or <no-symbol>".
@@ -561,7 +587,7 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
             continue;
         }
         let lib = module_names
-            .get(c.module)
+            .get(module)
             .map(String::as_str)
             .filter(|s| !s.is_empty())
             .unwrap_or("unknown");

@@ -321,10 +321,7 @@ pub use bun_bunfig::bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 
-// ─── per-subcommand bodies (un-gated for `Command::start` dispatch) ──────────
-// Heavy bodies inside re-gate on whatever
-// lower-tier crate surface they still need; the dispatch arm just calls
-// `<Mod>Command::exec(ctx)`.
+// ─── per-subcommand bodies ───────────────────────────────────────────────────
 #[path = "build_command.rs"]
 pub mod build_command;
 #[path = "bunx_command.rs"]

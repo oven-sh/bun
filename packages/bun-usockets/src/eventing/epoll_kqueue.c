@@ -142,7 +142,7 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
         } while (ret == -EINTR);
 
-        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES)) {
+        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES && ret != -EFAULT)) {
             return ret;
         }
 

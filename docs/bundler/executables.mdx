@@ -888,6 +888,20 @@ export default {
 
 This is honestly a workaround, and we expect to improve this in the future with a more direct API.
 
+### Detecting standalone mode at runtime
+
+Use `Bun.isStandaloneExecutable` to check whether the current process is running from a compiled binary:
+
+```ts index.ts icon="/icons/typescript.svg"
+if (Bun.isStandaloneExecutable) {
+  // Running from `bun build --compile` output
+} else {
+  // Running via `bun <file>` or as a library
+}
+```
+
+Unlike `Bun.embeddedFiles.length > 0`, this check does not allocate `Blob` objects for each embedded file, so it is safe to call at startup in binaries that embed large assets.
+
 ### Listing embedded files
 
 `Bun.embeddedFiles` gives you access to all embedded files as `Blob` objects:

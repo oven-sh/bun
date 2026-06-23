@@ -72,6 +72,21 @@ unsafe extern "C" {
     fn highway_xxhash64_reset(state: *mut u8, seed: u64);
     fn highway_xxhash64_update(state: *mut u8, input: *const u8, len: usize);
     fn highway_xxhash64_digest(state: *const u8) -> u64;
+
+    fn highway_parse_mappings(
+        bytes: *const u8,
+        len: usize,
+        out_generated: *mut i32,
+        out_original: *mut i32,
+        out_src_idx: *mut i32,
+        out_name_idx: *mut i32,
+        cap: usize,
+        sources_count: i32,
+        state: *mut i32,
+        err_at: *mut usize,
+    ) -> usize;
+
+    fn highway_count_mapping_delims(bytes: *const u8, len: usize) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -535,5 +550,98 @@ impl XxHash64State {
     pub fn digest(&self) -> u64 {
         // SAFETY: `self._storage` is a valid XXH64State; digest only reads it.
         unsafe { highway_xxhash64_digest(self._storage.as_ptr().cast()) }
+    }
+}
+
+/// In/out accumulator state for [`parse_mappings`]. Layout must match the
+/// `kSt*` indices in `highway_sourcemap.cpp`.
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct ParseMappingsState {
+    pub gen_line: i32,
+    pub gen_col: i32,
+    pub orig_line: i32,
+    pub orig_col: i32,
+    pub src_idx: i32,
+    pub name_idx: i32,
+    pub needs_sort: i32,
+    pub has_names: i32,
+    pub fast_blocks: i32,
+    pub slow_blocks: i32,
+}
+
+/// Count of `,` and `;` bytes in `bytes`. `count + 1` is an upper bound on
+/// the number of segments (and therefore the number of output rows) for a
+/// source-map `mappings` string.
+#[inline(always)]
+pub fn count_mapping_delims(bytes: &[u8]) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+    // SAFETY: `bytes.ptr/len` are a valid readable range.
+    unsafe { highway_count_mapping_delims(bytes.as_ptr(), bytes.len()) }
+}
+
+/// Raw output column pointers for [`parse_mappings`]. Each points to `cap`
+/// writable rows: `generated`/`original` as `[line, column]` i32 pairs
+/// (byte-compatible with `bun_sourcemap::LineColumnOffset`, which is
+/// `repr(C)`); `src_idx`/`name_idx` as one i32 per row. `name_idx` may be
+/// null when the caller doesn't store names.
+pub struct ParseMappingsOut {
+    pub generated: *mut [i32; 2],
+    pub original: *mut [i32; 2],
+    pub src_idx: *mut i32,
+    pub name_idx: *mut i32,
+    pub cap: usize,
+}
+
+/// SIMD decode of a source-map `mappings` string. Writes one row per 4- or
+/// 5-field segment (accumulated absolute values) into `out`, up to
+/// `out.cap`. On return, `err_at` is the byte offset in `bytes` where the
+/// caller should resume with the scalar decoder (== len when the whole
+/// input was consumed), and `state` holds the accumulator at that offset.
+/// Returns the number of rows written.
+///
+/// Any anomaly (invalid byte, unsupported field count, out-of-range value,
+/// segment longer than one SIMD block, output capacity exhausted, < one
+/// block of input remaining) ends the SIMD pass at the start of the
+/// offending segment; the scalar decoder owns all error reporting, so error
+/// messages and byte offsets are unchanged from a pure-scalar parse.
+///
+/// # Safety
+/// `out.generated`, `out.original` and `out.src_idx` must each be valid
+/// for `out.cap` writes of their element type; `out.name_idx` likewise when
+/// non-null. The four ranges must not overlap each other or `bytes`.
+#[inline]
+pub unsafe fn parse_mappings(
+    bytes: &[u8],
+    out: &ParseMappingsOut,
+    sources_count: i32,
+    state: &mut ParseMappingsState,
+    err_at: &mut usize,
+) -> usize {
+    if bytes.is_empty() || out.cap == 0 {
+        *err_at = 0;
+        return 0;
+    }
+
+    // SAFETY: caller contract covers the output pointers; `bytes` is a
+    // valid readable range; `state` is a `#[repr(C)]` struct of 10
+    // contiguous i32s matching the kernel's `kSt*` indices; `err_at` is a
+    // valid write target. The kernel writes at most `out.cap` rows and
+    // never reads past `bytes.len()`.
+    unsafe {
+        highway_parse_mappings(
+            bytes.as_ptr(),
+            bytes.len(),
+            out.generated.cast::<i32>(),
+            out.original.cast::<i32>(),
+            out.src_idx,
+            out.name_idx,
+            out.cap,
+            sources_count,
+            core::ptr::from_mut::<ParseMappingsState>(state).cast::<i32>(),
+            err_at,
+        )
     }
 }

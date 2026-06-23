@@ -879,20 +879,28 @@ export function assignStreamIntoResumableSink(stream, sink) {
   }
 }
 
+// Bound (via `this`) to readStreamIntoSink's per-request state object so the
+// onClose callback the native sink stores in m_onClose holds only that small
+// state, not the whole readStreamIntoSink activation.
+export function readStreamIntoSinkOnClose(this: { didThrow: boolean; didClose: boolean }, stream, reason) {
+  if (!this.didThrow && !this.didClose && stream && stream.$state !== $streamClosed) {
+    $readableStreamCancel(stream, reason);
+  }
+  this.didClose = true;
+}
+
 export async function readStreamIntoSink(stream: ReadableStream, sink, isNative) {
-  var didClose = false;
-  var didThrow = false;
   var started = false;
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
+
+  // Mutable state onSinkClose needs; bound so it does not capture this
+  // function's scope.
+  var state = { __proto__: null, didThrow: false, didClose: false };
+  var onSinkClose = isNative ? $readStreamIntoSinkOnClose.bind(state) : undefined;
 
   try {
     var reader = stream.getReader();
     var many = reader.readMany();
-    function onSinkClose(stream, reason) {
-      if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
-        $readableStreamCancel(stream, reason);
-      }
-    }
 
     if (many && $isPromise(many)) {
       // Some time may pass before this Promise is fulfilled. The sink may
@@ -906,7 +914,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       many = await many;
     }
     if (many.done) {
-      didClose = true;
+      state.didClose = true;
       return sink.end();
     }
 
@@ -916,26 +924,41 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
     }
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
-      sink.write(values[i]);
+      // The HTTP response sink returns a negative number when the socket is
+      // backed up; await flush(true) (the pending-flush promise) so we stop
+      // pulling until it drains. FileSink may return a Promise on every write
+      // (Windows pipes are always async); awaiting that here would serialize
+      // every chunk behind a uv_write round-trip, so the negative-number check
+      // intentionally lets those fall through.
+      if (sink.write(values[i]) < 0) {
+        await sink.flush(true);
+        // The sink's close path resolves the same promise; stop writing into a
+        // dead sink.
+        if (state.didClose) break;
+      }
     }
+    values = many = undefined;
 
     var streamState = $getByIdDirectPrivate(stream, "state");
-    if (streamState === $streamClosed) {
-      didClose = true;
+    if (state.didClose || streamState === $streamClosed) {
+      state.didClose = true;
       return sink.end();
     }
 
     while (true) {
       var { value, done } = await reader.read();
       if (done) {
-        didClose = true;
+        state.didClose = true;
         return sink.end();
       }
 
-      sink.write(value);
+      if (sink.write(value) < 0) {
+        await sink.flush(true);
+        if (state.didClose) return sink.end();
+      }
     }
   } catch (e) {
-    didThrow = true;
+    state.didThrow = true;
 
     try {
       reader = undefined;
@@ -945,8 +968,8 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       }
     } catch {}
 
-    if (sink && !didClose) {
-      didClose = true;
+    if (sink && !state.didClose) {
+      state.didClose = true;
       try {
         sink.close(e);
       } catch (j) {
@@ -979,7 +1002,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         readableStreamController = undefined;
       }
 
-      if (stream && !didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
+      if (stream && !state.didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
         $readableStreamCloseIfPossible(stream);
       }
       stream = undefined;
@@ -999,9 +1022,11 @@ export function handleDirectStreamError(e) {
 
   this.error = this.flush = this.write = this.close = this.end = $onReadableStreamDirectControllerClosed;
 
-  if (typeof this.$underlyingSource.close === "function") {
+  const underlyingSource = this.$underlyingSource;
+  const underlyingClose = underlyingSource.close;
+  if (typeof underlyingClose === "function") {
     try {
-      this.$underlyingSource.close.$call(this.$underlyingSource, e);
+      underlyingClose.$call(underlyingSource, e);
     } catch {}
   }
 
@@ -1156,9 +1181,11 @@ export function onCloseDirectStream(reason) {
   if (!sink) return;
 
   $putByIdDirectPrivate(stream, "state", $streamClosing);
-  if (typeof this.$underlyingSource.close === "function") {
+  const underlyingSource = this.$underlyingSource;
+  const underlyingClose = underlyingSource.close;
+  if (typeof underlyingClose === "function") {
     try {
-      this.$underlyingSource.close.$call(this.$underlyingSource, reason);
+      underlyingClose.$call(underlyingSource, reason);
     } catch {}
   }
 
@@ -1640,9 +1667,10 @@ export function readableStreamDefaultControllerCancel(controller, reason) {
 
 export function readableStreamDefaultControllerPull(controller) {
   var queue = $getByIdDirectPrivate(controller, "queue");
-  if (queue.content.isNotEmpty()) {
+  const content = queue.content;
+  if (content.isNotEmpty()) {
     const chunk = $dequeueValue(queue);
-    if ($getByIdDirectPrivate(controller, "closeRequested") && queue.content.isEmpty()) {
+    if ($getByIdDirectPrivate(controller, "closeRequested") && content.isEmpty()) {
       $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
     } else $readableStreamDefaultControllerCallPullIfNeeded(controller);
 
@@ -1859,7 +1887,15 @@ export function readableStreamFromAsyncIterator(target, fn) {
         }
 
         if (!$isUndefinedOrNull(value)) {
-          controller.write(value);
+          // See readStreamIntoSink: the HTTP response sink returns a negative
+          // number when the socket is backed up; await the drain via
+          // flush(true). FileSink's Promise return is intentionally not
+          // awaited here.
+          if (controller.write(value) < 0) {
+            clearImmediate(immediateTask);
+            immediateTask = undefined;
+            await controller.flush(true);
+          }
         }
       }
     } catch (e) {

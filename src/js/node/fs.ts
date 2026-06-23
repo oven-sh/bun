@@ -231,8 +231,9 @@ var access = function access(path, mode, callback) {
     // fd = getValidatedFd(fd); DEFERRED TO NATIVE
     let offset = offsetOrOptions;
     let params: any = null;
-    if (arguments.length <= 4) {
-      if (arguments.length === 4) {
+    const argc = arguments.length;
+    if (argc <= 4) {
+      if (argc === 4) {
         // This is fs.read(fd, buffer, options, callback)
         // validateObject(params, 'options', kValidateObjectAllowNullable);
         if (typeof params !== "object" || $isArray(params)) {
@@ -240,7 +241,7 @@ var access = function access(path, mode, callback) {
         }
         callback = length;
         params = offsetOrOptions;
-      } else if (arguments.length === 3) {
+      } else if (argc === 3) {
         // This is fs.read(fd, bufferOrParams, callback)
         if (!types.isArrayBufferView(buffer)) {
           // fs.read(fd, bufferOrParams, callback)
@@ -672,8 +673,9 @@ const realpathSync: typeof import("node:fs").realpathSync =
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
         if (p instanceof URL) {
-          if (p.pathname.indexOf("%00") != -1) {
-            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
+          const pathname = p.pathname;
+          if (pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
           }
           p = Bun.fileURLToPath(p as URL);
         } else {
@@ -791,8 +793,9 @@ const realpath: typeof import("node:fs").realpath =
           }
         }
         if (p instanceof URL) {
-          if (p.pathname.indexOf("%00") != -1) {
-            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", p.pathname);
+          const pathname = p.pathname;
+          if (pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
           }
           p = Bun.fileURLToPath(p as URL);
         } else {
@@ -935,18 +938,11 @@ function cpSync(src, dest, options) {
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
-  if (
-    !options.filter &&
-    !options.dereference &&
-    !options.preserveTimestamps &&
-    !options.verbatimSymlinks &&
-    !options.mode &&
-    !options.errorOnExist &&
-    options.force
-  ) {
+  const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
+  if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = tryNativeFastPathSync(src, dest, options);
     if (ok) {
-      return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force, options.mode);
+      return fs.cpSync(src, dest, recursive, errorOnExist, force, mode);
     }
     return cpSyncFn(src, dest, options, checked);
   }

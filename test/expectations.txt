@@ -238,6 +238,13 @@ test/js/node/test/sequential/test-http2-settings-flood.js [ SKIP ] # hangs; skip
 [ ASAN ] test/js/node/test/parallel/test-http2-client-unescaped-path.js [ SKIP ] # ASan report under investigation
 [ ASAN ] test/js/node/test/parallel/test-http2-buffersize.js [ SKIP ] # ASan report under investigation
 
+# These node-api suites fail (spawned bun exits 1, no output) on the release-ASAN CI
+# runners; they pass on every other platform and on a local ASAN debug build. They only
+# started landing on the ASAN shards when the test list grew and shifted the shard
+# boundaries. https://github.com/oven-sh/bun/issues/32642
+[ ASAN ] test/napi/node-napi-tests/test/js-native-api/test_function/do.test.ts [ FAIL ] # exits 1 on the release-ASAN runners, see issue 32642
+[ ASAN ] test/napi/node-napi-tests/test/js-native-api/test_instance_data/do.test.ts [ FAIL ] # exits 1 on the release-ASAN runners, see issue 32642
+
 # The bun-specific http2 integration suites are being reconciled with the rewritten
 # (node-faithful) HTTP/2 engine: several of their expectations pin legacy-parser behaviors
 # that contradict node's (e.g. 'ping' events for PING ACKs, connection-error codes for

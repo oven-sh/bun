@@ -322,28 +322,31 @@ describe("AbortSignal.timeout through proxy", () => {
         server.listen(0, "127.0.0.1");
         await once(server, "listening");
         const originPort = (server.address() as net.AddressInfo).port;
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
-
-        let code: string;
-        const t0 = Date.now();
         try {
-          const res = await fetch(`${originTls ? "https" : "http"}://127.0.0.1:${originPort}/`, {
-            proxy: proxy.url,
-            keepalive: false,
-            tls: laxTls,
-            signal: AbortSignal.timeout(500),
-          });
-          await res.arrayBuffer().catch(() => {});
-          code = `resolved:${res.status}`;
-        } catch (e) {
-          code = errcode(e);
+          await using proxy = await createAdversarialProxy({ tls: proxyTls });
+
+          let code: string;
+          const t0 = Date.now();
+          try {
+            const res = await fetch(`${originTls ? "https" : "http"}://127.0.0.1:${originPort}/`, {
+              proxy: proxy.url,
+              keepalive: false,
+              tls: laxTls,
+              signal: AbortSignal.timeout(500),
+            });
+            await res.arrayBuffer().catch(() => {});
+            code = `resolved:${res.status}`;
+          } catch (e) {
+            code = errcode(e);
+          }
+          const elapsed = Date.now() - t0;
+          expect(code).toBe("TimeoutError");
+          // The 500ms timeout is honored (with generous slack for debug+ASAN
+          // builds), not the client's multi-second default idle timeout.
+          expect(elapsed).toBeLessThan(10_000);
+        } finally {
+          server.close();
         }
-        const elapsed = Date.now() - t0;
-        server.close();
-        expect(code).toBe("TimeoutError");
-        // The 500ms timeout is honored (with generous slack for debug+ASAN
-        // builds), not the client's multi-second default idle timeout.
-        expect(elapsed).toBeLessThan(10_000);
       },
       20_000,
     );

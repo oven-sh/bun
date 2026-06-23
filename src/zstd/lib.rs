@@ -241,7 +241,7 @@ pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: Option<i32>) -> Res
         return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(rc)) });
     }
     // SAFETY: zstd has initialized `rc` bytes at the start of spare.
-    unsafe { out.set_len(out.len() + rc) };
+    unsafe { bun_core::vec::commit_spare(out, rc) };
     Result::Success(rc)
 }
 

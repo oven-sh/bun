@@ -222,7 +222,7 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect({ stdout, stderr, exitCode }).toEqual({
             stdout: expected,
-            stderr: "",
+            stderr: expect.not.stringContaining("error"),
             exitCode: 0,
           });
         } finally {

@@ -1102,7 +1102,6 @@ impl<'a> Drop for ZlibCompressorArrayList<'a> {
 /// RAII deflate (compression) stream. `deflateEnd` on drop.
 pub struct DeflateEncoder {
     strm: Box<zStream_struct>,
-    ended: bool,
 }
 
 impl DeflateEncoder {
@@ -1114,7 +1113,6 @@ impl DeflateEncoder {
     ) -> Result<Self, ZlibError> {
         let mut this = Self {
             strm: Box::new(new_zstream()),
-            ended: false,
         };
         // SAFETY: strm is fully initialized; version/size match the linked zlib.
         let rc = unsafe {
@@ -1131,14 +1129,8 @@ impl DeflateEncoder {
         };
         match rc {
             ReturnCode::Ok => Ok(this),
-            ReturnCode::MemError => {
-                this.ended = true;
-                Err(ZlibError::OutOfMemory)
-            }
-            _ => {
-                this.ended = true;
-                Err(ZlibError::InvalidArgument)
-            }
+            ReturnCode::MemError => Err(ZlibError::OutOfMemory),
+            _ => Err(ZlibError::InvalidArgument),
         }
     }
 
@@ -1178,11 +1170,10 @@ impl DeflateEncoder {
 
 impl Drop for DeflateEncoder {
     fn drop(&mut self) {
-        if !self.ended {
-            // SAFETY: strm was initialized via deflateInit2_; freed once here.
-            unsafe { deflateEnd(&raw mut *self.strm) };
-            self.ended = true;
-        }
+        // SAFETY: strm was initialized via deflateInit2_ (or init failed and
+        // `internal_state` is null — `deflateEnd` on a null state is a
+        // defined no-op returning Z_STREAM_ERROR). Freed exactly once here.
+        unsafe { deflateEnd(&raw mut *self.strm) };
     }
 }
 
@@ -1229,7 +1220,11 @@ impl InflateDecoder {
 
     pub fn reset(&mut self) -> ReturnCode {
         // SAFETY: strm was initialized via inflateInit2_.
-        unsafe { inflateReset(&raw mut *self.strm) }
+        let rc = unsafe { inflateReset(&raw mut *self.strm) };
+        if rc == ReturnCode::Ok {
+            self.state = State::Uninitialized;
+        }
+        rc
     }
 
     /// One `inflate()` call writing into `out`'s spare capacity. Same
@@ -1311,10 +1306,11 @@ impl InflateDecoder {
 
 impl Drop for InflateDecoder {
     fn drop(&mut self) {
-        // SAFETY: strm was initialized via inflateInit2_ (the error branch in
-        // `new` skipped constructing `Self`); freed exactly once here.
-        // `state == End` only signals stream completion, not that the C state
-        // was already freed.
+        // SAFETY: strm was initialized via inflateInit2_ (or init failed and
+        // `internal_state` is null — `inflateEnd` on a null state is a
+        // defined no-op returning Z_STREAM_ERROR). Freed exactly once here.
+        // `state == End` only signals stream completion, not that the C
+        // state was already freed.
         unsafe { inflateEnd(&raw mut *self.strm) };
     }
 }

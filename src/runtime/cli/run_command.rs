@@ -1471,9 +1471,6 @@ impl Run {
         // ── hot-reloader enable ─────────────────────────────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                // Opt this run into keeping the watcher alive on `process.exit()`
-                // (the loop below recovers the VM); `bun test --watch` does not.
-                vm.watch_exit_keepalive = true;
                 // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {
@@ -1484,7 +1481,12 @@ impl Run {
                 }
             }
             cli::command::HotReload::Watch => {
-                // See the `Hot` arm above.
+                // Opt `--watch` into keeping the watcher alive on
+                // `process.exit()` (the loop below recovers the VM, and a file
+                // change re-execs the process). `--hot` re-evaluates in place,
+                // where process-exit state (e.g. the one-shot `process.on('exit')`
+                // dispatch) would persist across runs, so it is left unset and
+                // keeps exiting the process as before.
                 vm.watch_exit_keepalive = true;
                 // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
@@ -1508,7 +1510,7 @@ impl Run {
         }
 
         match vm.load_entry_point(entry) {
-            // `process.exit()` during evaluation (watch/hot) unwinds the run via
+            // `process.exit()` during evaluation (`--watch`) unwinds the run via
             // a JSC termination exception; skip the rejected-entry handling and
             // fall through to the watcher loop, which keeps the process alive.
             _ if vm.watch_exit_requested => {}
@@ -1575,7 +1577,7 @@ impl Run {
             loop {
                 while vm.is_event_loop_alive() {
                     vm.tick();
-                    // A watch/hot `process.exit()` during this tick raises a
+                    // A `--watch` `process.exit()` during this tick raises a
                     // termination exception; stop ticking before running more
                     // JS with it pending.
                     if vm.watch_exit_requested {

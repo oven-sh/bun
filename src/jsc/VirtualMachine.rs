@@ -292,21 +292,19 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
-    /// Set by the `bun run` watch/hot path ([`crate::hot_reloader`] install in
+    /// Set by `bun run --watch` ([`crate::hot_reloader`] install in
     /// `run_command`) to opt this VM into keeping the watcher alive when user
-    /// code calls `process.exit()`. The bare watcher (`bun test --watch`) does
-    /// NOT set this, because its run loop does not know how to recover from the
-    /// termination exception below, so `process.exit()` there keeps exiting the
-    /// process as before.
+    /// code calls `process.exit()`. Only `--watch` sets it: it re-execs the
+    /// process on the next change, so no process-exit state persists across
+    /// runs. `--hot` (in-process re-evaluation) and `bun test --watch` leave it
+    /// unset and keep exiting the process as before.
     pub watch_exit_keepalive: bool,
     /// Set when `process.exit()` is called on the main thread while
     /// `watch_exit_keepalive` is active. Instead of tearing the process down
     /// (which would kill the watcher), the exit raises a JSC termination
     /// exception to stop the current run and this flag keeps the event loop
-    /// quiet until the next reload, mirroring how an uncaught exception keeps
-    /// the watcher alive. Cleared at the start of [`VirtualMachine::reload`]
-    /// (the `--hot` path); the `--watch` path re-execs the process, which
-    /// resets it to `false`.
+    /// quiet until the watcher re-execs the process on the next file change,
+    /// mirroring how an uncaught exception keeps the watcher alive.
     pub watch_exit_requested: bool,
     pub entry_point_result: EntryPointResult,
 
@@ -1052,7 +1050,7 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
-        // A pending `process.exit()` in watch/hot mode ends the current run
+        // A pending `process.exit()` in `--watch` mode ends the current run
         // just like an uncaught exception does (`unhandled_error_counter`), so
         // the watcher loop falls through to waiting for the next file change.
         if self.watch_exit_requested {
@@ -1081,12 +1079,12 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
-    /// After a watch/hot-mode `process.exit()` has unwound the current run, the
-    /// JSC termination exception is still pending (it is sticky). Clear it so
-    /// the event loop can keep ticking while the watcher waits for the next
-    /// change. `watch_exit_requested` stays set so the loop treats the run as
-    /// finished; it is reset by [`VirtualMachine::reload`] on the next reload
-    /// (the `--watch` path re-execs the process instead).
+    /// After a `--watch` `process.exit()` has unwound the current run, the JSC
+    /// termination exception is still pending (it is sticky). Clear it so the
+    /// event loop can keep ticking while the watcher waits for the next change.
+    /// `watch_exit_requested` stays set so the loop treats the run as finished;
+    /// the watcher re-execs the process on the next file change, which resets
+    /// all of this.
     pub fn clear_watch_exit_termination(&mut self) {
         if self.watch_exit_requested {
             self.global().clear_termination_exception();
@@ -1432,14 +1430,24 @@ impl VirtualMachine {
         if self.is_handling_uncaught_exception {
             self.run_error_handler(err, None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
-            // `bun_runtime::node::process::exit` (main-thread `noreturn`).
+            // `bun_runtime::node::process::exit`, normally `noreturn` on the
+            // main thread.
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
+            // Under `--watch`, `process_exit` returns after raising a
+            // termination exception (it keeps the watcher alive). Let that
+            // unwind the run instead of panicking on the now-reachable path.
+            if self.watch_exit_requested {
+                return true;
+            }
             panic!("Uncaught exception while handling uncaught exception");
         }
         if self.exit_on_uncaught_exception {
             self.run_error_handler(err, None);
             // SAFETY: see above.
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+            if self.watch_exit_requested {
+                return true;
+            }
             panic!("made it past process.exit()");
         }
         self.is_handling_uncaught_exception = true;
@@ -1738,8 +1746,11 @@ pub struct RuntimeHooks {
     /// `ResolveMessage` arms in `Macro::Run::coerce`.
     pub body_mixin_get_blob:
         fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
-    /// `process.exit(global, code)`. Main-thread is `noreturn`; in a worker
-    /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
+    /// `process.exit(global, code)`. Main-thread is `noreturn`, except under
+    /// `bun run --watch` where it raises a termination exception and returns to
+    /// keep the watcher alive; in a worker it also returns. Callers that assume
+    /// `noreturn` (e.g. [`uncaught_exception`]) must re-check
+    /// `watch_exit_requested` after calling it. Lives in `bun_runtime::node`
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
@@ -3498,20 +3509,6 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
-        if self.watch_exit_requested {
-            // The previous run ended via `process.exit()` (`--hot`), which
-            // raised a termination exception and left the entry promise stuck
-            // pending. Clear that state so the re-evaluation below can run.
-            self.watch_exit_requested = false;
-            self.global().clear_termination_exception();
-            if self.pending_internal_promise_is_protected {
-                if let Some(p) = self.pending_internal_promise {
-                    JSValue::from_cell(p).unprotect();
-                }
-                self.pending_internal_promise_is_protected = false;
-            }
-            self.pending_internal_promise = None;
-        }
         if let Some(p) = self.pending_internal_promise {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {

@@ -48,9 +48,9 @@ afterEach(() => {
   watchee?.kill();
 });
 
-// process.exit() used to tear down the whole process in --watch/--hot mode,
-// killing the watcher itself. It should instead end the current run (like a
-// thrown error does) and keep the watcher waiting for the next change.
+// process.exit() used to tear down the whole process in --watch mode, killing
+// the watcher itself. It should instead end the current run (like a thrown
+// error does) and keep the watcher waiting for the next change.
 // https://github.com/oven-sh/bun/issues/32648
 const exitScenarios = {
   // process.exit() during top-level evaluation.
@@ -61,7 +61,7 @@ const exitScenarios = {
   "beforeExit handler": (n: number) => `console.log("MARK:${n}");\nprocess.on("beforeExit", () => process.exit(1));\n`,
 } as const;
 
-for (const mode of ["--watch", "--hot"] as const) {
+for (const mode of ["--watch"] as const) {
   for (const [scenario, fixture] of Object.entries(exitScenarios)) {
     test(`${mode}: process.exit() (${scenario}) keeps the watcher alive`, async () => {
       using dir = tempDir("watch-process-exit", { "index.ts": fixture(0) });

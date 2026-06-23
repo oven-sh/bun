@@ -1,5 +1,5 @@
 // Hardcoded module "node:diagnostics_channel"
-// Reference: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/diagnostics_channel.js
+// Reference: https://github.com/nodejs/node/blob/v26.3.0/lib/diagnostics_channel.js
 
 const { validateFunction } = require("internal/validators");
 
@@ -8,28 +8,43 @@ const SafeFinalizationRegistry = FinalizationRegistry;
 
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
+const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
-const SymbolHasInstance = Symbol.hasInstance;
-const PromiseResolve = Promise.$resolve.bind(Promise);
+const PromisePrototypeThen = Promise.prototype.then;
 const PromiseReject = Promise.$reject.bind(Promise);
-const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
+const SymbolDispose = Symbol.dispose;
+const SymbolHasInstance = Symbol.hasInstance;
 
-// TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
-class WeakReference<T extends WeakKey> extends WeakRef<T> {
+// Mirrors Node's native WeakReference (src/node_util.h): the target is held
+// strongly while the ref count is non-zero (an active subscription must keep
+// its channel alive), and only weakly once it drops back to zero.
+class WeakReference<T extends WeakKey> {
+  #weak: WeakRef<T>;
+  #strong: T | undefined = undefined;
   #refs = 0;
 
+  constructor(value: T) {
+    this.#weak = new WeakRef(value);
+  }
+
   get() {
-    return this.deref();
+    return this.#strong ?? this.#weak.deref();
   }
 
   incRef() {
-    return ++this.#refs;
+    this.#refs++;
+    if (this.#refs === 1) this.#strong = this.#weak.deref();
+    return this.#refs;
   }
 
   decRef() {
-    return --this.#refs;
+    this.#refs--;
+    if (this.#refs === 0) this.#strong = undefined;
+    return this.#refs;
   }
 }
 
@@ -37,7 +52,9 @@ class WeakReference<T extends WeakKey> extends WeakRef<T> {
 // Only GC can be used as a valid time to clean up the channels map.
 class WeakRefMap extends SafeMap {
   #finalizers = new SafeFinalizationRegistry(key => {
-    this.delete(key);
+    // Check that the key doesn't have any value before deleting, as the WeakRef for the key
+    // may have been replaced since finalization callbacks aren't synchronous with GC.
+    if (!this.has(key)) this.delete(key);
   });
 
   set(key, value) {
@@ -47,6 +64,10 @@ class WeakRefMap extends SafeMap {
 
   get(key) {
     return super.get(key)?.get();
+  }
+
+  has(key) {
+    return !!this.get(key);
   }
 
   incRef(key) {
@@ -73,22 +94,48 @@ function maybeMarkInactive(channel) {
   }
 }
 
-function defaultTransform(data) {
-  return data;
-}
+class RunStoresScope {
+  #stack;
 
-function wrapStoreRun(store, data, next, transform = defaultTransform) {
-  return () => {
-    let context;
+  constructor(activeChannel, data) {
+    const stack = new DisposableStack();
+    const stores = activeChannel._stores;
+
     try {
-      context = transform(data);
+      // Enter stores using withScope
+      if (stores) {
+        for (const entry of stores.entries()) {
+          const store = entry[0];
+          const transform = entry[1];
+
+          let newContext = data;
+          if (transform) {
+            try {
+              newContext = transform(data);
+            } catch (err) {
+              process.nextTick(() => reportError(err));
+              continue;
+            }
+          }
+
+          stack.use(store.withScope(newContext));
+        }
+      }
+
+      // Publish data
+      activeChannel.publish(data);
     } catch (err) {
-      process.nextTick(() => reportError(err));
-      return next();
+      stack.dispose();
+      throw err;
     }
 
-    return store.run(context, next);
-  };
+    // Transfer ownership of the stack
+    this.#stack = stack.move();
+  }
+
+  [SymbolDispose]() {
+    this.#stack[SymbolDispose]();
+  }
 }
 
 class ActiveChannel {
@@ -98,8 +145,8 @@ class ActiveChannel {
 
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
-
-    $arrayPush(this._subscribers, subscription);
+    this._subscribers = ArrayPrototypeSlice.$call(this._subscribers);
+    ArrayPrototypePush.$call(this._subscribers, subscription);
     channels.incRef(this.name);
   }
 
@@ -107,7 +154,10 @@ class ActiveChannel {
     const index = ArrayPrototypeIndexOf.$call(this._subscribers, subscription);
     if (index === -1) return false;
 
-    ArrayPrototypeSplice.$call(this._subscribers, index, 1);
+    const before = ArrayPrototypeSlice.$call(this._subscribers, 0, index);
+    const after = ArrayPrototypeSlice.$call(this._subscribers, index + 1);
+    this._subscribers = before;
+    ArrayPrototypePush.$apply(this._subscribers, after);
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
@@ -139,9 +189,10 @@ class ActiveChannel {
   }
 
   publish(data) {
-    for (let i = 0; i < (this._subscribers?.length || 0); i++) {
+    const subscribers = this._subscribers;
+    for (let i = 0; i < (subscribers?.length || 0); i++) {
       try {
-        const onMessage = this._subscribers[i];
+        const onMessage = subscribers[i];
         onMessage(data, this.name);
       } catch (err) {
         process.nextTick(() => reportError(err));
@@ -149,19 +200,17 @@ class ActiveChannel {
     }
   }
 
+  withStoreScope(data) {
+    return new RunStoresScope(this, data);
+  }
+
   runStores(data, fn, thisArg, ...args) {
-    let run = () => {
-      this.publish(data);
+    const scope = this.withStoreScope(data);
+    try {
       return fn.$apply(thisArg, args);
-    };
-
-    for (const entry of this._stores.entries()) {
-      const store = entry[0];
-      const transform = entry[1];
-      run = wrapStoreRun(store, data, run, transform);
+    } finally {
+      scope[SymbolDispose]();
     }
-
-    return run();
   }
 }
 
@@ -179,6 +228,11 @@ class Channel {
   }
 
   static [SymbolHasInstance](instance) {
+    if (instance == null) {
+      // Node's primordial ObjectGetPrototypeOf throws V8's ToObject error here;
+      // match the message since tests assert on it.
+      throw new TypeError("Cannot convert undefined or null to object");
+    }
     const prototype = ObjectGetPrototypeOf.$call(null, instance);
     return prototype === Channel.prototype || prototype === ActiveChannel.prototype;
   }
@@ -210,6 +264,13 @@ class Channel {
   runStores(data, fn, thisArg, ...args) {
     return fn.$apply(thisArg, args);
   }
+
+  withStoreScope() {
+    // Return no-op disposable for inactive channels
+    return {
+      [SymbolDispose]() {},
+    };
+  }
 }
 
 const channels = new WeakRefMap();
@@ -240,49 +301,85 @@ function hasSubscribers(name) {
   return channel.hasSubscribers;
 }
 
-const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
+const boundedEvents = ["start", "end"];
 
 function assertChannel(value, name) {
   if (!(value instanceof Channel)) {
-    throw $ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
+    throw $ERR_INVALID_ARG_TYPE(name, "instance of Channel", value);
   }
 }
 
-class TracingChannel {
-  start;
-  end;
-  asyncStart;
-  asyncEnd;
-  error;
+function emitNonThenableWarning(fn) {
+  process.emitWarning(
+    `tracePromise was called with the function '${fn.name || "<anonymous>"}', ` + "which returned a non-thenable.",
+  );
+}
 
+function channelFromMap(nameOrChannels, name, className) {
+  if (typeof nameOrChannels === "string") {
+    return channel(`tracing:${nameOrChannels}:${name}`);
+  }
+
+  if (typeof nameOrChannels === "object" && nameOrChannels !== null) {
+    const channel = nameOrChannels[name];
+    assertChannel(channel, `nameOrChannels.${name}`);
+    return channel;
+  }
+
+  throw $ERR_INVALID_ARG_TYPE("nameOrChannels", `string or an instance of ${className} or Object`, nameOrChannels);
+}
+
+class BoundedChannelScope {
+  #context;
+  #end;
+  #scope;
+
+  constructor(boundedChannel, context) {
+    // Only proceed if there are subscribers
+    if (!boundedChannel.hasSubscribers) {
+      return;
+    }
+
+    const { start, end } = boundedChannel;
+    this.#context = context;
+    this.#end = end;
+
+    // Use RunStoresScope for the start channel
+    this.#scope = new RunStoresScope(start, context);
+  }
+
+  [SymbolDispose]() {
+    if (!this.#scope) {
+      return;
+    }
+
+    // Publish end event
+    this.#end.publish(this.#context);
+
+    // Dispose the start scope to restore stores
+    this.#scope[SymbolDispose]();
+    this.#scope = undefined;
+  }
+}
+
+class BoundedChannel {
   constructor(nameOrChannels) {
-    if (typeof nameOrChannels === "string") {
-      this.start = channel(`tracing:${nameOrChannels}:start`);
-      this.end = channel(`tracing:${nameOrChannels}:end`);
-      this.asyncStart = channel(`tracing:${nameOrChannels}:asyncStart`);
-      this.asyncEnd = channel(`tracing:${nameOrChannels}:asyncEnd`);
-      this.error = channel(`tracing:${nameOrChannels}:error`);
-    } else if (typeof nameOrChannels === "object") {
-      const { start, end, asyncStart, asyncEnd, error } = nameOrChannels;
-
-      assertChannel(start, "nameOrChannels.start");
-      assertChannel(end, "nameOrChannels.end");
-      assertChannel(asyncStart, "nameOrChannels.asyncStart");
-      assertChannel(asyncEnd, "nameOrChannels.asyncEnd");
-      assertChannel(error, "nameOrChannels.error");
-
-      this.start = start;
-      this.end = end;
-      this.asyncStart = asyncStart;
-      this.asyncEnd = asyncEnd;
-      this.error = error;
-    } else {
-      throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
+    for (let i = 0; i < boundedEvents.length; ++i) {
+      const eventName = boundedEvents[i];
+      ObjectDefineProperty.$call(null, this, eventName, {
+        __proto__: null,
+        value: channelFromMap(nameOrChannels, eventName, "BoundedChannel"),
+      });
     }
   }
 
+  get hasSubscribers() {
+    return this.start?.hasSubscribers || this.end?.hasSubscribers;
+  }
+
   subscribe(handlers) {
-    for (const name of traceEvents) {
+    for (let i = 0; i < boundedEvents.length; ++i) {
+      const name = boundedEvents[i];
       if (!handlers[name]) continue;
 
       this[name]?.subscribe(handlers[name]);
@@ -292,7 +389,8 @@ class TracingChannel {
   unsubscribe(handlers) {
     let done = true;
 
-    for (const name of traceEvents) {
+    for (let i = 0; i < boundedEvents.length; ++i) {
+      const name = boundedEvents[i];
       if (!handlers[name]) continue;
 
       if (!this[name]?.unsubscribe(handlers[name])) {
@@ -303,64 +401,220 @@ class TracingChannel {
     return done;
   }
 
-  traceSync(fn, context = {}, thisArg, ...args) {
-    const { start, end, error } = this;
+  withScope(context = {}) {
+    return new BoundedChannelScope(this, context);
+  }
 
-    return start.runStores(context, () => {
-      try {
-        const result = fn.$apply(thisArg, args);
-        context.result = result;
-        return result;
-      } catch (err) {
-        context.error = err;
-        error.publish(context);
-        throw err;
-      } finally {
-        end.publish(context);
-      }
+  run(context, fn, thisArg, ...args) {
+    context ??= {};
+    const scope = this.withScope(context);
+    try {
+      return fn.$apply(thisArg, args);
+    } finally {
+      scope[SymbolDispose]();
+    }
+  }
+}
+
+function boundedChannel(nameOrChannels) {
+  return new BoundedChannel(nameOrChannels);
+}
+
+class TracingChannel {
+  #callWindow;
+  #continuationWindow;
+
+  constructor(nameOrChannels) {
+    // Create a BoundedChannel for start/end (call window)
+    if (typeof nameOrChannels === "string") {
+      this.#callWindow = new BoundedChannel(nameOrChannels);
+      this.#continuationWindow = new BoundedChannel({
+        start: channel(`tracing:${nameOrChannels}:asyncStart`),
+        end: channel(`tracing:${nameOrChannels}:asyncEnd`),
+      });
+    } else if (typeof nameOrChannels === "object") {
+      this.#callWindow = new BoundedChannel({
+        start: nameOrChannels.start,
+        end: nameOrChannels.end,
+      });
+      this.#continuationWindow = new BoundedChannel({
+        start: nameOrChannels.asyncStart,
+        end: nameOrChannels.asyncEnd,
+      });
+    }
+
+    // Create individual channel for error
+    ObjectDefineProperty.$call(null, this, "error", {
+      __proto__: null,
+      value: channelFromMap(nameOrChannels, "error", "TracingChannel"),
     });
   }
 
+  get start() {
+    return this.#callWindow.start;
+  }
+
+  get end() {
+    return this.#callWindow.end;
+  }
+
+  get asyncStart() {
+    return this.#continuationWindow.start;
+  }
+
+  get asyncEnd() {
+    return this.#continuationWindow.end;
+  }
+
+  get hasSubscribers() {
+    return this.#callWindow.hasSubscribers || this.#continuationWindow.hasSubscribers || this.error?.hasSubscribers;
+  }
+
+  subscribe(handlers) {
+    const { start, end, asyncStart, asyncEnd, error } = handlers;
+
+    // Subscribe to call window (start/end)
+    if (start || end) {
+      this.#callWindow.subscribe({ start, end });
+    }
+
+    // Subscribe to continuation window (asyncStart/asyncEnd)
+    if (asyncStart || asyncEnd) {
+      this.#continuationWindow.subscribe({
+        start: asyncStart,
+        end: asyncEnd,
+      });
+    }
+
+    // Subscribe to error channel
+    if (error) {
+      this.error.subscribe(error);
+    }
+  }
+
+  unsubscribe(handlers) {
+    let done = true;
+    const { start, end, asyncStart, asyncEnd, error } = handlers;
+
+    // Unsubscribe from call window
+    if (start || end) {
+      if (!this.#callWindow.unsubscribe({ start, end })) {
+        done = false;
+      }
+    }
+
+    // Unsubscribe from continuation window
+    if (asyncStart || asyncEnd) {
+      if (
+        !this.#continuationWindow.unsubscribe({
+          start: asyncStart,
+          end: asyncEnd,
+        })
+      ) {
+        done = false;
+      }
+    }
+
+    // Unsubscribe from error channel
+    if (error) {
+      if (!this.error.unsubscribe(error)) {
+        done = false;
+      }
+    }
+
+    return done;
+  }
+
+  traceSync(fn, context = {}, thisArg, ...args) {
+    if (!this.hasSubscribers) {
+      return fn.$apply(thisArg, args);
+    }
+
+    const { error } = this;
+
+    const scope = this.#callWindow.withScope(context);
+    try {
+      const result = fn.$apply(thisArg, args);
+      context.result = result;
+      return result;
+    } catch (err) {
+      context.error = err;
+      error.publish(context);
+      throw err;
+    } finally {
+      scope[SymbolDispose]();
+    }
+  }
+
   tracePromise(fn, context = {}, thisArg, ...args) {
-    const { start, end, asyncStart, asyncEnd, error } = this;
+    if (!this.hasSubscribers) {
+      const result = fn.$apply(thisArg, args);
+      if (typeof result?.then !== "function") {
+        emitNonThenableWarning(fn);
+      }
+      return result;
+    }
+
+    const { error } = this;
+    const continuationWindow = this.#continuationWindow;
 
     function reject(err) {
       context.error = err;
       error.publish(context);
-      asyncStart.publish(context);
-      // TODO: Is there a way to have asyncEnd _after_ the continuation?
-      asyncEnd.publish(context);
-      return PromiseReject(err);
+      // Use continuation window for asyncStart/asyncEnd
+      const scope = continuationWindow.withScope(context);
+      try {
+        // TODO: Is there a way to have asyncEnd _after_ the continuation?
+        return PromiseReject(err);
+      } finally {
+        scope[SymbolDispose]();
+      }
     }
 
     function resolve(result) {
       context.result = result;
-      asyncStart.publish(context);
-      // TODO: Is there a way to have asyncEnd _after_ the continuation?
-      asyncEnd.publish(context);
-      return result;
+      // Use continuation window for asyncStart/asyncEnd
+      const scope = continuationWindow.withScope(context);
+      try {
+        // TODO: Is there a way to have asyncEnd _after_ the continuation?
+        return result;
+      } finally {
+        scope[SymbolDispose]();
+      }
     }
 
-    return start.runStores(context, () => {
-      try {
-        let promise = fn.$apply(thisArg, args);
-        // Convert thenables to native promises
-        if (!(promise instanceof Promise)) {
-          promise = PromiseResolve(promise);
-        }
-        return PromisePrototypeThen(promise, resolve, reject);
-      } catch (err) {
-        context.error = err;
-        error.publish(context);
-        throw err;
-      } finally {
-        end.publish(context);
+    const scope = this.#callWindow.withScope(context);
+    try {
+      const result = fn.$apply(thisArg, args);
+      // If the return value is not a thenable, return it directly with a warning.
+      // Do not publish to asyncStart/asyncEnd.
+      if (typeof result?.then !== "function") {
+        emitNonThenableWarning(fn);
+        context.result = result;
+        return result;
       }
-    });
+      // For native Promises use PromisePrototypeThen to avoid user overrides.
+      if ($isPromise(result)) {
+        return PromisePrototypeThen.$call(result, resolve, reject);
+      }
+      // For custom thenables, call .then() directly to preserve the thenable type.
+      return result.then(resolve, reject);
+    } catch (err) {
+      context.error = err;
+      error.publish(context);
+      throw err;
+    } finally {
+      scope[SymbolDispose]();
+    }
   }
 
   traceCallback(fn, position = -1, context = {}, thisArg, ...args) {
-    const { start, end, asyncStart, asyncEnd, error } = this;
+    if (!this.hasSubscribers) {
+      return fn.$apply(thisArg, args);
+    }
+
+    const { error } = this;
+    const continuationWindow = this.#continuationWindow;
 
     function wrappedCallback(err, res) {
       if (err) {
@@ -370,33 +624,29 @@ class TracingChannel {
         context.result = res;
       }
 
-      // Using runStores here enables manual context failure recovery
-      asyncStart.runStores(context, () => {
-        try {
-          if (callback) {
-            return callback.$apply(this, arguments);
-          }
-        } finally {
-          asyncEnd.publish(context);
-        }
-      });
+      // Use continuation window for asyncStart/asyncEnd around callback
+      const scope = continuationWindow.withScope(context);
+      try {
+        return callback.$apply(this, arguments);
+      } finally {
+        scope[SymbolDispose]();
+      }
     }
 
     const callback = ArrayPrototypeAt.$call(args, position);
     validateFunction(callback, "callback");
     ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
 
-    return start.runStores(context, () => {
-      try {
-        return fn.$apply(thisArg, args);
-      } catch (err) {
-        context.error = err;
-        error.publish(context);
-        throw err;
-      } finally {
-        end.publish(context);
-      }
-    });
+    const scope = this.#callWindow.withScope(context);
+    try {
+      return fn.$apply(thisArg, args);
+    } catch (err) {
+      context.error = err;
+      error.publish(context);
+      throw err;
+    } finally {
+      scope[SymbolDispose]();
+    }
   }
 }
 
@@ -410,5 +660,7 @@ export default {
   subscribe,
   tracingChannel,
   unsubscribe,
+  boundedChannel,
   Channel,
+  BoundedChannel,
 };

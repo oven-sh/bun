@@ -37,6 +37,7 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
+let workerThreadsChannel;
 
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
@@ -517,6 +518,15 @@ class Worker extends EventEmitter {
         });
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
+    }
+
+    if (!workerThreadsChannel) {
+      workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
+    }
+    if (workerThreadsChannel.hasSubscribers) {
+      workerThreadsChannel.publish({
+        worker: this,
+      });
     }
   }
 

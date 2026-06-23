@@ -148,6 +148,16 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
 
+# node:diagnostics_channel tests synced from Node v26.3.0 that depend on features Bun
+# does not implement yet. Burn these down as the corresponding features land.
+test/js/node/test/parallel/test-diagnostics-channel-http.js [ FAIL ] # node:http server connection sockets are Duplex wrappers, not net.Socket instances
+test/js/node/test/parallel/test-diagnostics-channel-memory-leak.js [ FAIL ] # v8.queryObjects() is not implemented
+test/js/node/test/parallel/test-diagnostics-channel-module-import.js [ FAIL ] # module loader does not publish module.import tracing channels
+test/js/node/test/parallel/test-diagnostics-channel-module-import-error.js [ FAIL ] # module loader does not publish module.import tracing channels
+test/js/node/test/parallel/test-diagnostics-channel-module-require.js [ FAIL ] # require() does not publish module.require tracing channels
+test/js/node/test/parallel/test-diagnostics-channel-module-require-error.js [ FAIL ] # require() does not publish module.require tracing channels
+test/js/node/test/parallel/test-diagnostics-channel-web-locks.js [ FAIL ] # Web Locks API (navigator.locks) is not implemented
+
 # node:http2 tests ported together with the HTTP/2 engine overhaul that do not pass yet
 # (remaining compatibility work: ALPN/h1-fallback, tunnelling, perf_hooks entries, stream
 # write semantics, async_hooks integration, node-internal-module dependencies). Burn these

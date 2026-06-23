@@ -73,6 +73,55 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
   return $putInternalField($asyncContext, 0, contextValue);
 }
 
+// Sets `storage`'s value in the current async context. Unlike `enterWith`,
+// this does not schedule the end-of-tick native cleanup (`cleanupLater`):
+// RunScope always restores the previous value explicitly on dispose.
+function setStoreInCurrentContext(storage, store) {
+  var context = get();
+  if (!context) {
+    set([storage, store]);
+    return;
+  }
+  var { length } = context;
+  $assert(length > 0);
+  $assert(length % 2 === 0);
+  for (var i = 0; i < length; i += 2) {
+    if (context[i] === storage) {
+      $assert(length > i + 1);
+      const clone = context.slice();
+      clone[i + 1] = store;
+      set(clone);
+      return;
+    }
+  }
+  set(context.concat(storage, store));
+}
+
+// Reference: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/async_local_storage/run_scope.js
+class RunScope {
+  #storage;
+  #previousStore;
+  #disposed = false;
+
+  constructor(storage, store) {
+    this.#storage = storage;
+    this.#previousStore = storage.getStore();
+    setStoreInCurrentContext(storage, store);
+  }
+
+  dispose() {
+    if (this.#disposed) {
+      return;
+    }
+    this.#disposed = true;
+    setStoreInCurrentContext(this.#storage, this.#previousStore);
+  }
+
+  [Symbol.dispose]() {
+    this.dispose();
+  }
+}
+
 class AsyncLocalStorage {
   #disabled = false;
 
@@ -112,29 +161,18 @@ class AsyncLocalStorage {
     cleanupLater();
     // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     this.#disabled = false;
-    var context = get();
-    if (!context) {
-      set([this, store]);
-      return;
-    }
-    var { length } = context;
-    $assert(length > 0);
-    $assert(length % 2 === 0);
-    for (var i = 0; i < length; i += 2) {
-      if (context[i] === this) {
-        $assert(length > i + 1);
-        const clone = context.slice();
-        clone[i + 1] = store;
-        set(clone);
-        return;
-      }
-    }
-    set(context.concat(this, store));
+    setStoreInCurrentContext(this, store);
     $assert(this.getStore() === store);
   }
 
   exit(cb, ...args) {
     return this.run(undefined, cb, ...args);
+  }
+
+  withScope(store) {
+    // Like enterWith, withScope re-enables a disabled storage.
+    this.#disabled = false;
+    return new RunScope(this, store);
   }
 
   // This function is litered with $asserts to ensure that everything that

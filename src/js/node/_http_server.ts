@@ -18,6 +18,11 @@ const {
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
+const dc = require("node:diagnostics_channel");
+const onServerRequestStartChannel = dc.channel("http.server.request.start");
+const onServerResponseCreatedChannel = dc.channel("http.server.response.created");
+const onServerResponseFinishChannel = dc.channel("http.server.response.finish");
+
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const {
@@ -740,6 +745,20 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_req._dumpAndCloseReadable();
         }
 
+        if (!is_upgrade) {
+          if (onServerRequestStartChannel.hasSubscribers) {
+            onServerRequestStartChannel.publish({
+              request: http_req,
+              response: http_res,
+              socket,
+              server,
+            });
+          }
+          if (onServerResponseFinishChannel.hasSubscribers) {
+            http_res.once("finish", publishServerResponseFinish.bind(undefined, http_req, http_res, socket, server));
+          }
+        }
+
         if (reachedRequestsLimit) {
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);
@@ -1436,6 +1455,15 @@ function _writeHead(statusCode, reason, obj, response) {
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
+function publishServerResponseFinish(request, response, socket, server) {
+  onServerResponseFinishChannel.publish({
+    request,
+    response,
+    socket,
+    server,
+  });
+}
+
 function ServerResponse(req, options): void {
   if (!(this instanceof ServerResponse)) return new ServerResponse(req, options);
   OutgoingMessage.$call(this, options);
@@ -1488,6 +1516,13 @@ function ServerResponse(req, options): void {
   this.statusCode = 200;
   this.statusMessage = undefined;
   this.chunkedEncoding = false;
+
+  if (onServerResponseCreatedChannel.hasSubscribers) {
+    onServerResponseCreatedChannel.publish({
+      request: req,
+      response: this,
+    });
+  }
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 

@@ -700,41 +700,32 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
 }
 
 void JS${controllerName}::detach() {
-    if (m_onDestroy) {
-        auto destroy = m_onDestroy;
-        m_onDestroy = 0;
-        Bun__onSinkDestroyed(destroy, m_sinkPtr);
-    }
+    // Prevent re-entrancy.
+    JSC::EnsureStillAliveScope readableStream(m_weakReadableStream.get());
+    JSC::EnsureStillAliveScope onClose(m_onClose.get());
 
-    if (m_sinkPtr) {
-        ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
-    }
+    auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
+    auto destroy = std::exchange(m_onDestroy, 0);
 
-    m_sinkPtr = nullptr;
     m_onPull.clear();
-
-    auto readableStream = m_weakReadableStream.get();
-    JSC::JSValue onClose = m_onClose.get();
-    // Copy-and-null before invoking: the callback runs user JS (the direct
-    // stream's cancel()) which can re-enter detach(), so clear the one-shot
-    // state first to avoid firing onClose twice.
     m_onClose.clear();
     m_weakReadableStream.clear();
 
-    if (readableStream && onClose) {
+    if (destroy) {
+        Bun__onSinkDestroyed(destroy, sinkPtr);
+    }
+
+    if (sinkPtr) {
+        ${name}__controllerDetached(sinkPtr, JSC::JSValue::encode(this));
+    }
+
+    if (readableStream.value() && onClose.value()) {
         JSC::JSGlobalObject *globalObject = this->globalObject();
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::MarkedArgumentBuffer arguments;
-        arguments.append(readableStream);
+        arguments.append(readableStream.value());
         arguments.append(jsUndefined());
-        // m_onClose may be an AsyncContextFrame (startDirectStream wraps the
-        // callback when the stream was created with an async context), which
-        // JSC::getCallData reports as not callable. AsyncContextFrame::call
-        // unwraps the frame and also handles plain callables.
-        AsyncContextFrame::call(globalObject, onClose, JSC::jsUndefined(), arguments);
-        // onClose runs user JS; let the exception propagate to the caller's
-        // scope (the ${controller}__end/__close host fns check it) instead of
-        // leaving it unchecked. Mirrors ${name}__onClose.
+        AsyncContextFrame::call(globalObject, onClose.value(), JSC::jsUndefined(), arguments);
         RELEASE_AND_RETURN(scope, void());
     }
 }

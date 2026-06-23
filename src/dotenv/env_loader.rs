@@ -1418,8 +1418,7 @@ impl Map {
         {
             let mut it = self.map.iterator();
             while let Some(pair) = it.next() {
-                i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr)
-                    .len();
+                i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
                 result[i] = b'=' as u16;
                 i += 1;
                 i += strings::convert_utf8_to_utf16_in_buffer(

@@ -3604,12 +3604,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     UNUSED_PARAM(deferred);
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Node publishes the "module.import" tracing channel around dynamic import().
     // Only consider it once node:diagnostics_channel has been loaded; otherwise
     // dynamic import behaves exactly as before.
     if (globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::Field::NodeDiagnosticsChannel).get()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue moduleTracing = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::Field::InternalModuleTracing).get();
         if (moduleTracing && moduleTracing.isObject()) {
             JSObject* moduleTracingObject = asObject(moduleTracing);
@@ -3669,7 +3669,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
     }
 
-    return moduleLoaderImportModuleImpl(globalObject, moduleNameValue, WTF::move(parameters), sourceOrigin);
+    RELEASE_AND_RETURN(scope, moduleLoaderImportModuleImpl(globalObject, moduleNameValue, WTF::move(parameters), sourceOrigin));
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)

@@ -466,7 +466,9 @@ describe("NODE_OPTIONS validation", () => {
       cmd: [bunExe(), "-e", "console.log('ran')"],
       env: { ...bunEnv, NODE_OPTIONS: opt },
     });
-    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: ${opt} is not allowed in NODE_OPTIONS`);
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(
+      `${process.execPath}: ${opt} is not allowed in NODE_OPTIONS`,
+    );
     expect(stdout.toString("utf8")).toBe("");
     expect(exitCode).toBe(9);
   });

@@ -1036,6 +1036,100 @@ test.skipIf(!isASAN)(
   },
 );
 
+// Sibling of the above: after the inner-TLS handshake completes,
+// HTTPClient.on_writable calls ProxyTunnel.on_writable → SSLWrapper.flush →
+// handle_reading. If a TLS alert/close_notify arrived with (or right after)
+// the origin's ServerHello flight it is still buffered in the input BIO, so
+// handle_reading synchronously fires the tunnel's on_close → close_and_fail
+// → result callback, which frees the ThreadlocalAsyncHTTP that embeds the
+// client. Control then returned to on_writable and read self.state.flags on
+// freed memory. Only deterministic under ASAN; release builds usually read
+// freed-but-intact memory.
+test.skipIf(!isASAN)(
+  "TLS alert buffered with the inner-handshake flight via CONNECT tunnel does not use-after-free the client",
+  async () => {
+    const fixture = `
+      const net = require("node:net");
+      const { once } = require("node:events");
+      const tlsCert = ${JSON.stringify({ cert: tlsCert.cert, key: tlsCert.key })};
+
+      const origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("never") });
+
+      // CONNECT proxy that duplicates every client→upstream byte. The
+      // origin's TLS stack sees a second ClientHello interleaved with real
+      // traffic and aborts with an alert that arrives alongside its
+      // ServerHello flight.
+      const proxy = net.createServer(client => {
+        client.on("error", () => {});
+        let head = Buffer.alloc(0), upstream;
+        client.on("close", () => upstream?.destroy());
+        client.on("data", chunk => {
+          if (upstream) { upstream.write(chunk); upstream.write(chunk); return; }
+          head = Buffer.concat([head, chunk]);
+          const end = head.indexOf("\\r\\n\\r\\n");
+          if (end === -1) return;
+          const leftover = head.subarray(end + 4);
+          upstream = net.connect(origin.port, "127.0.0.1", () => {
+            client.write("HTTP/1.1 200 OK\\r\\n\\r\\n");
+            if (leftover.length) { upstream.write(leftover); upstream.write(leftover); }
+            upstream.pipe(client);
+          });
+          upstream.on("error", () => client.destroy());
+          upstream.on("close", () => client.destroy());
+        });
+      });
+      proxy.listen(0, "127.0.0.1");
+      await once(proxy, "listening");
+
+      // Loop: ASAN's symbolize+abort on the HTTP thread is slower than the
+      // result callback resolving the fetch on the main thread, so a single
+      // iteration can race to a clean process.exit before the abort lands.
+      for (let i = 0; i < 20; i++) {
+        try {
+          const res = await fetch("https://localhost:" + origin.port + "/", {
+            proxy: "http://127.0.0.1:" + proxy.address().port,
+            keepalive: false,
+            tls: { rejectUnauthorized: false },
+            signal: AbortSignal.timeout(5000),
+          });
+          await res.arrayBuffer().catch(() => {});
+          console.log("resolved:" + res.status);
+        } catch (e) {
+          console.log("rejected:" + (e?.code ?? e?.name));
+        }
+      }
+      process.exit(0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+        // symbolize=0: the debug binary's ASAN symbolization can take longer
+        // than the test timeout; the unsymbolized report still names the
+        // error class for anyone reading fail-before output.
+        ASAN_OPTIONS:
+          (bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":" : "") + "abort_on_error=1:halt_on_error=1:symbolize=0",
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    const lines = stdout.trim() === "" ? [] : stdout.trim().split("\n");
+    expect({ lines, exitCode }).toEqual({
+      lines: Array(20).fill(expect.stringMatching(/^rejected:/)),
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
 // Sentry BUN-2V7Z: debug_assert!(!socket.is_shutdown()/is_closed()) in the
 // ProxyHeaders arm of on_writable (and the matching assert in
 // send_initial_request_payload) fired when the outer proxy socket died

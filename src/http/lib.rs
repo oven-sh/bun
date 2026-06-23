@@ -2947,6 +2947,16 @@ impl<'a> HTTPClient<'a> {
 
         if let Some(proxy) = self.proxy_tunnel_mut() {
             proxy.on_writable::<IS_SSL>(socket);
+            // flush() → handle_traffic → handle_reading can synchronously
+            // consume a buffered TLS alert/close_notify and fire the tunnel's
+            // on_close → close_and_fail → result callback, which frees the
+            // ThreadlocalAsyncHTTP that embeds `*self` (same re-entrant free
+            // as start_proxy_handshake). close_and_fail terminates `socket`
+            // first, so its closed flag is the liveness guard; the handle
+            // itself is event-loop-owned and outlives the client.
+            if socket.is_closed() {
+                return;
+            }
         }
 
         // Parked until the JS `checkServerIdentity` callback approves the peer

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Console } from "node:console";
+import { bunEnv, bunExe } from "harness";
 
 import { Writable } from "node:stream";
 
@@ -86,5 +87,40 @@ test("console._stderr", () => {
     writable: true,
     enumerable: false,
     configurable: true,
+  });
+});
+
+// console.trace writes to stderr with a "Trace:" prefix, matching Node.
+// https://github.com/oven-sh/bun/issues/19952
+describe("console.trace", () => {
+  async function run(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("goes to stderr, not stdout", async () => {
+    const { stdout, stderr, exitCode } = await run(`console.trace("hi")`);
+    expect(stdout).toBe("");
+    expect(stderr).toStartWith("Trace: hi\n");
+    expect(stderr).toContain("at ");
+    expect(exitCode).toBe(0);
+  });
+
+  test("no arguments prints bare 'Trace'", async () => {
+    const { stdout, stderr } = await run(`console.trace()`);
+    expect(stdout).toBe("");
+    expect(stderr).toStartWith("Trace\n");
+    expect(stderr).toContain("at ");
+  });
+
+  test("applies format specifiers", async () => {
+    const { stderr } = await run(`console.trace("x=%d", 5)`);
+    expect(stderr).toStartWith("Trace: x=5\n");
   });
 });

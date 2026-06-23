@@ -280,8 +280,12 @@ mod windows {
 
     unsafe extern "system" {
         fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
-        fn CreateEventW(attrs: *mut c_void, manual_reset: BOOL, initial: BOOL, name: *const u16)
-        -> HANDLE;
+        fn CreateEventW(
+            attrs: *mut c_void,
+            manual_reset: BOOL,
+            initial: BOOL,
+            name: *const u16,
+        ) -> HANDLE;
         fn SetEvent(h: HANDLE) -> BOOL;
         fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
         fn WaitForMultipleObjects(n: DWORD, h: *const HANDLE, wait_all: BOOL, ms: DWORD) -> DWORD;

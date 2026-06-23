@@ -96,4 +96,4 @@ private:
     CFFIFunction m_function;
 };
 
-} // namespace JSC
+} // namespace Bun

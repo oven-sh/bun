@@ -182,7 +182,7 @@ JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Bun::GlobalObject* globalObje
     return function;
 }
 
-} // namespace JSC
+} // namespace Bun
 
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)

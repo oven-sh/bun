@@ -4,7 +4,6 @@
 // Generated bindings are available as `bun.generated.<basename>.*` on the native side,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import assert from "node:assert";
-import fs from "node:fs";
 import * as path from "node:path";
 import {
   ArgStrategyChildItem,

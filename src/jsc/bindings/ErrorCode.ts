@@ -339,5 +339,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_EEXIST", Error],
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
   ["ERR_DIR_CONCURRENT_OPERATION", Error],
+  ["ERR_CRYPTO_ARGON2_NOT_SUPPORTED", Error],
 ];
 export default errors;

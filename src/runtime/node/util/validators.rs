@@ -165,7 +165,10 @@ pub(crate) fn validate_int32(
             value,
         ));
     }
-    if !value.is_any_int() {
+    let num = value.as_number();
+    // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
+    // outside the int52 range are integers; the range check below rejects out-of-range.
+    if !num.is_finite() || num.fract() != 0.0 {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
@@ -176,7 +179,6 @@ pub(crate) fn validate_int32(
             ),
         ));
     }
-    let num = value.as_number();
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if num < (min as f64) || num > (max as f64) {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);

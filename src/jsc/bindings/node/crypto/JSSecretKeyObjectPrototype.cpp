@@ -51,11 +51,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject
     RELEASE_AND_RETURN(scope, JSValue::encode(handle.exportSecret(globalObject, scope, optionsValue)));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
     JSSecretKeyObject* secretKeyObject = dynamicDowncast<JSSecretKeyObject>(JSValue::decode(thisValue));
     if (!secretKeyObject) {
-        return JSValue::encode(jsUndefined());
+        return ERR::INVALID_THIS(scope, globalObject, "SecretKeyObject"_s);
     }
 
     size_t symmetricKeySize = secretKeyObject->handle().symmetricKey().size();

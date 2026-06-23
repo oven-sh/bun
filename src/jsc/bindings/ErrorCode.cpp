@@ -763,7 +763,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     builder.append(arg_name);
     builder.append("\" is out of range. It must be >= "_s);
     builder.append(lower);
-    builder.append(" and <= "_s);
+    builder.append(" && <= "_s);
     builder.append(upper);
     builder.append(". Received "_s);
     JSValueToStringSafe(globalObject, builder, actual);
@@ -786,7 +786,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     builder.append(arg_name);
     builder.append("\" is out of range. It must be >= "_s);
     builder.append(lower);
-    builder.append(" and <= "_s);
+    builder.append(" && <= "_s);
     builder.append(upper);
     builder.append(". Received "_s);
     JSValueToStringSafe(globalObject, builder, actual);

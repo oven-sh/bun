@@ -711,9 +711,11 @@ impl ErrorCode {
     pub const FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode(326);
     /// `ERR_DIR_CONCURRENT_OPERATION` (instanceof Error)
     pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(327);
+    /// `ERR_CRYPTO_ARGON2_NOT_SUPPORTED` (instanceof Error)
+    pub const CRYPTO_ARGON2_NOT_SUPPORTED: ErrorCode = ErrorCode(328);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 328;
+    pub const COUNT: u16 = 329;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -741,6 +743,7 @@ impl ErrorCode {
     pub const ERR_CONSOLE_WRITABLE_STREAM: ErrorCode = ErrorCode::CONSOLE_WRITABLE_STREAM;
     pub const ERR_CONSTRUCT_CALL_INVALID: ErrorCode = ErrorCode::CONSTRUCT_CALL_INVALID;
     pub const ERR_CONSTRUCT_CALL_REQUIRED: ErrorCode = ErrorCode::CONSTRUCT_CALL_REQUIRED;
+    pub const ERR_CRYPTO_ARGON2_NOT_SUPPORTED: ErrorCode = ErrorCode::CRYPTO_ARGON2_NOT_SUPPORTED;
     pub const ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED: ErrorCode =
         ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED;
     pub const ERR_CRYPTO_ECDH_INVALID_FORMAT: ErrorCode = ErrorCode::CRYPTO_ECDH_INVALID_FORMAT;
@@ -1429,6 +1432,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_FS_CP_EEXIST",
     "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
     "ERR_DIR_CONCURRENT_OPERATION",
+    "ERR_CRYPTO_ARGON2_NOT_SUPPORTED",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

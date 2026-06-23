@@ -14,15 +14,13 @@ using namespace WebCore;
 using namespace ncrypto;
 
 JSC_DECLARE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_export);
-JSC_DECLARE_CUSTOM_GETTER(jsPrivateKeyObjectPrototype_asymmetricKeyType);
-JSC_DECLARE_CUSTOM_GETTER(jsPrivateKeyObjectPrototype_asymmetricKeyDetails);
 JSC_DECLARE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_toCryptoKey);
 
 const JSC::ClassInfo JSPrivateKeyObjectPrototype::s_info = { "PrivateKeyObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPrivateKeyObjectPrototype) };
 
+// asymmetricKeyType/asymmetricKeyDetails live on the shared AsymmetricKeyObject prototype
+// (JSAsymmetricKeyObjectPrototype.cpp), matching Node's prototype chain.
 static const JSC::HashTableValue JSPrivateKeyObjectPrototypeTableValues[] = {
-    { "asymmetricKeyType"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsPrivateKeyObjectPrototype_asymmetricKeyType, 0 } },
-    { "asymmetricKeyDetails"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsPrivateKeyObjectPrototype_asymmetricKeyDetails, 0 } },
     { "export"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_export, 1 } },
     // { "toCryptoKey"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPrivateKeyObjectPrototype_toCryptoKey, 3 } },
 };
@@ -50,42 +48,6 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_export, (JSGlobalObject * g
     KeyObject& handle = privateKeyObject->handle();
     JSValue optionsValue = callFrame->argument(0);
     return JSValue::encode(handle.exportAsymmetric(globalObject, scope, optionsValue, CryptoKeyType::Private));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_asymmetricKeyType, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-
-    JSPrivateKeyObject* privateKeyObject = dynamicDowncast<JSPrivateKeyObject>(JSValue::decode(thisValue));
-    if (!privateKeyObject) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    KeyObject& handle = privateKeyObject->handle();
-    return JSValue::encode(handle.asymmetricKeyType(globalObject));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_asymmetricKeyDetails, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
-
-    JSPrivateKeyObject* privateKeyObject = dynamicDowncast<JSPrivateKeyObject>(JSValue::decode(thisValue));
-    if (!privateKeyObject) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    if (auto* keyDetails = privateKeyObject->m_keyDetails.get()) {
-        return JSValue::encode(keyDetails);
-    }
-
-    KeyObject& handle = privateKeyObject->handle();
-    JSObject* keyDetails = handle.asymmetricKeyDetails(globalObject, scope);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    privateKeyObject->m_keyDetails.set(vm, privateKeyObject, keyDetails);
-    return JSValue::encode(keyDetails);
 }
 
 // JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_toCryptoKey, (JSGlobalObject * globalObject, CallFrame* callFrame))

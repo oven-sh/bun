@@ -345,9 +345,56 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "reason"_s), jsString(vm, reasonString), reasonSlot);
             RETURN_IF_EXCEPTION(scope, {});
 
-            // Convert reason to error code (e.g. "this error" -> "ERR_OSSL_THIS_ERROR")
+            // Convert reason to error code (e.g. "this error" -> "ERR_OSSL_<LIB>_THIS_ERROR"),
+            // matching Node's error::Decorate (src/crypto/crypto_util.cc): the code embeds the
+            // OpenSSL library name for the libraries Node knows about, and the "OSSL_" prefix is
+            // dropped for the SSL library so codes never look like "ERR_OSSL_SSL_".
+            // BoringSSL reason strings are already underscore-separated macro names, so only
+            // uppercasing is needed here (Node additionally maps spaces for OpenSSL builds).
             String upperReason = reasonString.convertToASCIIUppercase();
-            String code = makeString("ERR_OSSL_"_s, upperReason);
+
+            int errLib = ERR_GET_LIB(err);
+            ASCIILiteral lib = ""_s;
+            switch (errLib) {
+#define BUN_OSSL_LIB_CASE(name)        \
+    case ERR_LIB_##name:               \
+        lib = #name "_"_s;             \
+        break;
+                BUN_OSSL_LIB_CASE(SYS)
+                BUN_OSSL_LIB_CASE(BN)
+                BUN_OSSL_LIB_CASE(RSA)
+                BUN_OSSL_LIB_CASE(DH)
+                BUN_OSSL_LIB_CASE(EVP)
+                BUN_OSSL_LIB_CASE(BUF)
+                BUN_OSSL_LIB_CASE(OBJ)
+                BUN_OSSL_LIB_CASE(PEM)
+                BUN_OSSL_LIB_CASE(DSA)
+                BUN_OSSL_LIB_CASE(X509)
+                BUN_OSSL_LIB_CASE(ASN1)
+                BUN_OSSL_LIB_CASE(CONF)
+                BUN_OSSL_LIB_CASE(CRYPTO)
+                BUN_OSSL_LIB_CASE(EC)
+                BUN_OSSL_LIB_CASE(SSL)
+                BUN_OSSL_LIB_CASE(BIO)
+                BUN_OSSL_LIB_CASE(PKCS7)
+                BUN_OSSL_LIB_CASE(X509V3)
+                BUN_OSSL_LIB_CASE(RAND)
+                BUN_OSSL_LIB_CASE(ENGINE)
+                BUN_OSSL_LIB_CASE(OCSP)
+                BUN_OSSL_LIB_CASE(UI)
+                BUN_OSSL_LIB_CASE(COMP)
+                BUN_OSSL_LIB_CASE(ECDSA)
+                BUN_OSSL_LIB_CASE(ECDH)
+                BUN_OSSL_LIB_CASE(CMS)
+                BUN_OSSL_LIB_CASE(HMAC)
+                BUN_OSSL_LIB_CASE(USER)
+#undef BUN_OSSL_LIB_CASE
+            default:
+                break;
+            }
+
+            ASCIILiteral prefix = errLib == ERR_LIB_SSL ? ""_s : "OSSL_"_s;
+            String code = makeString("ERR_"_s, prefix, lib, upperReason);
 
             PutPropertySlot codeSlot(errorObject, false);
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "code"_s), jsString(vm, code), codeSlot);

@@ -16,6 +16,9 @@
 #include "CryptoGenKeyPair.h"
 #include "JSBuffer.h"
 #include "BunString.h"
+#include "BunProcess.h"
+
+extern "C" bool Bun__Node__ProcessNoDeprecation;
 
 namespace Bun {
 
@@ -23,6 +26,22 @@ using namespace Bun;
 using namespace JSC;
 using namespace ncrypto;
 using namespace WebCore;
+
+// DEP0203: passing a WebCrypto CryptoKey (instead of a KeyObject) to node:crypto
+// functions is deprecated but still accepted. Emitted once per process, like Node.
+static void emitCryptoKeyDeprecationWarning(JSGlobalObject* globalObject)
+{
+    static bool warned = false;
+    if (warned || Bun__Node__ProcessNoDeprecation)
+        return;
+    warned = true;
+    auto& vm = globalObject->vm();
+    Process::emitWarning(globalObject,
+        jsString(vm, makeString("Passing a CryptoKey to node:crypto functions is deprecated."_s)),
+        jsString(vm, makeString("DeprecationWarning"_s)),
+        jsString(vm, makeString("DEP0203"_s)),
+        jsUndefined());
+}
 
 JSValue encodeBignum(JSGlobalObject* globalObject, ThrowScope& scope, const BIGNUM* bn, int size)
 {
@@ -1217,6 +1236,9 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         checkCryptoKey(key, keyValue);
         RETURN_IF_EXCEPTION(scope, {});
 
+        emitCryptoKeyDeprecationWarning(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
         auto keyObject = create(key);
         if (keyObject.hasException()) [[unlikely]] {
             WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
@@ -1283,6 +1305,9 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(dataValue)) {
             auto& key = cryptoKey->wrapped();
             checkCryptoKey(key, dataValue);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            emitCryptoKeyDeprecationWarning(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
             auto keyObject = create(key);
@@ -1424,6 +1449,8 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, key.type(), "secret"_s);
                 return {};
             }
+            emitCryptoKeyDeprecationWarning(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             auto keyObject = create(key);
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(globalObject, scope, keyObject.releaseException());

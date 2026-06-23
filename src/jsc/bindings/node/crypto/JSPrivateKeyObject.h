@@ -45,8 +45,6 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    JSC::WriteBarrier<JSC::JSObject> m_keyDetails;
-
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     JSPrivateKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)

@@ -71,12 +71,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
         return {};
     }
 
-    // Check for empty buffer
-    if (span.size() == 0) {
-        throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Public key cannot be empty"_s);
-        return {};
-    }
-
     ncrypto::BignumPointer publicKey(span.data(), span.size());
     if (!publicKey) {
         throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid public key"_s);
@@ -89,18 +83,13 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
     auto checkResult = dh.checkPublicKey(publicKey);
     if (checkResult != ncrypto::DHPointer::CheckPublicKeyResult::NONE) {
         switch (checkResult) {
-        // case ncrypto::DHPointer::CheckPublicKeyResult::TOO_SMALL:
-        //     throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYLEN, "Supplied key is too small"_s);
-        //     return {};
-        // case ncrypto::DHPointer::CheckPublicKeyResult::TOO_LARGE:
-        //     throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYLEN, "Supplied key is too large"_s);
-        //     return {};
+        // TOO_SMALL/TOO_LARGE only exist on OpenSSL builds; BoringSSL reports them as INVALID.
         case ncrypto::DHPointer::CheckPublicKeyResult::INVALID:
-            throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, "Invalid public key for this key exchange"_s);
+            throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, "Supplied key is invalid"_s);
             return {};
         case ncrypto::DHPointer::CheckPublicKeyResult::CHECK_FAILED:
         default:
-            throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "DH check public key failed"_s);
+            throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, "Unspecified validation error"_s);
             return {};
         }
     }

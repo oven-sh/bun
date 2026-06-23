@@ -118,6 +118,14 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
 
+    // BoringSSL hangs indefinitely generating an RSA key with e=1 and reports a misleading
+    // error for other invalid exponents only after running the full keygen loop, so reject
+    // them up-front like Node does (src/crypto/crypto_rsa.cc, OPENSSL_IS_BORINGSSL branch).
+    if (publicExponent < 3 || (publicExponent & 1) == 0) {
+        ERR::OUT_OF_RANGE(scope, globalObject, "publicExponent is invalid"_s);
+        return std::nullopt;
+    }
+
     if (typeView == "rsa"_s) {
         return RsaKeyPairJobCtx(
             RsaKeyVariant::RSA_SSA_PKCS1_v1_5,

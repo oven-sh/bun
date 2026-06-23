@@ -1,11 +1,11 @@
-/*
-Skipped test. 'dh' key generation is not supported by BoringSSL.
-
 'use strict';
 
 const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
+
+if (process.features.openssl_is_boringssl)
+  common.skip('BoringSSL does not support DH key pair generation');
 
 const assert = require('assert');
 const {
@@ -24,5 +24,3 @@ const {
     assert.strictEqual(privateKey.asymmetricKeyType, 'dh');
   }));
 }
-
-*/

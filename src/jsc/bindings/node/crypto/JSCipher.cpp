@@ -68,6 +68,48 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSValue optionsValue = callFrame->argument(0);
     JSValue bufferValue = callFrame->argument(1);
 
+    // Like Node, validate the cipher options (padding, oaepHash, oaepLabel) before any key
+    // parsing so an invalid digest is reported even when the key material itself is invalid
+    // for this operation.
+    ncrypto::Digest digest;
+    int32_t padding = defaultPadding;
+    GCOwnedDataScope<std::span<const uint8_t>> oaepLabel = { nullptr, {} };
+    JSValue encodingValue = jsUndefined();
+    if (JSObject* options = optionsValue.getObject()) {
+        JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!paddingValue.isUndefined()) {
+            padding = paddingValue.toInt32(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        JSValue oaepHashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepHash"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!oaepHashValue.isUndefined()) {
+            V::validateString(scope, lexicalGlobalObject, oaepHashValue, "options.oaepHash"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSString* oaepHashString = oaepHashValue.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            GCOwnedDataScope<WTF::StringView> oaepHashView = oaepHashString->view(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            digest = ncrypto::Digest::FromName(oaepHashView);
+            if (!digest) {
+                ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
+                return {};
+            }
+        }
+
+        encodingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!oaepLabelValue.isUndefined()) {
+            oaepLabel = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
     KeyObject keyObject;
     switch (keyType) {
     case KeyType::Public: {
@@ -115,45 +157,6 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     }
 
     auto& pkey = keyObject.asymmetricKey();
-
-    ncrypto::Digest digest;
-    int32_t padding = defaultPadding;
-    GCOwnedDataScope<std::span<const uint8_t>> oaepLabel = { nullptr, {} };
-    JSValue encodingValue = jsUndefined();
-    if (JSObject* options = optionsValue.getObject()) {
-        JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!paddingValue.isUndefined()) {
-            padding = paddingValue.toInt32(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-
-        JSValue oaepHashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepHash"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!oaepHashValue.isUndefined()) {
-            V::validateString(scope, lexicalGlobalObject, oaepHashValue, "options.oaepHash"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSString* oaepHashString = oaepHashValue.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            GCOwnedDataScope<WTF::StringView> oaepHashView = oaepHashString->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            digest = ncrypto::Digest::FromName(oaepHashView);
-            if (!digest) {
-                ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
-                return {};
-            }
-        }
-
-        encodingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!oaepLabelValue.isUndefined()) {
-            oaepLabel = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
 
     auto buffer = getArrayBufferOrView2(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});

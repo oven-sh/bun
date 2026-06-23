@@ -142,7 +142,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     }
 
     if (!cipher->m_ctx) {
-        return ERR::CRYPTO_INVALID_STATE(scope, lexicalGlobalObject, "final"_s);
+        return ERR::CRYPTO_INVALID_STATE(scope, lexicalGlobalObject, "Invalid state for operation final"_s);
     }
 
     const bool isAuthMode = cipher->isAuthenticatedMode();
@@ -213,7 +213,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAutoPadding, (JSC::JSGlobalObject * globalOb
 
     MarkPopErrorOnReturn popError;
     if (!cipher->m_ctx.setPadding(padding)) {
-        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "setAutoPadding"_s);
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAutoPadding"_s);
     }
 
     return JSValue::encode(jsUndefined());
@@ -231,7 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherGetAuthTag, (JSC::JSGlobalObject * lexicalGloba
     }
 
     if (cipher->m_ctx || cipher->m_kind != CipherKind::Cipher || !cipher->m_authTagLen) {
-        return ERR::CRYPTO_INVALID_STATE(scope, lexicalGlobalObject, "getAuthTag"_s);
+        return ERR::CRYPTO_INVALID_STATE(scope, lexicalGlobalObject, "Invalid state for operation getAuthTag"_s);
     }
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -266,7 +266,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
     ASSERT(authTag);
 
     if (!cipher->m_ctx || !cipher->isAuthenticatedMode() || cipher->m_kind != CipherKind::Decipher || cipher->m_authTagState != AuthTagState::AuthTagUnknown) {
-        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "setAuthTag"_s);
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAuthTag"_s);
     }
 
     if (authTag->byteLength() > INT_MAX) {
@@ -275,25 +275,16 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
 
     uint32_t tagLen = authTag->byteLength();
 
-    bool isValid;
-    if (cipher->m_ctx.isGcmMode()) {
-        isValid = (!cipher->m_authTagLen.has_value() || *cipher->m_authTagLen == tagLen) && Cipher::IsValidGCMTagLength(tagLen);
-    } else {
-        ASSERT(Cipher::FromCtx(cipher->m_ctx).isSupportedAuthenticatedMode());
-        ASSERT(cipher->m_authTagLen.has_value());
-        isValid = *cipher->m_authTagLen == tagLen;
-    }
-
-    if (!isValid) {
+    // The authentication tag length was determined at construction time (every
+    // authenticated mode either received an explicit authTagLength or got its
+    // default), so the supplied tag must match it exactly. Implicitly accepting
+    // shorter GCM tags (former DEP0182) is no longer allowed in Node 26.
+    ASSERT(cipher->m_authTagLen.has_value());
+    if (*cipher->m_authTagLen != tagLen) {
         WTF::StringBuilder builder;
         builder.append("Invalid authentication tag length: "_s);
         builder.append(tagLen);
         return ERR::CRYPTO_INVALID_AUTH_TAG(scope, globalObject, builder.toString());
-    }
-
-    if (cipher->m_ctx.isGcmMode() && !cipher->m_authTagLen.has_value() && tagLen != 16 && !Bun__Node__ProcessNoDeprecation) {
-        Bun::Process::emitWarning(globalObject, jsString(vm, makeString("Using AES-GCM authentication tags of less than 128 bits without specifying the authTagLength option when initializing decryption is deprecated."_s)), jsString(vm, makeString("DeprecationWarning"_s)), jsString(vm, makeString("DEP0182"_s)), jsUndefined());
-        CLEAR_IF_EXCEPTION(scope);
     }
 
     cipher->m_authTagLen = tagLen;
@@ -364,7 +355,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
         }
 
         if (cipher->m_kind == CipherKind::Decipher && !cipher->maybePassAuthTagToOpenSSL()) {
-            return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "setAAD"_s);
+            return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAAD"_s);
         }
 
         ncrypto::Buffer<const unsigned char> buf {
@@ -373,7 +364,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
         };
 
         if (!cipher->m_ctx.update(buf, nullptr, &outlen)) {
-            return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "setAAD"_s);
+            return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAAD"_s);
         }
     }
 
@@ -383,7 +374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
     };
 
     if (!cipher->m_ctx.update(buf, nullptr, &outlen)) {
-        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "setAAD"_s);
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAAD"_s);
     }
 
     return JSValue::encode(jsUndefined());

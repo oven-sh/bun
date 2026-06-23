@@ -381,8 +381,6 @@ const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
 const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
 const SafeMapPrototypeHas = SafeMap.prototype.has;
 const SafeMapPrototypeGet = SafeMap.prototype.get;
-const SafeMapPrototypeSet = SafeMap.prototype.set;
-const SafeMapPrototypeDelete = SafeMap.prototype.delete;
 
 /**
  * Compares two objects or values recursively to check if they are equal.
@@ -462,43 +460,26 @@ function compareBranch(actual, expected, comparedObjects?) {
     return true;
   }
 
-  // Check if expected array is a subset of actual array
+  // The expected array must match a subsequence of the actual array, in order,
+  // with each element compared partially (Node's partialArrayEquiv).
   if ($isArray(actual) && $isArray(expected)) {
     if (expected.length > actual.length) {
       return false;
     }
 
-    // Create a map to count occurrences of each element in the expected array
-    const expectedCounts = new SafeMap();
-    for (const expectedItem of expected) {
-      let found = false;
-      for (const { 0: key, 1: count } of expectedCounts) {
-        if (isDeepStrictEqual(key, expectedItem)) {
-          SafeMapPrototypeSet.$call(expectedCounts, key, count + 1);
-          found = true;
-          break;
-        }
+    let actualPos = 0;
+    for (let i = 0; i < expected.length; i++) {
+      const lastCandidate = actual.length - expected.length + i;
+      while (actualPos <= lastCandidate && !compareBranch(actual[actualPos], expected[i], comparedObjects)) {
+        actualPos++;
       }
-      if (!found) {
-        SafeMapPrototypeSet.$call(expectedCounts, expectedItem, 1);
+      if (actualPos > lastCandidate) {
+        return false;
       }
+      actualPos++;
     }
 
-    // Create a map to count occurrences of relevant elements in the actual array
-    for (const actualItem of actual) {
-      for (const { 0: key, 1: count } of expectedCounts) {
-        if (isDeepStrictEqual(key, actualItem)) {
-          if (count === 1) {
-            SafeMapPrototypeDelete.$call(expectedCounts, key);
-          } else {
-            SafeMapPrototypeSet.$call(expectedCounts, key, count - 1);
-          }
-          break;
-        }
-      }
-    }
-
-    return !expectedCounts.size;
+    return true;
   }
 
   // Comparison done when at least one of the values is not an object

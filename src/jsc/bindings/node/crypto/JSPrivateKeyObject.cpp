@@ -7,6 +7,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/ObjectPrototype.h>
 
@@ -25,7 +26,6 @@ void JSPrivateKeyObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSPrivateKeyObject* thisObject = uncheckedDowncast<JSPrivateKeyObject>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_keyDetails);
 }
 
 DEFINE_VISIT_CHILDREN(JSPrivateKeyObject);
@@ -34,7 +34,8 @@ void setupPrivateKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& i
 {
     auto* globalObject = defaultGlobalObject(init.global);
 
-    auto* prototypeStructure = JSPrivateKeyObjectPrototype::createStructure(init.vm, init.global, globalObject->KeyObjectPrototype());
+    JSObject* asymmetricKeyObjectPrototype = globalObject->m_JSAsymmetricKeyObjectPrototype.getInitializedOnMainThread(globalObject);
+    auto* prototypeStructure = JSPrivateKeyObjectPrototype::createStructure(init.vm, init.global, asymmetricKeyObjectPrototype);
     auto* prototype = JSPrivateKeyObjectPrototype::create(init.vm, init.global, prototypeStructure);
 
     auto* constructorStructure = JSKeyObjectConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());

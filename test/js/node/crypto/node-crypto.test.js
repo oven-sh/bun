@@ -616,7 +616,7 @@ describe("ECDH", () => {
     expect(ecdh.computeSecret.name).toBe("computeSecret");
     expect(ecdh.getPublicKey.name).toBe("getPublicKey");
     expect(ecdh.getPrivateKey.name).toBe("getPrivateKey");
-    expect(ecdh.setPublicKey.name).toBe("setPublicKey");
+    expect(ecdh.setPublicKey.name).toBe("deprecated"); // wrapped by util.deprecate (DEP0031), same as Node
     expect(ecdh.setPrivateKey.name).toBe("setPrivateKey");
   });
 });
@@ -636,8 +636,8 @@ describe("crypto module", () => {
   });
 
   it("should have correct constructor names", () => {
-    expect(crypto.Hash.name).toBe("Hash");
-    expect(crypto.Hmac.name).toBe("Hmac");
+    expect(crypto.Hash.name).toBe("deprecated"); // wrapped by util.deprecate (DEP0179), same as Node
+    expect(crypto.Hmac.name).toBe("deprecated"); // wrapped by util.deprecate (DEP0181), same as Node
     expect(crypto.Sign.name).toBe("Sign");
     expect(crypto.Verify.name).toBe("Verify");
   });

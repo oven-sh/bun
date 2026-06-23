@@ -146,7 +146,7 @@ assert.throws(
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
     message: 'The value of "targetStart" is out of range. ' +
-             'It must be >= 0 and <= 5. Received -1'
+             'It must be >= 0 && <= 5. Received -1'
   }
 );
 
@@ -185,7 +185,7 @@ assert.throws(
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
     message: 'The value of "sourceEnd" is out of range. ' +
-             'It must be >= 0 and <= 1024. Received -1'
+             'It must be >= 0 && <= 1024. Received -1'
   }
 );
 

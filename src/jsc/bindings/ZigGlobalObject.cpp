@@ -189,6 +189,7 @@
 #include "JSCipher.h"
 #include "JSKeyObject.h"
 #include "JSSecretKeyObject.h"
+#include "JSAsymmetricKeyObjectPrototype.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
@@ -1965,6 +1966,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSSecretKeyObjectClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupSecretKeyObjectClassStructure(init);
+        });
+
+    m_JSAsymmetricKeyObjectPrototype.initLater(
+        [](const Initializer<JSObject>& init) {
+            setupAsymmetricKeyObjectPrototype(init);
         });
 
     m_JSPublicKeyObjectClassStructure.initLater(

@@ -364,14 +364,33 @@ pub mod random {
             }
 
             if max - min > MAX_RANGE {
+                // Node's ERR_OUT_OF_RANGE adds "_" numerical separators to integer
+                // "Received" values whose magnitude exceeds 2^32
+                // (lib/internal/errors.js, addNumericalSeparator).
+                let received = {
+                    let digits = (max - min).to_string();
+                    let (sign, digits) = match digits.strip_prefix('-') {
+                        Some(rest) => ("-", rest),
+                        None => ("", digits.as_str()),
+                    };
+                    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+                    out.push_str(sign);
+                    let lead = digits.len() % 3;
+                    for (i, ch) in digits.chars().enumerate() {
+                        if i != 0 && (i + 3 - lead) % 3 == 0 {
+                            out.push('_');
+                        }
+                        out.push(ch);
+                    }
+                    out
+                };
                 if min_specified {
                     return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "The value of \"max - min\" is out of range. It must be <= {}. Received {}",
-                            MAX_RANGE,
-                            max - min
+                            MAX_RANGE, received
                         ),
                     )
                     .throw());
@@ -381,8 +400,7 @@ pub mod random {
                         jsc::ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "The value of \"max\" is out of range. It must be <= {}. Received {}",
-                            MAX_RANGE,
-                            max - min
+                            MAX_RANGE, received
                         ),
                     )
                     .throw());
@@ -486,12 +504,13 @@ pub mod random {
 
             let max_length = length.min(MAX_POSSIBLE_LENGTH);
             if offset.is_nan() || offset > (max_length as f64) || offset < 0.0 {
+                // Node spells this range with "&&" (lib/internal/crypto/random.js assertOffset).
+                let range = format!(">= 0 && <= {max_length}");
                 return Err(global.throw_range_error(
                     offset,
                     jsc::RangeErrorOptions {
                         field_name: b"offset",
-                        min: 0,
-                        max: i64::try_from(max_length).expect("int cast"),
+                        msg: range.as_bytes(),
                         ..Default::default()
                     },
                 ));
@@ -511,12 +530,13 @@ pub mod random {
             size *= element_size as f64;
 
             if size.is_nan() || size > (MAX_POSSIBLE_LENGTH as f64) || size < 0.0 {
+                // Node spells this range with "&&" (lib/internal/crypto/random.js assertSize).
+                let range = format!(">= 0 && <= {MAX_POSSIBLE_LENGTH}");
                 return Err(global.throw_range_error(
                     size,
                     jsc::RangeErrorOptions {
                         field_name: b"size",
-                        min: 0,
-                        max: i64::try_from(MAX_POSSIBLE_LENGTH).expect("int cast"),
+                        msg: range.as_bytes(),
                         ..Default::default()
                     },
                 ));

@@ -37,6 +37,22 @@ function deprecate(fn, msg, code) {
 
   // The wrapper will keep the same prototype as fn to maintain prototype chain
   Object.setPrototypeOf(deprecated, fn);
+  if (fn.prototype) {
+    // Sharing fn.prototype (rather than only the setPrototypeOf above) ensures
+    // that calling the unwrapped constructor gives an instanceof the wrapped
+    // constructor. Builtin-compiled functions have no own "prototype", so this
+    // must be defineProperty — a plain assignment would hit fn's non-writable
+    // "prototype" through the prototype chain.
+    Object.defineProperty(deprecated, "prototype", {
+      __proto__: null,
+      value: fn.prototype,
+      writable: true,
+    });
+  }
+  Object.defineProperty(deprecated, "length", {
+    __proto__: null,
+    ...Object.getOwnPropertyDescriptor(fn, "length"),
+  });
   return deprecated;
 }
 

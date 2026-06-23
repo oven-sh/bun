@@ -130,7 +130,66 @@ pub struct Process {
     pub ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
     pub sync: bool,
+    /// Windows only: the console input mode captured at spawn time when this
+    /// child inherited our console stdin, so we can restore it after the child
+    /// exits. A child can switch the shared console input buffer back to cooked
+    /// mode (`ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT`) and libuv's cached tty
+    /// mode keeps us from re-applying raw mode. `None` when stdin was not an
+    /// inherited console (the common case). See `windows_console_in_snapshot`
+    /// and `windows_console_in_restore`.
+    #[cfg(windows)]
+    pub windows_console_in_mode: Option<u32>,
     pub event_loop: EventLoopHandle,
+}
+
+/// Windows: a child that inherits our console stdin can switch the shared
+/// console input buffer back to cooked mode (`ENABLE_LINE_INPUT |
+/// ENABLE_ECHO_INPUT`) — cmd.exe, PowerShell, git, node, python and many CRTs
+/// reconfigure `CONIN$` on startup. libuv's `uv_tty_set_mode` caches the last
+/// mode it applied and early-returns when asked for that same mode:
+///
+/// ```c
+/// if ((int)mode == tty->tty.rd.mode.mode) return 0;   // no SetConsoleMode
+/// ```
+///
+/// so once the OS mode is changed out from under it, libuv never re-applies it
+/// and a subsequent `setRawMode(true)` from JS is a no-op — a TUI keeps
+/// rendering while its stdin is cooked, echoed and line-buffered. We mirror the
+/// POSIX `bun_restore_stdio` path: snapshot the console input mode before
+/// handing the console to the child, and restore it when the child exits.
+///
+/// Returns the current console input mode iff `stdin` is an inherited console
+/// handle, otherwise `None`. `GetConsoleMode` only succeeds on a real console
+/// handle, so a redirected (pipe/file) stdin returns `None` and the guard is
+/// skipped for free.
+#[cfg(windows)]
+fn windows_console_in_snapshot(stdin: &WindowsStdio) -> Option<u32> {
+    if !matches!(stdin, WindowsStdio::Inherit) {
+        return None;
+    }
+    let handle = Fd::stdin().native();
+    let mut mode: u32 = 0;
+    // SAFETY: `handle` is the process stdin handle (valid for the process
+    // lifetime); `&mut mode` coerces to the `*mut DWORD` out-param. The call is
+    // side-effect free and returns 0 for a non-console handle.
+    if unsafe { bun_sys::windows::GetConsoleMode(handle, &mut mode) } == 0 {
+        return None;
+    }
+    Some(mode)
+}
+
+/// Restore a console input mode captured by [`windows_console_in_snapshot`].
+/// No-op when `saved` is `None`. Restoring the exact prior mode keeps libuv's
+/// cached tty value consistent with the OS rather than fighting the cache.
+#[cfg(windows)]
+fn windows_console_in_restore(saved: Option<u32>) {
+    let Some(mode) = saved else { return };
+    // SAFETY: stdin handle is valid for the process lifetime. Restore is
+    // best-effort — an error (e.g. handle no longer a console) is ignored,
+    // matching `bun_restore_stdio`.
+    unsafe {
+        let _ = bun_sys::windows::SetConsoleMode(Fd::stdin().native(), mode);
+    }
 }
 
 impl Drop for Process {
@@ -273,6 +332,17 @@ impl Process {
         self.status = status.clone();
         if self.has_exited() {
             self.detach();
+            // A child that inherited our console stdin may have switched the
+            // shared console input buffer back to cooked mode. Put back the mode
+            // we captured at spawn so an interactive parent (e.g. a TUI in raw
+            // mode) keeps receiving raw keystrokes instead of cooked, echoed,
+            // line-buffered input. No-op unless we snapshotted a mode for this
+            // child.
+            #[cfg(windows)]
+            {
+                windows_console_in_restore(self.windows_console_in_mode);
+                self.windows_console_in_mode = None;
+            }
         }
         call_exit_handler(&exit_handler, self, status, rusage);
     }
@@ -2083,6 +2153,9 @@ mod spawn_process_body {
             poller: Poller::Detached,
             exit_handler: ProcessExitHandler::default(),
             sync: false,
+            // Captured before uv_spawn below so it reflects our mode, not
+            // whatever the child sets. Restored in `Process::on_exit`.
+            windows_console_in_mode: windows_console_in_snapshot(&options.stdin),
         }));
 
         // defer if failed: process.close(); process.deref(); — handled at error sites

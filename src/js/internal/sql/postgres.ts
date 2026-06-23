@@ -528,6 +528,11 @@ class PostgresAdapter
   // tracked channel. notify() goes through the regular pool via pg_notify().
 
   #listenConnection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
+  // Native handle returned by createPooledConnectionHandle before the
+  // handshake completes. Stored so #closeListen can abort a mid-handshake
+  // connect (mirrors the pool path, which stores it on BasePooledConnection
+  // for the same reason); #listenConnection is only populated in onConnected.
+  #listenConnectingHandle: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
   #listenConnectPromise: Promise<$ZigGeneratedClasses.PostgresSQLConnection> | null = null;
   // Per-channel listener sets. The presence of a key means LISTEN should be
   // active for that channel on the dedicated connection.
@@ -569,6 +574,8 @@ class PostgresAdapter
     }
     const conn = this.#listenConnection;
     this.#listenConnection = null;
+    const connecting = this.#listenConnectingHandle;
+    this.#listenConnectingHandle = null;
     // The in-flight create promise self-clears via .finally(), but null it here
     // for symmetry so post-close synchronous reads don't see a stale promise.
     this.#listenConnectPromise = null;
@@ -585,6 +592,11 @@ class PostgresAdapter
     if (conn) {
       try {
         conn.close();
+      } catch {}
+    }
+    if (connecting && connecting !== conn) {
+      try {
+        connecting.close();
       } catch {}
     }
   }
@@ -610,6 +622,7 @@ class PostgresAdapter
       createPostgresConnection,
       { ...this.connectionInfo, idleTimeout: 0, maxLifetime: 0, prepare: true },
       (err, conn) => {
+        this.#listenConnectingHandle = null;
         if (err) {
           reject(wrapPostgresError(err));
           return;
@@ -659,6 +672,7 @@ class PostgresAdapter
           // the pending listen() instead of scheduling a reconnect. The
           // connection was never published to #listenConnection, so there is
           // nothing to clear.
+          this.#listenConnectingHandle = null;
           reject(wrapPostgresError(err ?? this.connectionClosedError()));
           return;
         }
@@ -672,6 +686,24 @@ class PostgresAdapter
         this.#listenRegisteredChannels.clear();
         this.#scheduleListenReconnect();
       },
+    ).then(
+      handle => {
+        // The native handle is available before the handshake completes.
+        // Store it so #closeListen can abort a mid-handshake connect instead
+        // of leaving the socket ref'd until the handshake finishes or the
+        // connectionTimeout fires. onConnected/onClose clear it; if either
+        // has already fired (fast loopback) or the adapter is already gone,
+        // there is nothing to store.
+        if (!handle || connected) return;
+        if (this.closed || this.#listenChannels.size === 0) {
+          try {
+            handle.close();
+          } catch {}
+          return;
+        }
+        this.#listenConnectingHandle = handle;
+      },
+      () => {},
     );
     return promise;
   }
@@ -1002,6 +1034,25 @@ class PostgresAdapter
       // registration, so no UNLISTEN round-trip is needed.
       this.#closeListenConnectionIfIdle();
     } else if (this.#listenConnection && !this.#listenChannels.has(channel)) {
+      // Let any in-flight LISTEN for this channel settle first so its
+      // post-ack #listenRegisteredChannels.add is ordered before our delete,
+      // and so a concurrent re-listen() that joins that in-flight (because
+      // unlisten does not clear #listenInFlight) does not get this UNLISTEN
+      // queued behind the LISTEN it is awaiting.
+      const pending = this.#listenInFlight.get(channel);
+      if (pending) {
+        try {
+          await pending;
+        } catch {}
+        // The channel was re-added while the in-flight LISTEN settled (or
+        // while this unlisten() was suspended): the re-listen owns the
+        // registration on the server; sending UNLISTEN now would strip it.
+        if (this.#listenChannels.has(channel)) return;
+        // The connection may have dropped while suspended; onClose cleared
+        // the registered set and the reconnect sweep will not re-LISTEN this
+        // channel (it is not in #listenChannels), so there is nothing to do.
+        if (!this.#listenConnection) return;
+      }
       this.#listenRegisteredChannels.delete(channel);
       try {
         await this.#runListenQuery(this.#listenConnection, `UNLISTEN ${this.#quoteChannel(channel)}`);
@@ -1028,10 +1079,17 @@ class PostgresAdapter
     }
     const conn = this.#listenConnection;
     this.#listenConnection = null;
+    const connecting = this.#listenConnectingHandle;
+    this.#listenConnectingHandle = null;
     this.#listenRegisteredChannels.clear();
     if (conn) {
       try {
         conn.close();
+      } catch {}
+    }
+    if (connecting && connecting !== conn) {
+      try {
+        connecting.close();
       } catch {}
     }
   }

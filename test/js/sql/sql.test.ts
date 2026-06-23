@@ -13695,6 +13695,67 @@ test("process survives the reconnect backoff window and gets notifications after
   expect(exitCode).toBe(0);
 });
 
+// createPooledConnectionHandle returns the native handle before the PG
+// handshake completes. The pool path stores it so a forced close can abort
+// a mid-handshake connect; the listen path must do the same. Without that,
+// close() resolves but the orphaned handshake socket keeps the process
+// alive until the handshake completes or connectionTimeout fires.
+test("close() during a listen handshake aborts it instead of leaving the socket ref'd", async () => {
+  // Accepts the TCP connection but never writes the AuthenticationOk, so
+  // the PG handshake never completes and onConnected never fires.
+  const { port, server, accepted } = await neverAnsweringServer();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { SQL } from "bun";
+        const sql = new SQL({
+          url: "postgres://u@127.0.0.1:${port}/db",
+          max: 1,
+          idleTimeout: 5,
+          // Long enough that the unfixed build (which waits this out) is
+          // caught by the spawn timeout instead of exiting on its own.
+          connectionTimeout: 60,
+        });
+        // Fire-and-forget: the handshake will never complete, so this would
+        // hang if awaited.
+        sql.listen("hang_ch", () => {}).catch(() => {});
+        // Let the in-flight task reach createPooledConnectionHandle and the
+        // returned-handle .then() fire so #listenConnectingHandle is set.
+        for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
+        await sql.close({ timeout: 0 });
+        console.log("CLOSED");
+        // No process.exit(): the event loop must drain on its own once the
+        // handshake socket is aborted.
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // On the unfixed build the handshake socket holds the event loop open
+      // until connectionTimeout (60s above) fires, so the child is killed
+      // here instead of exiting cleanly.
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("CLOSED\n");
+    expect(filterSpawnStderr(stderr)).toBe("");
+    // A SIGKILL (exitCode null) means the orphaned handshake socket held
+    // the process open past the spawn timeout.
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+    // The server saw the connection and then saw it close (the child
+    // aborted the handshake on sql.close()).
+    await accepted;
+  } finally {
+    server.close();
+  }
+}, 30_000);
+
 // The scoped handles returned by reserve() and begin() inherit
 // listen/unlisten/notify from SQL in the type declarations, so the runtime
 // objects must carry them too: listen/unlisten delegate to the adapter-wide
@@ -14115,6 +14176,54 @@ test("listen() after an unlisten raced a held LISTEN ack still sends LISTEN", as
 
   await db.unlisten("stale_ch");
   await db.unlisten("stale_keep");
+});
+
+// A re-listen() that lands while both an in-flight LISTEN is awaiting its
+// held ack and an unlisten() on the same channel has queued an UNLISTEN
+// behind it would join the stale in-flight and end up with the server
+// processing LISTEN then UNLISTEN (unsubscribed) while the client records
+// the channel as registered. unlisten() now awaits the in-flight and
+// aborts the UNLISTEN when the channel was re-added meanwhile, so the
+// LISTEN the re-listen joined stays in effect on the server.
+test("re-listen during a held LISTEN ack with a concurrent unlisten keeps the server subscribed", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  await db.listen("readd_keep", () => {});
+
+  mock.holdAcksFor(["readd_ch"]);
+  const listen1 = db.listen("readd_ch", () => {});
+  await mock.waitForQuery(qs => qs.includes('LISTEN "readd_ch"'));
+
+  // unlisten synchronously drops the channel; with the fix it then awaits
+  // the held in-flight instead of queuing UNLISTEN behind it.
+  const unlistenP = db.unlisten("readd_ch");
+  // Re-listen while the ack is still held: joins the step-1 in-flight.
+  const listen2 = db.listen("readd_ch", () => {});
+
+  mock.holdAcksFor([]);
+  mock.releaseHeldAcks();
+  await listen1;
+  await unlistenP;
+  await listen2;
+
+  // Barrier: pipelines behind anything the above wrote on the dedicated
+  // connection, so the server's query log is final for readd_ch.
+  await db.unlisten("readd_keep");
+
+  // The re-listen owns the registration on the server via the joined
+  // in-flight's LISTEN; an UNLISTEN here would strip it and leave the
+  // client believing it is subscribed when it is not.
+  const readdQueries = mock.queries.filter(q => q.includes('"readd_ch"'));
+  expect(readdQueries).not.toContain('UNLISTEN "readd_ch"');
+  expect(readdQueries).toContain('LISTEN "readd_ch"');
+
+  await db.unlisten("readd_ch");
 });
 
 // The Postgres adapter's listen/unlisten are async methods, so their

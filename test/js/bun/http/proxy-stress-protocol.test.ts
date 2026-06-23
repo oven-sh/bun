@@ -7,9 +7,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
-import { once } from "node:events";
 import {
   cartesian,
   clearProxyEnv,
@@ -277,43 +277,40 @@ describe("IPv6 literal origin through proxy", () => {
     proxyTls: [false, true] as const,
     originTls: [false, true] as const,
   })) {
-    test.concurrent(
-      `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}://[::1]`,
-      async () => {
-        if (!v6Available) {
-          // Origin unreachable on this host; nothing to assert.
-          return;
-        }
-        await using origin = Bun.serve({
-          port: 0,
-          hostname: "::1",
-          tls: originTls ? tlsCert : undefined,
-          fetch: () => new Response("v6"),
+    test.concurrent(`${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}://[::1]`, async () => {
+      if (!v6Available) {
+        // Origin unreachable on this host; nothing to assert.
+        return;
+      }
+      await using origin = Bun.serve({
+        port: 0,
+        hostname: "::1",
+        tls: originTls ? tlsCert : undefined,
+        fetch: () => new Response("v6"),
+      });
+      await using proxy = await createAdversarialProxy({ tls: proxyTls });
+      const scheme = originTls ? "https" : "http";
+      let outcome: string;
+      try {
+        const res = await fetch(`${scheme}://[::1]:${origin.port}/`, {
+          proxy: proxy.url,
+          keepalive: false,
+          tls: laxTls,
+          signal: AbortSignal.timeout(10_000),
         });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
-        const scheme = originTls ? "https" : "http";
-        let outcome: string;
-        try {
-          const res = await fetch(`${scheme}://[::1]:${origin.port}/`, {
-            proxy: proxy.url,
-            keepalive: false,
-            tls: laxTls,
-            signal: AbortSignal.timeout(10_000),
-          });
-          outcome = `${res.status}:${await res.text()}`;
-        } catch (e) {
-          outcome = errcode(e);
-        }
-        // The proxy itself is IPv4-only (127.0.0.1) and dials the origin
-        // over IPv6 via `net.connect`. If the proxy's own upstream connect
-        // fails (host lacks ::1 routing) the client sees 502; otherwise a
-        // clean 200.
-        expect(["200:v6", "resolved:502"]).toContain(
-          outcome.startsWith("200:") ? outcome : `resolved:${outcome.split(":")[0]}`,
-        );
-        expect(outcome).not.toBe("TimeoutError");
-      },
-    );
+        outcome = `${res.status}:${await res.text()}`;
+      } catch (e) {
+        outcome = errcode(e);
+      }
+      // The proxy itself is IPv4-only (127.0.0.1) and dials the origin
+      // over IPv6 via `net.connect`. If the proxy's own upstream connect
+      // fails (host lacks ::1 routing) the client sees 502; otherwise a
+      // clean 200.
+      expect(["200:v6", "resolved:502"]).toContain(
+        outcome.startsWith("200:") ? outcome : `resolved:${outcome.split(":")[0]}`,
+      );
+      expect(outcome).not.toBe("TimeoutError");
+    });
   }
 });
 
@@ -432,21 +429,24 @@ describe('redirect: "manual" through proxy', () => {
     proxyTls: [false, true] as const,
     originTls: [false, true] as const,
   })) {
-    test.concurrent(`${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin 302 manual`, async () => {
-      await using target = await createAdversarialOrigin({ tls: originTls, body: "should-not-reach" });
-      await using origin = await createAdversarialOrigin({ tls: originTls, redirectTo: target.url });
-      await using proxy = await createAdversarialProxy({ tls: proxyTls });
-      const res = await fetch(origin.url, {
-        proxy: proxy.url,
-        keepalive: false,
-        tls: laxTls,
-        redirect: "manual",
-      });
-      expect(res.status).toBe(302);
-      expect(res.headers.get("location")).toBe(target.url);
-      expect(proxy.connections.length).toBe(1);
-      expect(target.requests.length).toBe(0);
-    });
+    test.concurrent(
+      `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin 302 manual`,
+      async () => {
+        await using target = await createAdversarialOrigin({ tls: originTls, body: "should-not-reach" });
+        await using origin = await createAdversarialOrigin({ tls: originTls, redirectTo: target.url });
+        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const res = await fetch(origin.url, {
+          proxy: proxy.url,
+          keepalive: false,
+          tls: laxTls,
+          redirect: "manual",
+        });
+        expect(res.status).toBe(302);
+        expect(res.headers.get("location")).toBe(target.url);
+        expect(proxy.connections.length).toBe(1);
+        expect(target.requests.length).toBe(0);
+      },
+    );
   }
 });
 
@@ -459,22 +459,25 @@ describe('redirect: "error" through proxy', () => {
     proxyTls: [false, true] as const,
     originTls: [false, true] as const,
   })) {
-    test.concurrent(`${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin 302 error`, async () => {
-      await using origin = await createAdversarialOrigin({
-        tls: originTls,
-        redirectTo: "http://never-reached.invalid/",
-      });
-      await using proxy = await createAdversarialProxy({ tls: proxyTls });
-      await expect(
-        fetch(origin.url, {
-          proxy: proxy.url,
-          keepalive: false,
-          tls: laxTls,
-          redirect: "error",
-        }),
-      ).rejects.toThrow();
-      expect(proxy.connections.length).toBe(1);
-    });
+    test.concurrent(
+      `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin 302 error`,
+      async () => {
+        await using origin = await createAdversarialOrigin({
+          tls: originTls,
+          redirectTo: "http://never-reached.invalid/",
+        });
+        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        await expect(
+          fetch(origin.url, {
+            proxy: proxy.url,
+            keepalive: false,
+            tls: laxTls,
+            redirect: "error",
+          }),
+        ).rejects.toThrow();
+        expect(proxy.connections.length).toBe(1);
+      },
+    );
   }
 });
 

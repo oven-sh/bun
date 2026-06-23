@@ -980,6 +980,33 @@ describe("defineProperty errors use vm-realm global", () => {
     expect(result.hostFunction === Function).toBe(false);
     expect(result.hostFunction("return typeof process")()).toBe("undefined");
   });
+
+  test("data descriptor on a property not on the sandbox (non-extensible sandbox)", () => {
+    // Reaches the fall-through defineOwnProperty call where the property is not
+    // already on the sandbox. A non-extensible sandbox makes JSC throw from that
+    // call; the error must be created in the vm realm.
+    const sandbox = {};
+    Object.preventExtensions(sandbox);
+    createContext(sandbox);
+
+    const result = runInContext(
+      `
+        let err;
+        try {
+          Object.defineProperty(this, "newKey", { value: 1 });
+        } catch (e) { err = e; }
+        ({
+          isVmRealmTypeError: err instanceof TypeError,
+          hostFunction: err && err.constructor && err.constructor.constructor,
+        });
+      `,
+      sandbox,
+    );
+
+    expect(result.isVmRealmTypeError).toBe(true);
+    expect(result.hostFunction === Function).toBe(false);
+    expect(result.hostFunction("return typeof process")()).toBe("undefined");
+  });
 });
 
 test("Loader is not defined in vm context", () => {

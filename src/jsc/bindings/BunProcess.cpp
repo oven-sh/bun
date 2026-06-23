@@ -1232,7 +1232,11 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
-            // if an exception is thrown in the uncaughtException handler, we abort
+            // If the capture callback itself throws, exit. On the main thread
+            // this is noreturn, except under `bun run --watch` where it raises
+            // a termination exception and returns (the watcher loop recovers);
+            // in a worker it returns after requesting termination. In the
+            // returning cases we fall through to `return true`.
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
         }

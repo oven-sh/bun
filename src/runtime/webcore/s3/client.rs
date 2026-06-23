@@ -1039,6 +1039,7 @@ pub(crate) fn download_stream(
                 crate::webcore::s3::download_stream::State::default().0,
             ),
             concurrent_task: Default::default(),
+            async_http_id: 0,
         },
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
@@ -1095,6 +1096,7 @@ pub(crate) fn download_stream(
     ));
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     let http = unsafe { task.http.assume_init_mut() };
+    task.async_http_id = http.async_http_id;
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
@@ -1215,7 +1217,7 @@ pub fn readable_stream(
                     // Wake the HTTP thread so it observes the abort even when the
                     // socket is idle; otherwise the final `has_more == false`
                     // callback never fires and both the task and wrapper leak.
-                    bun_http::http_thread().schedule_shutdown((*task).http.assume_init_ref());
+                    bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
                 }
             }
         }

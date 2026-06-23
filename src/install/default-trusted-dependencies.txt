@@ -1,3 +1,4 @@
+@851-labs/tokenmaxxing
 @airbnb/node-memwatch
 @anthropic-ai/claude-code
 @apollo/protobufjs

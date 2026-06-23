@@ -382,11 +382,7 @@ crypto_exports.DiffieHellman = DiffieHellman;
 
 crypto_exports.diffieHellman = diffieHellman;
 
-ECDH.prototype.setPublicKey = deprecate(
-  ECDH.prototype.setPublicKey,
-  "ecdh.setPublicKey() is deprecated.",
-  "DEP0031",
-);
+ECDH.prototype.setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
 crypto_exports.ECDH = ECDH;
 crypto_exports.createECDH = function createECDH(curve) {
   return new ECDH(curve);

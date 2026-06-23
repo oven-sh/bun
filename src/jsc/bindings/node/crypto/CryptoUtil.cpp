@@ -356,9 +356,9 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
             int errLib = ERR_GET_LIB(err);
             ASCIILiteral lib = ""_s;
             switch (errLib) {
-#define BUN_OSSL_LIB_CASE(name)        \
-    case ERR_LIB_##name:               \
-        lib = #name "_"_s;             \
+#define BUN_OSSL_LIB_CASE(name) \
+    case ERR_LIB_##name:        \
+        lib = #name "_"_s;      \
         break;
                 BUN_OSSL_LIB_CASE(SYS)
                 BUN_OSSL_LIB_CASE(BN)

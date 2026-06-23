@@ -12,6 +12,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { once } from "node:events";
+import net from "node:net";
+import tls from "node:tls";
 import {
   cartesian,
   clearProxyEnv,
@@ -326,28 +329,47 @@ describe("unsupported proxy scheme", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HTTP/2 is not offered through a proxy. The client should negotiate
-// HTTP/1.1 even against an HTTP/2-capable origin.
+// HTTP/2 is not offered through a proxy. The client must negotiate
+// http/1.1 in the inner-TLS ALPN even against an h2-capable origin.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("HTTP/2 not offered through proxy", () => {
   for (const proxyTls of [false, true] as const) {
-    test.concurrent(`${proxyTls ? "https" : "http"}-proxy → h2-capable https origin uses HTTP/1.1`, async () => {
-      // Bun.serve with tls negotiates h2 by default; by going through a
-      // proxy the client must offer only http/1.1 in the inner-TLS ALPN,
-      // so the server downgrades.
-      await using origin = Bun.serve({
-        port: 0,
-        tls: tlsCert,
-        fetch: () => new Response("h1"),
+    test.concurrent(`${proxyTls ? "https" : "http"}-proxy → h2-capable https origin negotiates http/1.1`, async () => {
+      // A raw TLS server that advertises both h2 and http/1.1 and echoes
+      // back the protocol it actually negotiated with the client. A
+      // Bun.serve origin can't expose the ALPN result to its handler, so
+      // observe it at the socket level instead.
+      const server = tls.createServer({ ...tlsCert, ALPNProtocols: ["h2", "http/1.1"] }, sock => {
+        sock.on("error", () => {});
+        sock.once("data", () => {
+          const negotiated = sock.alpnProtocol || "none";
+          const body = `alpn=${negotiated}`;
+          sock.write(
+            `HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+          );
+          sock.end();
+        });
       });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const originPort = (server.address() as net.AddressInfo).port;
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
-
-      const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
-      expect(await res.text()).toBe("h1");
-      expect(res.status).toBe(200);
-      // The proxy saw a CONNECT (not an h2 preface).
-      expect(proxy.connections[0].method).toBe("CONNECT");
+      try {
+        const res = await fetch(`https://localhost:${originPort}/`, {
+          proxy: proxy.url,
+          keepalive: false,
+          tls: laxTls,
+        });
+        // If the client offered h2 in the inner ALPN, the origin would have
+        // selected it (h2 is first in ALPNProtocols) and this assertion
+        // would read "alpn=h2".
+        expect(await res.text()).toBe("alpn=http/1.1");
+        expect(res.status).toBe(200);
+        expect(proxy.connections[0].method).toBe("CONNECT");
+      } finally {
+        server.close();
+      }
     });
   }
 });

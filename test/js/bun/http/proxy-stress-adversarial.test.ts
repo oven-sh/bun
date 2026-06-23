@@ -533,18 +533,29 @@ describe("interleaved proxy/direct", () => {
       });
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
 
+      const totalBytesUp = () => proxy.connections.reduce((s, c) => s + c.bytesUp, 0);
       for (let i = 0; i < 6; i++) {
         const viaProxy = i % 2 === 0;
+        const before = totalBytesUp();
         const res = await fetch(`${origin.url}?via=${viaProxy ? "proxy" : "direct"}`, {
           ...(viaProxy ? { proxy: proxy.url } : {}),
           keepalive: true,
           tls: laxTls,
         });
         expect(await res.text()).toBe(viaProxy ? "proxy" : "direct");
+        // A direct fetch mis-routed onto a pooled tunnel would show up as
+        // new client→upstream bytes on the proxy even though no `proxy`
+        // option was passed.
+        if (!viaProxy) expect(totalBytesUp()).toBe(before);
       }
       // 3 proxied requests → at least 1 CONNECT, at most 3.
       expect(proxy.connectCount()).toBeGreaterThanOrEqual(1);
       expect(proxy.connectCount()).toBeLessThanOrEqual(3);
+      // http-proxy: 3 sequential keepalive proxied requests reuse one
+      // tunnel deterministically. A proxied request that silently
+      // bypassed the proxy would leave this at 0; a direct request that
+      // opened its own CONNECT would push it above 1.
+      if (!proxyTls) expect(proxy.connectCount()).toBe(1);
     });
   }
 });

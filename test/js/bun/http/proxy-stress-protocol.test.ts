@@ -7,6 +7,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { isIPv6 } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
@@ -254,33 +255,12 @@ describe("1xx through tunnel", () => {
 // CONNECT target and in the absolute-form URL.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("IPv6 literal origin through proxy", () => {
-  // Some CI hosts disable IPv6 loopback; skip the whole block in that
-  // case rather than reporting a false failure.
-  let v6Available = true;
-  beforeAll(async () => {
-    const probe = net.createServer();
-    await new Promise<void>(resolve => {
-      probe.once("error", () => {
-        v6Available = false;
-        resolve();
-      });
-      probe.listen(0, "::1", () => {
-        probe.close();
-        resolve();
-      });
-    });
-  });
-
+describe.skipIf(!isIPv6())("IPv6 literal origin through proxy", () => {
   for (const { proxyTls, originTls } of cartesian({
     proxyTls: [false, true] as const,
     originTls: [false, true] as const,
   })) {
     test.concurrent(`${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}://[::1]`, async () => {
-      if (!v6Available) {
-        // Origin unreachable on this host; nothing to assert.
-        return;
-      }
       await using origin = Bun.serve({
         port: 0,
         hostname: "::1",

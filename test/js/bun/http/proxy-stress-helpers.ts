@@ -135,16 +135,6 @@ export interface AdversarialProxyOptions {
    * and replies 407 if missing / 403 if wrong.
    */
   auth?: { user: string; pass: string };
-  /**
-   * Override upstream target: every CONNECT/absolute-form request is routed
-   * here regardless of what the client asked for. Useful for simulating a
-   * proxy that forwards to an unreachable upstream.
-   */
-  forceUpstream?: { host: string; port: number };
-  /**
-   * Observe each new connection as it's accepted.
-   */
-  onConnection?: (record: ProxyConnectionRecord, client: net.Socket) => void;
 }
 
 export interface AdversarialProxy {
@@ -155,8 +145,6 @@ export interface AdversarialProxy {
   connections: ProxyConnectionRecord[];
   /** Number of CONNECT requests seen. */
   connectCount(): number;
-  /** Number of absolute-form (non-CONNECT) requests seen on request lines. */
-  absoluteFormCount(): number;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -317,7 +305,6 @@ export async function createAdversarialProxy(opts: AdversarialProxyOptions = {})
         bytesDown: 0,
       };
       connections.push(record);
-      opts.onConnection?.(record, client);
 
       if (stageHit("request-received")) return;
 
@@ -356,10 +343,7 @@ export async function createAdversarialProxy(opts: AdversarialProxyOptions = {})
       // Resolve upstream address.
       let host: string;
       let port: number;
-      if (opts.forceUpstream) {
-        host = opts.forceUpstream.host;
-        port = opts.forceUpstream.port;
-      } else if (isConnect) {
+      if (isConnect) {
         const colon = parsed.target.lastIndexOf(":");
         host = parsed.target.slice(0, colon);
         port = Number(parsed.target.slice(colon + 1));
@@ -468,7 +452,6 @@ export async function createAdversarialProxy(opts: AdversarialProxyOptions = {})
     port,
     connections,
     connectCount: () => connections.filter(c => c.method === "CONNECT").length,
-    absoluteFormCount: () => connections.filter(c => c.method !== "CONNECT").length,
     close,
     [Symbol.asyncDispose]: close,
   };

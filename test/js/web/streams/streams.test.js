@@ -260,6 +260,64 @@ describe("WritableStream", () => {
     await rs.pipeTo(ws);
     expect(received).toBe("hello world");
   });
+
+  // SetUpWritableStreamDefaultController step 17: "Let startPromise be a
+  // promise resolved with startResult." Web IDL "a promise resolved with x" is
+  // always a fresh promise; when x is a thenable the PromiseResolveThenableJob
+  // hop is observable in microtask ordering. Promise.resolve(x) would return x
+  // unchanged when x is already a native Promise and skip that hop.
+  describe('[[started]] timing (Web IDL "a promise resolved with")', () => {
+    async function observe(sink) {
+      const order = [];
+      const { promise: done, resolve } = Promise.withResolvers();
+      const ws = new WritableStream({
+        ...sink,
+        write() {
+          order.push("write");
+          resolve();
+        },
+      });
+      ws.getWriter().write("x");
+      queueMicrotask(() => {
+        order.push("mt1");
+        queueMicrotask(() => order.push("mt2"));
+      });
+      await done;
+      return order;
+    }
+
+    it("start() returns a fulfilled Promise: write after the assimilation hop", async () => {
+      expect(await observe({ start: () => Promise.resolve() })).toEqual(["mt1", "mt2", "write"]);
+    });
+
+    it("start() returns undefined: write before the first queued microtask (single wrap, no double-wrap regression)", async () => {
+      expect(await observe({ start() {} })).toEqual(["write", "mt1", "mt2"]);
+    });
+
+    it("no start(): write before the first queued microtask", async () => {
+      expect(await observe({})).toEqual(["write", "mt1", "mt2"]);
+    });
+
+    it("TransformStream writable startAlgorithm returns startPromise: transform after the assimilation hop", async () => {
+      const order = [];
+      const { promise: done, resolve } = Promise.withResolvers();
+      const ts = new TransformStream({
+        transform(chunk, controller) {
+          order.push("transform");
+          controller.enqueue(chunk);
+          resolve();
+        },
+      });
+      ts.readable.getReader().read();
+      ts.writable.getWriter().write("x");
+      queueMicrotask(() => {
+        order.push("mt1");
+        queueMicrotask(() => order.push("mt2"));
+      });
+      await done;
+      expect(order).toEqual(["mt1", "mt2", "transform"]);
+    });
+  });
 });
 
 describe("ReadableStream.prototype.tee", () => {

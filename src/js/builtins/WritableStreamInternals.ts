@@ -632,7 +632,13 @@ export function setUpWritableStreamDefaultControllerFromUnderlyingSink(
 
   if ("start" in underlyingSinkDict) {
     const startMethod = underlyingSinkDict["start"];
-    startAlgorithm = () => $promiseInvokeOrNoopMethodNoCatch(underlyingSink, startMethod, [controller]);
+    // UnderlyingSinkStartCallback's IDL return type is `any`, so Web IDL
+    // "invoke" performs no promise conversion here. The single "a promise
+    // resolved with startResult" wrap happens in
+    // writableStreamDefaultControllerStart (SetUpWritableStreamDefaultController
+    // step 17). A synchronous throw propagates out of the WritableStream
+    // constructor, matching spec.
+    startAlgorithm = () => startMethod.$call(underlyingSink, controller);
   }
   if ("write" in underlyingSinkDict) {
     const writeMethod = underlyingSinkDict["write"];

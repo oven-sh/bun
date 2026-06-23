@@ -3022,30 +3022,10 @@ where
         this.do_render_blob();
     }
 
-    pub fn on_pipe(this: &mut Self, mut stream: WebCore::streams::Result) {
-        let stream_needs_deinit = matches!(
-            stream,
-            WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_)
-        );
+    pub fn on_pipe(this: &mut Self, stream: &WebCore::streams::Result) {
         let is_done = stream.is_done();
-        // NOTE: reshaped for borrowck — the defer reads `stream` through a
-        // raw ptr so the body below can keep borrowing it.
-        let stream_ptr: *mut WebCore::streams::Result = &raw mut stream;
         // Drop one ref only when the stream signals completion.
         let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
-        scopeguard::defer! {
-            if stream_needs_deinit {
-                // SAFETY: stream lives on the caller's stack frame past the guard.
-                match unsafe { &mut *stream_ptr } {
-                    WebCore::streams::Result::OwnedAndDone(owned)
-                    | WebCore::streams::Result::Owned(owned) => {
-                        // Vec::deinit → Drop in Rust.
-                        *owned = Vec::<u8>::default();
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
 
         if this.is_aborted_or_ended() {
             return;
@@ -3628,11 +3608,9 @@ where
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
-                    let js_err = err.to_js(global_this);
-                    js_err.ensure_still_alive();
                     // TODO: properly propagate exception upwards
                     let _ = bytes.on_data(WebCore::streams::Result::Err(
-                        WebCore::streams::StreamError::JSValue(js_err),
+                        err.to_stream_error(global_this),
                     ));
                     err.reset();
                 }
@@ -4088,7 +4066,7 @@ where
     fn on_pipe(&mut self, stream: WebCore::streams::Result) {
         // Forward to the inherent associated fn (not method-dispatched to avoid
         // recursing into this trait impl).
-        RequestContext::on_pipe(self, stream)
+        RequestContext::on_pipe(self, &stream)
     }
 }
 

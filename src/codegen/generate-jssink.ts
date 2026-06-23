@@ -452,9 +452,33 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native close first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    ${name}__close(lexicalGlobalObject, ptr);
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native close threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -475,9 +499,34 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
+    // Null the native pointer before running any JS. detach() fires the
+    // onClose callback, which can re-enter the event loop and free the
+    // sink (e.g. handle_resolve_stream -> destroy_sink) while ptr is still
+    // live on our stack. Do the native end first, then let detach() run
+    // the JS callback once we no longer need ptr.
+    ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+    controller->m_sinkPtr = nullptr;
+
+    auto result = ${name}__endWithSink(ptr, lexicalGlobalObject);
+
+    // detach() must still fire onClose (it transitions the direct
+    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // even if the native end threw, matching the pre-reorder behaviour.
+    // Stash and rethrow around it; the sink's error wins over any onClose
+    // error.
+    if (JSC::Exception* pending = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            return {};
+        }
+        controller->detach();
+        (void)scope.tryClearException();
+        scope.throwException(lexicalGlobalObject, pending);
+        return {};
+    }
+
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
-    return ${name}__endWithSink(ptr, lexicalGlobalObject);
+    return result;
 }
 
 extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);

@@ -124,7 +124,10 @@ fn run_async<A: FsArgument>(
 
     // The `cp` / `readdir` operations are handled by their dedicated
     // bindings below.
-    // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
+    // SAFETY: re-borrow `vm` mutably. `slice` holds a shared `&vm` but is
+    // touched again only by the `Drop` below, which reads its bitset/`all` and
+    // never dereferences `slice.vm`; this exclusive borrow's last use is inside
+    // `create_task`, before that drop.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     let result = create_task(global, this, args, vm);
     // SAFETY: not yet dropped; only drop site for this path. Releases the
@@ -208,7 +211,10 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
+        // Re-borrow `vm` mutably. `slice` holds a shared `&vm` but is used
+        // again only by its scope-exit `Drop` (bitset unprotect over `all`),
+        // which never dereferences `slice.vm`, and that drop runs after this
+        // exclusive borrow's last use in `create`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(global, this, cp_args, vm))
     }
@@ -250,7 +256,10 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
+        // Re-borrow `vm` mutably. `slice` holds a shared `&vm` but is used
+        // again only by its scope-exit `Drop` (bitset unprotect over `all`),
+        // which never dereferences `slice.vm`, and that drop runs after this
+        // exclusive borrow's last use in `create`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let result = if rd_args.recursive {
             AsyncReaddirRecursiveTask::create(global, rd_args, vm)

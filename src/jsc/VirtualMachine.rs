@@ -292,6 +292,14 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
+    /// Set when `process.exit()` is called on the main thread while `--watch`
+    /// or `--hot` is active. Instead of tearing the process down (which would
+    /// kill the watcher), the exit raises a JSC termination exception to stop
+    /// the current run and this flag keeps the event loop quiet until the next
+    /// reload, mirroring how an uncaught exception keeps the watcher alive.
+    /// Cleared at the start of [`VirtualMachine::reload`] (the `--hot` path);
+    /// the `--watch` path re-execs the process, which resets it to `false`.
+    pub watch_exit_requested: bool,
     pub entry_point_result: EntryPointResult,
 
     pub auto_install_dependencies: bool,
@@ -1036,6 +1044,12 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        // A pending `process.exit()` in watch/hot mode ends the current run
+        // just like an uncaught exception does (`unhandled_error_counter`), so
+        // the watcher loop falls through to waiting for the next file change.
+        if self.watch_exit_requested {
+            return false;
+        }
         let el = self.event_loop_shared();
         let active = self
             .platform_loop_opt()
@@ -1050,10 +1064,25 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
+        if self.watch_exit_requested {
+            return false;
+        }
         let el = self.event_loop_shared();
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
+    }
+
+    /// After a watch/hot-mode `process.exit()` has unwound the current run, the
+    /// JSC termination exception is still pending (it is sticky). Clear it so
+    /// the event loop can keep ticking while the watcher waits for the next
+    /// change. `watch_exit_requested` stays set so the loop treats the run as
+    /// finished; it is reset by [`VirtualMachine::reload`] on the next reload
+    /// (the `--watch` path re-execs the process instead).
+    pub fn clear_watch_exit_termination(&mut self) {
+        if self.watch_exit_requested {
+            self.global().clear_termination_exception();
+        }
     }
 
     pub fn wakeup(&mut self) {
@@ -2377,6 +2406,13 @@ impl VirtualMachine {
             // accessed here (no overlapping `&mut EventLoop`).
             self.event_loop_mut().perform_gc();
             loop {
+                // `process.exit()` during initial evaluation leaves the entry
+                // promise pending but raises a termination exception, so the
+                // status check below never advances — stop spinning and let the
+                // watcher loop take over.
+                if self.watch_exit_requested {
+                    break;
+                }
                 let Some(p) = self.pending_internal_promise else {
                     break;
                 };
@@ -3454,6 +3490,20 @@ impl VirtualMachine {
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+        if self.watch_exit_requested {
+            // The previous run ended via `process.exit()` (`--hot`), which
+            // raised a termination exception and left the entry promise stuck
+            // pending. Clear that state so the re-evaluation below can run.
+            self.watch_exit_requested = false;
+            self.global().clear_termination_exception();
+            if self.pending_internal_promise_is_protected {
+                if let Some(p) = self.pending_internal_promise {
+                    JSValue::from_cell(p).unprotect();
+                }
+                self.pending_internal_promise_is_protected = false;
+            }
+            self.pending_internal_promise = None;
+        }
         if let Some(p) = self.pending_internal_promise {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {

@@ -56,6 +56,19 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
         worker.exit();
+    } else if vm.is_watcher_enabled() {
+        // In `--watch`/`--hot` mode the watcher runs in the same process, so a
+        // real exit would kill it. Instead, stop the current run the same way a
+        // thrown error does (raise a JSC termination exception to unwind) and
+        // keep the watcher alive to reload on the next file change. `exit` is
+        // dispatched in `Process_functionExit` before this call, so handlers
+        // have already run.
+        vm.watch_exit_requested = true;
+        // The main thread doesn't build the termination-exception singleton at
+        // startup (only workers do), so create it here before firing the trap;
+        // otherwise `throwTerminationException` would hit a null singleton.
+        global_object.request_termination();
+        vm.jsc_vm().notify_need_termination();
     } else {
         vm.on_exit();
         vm.global_exit();

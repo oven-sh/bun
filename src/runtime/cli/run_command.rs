@@ -1503,6 +1503,10 @@ impl Run {
         }
 
         match vm.load_entry_point(entry) {
+            // `process.exit()` during evaluation (watch/hot) unwinds the run via
+            // a JSC termination exception; skip the rejected-entry handling and
+            // fall through to the watcher loop, which keeps the process alive.
+            _ if vm.watch_exit_requested => {}
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
@@ -1566,10 +1570,24 @@ impl Run {
             loop {
                 while vm.is_event_loop_alive() {
                     vm.tick();
+                    // A watch/hot `process.exit()` during this tick raises a
+                    // termination exception; stop ticking before running more
+                    // JS with it pending.
+                    if vm.watch_exit_requested {
+                        break;
+                    }
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
                 }
-                vm.on_before_exit();
+                // Clear a pending termination left by `process.exit()` so the
+                // loop can keep ticking; skip the beforeExit dispatch since the
+                // run already exited (matches Node, which does not fire
+                // `beforeExit` on `process.exit()`).
+                if vm.watch_exit_requested {
+                    vm.clear_watch_exit_termination();
+                } else {
+                    vm.on_before_exit();
+                }
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across

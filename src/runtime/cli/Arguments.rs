@@ -739,6 +739,80 @@ fn exit_node_requires_argument(flag: &[u8]) -> ! {
     Global::exit(9);
 }
 
+/// Options Node refuses to accept through the NODE_OPTIONS environment
+/// variable: the ones that change what the process executes. Mirrors the set
+/// exercised by Node's test-cli-node-options-disallowed.js.
+const NODE_OPTIONS_DISALLOWED: &[&[u8]] = &[
+    b"-v",
+    b"--version",
+    b"-h",
+    b"--help",
+    b"-e",
+    b"--eval",
+    b"-p",
+    b"--print",
+    b"-pe",
+    b"-c",
+    b"--check",
+    b"-i",
+    b"--interactive",
+    b"--v8-options",
+    b"--test",
+    b"--",
+    b"--expose-internals",
+];
+
+/// Reject NODE_OPTIONS values Node itself refuses, with Node's message and
+/// exit code 9. Bun does not apply the remaining NODE_OPTIONS yet; this only
+/// covers the error contract scripts can rely on.
+#[cold]
+#[inline(never)]
+fn validate_node_options(env: &[u8]) {
+    let mut i = 0usize;
+    while i < env.len() {
+        while i < env.len() && env[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= env.len() {
+            break;
+        }
+        // Tokenize the way Node does: whitespace-separated, double quotes
+        // group a span containing whitespace.
+        let mut token: Vec<u8> = Vec::new();
+        let mut in_quotes = false;
+        while i < env.len() && (in_quotes || !env[i].is_ascii_whitespace()) {
+            if env[i] == b'"' {
+                in_quotes = !in_quotes;
+            } else {
+                token.push(env[i]);
+            }
+            i += 1;
+        }
+        if !token.starts_with(b"-") {
+            continue;
+        }
+        // Compare the option name (before any '='), treating '_' as '-' the
+        // way Node canonicalizes option names.
+        let name_end = token.iter().position(|&b| b == b'=').unwrap_or(token.len());
+        let canonical: Vec<u8> = token[..name_end]
+            .iter()
+            .map(|&b| if b == b'_' { b'-' } else { b })
+            .collect();
+        if NODE_OPTIONS_DISALLOWED.contains(&canonical.as_slice()) {
+            let exec_path: &[u8] = bun_core::self_exe_path()
+                .map(|p| p.as_bytes())
+                .unwrap_or(b"bun");
+            bun_core::pretty_errorln!(
+                "{}: {} is not allowed in NODE_OPTIONS",
+                BStr::new(exec_path),
+                BStr::new(&token[..name_end])
+            );
+            Output::flush();
+            Global::exit(9);
+        }
+    }
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -1152,6 +1226,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             cmd,
             CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
         ) {
+            if let Some(node_options) = bun_core::env_var::NODE_OPTIONS.get() {
+                validate_node_options(node_options);
+            }
+
             ctx.runtime_options.check_syntax = args.flag(b"--check");
             if ctx.runtime_options.check_syntax && !ctx.runtime_options.eval.script.is_empty() {
                 // Node prints this (and exits 9) for `node -c -e foo`.

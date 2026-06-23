@@ -457,3 +457,26 @@ describe("--check / -c (syntax check)", () => {
     expect(exitCode).toBe(9);
   });
 });
+
+describe("NODE_OPTIONS validation", () => {
+  // Node refuses options in NODE_OPTIONS that change what the process
+  // executes; Bun matches that error contract (exit code 9, same message).
+  test.each(["-e", "--print", "--check", "--test", "--"])("%s in NODE_OPTIONS exits with code 9", opt => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log('ran')"],
+      env: { ...bunEnv, NODE_OPTIONS: opt },
+    });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: ${opt} is not allowed in NODE_OPTIONS`);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  test("allowed NODE_OPTIONS values do not fail startup", () => {
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log('ok')"],
+      env: { ...bunEnv, NODE_OPTIONS: "--no-warnings --max-old-space-size=4096 --stack-trace-limit=100" },
+    });
+    expect(stdout.toString("utf8")).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+});

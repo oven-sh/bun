@@ -9,9 +9,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
-import { once } from "node:events";
 import zlib from "node:zlib";
 import {
   cartesian,
@@ -208,8 +208,7 @@ describe("decompress:false through tunnel", () => {
         const raw = Buffer.from(await res.arrayBuffer());
         // The raw bytes are the compressed form, not the plaintext.
         expect(raw.toString("latin1")).not.toBe(payload);
-        const decoded =
-          encoding === "gzip" ? zlib.gunzipSync(raw) : zlib.brotliDecompressSync(raw);
+        const decoded = encoding === "gzip" ? zlib.gunzipSync(raw) : zlib.brotliDecompressSync(raw);
         expect(decoded.toString("latin1")).toBe(payload);
       },
     );

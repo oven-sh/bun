@@ -8,17 +8,7 @@
 import { describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { knownFailures, wptTest } from "../wpt-h2/testharness-shim";
-
-// Web IDL "a promise resolved with x" is `new Promise(r => r(x))` (always a
-// fresh promise), not `Promise.resolve(x)` (returns x when x is already a
-// Promise). writableStreamDefaultControllerStart uses Promise.$resolve, so the
-// [[started]] reaction queues one microtask earlier than the spec ref-impl;
-// this test depends on the cancel-fulfill reaction observing the writable
-// mid-"erroring" rather than already "errored".
-knownFailures.add(
-  "readable.cancel() and a parallel writable.close() should reject if a transformer.cancel() calls controller.error()",
-);
+import { wptTest } from "../wpt-h2/testharness-shim";
 
 const g = globalThis as any;
 g.self = globalThis;

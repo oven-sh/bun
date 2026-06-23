@@ -70,13 +70,10 @@ mod posix {
         /// Back-pointer so the poll dispatch can reach JS without going through
         /// the per-thread VM singleton (workers each have their own global).
         global: *mut JSGlobalObject,
-        /// Always set once `install` returns. The poll owns the PSI fd on Linux
-        /// (closed in `uninstall`); on macOS the fd slot is the kevent ident (0).
+        /// Non-null only when successfully registered; null if registration
+        /// failed or was torn down. The poll owns the PSI fd on Linux (closed
+        /// in `deinit_poll`); on macOS the fd slot is the kevent ident (0).
         poll: *mut FilePoll,
-        /// Whether `poll` was successfully registered with kqueue/epoll. On
-        /// Linux this is false when PSI is unavailable or requires privileges
-        /// we don't have; the emit path is still functional for tests.
-        registered: bool,
         /// Set while `on_poll` is on the stack around the JS emit. A
         /// `process.once` listener (or any listener that removes itself)
         /// can reach `uninstall` synchronously from inside `emit()`; when
@@ -173,7 +170,6 @@ mod posix {
         let watcher = bun_core::heap::into_raw(Box::new(MemoryPressureWatcher {
             global: ptr::from_ref(global).cast_mut(),
             poll: ptr::null_mut(),
-            registered: false,
             dispatching: false,
         }));
 
@@ -193,24 +189,19 @@ mod posix {
             );
             // SAFETY: `poll` was just allocated by `FilePoll::init` (sole borrow);
             // `platform_event_loop` returns the live uws loop.
-            let registered = match unsafe { &mut *poll }.register(
-                unsafe { ctx.platform_event_loop() },
-                Flags::MemoryPressure,
-                false,
-            ) {
-                bun_sys::Result::Ok(()) => true,
-                Err(_) => {
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
-                    {
-                        let _ = bun_sys::close(fd);
-                    }
-                    false
+            match unsafe { (*poll).register(ctx.platform_event_loop(), Flags::MemoryPressure, false) }
+            {
+                bun_sys::Result::Ok(()) => {
+                    // SAFETY: `watcher` was just heap-allocated above; sole owner.
+                    unsafe { (*watcher).poll = poll };
                 }
-            };
-            // SAFETY: `watcher` was just heap-allocated above; sole owner.
-            unsafe {
-                (*watcher).poll = poll;
-                (*watcher).registered = registered;
+                Err(_) => {
+                    // Return the hive slot and (on Linux) close the PSI fd
+                    // here; `watcher.poll` stays null so `uninstall` will
+                    // not close the fd a second time after it is reassigned.
+                    // SAFETY: `poll` is the fresh hive slot; sole owner.
+                    unsafe { deinit_poll(poll) };
+                }
             }
         }
 
@@ -290,7 +281,6 @@ mod posix {
             if (*poll).flags.contains(Flags::Eof) || (*poll).flags.contains(Flags::Hup) {
                 deinit_poll(poll);
                 (*watcher).poll = ptr::null_mut();
-                (*watcher).registered = false;
                 return;
             }
         }
@@ -315,6 +305,18 @@ mod posix {
         unsafe {
             (*watcher).dispatching = false;
             if (*watcher).poll.is_null() {
+                // If the listener re-subscribed inside `emit()`, the slot now
+                // holds a fresh watcher whose registration reused our kernel
+                // key: on macOS the `(ident=0, EVFILT_MEMORYSTATUS)` knote is
+                // unique per kqueue and `EV_ADD` modifies in place, so an
+                // `EV_DELETE` from this old poll would strand the new watch.
+                // Drop the poll-side registration flag so `unregister` becomes
+                // a no-syscall cleanup. On Linux each install opens its own
+                // PSI fd, so this only elides a redundant `CTL_DEL` (closing
+                // the fd below auto-removes it from epoll anyway).
+                if slot(&mut *global.bun_vm_ptr()).is_some() {
+                    (*poll).flags.remove(Flags::PollMemoryPressure);
+                }
                 deinit_poll(poll);
                 bun_core::heap::destroy(watcher);
             }

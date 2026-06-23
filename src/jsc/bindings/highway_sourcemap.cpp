@@ -37,6 +37,8 @@
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_sourcemap.cpp"
 // OHOS: restrict to NEON targets (SVE/SVE2 not fully compatible).
+// TODO(ohos): remove this restriction when highway_strings.cpp has proper
+// SVE/SVE2 implementations (track upstream: bun#31553).
 #if defined(__OHOS__)
 #define HWY_TARGETS (HWY_NEON | HWY_NEON_BF16)
 #endif

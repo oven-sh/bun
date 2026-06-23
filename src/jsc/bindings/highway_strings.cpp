@@ -2,6 +2,8 @@
 // OHOS: Highway's SVE/SVE2 targets aren't fully compatible with the
 // Cortex-A53 codegen and would produce empty dispatch entries. Restrict
 // to NEON (and its sub-variants) which is always available on aarch64.
+// TODO(ohos): remove this restriction when highway_strings.cpp has proper
+// SVE/SVE2 implementations (track upstream: bun#31553).
 #if defined(__OHOS__)
 #define HWY_TARGETS (HWY_NEON | HWY_NEON_BF16)
 #endif

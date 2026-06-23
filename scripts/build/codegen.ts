@@ -46,12 +46,7 @@ import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 
 /**
- * Codegen outputs that land in `src/` instead of `codegenDir`. The zig
- * compiler refuses to import files outside its source tree, so these two
- * generated `.zig` files live in `src/jsc/bindings/` (gitignored).
- *
- * Consumers of `sources.zig` (the `src/**\/*.zig` glob) must filter these
- * out — they're OUTPUTS of codegen, not inputs.
+ * Codegen outputs that land in `src/` instead of `codegenDir` (gitignored).
  *
  * Paths are relative to repo root. This list is the single source of truth;
  * `globAllSources()` does NOT hardcode these.

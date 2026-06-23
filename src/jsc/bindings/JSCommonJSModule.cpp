@@ -110,6 +110,7 @@ static bool canPerformFastEnumeration(Structure* s)
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
+extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
@@ -121,6 +122,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
     }
+
+    // Node reports a top-level throw from a CJS entry with origin
+    // "uncaughtException" rather than "unhandledRejection"; record that the
+    // entry point is being evaluated as CommonJS so the run command picks
+    // the right origin if this evaluation throws.
+    Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
 
     JSFunction* resolveFunction = nullptr;
     JSFunction* requireFunction = nullptr;

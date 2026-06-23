@@ -209,6 +209,44 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("accepts an omitted args parameter", async () => {
+    // Node declares execve(execPath, args = [], env = process.env): a
+    // one-argument call is valid and must reach execve (failing with ENOENT
+    // here, not ERR_INVALID_ARG_TYPE).
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.execve(process.execPath + "_does_not_exist");`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("ERR_INVALID_ARG_TYPE");
+    expect(stderr).toContain('code: "ENOENT"');
+    expect(stderr).toContain('syscall: "execve"');
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.skipIf(isWindows)("inherits process.env when env is omitted", async () => {
+    // Node declares execve(execPath, args = [], env = process.env): the
+    // current environment is the default, not an empty one.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.execve(process.execPath, [process.execPath, "-e", "console.log(process.env.EXECVE_INHERITED)"]);`,
+      ],
+      env: { ...bunEnv, EXECVE_INHERITED: "yes-inherited" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "yes-inherited", exitCode: 0 });
+  });
+
   test.skipIf(isWindows)("validates arguments", async () => {
     await using proc = Bun.spawn({
       cmd: [

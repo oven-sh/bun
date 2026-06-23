@@ -35,7 +35,11 @@ it("process", () => {
   // this property isn't implemented yet but it should at least return a string
   const isNode = !process.isBun;
 
-  if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
+  // process.title defaults to argv[0] as invoked, matching Node
+  // (uv_get_process_title semantics), so it is the executable path here.
+  if (!isNode && process.platform !== "win32" && typeof process.title !== "string")
+    throw new Error("process.title is not a string");
+  if (!isNode && process.platform !== "win32" && process.title.length === 0) throw new Error("process.title is empty");
 
   if (process.platform !== "win32" && typeof process.env.USER !== "string")
     throw new Error("process.env is not an object");
@@ -100,6 +104,102 @@ it("process.title with UTF-16 characters", () => {
 
   process.title = "bun";
   expect(process.title).toBe("bun");
+});
+
+it("process.loadEnvFile can set accessor-backed keys and respects empty values", async () => {
+  using dir = tempDir("load-env-accessors", {
+    ".env": "HTTP_PROXY=http://from-dotenv:8080\nEMPTY_WINS=from-dotenv\nFRESH_KEY=fresh\n",
+    "index.js": `
+      process.loadEnvFile();
+      // HTTP_PROXY always exists on process.env as a custom accessor even
+      // when the variable is unset; loadEnvFile must still apply it.
+      console.log(process.env.HTTP_PROXY);
+      // An existing empty-string value takes precedence over the file.
+      console.log(JSON.stringify(process.env.EMPTY_WINS));
+      console.log(process.env.FRESH_KEY);
+    `,
+  });
+
+  const env = { ...bunEnv, EMPTY_WINS: "" };
+  delete env.HTTP_PROXY;
+  delete env.http_proxy;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: 'http://from-dotenv:8080\n""\nfresh\n', exitCode: 0 });
+});
+
+it("process.env defineProperty matches assignment semantics", () => {
+  // Node's EnvDefiner delegates to the env setter after validating the
+  // descriptor: symbol keys throw a TypeError...
+  expect(() =>
+    Object.defineProperty(process.env, Symbol("env"), {
+      value: "x",
+      configurable: true,
+      writable: true,
+      enumerable: true,
+    }),
+  ).toThrow(TypeError);
+
+  // ...a data descriptor without a [[Value]] is rejected...
+  expect(() =>
+    Object.defineProperty(process.env, "NO_VALUE_DESCRIPTOR", {
+      configurable: true,
+      writable: true,
+      enumerable: true,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+    }),
+  );
+  expect(process.env.NO_VALUE_DESCRIPTOR).toBeUndefined();
+
+  // ...and empty variable names are silently ignored
+  // (https://github.com/nodejs/node/issues/32920).
+  Object.defineProperty(process.env, "", {
+    value: "empty",
+    configurable: true,
+    writable: true,
+    enumerable: true,
+  });
+  expect(process.env[""]).toBeUndefined();
+});
+
+it("process.env defineProperty routes through the env setter for accessor-backed keys", async () => {
+  // Node's EnvDefiner delegates to EnvSetter, so defineProperty(env, "TZ", ...)
+  // must both apply the time zone and leave the native TZ accessor intact for
+  // later plain assignments (a data-descriptor define would destroy it).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const d = new Date("2024-01-15T12:00:00Z");
+       process.env.TZ = "UTC";
+       const utc = d.getHours();
+       Object.defineProperty(process.env, "TZ", {
+         value: "America/New_York",
+         writable: true,
+         enumerable: true,
+         configurable: true,
+       });
+       const ny = d.getHours();
+       process.env.TZ = "UTC";
+       console.log(JSON.stringify([utc, ny, d.getHours()]));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [utc, ny, utcAgain] = JSON.parse(stdout);
+  // New York is UTC-5 in January.
+  expect({ ny, utcAgain, exitCode }).toEqual({ ny: (utc + 24 - 5) % 24, utcAgain: utc, exitCode: 0 });
 });
 
 it("process.chdir() on root dir", () => {
@@ -920,16 +1020,29 @@ describe.concurrent(() => {
     });
   });
 
+  // _rawDebug is not listed: it is a real implementation now (it writes a
+  // formatted line to fd 2); its coverage lives in the vendored
+  // test-process-raw-debug.js.
   const undefinedStubs = [
     "_debugEnd",
     "_debugProcess",
-    "_fatalException",
     "_linkedBinding",
-    "_rawDebug",
     "_startProfilerIdleNotifier",
     "_stopProfilerIdleNotifier",
     "_tickCallback",
   ];
+
+  it("process._fatalException", async () => {
+    // Returns whether an uncaughtException handler claimed the error
+    // (Node semantics), so it is a boolean rather than undefined.
+    await runInlineFixture(
+      `console.log(process._fatalException(new Error("nobody listening")));
+       process.on("uncaughtException", () => {});
+       console.log(process._fatalException(new Error("handled")));`,
+      "false\ntrue\n",
+      0,
+    );
+  });
 
   for (const stub of undefinedStubs) {
     it(`process.${stub}`, () => {
@@ -945,8 +1058,53 @@ describe.concurrent(() => {
     });
   }
 
+  it("process.getActiveResourcesInfo does not report unref'd timers", async () => {
+    // Node reports only ref'd handles: an unref'd timer is not keeping the
+    // event loop alive, so it must not be listed.
+    await runInlineFixture(
+      `const count = () => process.getActiveResourcesInfo().filter(x => x === "Timeout").length;
+       const base = count();
+       const t = setTimeout(() => {}, 100000);
+       t.unref();
+       const i = setInterval(() => {}, 100000);
+       i.unref();
+       console.log(count() - base);
+       const r = setTimeout(() => {}, 100000);
+       console.log(count() - base);
+       t.ref();
+       console.log(count() - base);
+       clearTimeout(t);
+       clearInterval(i);
+       clearTimeout(r);`,
+      "0\n1\n2\n",
+      0,
+    );
+  });
+
+  it("process.getActiveResourcesInfo does not report unref'd net servers", async () => {
+    // Same rule as timers: only ref'd handles are listed, and ref/unref are
+    // idempotent (no double counting).
+    await runInlineFixture(
+      `const net = require("node:net");
+       const count = () => process.getActiveResourcesInfo().filter(x => x === "TCPServerWrap").length;
+       const base = count();
+       const server = net.createServer();
+       server.listen(0, () => {
+         console.log(count() - base);
+         server.unref();
+         server.unref();
+         console.log(count() - base);
+         server.ref();
+         server.ref();
+         console.log(count() - base);
+         server.close(() => console.log(count() - base));
+       });`,
+      "1\n0\n1\n0\n",
+      0,
+    );
+  });
+
   const emptyObjectStubs = [];
-  const emptySetStubs = ["allowedNodeEnvironmentFlags"];
   const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
 
   for (const stub of emptyObjectStubs) {
@@ -955,12 +1113,20 @@ describe.concurrent(() => {
     });
   }
 
-  for (const stub of emptySetStubs) {
-    it(`process.${stub}`, () => {
-      expect(process[stub]).toBeInstanceOf(Set);
-      expect(process[stub].size).toBe(0);
-    });
-  }
+  it("process.allowedNodeEnvironmentFlags", () => {
+    // A real, frozen Set with Node's normalizing has() — no longer an empty
+    // stub.
+    const flags = process.allowedNodeEnvironmentFlags;
+    expect(flags).toBeInstanceOf(Set);
+    expect(flags.size).toBeGreaterThan(0);
+    expect(flags.has("--require")).toBe(true);
+    expect(flags.has("require")).toBe(true);
+    expect(flags.has("--no_warnings")).toBe(true);
+    expect(flags.has("--require=./foo.js")).toBe(true);
+    expect(flags.has("--not-a-real-flag")).toBe(false);
+    flags.add("--not-a-real-flag");
+    expect(flags.has("--not-a-real-flag")).toBe(false);
+  });
 
   for (const stub of emptyArrayStubs) {
     it(`process.${stub}`, () => {
@@ -1448,10 +1614,21 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todo("exitWithUndefinedFatalException", async () => {
+  it("exitWithUndefinedFatalException", async () => {
     await runInlineFixture(
       `
       process._fatalException = undefined;
+      throw new Error('ok');
+    `,
+      "",
+      6,
+    );
+  });
+
+  it("exitWithDeletedFatalException", async () => {
+    await runInlineFixture(
+      `
+      delete process._fatalException;
       throw new Error('ok');
     `,
       "",

@@ -810,8 +810,11 @@ function expectsError(validator, exact) {
   }, exact);
 }
 
+const hasInspector = Boolean(process.features.inspector);
+const hasSQLite = Boolean(process.versions.sqlite);
+
 function skipIfInspectorDisabled() {
-  if (!process.features.inspector) {
+  if (!hasInspector) {
     skip('V8 inspector is disabled');
   }
 }
@@ -1125,6 +1128,8 @@ const common = {
   printSkipMessage,
   pwdCommand,
   requireNoPackageJSONAbove,
+  hasInspector,
+  hasSQLite,
   runWithInvalidFD,
   skip,
   skipIf32Bits,

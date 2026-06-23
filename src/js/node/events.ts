@@ -865,4 +865,21 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
+// Node: `Object.getPrototypeOf(process) instanceof EventEmitter` holds.
+// Link the native process prototype under this module's EventEmitter; the
+// native methods stay earlier in the chain and keep winning lookups.
+try {
+  const processPrototype = Object.getPrototypeOf(process);
+  if (
+    processPrototype !== null &&
+    processPrototype !== Object.prototype &&
+    !(processPrototype instanceof EventEmitter)
+  ) {
+    Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+  }
+} catch {
+  // If the prototype is not relinkable, process simply keeps its native
+  // chain; everything else about this module still works.
+}
+
 export default EventEmitter as any as typeof import("node:events");

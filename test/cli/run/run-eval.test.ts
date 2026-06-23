@@ -276,3 +276,33 @@ test("process._eval (undefined for normal run)", async () => {
 
   rmSync(cwd, { recursive: true, force: true });
 });
+
+test("uncaught error from a CommonJS-sniffed eval entry reports and exits 1", async () => {
+  // The presence of require() makes the eval source evaluate as CommonJS,
+  // which used to swallow a top-level throw entirely: no stderr output and
+  // exit code 0.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `require("assert"); throw new Error("eval-cjs-uncaught");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("eval-cjs-uncaught");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
+test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-"],
+    env: bunEnv,
+    stdin: Buffer.from(`require("assert"); throw new Error("stdin-cjs-uncaught");`),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("stdin-cjs-uncaught");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});

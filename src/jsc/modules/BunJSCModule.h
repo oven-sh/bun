@@ -38,6 +38,7 @@
 #include <wtf/text/WTFString.h>
 
 #include "BunProcess.h"
+#include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteInspectorServer.h>
@@ -651,7 +652,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
             makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
         return {};
     }
-    vm.dateCache.resetIfNecessarySlow();
+    Bun::resetDateCachesAfterTimeZoneChange(vm);
     WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
     WTF::String timeZoneString(buffer.span());

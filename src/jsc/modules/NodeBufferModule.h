@@ -176,7 +176,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
         auto name = Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s);
         auto value = JSC::CustomGetterSetter::create(vm, jsGetter_INSPECT_MAX_BYTES, jsSetter_INSPECT_MAX_BYTES);
         auto attributes = PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor;
-        defaultObject->putDirectCustomAccessor(vm, name, value, (unsigned)attributes);
+        if (!defaultObjectWasCached)
+            defaultObject->putDirectCustomAccessor(vm, name, value, (unsigned)attributes);
         exportNames.append(name);
         // We cannot assign a custom getter/setter to ESM exports.
         exportValues.append(jsNumber(defaultGlobalObject(lexicalGlobalObject)->INSPECT_MAX_BYTES));

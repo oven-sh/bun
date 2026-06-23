@@ -96,7 +96,92 @@ pub struct RuntimeState {
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
     pub body_value_pool: Box<crate::webcore::body::HiveAllocator>,
     pub isolation_handles: IsolationHandles,
+    /// Live native handles/requests for `process.getActiveResourcesInfo()`.
+    pub active_resources: ActiveResources,
 }
+
+/// Per-thread counts of live native handles/requests, surfaced to JS via
+/// `process.getActiveResourcesInfo()`. Counters are bumped at the resource's
+/// own active/inactive transition (no stored pointers, no query-time deref).
+#[derive(Default)]
+pub struct ActiveResources {
+    /// Open `NewSocket<_>` count: incremented in `mark_active`, decremented
+    /// wherever `Flags::IS_ACTIVE` is cleared.
+    pub sockets: Cell<usize>,
+    /// Listening `Listener` count: incremented on successful `listen()`,
+    /// decremented in `do_stop`.
+    pub listeners: Cell<usize>,
+    /// In-flight `AsyncFSTask` / `UVFSRequest` count.
+    pub fs_requests: Cell<usize>,
+}
+
+impl ActiveResources {
+    #[inline]
+    pub fn add_socket(&self) {
+        self.sockets.set(self.sockets.get() + 1);
+    }
+    #[inline]
+    pub fn remove_socket(&self) {
+        self.sockets.set(self.sockets.get().saturating_sub(1));
+    }
+    #[inline]
+    pub fn add_listener(&self) {
+        self.listeners.set(self.listeners.get() + 1);
+    }
+    #[inline]
+    pub fn remove_listener(&self) {
+        self.listeners.set(self.listeners.get().saturating_sub(1));
+    }
+    #[inline]
+    pub fn add_fs_request(&self) {
+        self.fs_requests.set(self.fs_requests.get() + 1);
+    }
+    #[inline]
+    pub fn remove_fs_request(&self) {
+        self.fs_requests
+            .set(self.fs_requests.get().saturating_sub(1));
+    }
+}
+
+// One-line registration helpers so resource create/destroy sites don't each
+// repeat the `if let Some(ar) = active_resources()` block. No-ops before
+// `init_runtime_state` installs the per-thread registry.
+macro_rules! active_resource_fns {
+    ($(($add:ident, $remove:ident, $add_m:ident, $remove_m:ident)),+ $(,)?) => {$(
+        #[inline]
+        pub(crate) fn $add() {
+            if let Some(ar) = active_resources() {
+                ar.$add_m();
+            }
+        }
+        #[inline]
+        pub(crate) fn $remove() {
+            if let Some(ar) = active_resources() {
+                ar.$remove_m();
+            }
+        }
+    )+};
+}
+active_resource_fns!(
+    (
+        active_resources_add_socket,
+        active_resources_remove_socket,
+        add_socket,
+        remove_socket
+    ),
+    (
+        active_resources_add_listener,
+        active_resources_remove_listener,
+        add_listener,
+        remove_listener
+    ),
+    (
+        active_resources_add_fs_request,
+        active_resources_remove_fs_request,
+        add_fs_request,
+        remove_fs_request
+    ),
+);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IsolationHandle {
@@ -173,6 +258,19 @@ pub(crate) fn isolation_handles() -> Option<&'static mut IsolationHandles> {
     }
     // SAFETY: live boxed per-thread `RuntimeState`.
     Some(unsafe { &mut (*state).isolation_handles })
+}
+
+/// Per-thread [`ActiveResources`] registry. None only before
+/// [`init_runtime_state`] (e.g. `bun_jsc` unit tests with no high tier).
+/// Single JS thread; callers must not hold the borrow across JS re-entry.
+#[inline]
+pub(crate) fn active_resources() -> Option<&'static mut ActiveResources> {
+    let state = runtime_state();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: live boxed per-thread `RuntimeState`.
+    Some(unsafe { &mut (*state).active_resources })
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
@@ -328,6 +426,7 @@ unsafe fn init_runtime_state(
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
         body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
         isolation_handles: IsolationHandles::default(),
+        active_resources: ActiveResources::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 

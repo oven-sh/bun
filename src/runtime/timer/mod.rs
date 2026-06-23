@@ -625,6 +625,11 @@ pub struct All {
     pub event_loop_delay: EventLoopDelayMonitor,
     pub fake_timers: FakeTimers,
     pub maps: Maps,
+    /// Live JS timer wrappers (Timeout/Immediate) keyed by their
+    /// `TimerObjectInternals` address, for process.getActiveResourcesInfo().
+    /// Registered in `TimerObjectInternals::init`, removed in `finalize`.
+    /// Used as a set; the `()` value is irrelevant.
+    pub live_timer_internals: bun_collections::HashMap<usize, ()>,
     pub date_header_timer: DateHeaderTimer,
 }
 
@@ -647,6 +652,7 @@ impl All {
             event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
             maps: Maps::default(),
+            live_timer_internals: bun_collections::HashMap::new(),
             date_header_timer: DateHeaderTimer::default(),
         }
     }

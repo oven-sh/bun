@@ -72,7 +72,10 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "bun:jsc"_s,
     "bun:sqlite"_s,
     "bun:test"_s,
-    "bun:wrap"_s,
+    // "bun:wrap" is intentionally omitted: it is internal transpiler
+    // plumbing, not a requireable public module, and node's
+    // test-process-get-builtin asserts every listed module round-trips
+    // through process.getBuiltinModule().
     "bun"_s,
     "child_process"_s,
     "cluster"_s,

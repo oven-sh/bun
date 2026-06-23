@@ -2,15 +2,25 @@
 #include "ZigGlobalObject.h"
 
 #include "helpers.h"
+#include "JSEnvironmentVariableMap.h"
 
 #include <JavaScriptCore/JSObject.h>
+#include <mutex>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
+#include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/DateInstanceCache.h>
+#include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/HeapIterationScope.h>
+#include <JavaScriptCore/MarkedSpaceInlines.h>
+#include <JavaScriptCore/SubspaceInlines.h>
 
 #include "BunClientData.h"
+#include "BunProcess.h"
+#include "ErrorCode.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
 #include "WebCoreJSBuiltins.h"
@@ -23,10 +33,124 @@ extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
 extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
 namespace Bun {
 
 using namespace WebCore;
+
+void invalidateLiveDateInstanceCaches(JSC::VM& vm)
+{
+    // Walk only the DateInstance IsoSubspace: TZ assignment must not pay an
+    // O(whole heap) traversal.
+    JSC::HeapIterationScope iterationScope(vm.heap);
+    vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
+        auto* date = static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell));
+        // m_data is private, but its offset is exported for the JIT.
+        auto& dataSlot = *reinterpret_cast<RefPtr<JSC::DateInstanceData>*>(reinterpret_cast<uint8_t*>(date) + JSC::DateInstance::offsetOfData());
+        if (dataSlot)
+            dataSlot->m_gregorianDateTimeCachedForMS = PNaN;
+        return IterationStatus::Continue;
+    });
+}
+
+void resetDateCachesAfterTimeZoneChange(JSC::VM& vm)
+{
+    // The shared DateCache reset and the per-instance gregorian-cache
+    // invalidation must always travel together; callers use this pair.
+    vm.dateCache.resetIfNecessarySlow();
+    invalidateLiveDateInstanceCaches(vm);
+}
+
+const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
+
+// Node's EnvSetter value handling, shared by put / putByIndex /
+// defineOwnProperty: DEP0104 under --pending-deprecation for non-string,
+// non-number, non-boolean values (at most once per process, matching
+// EmitProcessEnvWarning's one-shot flag), then ToString coercion.
+static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    static std::once_flag processEnvWarningFlag;
+    bool shouldEmitDeprecationWarning = false;
+    if (Bun__Node__ProcessPendingDeprecation && !value.isString() && !value.isNumber() && !value.isBoolean()) [[unlikely]] {
+        std::call_once(processEnvWarningFlag, [&] {
+            shouldEmitDeprecationWarning = true;
+        });
+    }
+    if (shouldEmitDeprecationWarning) [[unlikely]] {
+        Bun::Process::emitWarning(globalObject,
+            jsString(vm, String("Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it."_s)),
+            jsString(vm, String("DeprecationWarning"_s)),
+            jsString(vm, String("DEP0104"_s)),
+            jsUndefined());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    JSC::JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return string;
+}
+
+bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (uid && uid->isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        return false;
+    }
+
+    // Node silently ignores assignments to an empty variable name
+    // (https://github.com/nodejs/node/issues/32920).
+    if (propertyName.publicName() && propertyName.publicName()->isEmpty())
+        return true;
+
+    JSString* string = coerceEnvValue(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
+}
+
+bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Numeric keys route through EnvSetter in Node too, so the same DEP0104
+    // and coercion rules apply.
+    JSString* string = coerceEnvValue(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
+}
+
+bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (descriptor.isAccessorDescriptor()) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' does not accept an accessor(getter/setter) descriptor"_s);
+        return false;
+    }
+
+    // Node's EnvDefiner requires a [[Value]] alongside the three attributes,
+    // so a value-less data descriptor is rejected rather than defining the
+    // property as undefined.
+    if (!(descriptor.value() && descriptor.configurablePresent() && descriptor.configurable()
+            && descriptor.writablePresent() && descriptor.writable()
+            && descriptor.enumerablePresent() && descriptor.enumerable())) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s);
+        return false;
+    }
+
+    // Node's EnvDefiner hands the validated value to EnvSetter, i.e. plain
+    // assignment. Routing through put() (NOT Base::defineOwnProperty, which
+    // would replace the property) keeps the TZ/proxy CustomAccessor entries
+    // and their side effects intact.
+    PutPropertySlot slot(object, shouldThrow);
+    RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
+}
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -174,7 +298,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
         auto timeZoneName = decodedValue.toWTFString(globalObject);
         if (timeZoneName.length() < 32) {
             if (WTF::setTimeZoneOverride(timeZoneName)) {
-                vm.dateCache.resetIfNecessarySlow();
+                resetDateCachesAfterTimeZoneChange(vm);
             }
         }
     }
@@ -351,6 +475,14 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
+#if OS(WINDOWS)
+    // On Windows process.env is wrapped in the windowsEnv Proxy (for
+    // case-insensitive lookups), whose traps intercept every operation before
+    // it would reach the exotic JSEnvironmentVariableMap method table — and
+    // whose internal setup (the symbol-keyed Bun.inspect.custom helper and
+    // the string-coercing toJSON) would hit the exotic put's symbol-key
+    // TypeError. Keep the plain object there; the Node-specific semantics
+    // live in the Proxy traps.
     JSC::JSObject* object = nullptr;
     if (count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
@@ -358,9 +490,11 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());
     }
 
-#if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
     RETURN_IF_EXCEPTION(scope, {});
+#else
+    auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");

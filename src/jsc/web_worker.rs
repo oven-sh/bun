@@ -1097,10 +1097,14 @@ impl WebWorker {
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {
             if (*promise).status() == jsc::js_promise::Status::Rejected {
+                // Same rule as the main thread (run_command): a CJS worker
+                // entry's top-level throw is an uncaughtException; only an
+                // ESM entry rejection reports origin "unhandledRejection".
+                let is_rejection = !vm.as_mut().entry_evaluated_as_cjs;
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    true,
+                    is_rejection,
                 );
                 if !handled {
                     vm.as_mut().exit_handler.exit_code = 1;

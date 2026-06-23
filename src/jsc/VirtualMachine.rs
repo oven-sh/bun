@@ -302,6 +302,10 @@ pub struct VirtualMachine {
     pub unhandled_error_counter: usize,
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
+    /// True when the entry module evaluated as CommonJS: Node reports a CJS
+    /// entry's top-level throw with origin `uncaughtException` but an ESM
+    /// entry rejection with `unhandledRejection`; the run command consults this.
+    pub entry_evaluated_as_cjs: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,

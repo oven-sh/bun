@@ -1222,11 +1222,26 @@ impl<const SSL: bool> NewSocket<SSL> {
         unsafe { Self::handle_connect_error(this, errno, socket.dns_error()) }
     }
 
+    /// Single chokepoint for `Flags::IS_ACTIVE`: every set/clear must go
+    /// through here so the per-thread `getActiveResourcesInfo()` socket count
+    /// can never drift from the flag. Idempotent (counts only transitions).
+    fn set_active_flag(&self, active: bool) {
+        if self.flags.get().contains(Flags::IS_ACTIVE) == active {
+            return;
+        }
+        self.update_flags(|f| f.set(Flags::IS_ACTIVE, active));
+        if active {
+            crate::jsc_hooks::active_resources_add_socket();
+        } else {
+            crate::jsc_hooks::active_resources_remove_socket();
+        }
+    }
+
     pub fn mark_active(&self) {
         if !self.flags.get().contains(Flags::IS_ACTIVE) {
             let handlers = self.get_handlers();
             handlers.mark_active();
-            self.update_flags(|f| f.insert(Flags::IS_ACTIVE));
+            self.set_active_flag(true);
             // Keep the JS wrapper alive while the socket is active.
             // `getThisValue` may not have been called yet (e.g. server-side
             // sockets without default data), in which case the ref is still
@@ -1275,7 +1290,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         if self.flags.get().contains(Flags::IS_ACTIVE) {
-            self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+            self.set_active_flag(false);
             if let Some(h) = self.handlers.get() {
                 // SAFETY: `h` is the live client-mode `Handlers` box; see
                 // `Handlers::mark_inactive` contract.
@@ -1298,7 +1313,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 return;
             }
 
-            self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+            self.set_active_flag(false);
             // Allow the JS wrapper to be GC'd now that the socket is idle.
             // Do this before touching `handlers`: in client mode
             // `handlers.markInactive()` frees the Handlers allocation
@@ -1954,7 +1969,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // against the new Handlers) and release the lifecycle
                     // ref `mark_active` took on the *captured* Handlers so
                     // it can reach zero in `Scope::exit` instead of leaking.
-                    this_ref.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+                    this_ref.set_active_flag(false);
                     let vm = VirtualMachine::get();
                     // SAFETY: VM singleton is always live once initialized.
                     if !(*vm).is_shutting_down() {
@@ -3580,7 +3595,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         original_data.ensure_still_alive();
         if this.flags.get().contains(Flags::IS_ACTIVE) {
             this.poll_ref.with_mut(|p| p.disable());
-            this.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+            this.set_active_flag(false);
             // Do NOT markInactive raw_handlers — ownership of the
             // active_connections=1 it holds is transferring to `raw`.
             this.this_value.with_mut(|r| r.downgrade());
@@ -3637,10 +3652,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // would bad-free the listener's allocation when the twin is
             // finalized.
             flags: Cell::new(
-                Flags::BYPASS_TLS
-                    | Flags::IS_ACTIVE
-                    | Flags::OWNED_PROTOS
-                    | (this.flags.get() & Flags::OWNS_HANDLERS),
+                Flags::BYPASS_TLS | Flags::OWNED_PROTOS | (this.flags.get() & Flags::OWNS_HANDLERS),
             ),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -3653,6 +3665,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: raw just allocated via heap::alloc.
         let raw_ref: &TLSSocket = unsafe { &*raw };
         raw_ref.ref_();
+        // `raw` deliberately bypasses `mark_active` (active_connections=1 was
+        // already taken on raw_handlers by `this`), so arm the flag here.
+        raw_ref.set_active_flag(true);
         // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
         unsafe { (*tls_ptr).twin.set(Some(IntrusiveRc::from_raw(raw))) };
         // SAFETY: `new_raw` is the live adopted `us_socket_t`.

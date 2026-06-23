@@ -208,6 +208,13 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
+        "--inspect-port <STR>              Set the default [host:]port used when the debugger is activated with --inspect"
+    ),
+    parse_param!("--debug-port <STR>"),
+    parse_param!("--permission"),
+    parse_param!("--allow-fs-read <STR>..."),
+    parse_param!("--allow-fs-write <STR>..."),
+    parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
     ),
     parse_param!("--cpu-prof-name <STR>             Specify the name of the CPU profile file"),
@@ -703,6 +710,26 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
+/// Print Node's missing-argument error for runtime CLI flags Bun borrows from
+/// Node.js (`<execPath>: <flag> requires an argument`) and exit with code 9,
+/// Node's exit code for invalid command-line arguments.
+#[cold]
+#[inline(never)]
+fn exit_node_requires_argument(flag: &[u8]) -> ! {
+    // Same source as `process.execPath` (node_process::get_exec_path), so the
+    // prefix matches what scripts observe.
+    let exec_path: &[u8] = bun_core::self_exe_path()
+        .map(|p| p.as_bytes())
+        .unwrap_or(b"bun");
+    bun_core::pretty_errorln!(
+        "{}: {} requires an argument",
+        BStr::new(exec_path),
+        BStr::new(flag)
+    );
+    Output::flush();
+    Global::exit(9);
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -725,6 +752,30 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     ) {
         Ok(a) => a,
         Err(err) => {
+            // For runtime flags borrowed from Node.js, report a missing value
+            // the way `node` does (and with its exit code 9) so scripts that
+            // branch on Node's CLI error contract behave the same under Bun.
+            if err == bun_core::err!("MissingValue")
+                && matches!(
+                    cmd,
+                    CommandTag::AutoCommand
+                        | CommandTag::RunCommand
+                        | CommandTag::RunAsNodeCommand
+                )
+            {
+                let node_flag: Option<&[u8]> = match (diag.short, diag.long.as_deref()) {
+                    (Some(b'e'), _) => Some(b"-e"),
+                    (Some(b'p'), _) => Some(b"-p"),
+                    (_, Some(b"eval")) => Some(b"--eval"),
+                    (_, Some(b"print")) => Some(b"--print"),
+                    (_, Some(b"inspect-port")) => Some(b"--inspect-port"),
+                    (_, Some(b"debug-port")) => Some(b"--debug-port"),
+                    _ => None,
+                };
+                if let Some(flag) = node_flag {
+                    exit_node_requires_argument(flag);
+                }
+            }
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
             command::tag_print_help(cmd, false);
@@ -1134,9 +1185,60 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             Global::exit(1);
         }
 
+        // Node.js permission-model flags. The model itself is not implemented;
+        // reject these loudly instead of silently running without the
+        // requested sandbox.
+        if args.flag(b"--permission") {
+            Output::err_generic(
+                "--permission is not supported by Bun (the Node.js permission model is not implemented)",
+                (),
+            );
+            Global::exit(1);
+        }
+        for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
+            if !args.options(allow_flag).is_empty() {
+                // Same constraint (and message substring) as Node's
+                // ERR_MISSING_OPTION: "--permission is required".
+                Output::err_generic(
+                    "--permission is required to use {}",
+                    format_args!("{}", BStr::new(allow_flag)),
+                );
+                Global::exit(1);
+            }
+        }
+
+        // `--inspect-port` / `--debug-port` (Node alias) set the default
+        // debugger target used when --inspect/--inspect-wait/--inspect-brk is
+        // passed without its own [host:]port. They do not activate the
+        // debugger on their own, matching Node.
+        let inspect_port_value: Option<&[u8]> = match (
+            args.option(b"--inspect-port"),
+            args.option(b"--debug-port"),
+        ) {
+            (Some(value), _) => {
+                if value.is_empty() {
+                    exit_node_requires_argument(b"--inspect-port=");
+                }
+                Some(value)
+            }
+            (None, Some(value)) => {
+                if value.is_empty() {
+                    exit_node_requires_argument(b"--debug-port=");
+                }
+                Some(value)
+            }
+            (None, None) => None,
+        };
+        let default_debugger_target = || -> Box<[u8]> {
+            inspect_port_value.map(Box::<[u8]>::from).unwrap_or_default()
+        };
+
         if let Some(inspect_flag) = args.option(b"--inspect") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
-                Debugger::Enable(Default::default())
+                Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
+                    ..Default::default()
+                })
             } else {
                 Debugger::Enable(DebuggerEnable {
                     path_or_port: Box::<[u8]>::from(inspect_flag),
@@ -1146,6 +1248,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         } else if let Some(inspect_flag) = args.option(b"--inspect-wait") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
                     wait_for_connection: true,
                     ..Default::default()
                 })
@@ -1159,6 +1262,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         } else if let Some(inspect_flag) = args.option(b"--inspect-brk") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
                     wait_for_connection: true,
                     set_breakpoint_on_first_line: true,
                     ..Default::default()

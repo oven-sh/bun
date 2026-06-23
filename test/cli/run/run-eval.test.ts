@@ -276,3 +276,51 @@ test("process._eval (undefined for normal run)", async () => {
 
   rmSync(cwd, { recursive: true, force: true });
 });
+
+describe("node-style CLI argument errors", () => {
+  // Node exits with code 9 and `<execPath>: <flag> requires an argument` when a
+  // flag that needs a value is passed without one. Bun matches that contract for
+  // the runtime flags it shares with Node.
+  test.each(["-e", "--eval", "-p", "--print", "--inspect-port", "--debug-port"])(
+    "%s without a value exits with code 9 and Node's error message",
+    flag => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), flag],
+        env: bunEnv,
+      });
+      expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: ${flag} requires an argument`);
+      expect(stdout.toString("utf8")).toBe("");
+      expect(exitCode).toBe(9);
+    },
+  );
+
+  test.each(["--inspect-port=", "--debug-port="])("%s (empty value) exits with code 9", flag => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: ${flag} requires an argument`);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  test.each(["--allow-fs-read=*", "--allow-fs-write=*"])("%s without --permission exits with code 1", flag => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag, "-e", "console.log('ran')"],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toContain("--permission is required");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--permission is rejected instead of being silently ignored", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--permission", "-e", "console.log('ran')"],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toContain("--permission is not supported");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});

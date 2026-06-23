@@ -106,8 +106,9 @@ class AsyncLocalStorage {
     if (options !== undefined) {
       validateObject(options, "options");
       this.#defaultValue = options.defaultValue;
-      if (options.name !== undefined) {
-        this.#name = `${options.name}`;
+      const name = options.name;
+      if (name !== undefined) {
+        this.#name = `${name}`;
       }
     }
     setAsyncHooksEnabled(true);

@@ -570,6 +570,12 @@ pub struct ParseMappingsState {
     pub slow_blocks: i32,
 }
 
+// The C++ kernel indexes this struct as `int32_t state[10]` via the kSt*
+// constants, and `highway_sourcemap.cpp` static_asserts each offsetof against
+// its kSt* index. This pins the size from the Rust side so adding a field
+// here without updating the C++ enum fails the build.
+const _: () = assert!(core::mem::size_of::<ParseMappingsState>() == 10 * core::mem::size_of::<i32>());
+
 /// Count of `,` and `;` bytes in `bytes`. `count + 1` is an upper bound on
 /// the number of segments (and therefore the number of output rows) for a
 /// source-map `mappings` string.

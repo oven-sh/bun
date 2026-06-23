@@ -2811,6 +2811,45 @@ impl<'a> HTTPClient<'a> {
         buffer: &mut bun_io::StreamBuffer,
         data: &[u8],
     ) -> Result<bool, bun_core::Error> {
+        // Through a proxy tunnel the stream body goes via the inner TLS,
+        // not the outer socket.
+        if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
+            if socket.is_closed() || socket.is_shutdown() {
+                return Err(err!(ConnectionClosed));
+            }
+            let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
+            // Any Err is backpressure: WantRead/WantWrite retry on the next
+            // on_writable, and a fatal SSL error already ran on_close (and
+            // may have freed *self), so bail via Ok(true) without touching
+            // self — same as the other ProxyTunnel::write callers.
+            let pending = buffer.slice().len();
+            if pending > 0 {
+                let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
+                    let _ = buffer.write(data);
+                    return Ok(true);
+                };
+                self.state.request_sent_len += n;
+                buffer.cursor += n;
+                if n < pending {
+                    let _ = buffer.write(data);
+                    return Ok(true);
+                }
+                buffer.reset();
+            }
+            if !data.is_empty() {
+                let Ok(n) = ProxyTunnel::write(proxy, data) else {
+                    let _ = buffer.write(data);
+                    return Ok(true);
+                };
+                self.state.request_sent_len += n;
+                if n < data.len() {
+                    let _ = buffer.write(&data[n..]);
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+
         let to_send_len = buffer.slice().len();
         if to_send_len > 0 {
             let amount = write_to_socket::<IS_SSL>(socket, buffer.slice())?;
@@ -2947,6 +2986,17 @@ impl<'a> HTTPClient<'a> {
 
         if let Some(proxy) = self.proxy_tunnel_mut() {
             proxy.on_writable::<IS_SSL>(socket);
+            // ProxyTunnel::on_writable → SSLWrapper::flush → handle_traffic
+            // may process a TLS alert or close_notify that was buffered
+            // alongside the handshake flight, firing on_close →
+            // close_and_fail, which terminates the outer socket and frees
+            // the AsyncHTTP that embeds `*self` via the result callback
+            // (same hazard as documented in `start_proxy_handshake`). The
+            // socket handle outlives the client; use it as the liveness
+            // guard before touching `self` again.
+            if socket.is_closed() {
+                return;
+            }
         }
 
         // Parked until the JS `checkServerIdentity` callback approves the peer
@@ -3176,7 +3226,15 @@ impl<'a> HTTPClient<'a> {
                         );
                     }
 
-                    let has_sent_body = self.request_body().is_empty();
+                    // Match send_initial_request_payload: a Stream/Sendfile
+                    // body has an empty `request_body()` buffer at this
+                    // point, which does not mean the body is sent.
+                    let has_sent_body =
+                        if matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_)) {
+                            self.request_body().is_empty()
+                        } else {
+                            false
+                        };
 
                     if has_sent_headers && has_sent_body {
                         self.state.request_stage = RequestStage::Done;
@@ -3190,7 +3248,17 @@ impl<'a> HTTPClient<'a> {
                             let ctx = self.get_ssl_ctx::<IS_SSL>();
                             self.progress_update::<IS_SSL>(ctx, socket);
                         }
-                        debug_assert!(!self.request_body().is_empty());
+                        debug_assert!(
+                            // leftover bytes OR stream/sendfile (whose body
+                            // buffer is empty here; the body flows via
+                            // flush_stream in the ProxyBody arm)
+                            (matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+                                && !self.request_body().is_empty())
+                                || matches!(
+                                    self.state.original_request_body,
+                                    HTTPRequestBody::Sendfile(_) | HTTPRequestBody::Stream(_)
+                                )
+                        );
 
                         // we sent everything, but there's some body leftover
                         if amount == to_send.len() {

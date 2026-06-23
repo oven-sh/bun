@@ -282,52 +282,26 @@ pub struct CertCheckResumeMessage {
 }
 
 pub struct LibdeflateState {
-    pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
-    pub compressor: *mut bun_libdeflate_sys::libdeflate::Compressor,
+    pub decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
+    pub compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
     pub shared_buffer: [u8; 512 * 1024],
 }
 
-// SAFETY: `*mut T` (null) and `[u8; N]` are both valid at the all-zero bit pattern.
+// SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
+// `NonNull`, so all-zero = `None`; `[u8; N]` is valid at the all-zero bit
+// pattern.
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
     /// Mutable access to the libdeflate decompressor handle.
     ///
-    /// INVARIANT: `decompressor` is set once in [`HttpThread::deflater`] from
-    /// `libdeflate_alloc_decompressor` (panics on null) and is never freed
-    /// until thread teardown. The handle is a separate C heap allocation
-    /// disjoint from `self`, so the returned `&mut` does not alias
-    /// `shared_buffer`. HTTP-thread-only — sole live borrow. Centralises the
-    /// raw `&mut *deflater.decompressor` upgrade repeated at every
-    /// `decompress` call site.
+    /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
+    /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut<'a>(
-        &self,
-    ) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.decompressor }
-    }
-
-    /// Lazy libdeflate compressor at [`DEFAULT_DEFLATE_LEVEL`]; same lifetime
-    /// and aliasing invariants as [`decompressor_mut`].
-    ///
-    /// [`DEFAULT_DEFLATE_LEVEL`]: crate::compress_body::DEFAULT_DEFLATE_LEVEL
-    /// [`decompressor_mut`]: Self::decompressor_mut
-    #[inline]
-    pub(crate) fn compressor_mut<'a>(
-        &mut self,
-    ) -> &'a mut bun_libdeflate_sys::libdeflate::Compressor {
-        if self.compressor.is_null() {
-            self.compressor = bun_libdeflate_sys::libdeflate::Compressor::alloc(
-                crate::compress_body::DEFAULT_DEFLATE_LEVEL,
-            );
-            if self.compressor.is_null() {
-                bun_core::out_of_memory();
-            }
-        }
-        // SAFETY: just ensured non-null; HTTP-thread-only; separate C heap
-        // allocation disjoint from `shared_buffer`.
-        unsafe { &mut *self.compressor }
+    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+        self.decompressor
+            .as_deref_mut()
+            .expect("set in HttpThread::deflater()")
     }
 }
 
@@ -456,12 +430,10 @@ impl HttpThread {
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {
         if self.lazy_libdeflater.is_none() {
-            let decompressor = bun_libdeflate_sys::libdeflate::Decompressor::alloc();
-            if decompressor.is_null() {
-                bun_core::out_of_memory();
-            }
+            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
+                .unwrap_or_else(|| bun_core::out_of_memory());
             let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
-            state.decompressor = decompressor;
+            state.decompressor = Some(decompressor);
             self.lazy_libdeflater = Some(state);
         }
 

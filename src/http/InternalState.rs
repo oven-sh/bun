@@ -311,7 +311,11 @@ impl<'a> InternalState<'a> {
                     }
                 }
 
-                let result = deflater.decompressor_mut().decompress(
+                let decompressor = deflater
+                    .decompressor
+                    .as_deref_mut()
+                    .expect("set in HttpThread::deflater()");
+                let result = decompressor.decompress(
                     buffer,
                     &mut deflater.shared_buffer,
                     match self.encoding {
@@ -347,23 +351,12 @@ impl<'a> InternalState<'a> {
                 }
             }
 
-            if let Err(err) = self
-                .decompressor
-                .update_buffers(self.encoding, buffer, body_out_str)
+            let is_done = self.is_done();
+            if let Err(err) =
+                self.decompressor
+                    .decompress_chunk(self.encoding, buffer, body_out_str, is_done)
             {
-                self.compressed_body.reset();
-                return Err(err);
-            }
-            // While `update_buffers` is gated, `read_all` on Decompressor::None is a silent
-            // no-op (Decompressor.rs:148). Surface an error instead of pretending the body
-            // was decompressed and discarding the bytes — §Forbidden silent-no-op.
-            if matches!(self.decompressor, Decompressor::None) && self.encoding.is_compressed() {
-                self.compressed_body.reset();
-                return Err(bun_core::err!("DecompressionNotImplemented"));
-            }
-
-            if let Err(err) = self.decompressor.read_all(self.is_done()) {
-                if self.is_done() || err != bun_core::err!("ShortRead") {
+                if is_done || err != bun_core::err!("ShortRead") {
                     bun_core::pretty_errorln!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),

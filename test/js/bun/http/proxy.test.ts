@@ -228,6 +228,52 @@ for (const proxy_tls of [false, true]) {
   }
 }
 
+// Streamed request bodies through a CONNECT tunnel: after the inner TLS
+// handshake completes and the request headers are written, the body must be
+// written through the tunnel's inner TLS wrapper (not the outer proxy socket)
+// and the ProxyHeaders stage must not short-circuit to Done just because the
+// synchronous `request_body` slice is empty for the Stream variant. Before
+// the fix both happened, so the origin waited forever for a body that was
+// never sent.
+describe("streamed request body through CONNECT tunnel", () => {
+  const streamedBodies = {
+    ReadableStream: () =>
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello, "));
+          c.enqueue(new TextEncoder().encode("tunneled "));
+          c.enqueue(new TextEncoder().encode("world"));
+          c.close();
+        },
+      }),
+    "async iterator": () =>
+      (async function* () {
+        yield new TextEncoder().encode("hello, ");
+        yield new TextEncoder().encode("tunneled ");
+        yield new TextEncoder().encode("world");
+      })(),
+  } as const;
+
+  for (const proxy_tls of [false, true]) {
+    for (const [kind, makeBody] of Object.entries(streamedBodies)) {
+      test(`${kind} body through ${proxy_tls ? "TLS" : "non-TLS"} proxy -> TLS target`, async () => {
+        const response = await fetch(httpsServer.url, {
+          method: "POST",
+          proxy: proxy_tls ? httpsProxyServer.url : httpProxyServer.url,
+          headers: { "Content-Type": "text/plain" },
+          keepalive: false,
+          body: makeBody() as any,
+          duplex: "half",
+          tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+        });
+        const result = await response.text();
+        expect(result).toBe("hello, tunneled world");
+        expect(response.status).toBe(200);
+      });
+    }
+  }
+});
+
 for (const server_tls of [false, true]) {
   describe.concurrent(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
     test("with empty body #12007", async () => {

@@ -3207,11 +3207,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 options::ServerComponents::WrapExportsForServerReference => {}
             }
 
-            // Server-side components:
-            // Declare upfront the symbols for "Response" and "bun:app".
-            // Unlike the other generated symbols above, this one is looked up
-            // by name during visit (user `new Response(...)` resolves via
-            // `find_symbol`), so it must live in `module_scope.members`.
+            // Server-side components: declare "Response" / "bun:app" upfront.
+            // By-name ambient — see `declare_common_js_symbol`.
             match self.options.features.server_components {
                 options::ServerComponents::None | options::ServerComponents::ClientSide => {}
                 _ => {
@@ -4735,6 +4732,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle && self.options.output_format.is_esm()
     }
 
+    /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]
+    /// during visit (writes `module_scope.members[name]`). Use for parser-minted
+    /// symbols that user code references as a bare identifier: CJS wrapper vars
+    /// (`exports`, `module`, `require`, `__dirname`, `__filename`), jest globals,
+    /// `hmr`, server-components `Response`.
+    ///
+    /// Collision contract when a user binding already owns `name` in
+    /// `module_scope.members`:
+    /// - Both sides `Hoisted` and the file has no ESM syntax: not a collision
+    ///   (`var exports` inside the CJS wrapper merges with the `exports`
+    ///   argument). Returns the user's existing ref.
+    /// - Otherwise: returns a fresh ref appended to `module_scope.generated`
+    ///   (so generated code referencing it still gets a renamer-unique name)
+    ///   and leaves the user's member entry untouched.
+    ///
+    /// Callers that only want to emit when the ambient was actually reached
+    /// (e.g. the `Response` → `bun:app` import) check
+    /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed ref
+    /// is never recorded by `find_symbol`, so the count stays 0.
+    ///
+    /// Named for its original CJS-wrapper callers. For parser-generated symbols
+    /// consumed BY REF (never via `find_symbol`), use
+    /// [`Self::declare_generated_symbol`].
     pub fn declare_common_js_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,

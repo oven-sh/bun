@@ -2195,11 +2195,8 @@ pub fn NewParser_(
                 .wrap_exports_for_server_reference => {},
             }
 
-            // Server-side components:
-            // Declare upfront the symbols for "Response" and "bun:app".
-            // Unlike the other generated symbols above, this one is looked up
-            // by name during visit (user `new Response(...)` resolves via
-            // `findSymbol`), so it must live in `module_scope.members`.
+            // Server-side components: declare "Response" / "bun:app" upfront.
+            // By-name ambient — see `declareCommonJSSymbol`.
             switch (p.options.features.server_components) {
                 .none, .client_side => {},
                 else => {
@@ -3257,6 +3254,29 @@ pub fn NewParser_(
             return p.options.bundle and p.options.output_format.isESM();
         }
 
+        /// Declare an ambient symbol resolvable BY NAME via `findSymbol` during
+        /// visit (writes `module_scope.members[name]`). Use for parser-minted
+        /// symbols that user code references as a bare identifier: CJS wrapper
+        /// vars (`exports`, `module`, `require`, `__dirname`, `__filename`),
+        /// jest globals, `hmr`, server-components `Response`.
+        ///
+        /// Collision contract when a user binding already owns `name` in
+        /// `module_scope.members`:
+        /// - Both sides `.hoisted` and the file has no ESM syntax: not a
+        ///   collision (`var exports` inside the CJS wrapper merges with the
+        ///   `exports` argument). Returns the user's existing ref.
+        /// - Otherwise: returns a fresh ref appended to `module_scope.generated`
+        ///   (so generated code referencing it still gets a renamer-unique
+        ///   name) and leaves the user's member entry untouched.
+        ///
+        /// Callers that only want to emit when the ambient was actually reached
+        /// (e.g. the `Response` → `bun:app` import) check
+        /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed
+        /// ref is never recorded by `findSymbol`, so the count stays 0.
+        ///
+        /// Named for its original CJS-wrapper callers. For parser-generated
+        /// symbols consumed BY REF (never via `findSymbol`), use
+        /// `declareGeneratedSymbol`.
         pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {
             const name_hash = comptime Scope.getMemberHash(name);
             const member = p.module_scope.getMemberWithHash(name, name_hash);

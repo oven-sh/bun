@@ -106,14 +106,20 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             std::ignore = scope.exception();
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-                vm.clearHasTerminationRequest();
                 if (getSigintReceived()) {
+                    DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+                    vm.clearHasTerminationRequest();
                     setSigintReceived(false);
                     throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-                } else {
+                } else if (timeout != 0) {
+                    DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+                    vm.clearHasTerminationRequest();
                     throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
                 }
+                // else: termination came from outside this module evaluation
+                // (the bun:test watchdog around the test body,
+                // Worker.terminate(), etc.). Leave the TerminationException
+                // pending so it propagates to whoever armed it.
                 return {};
             }
         }

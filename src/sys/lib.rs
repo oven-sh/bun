@@ -8713,18 +8713,21 @@ mod win_symlink_impl {
                     WindowsSymlinkOptions::denied();
                     continue;
                 }
-                if let Some(sys_errno) = win_err.to_system_errno() {
-                    let e: E = sys_errno.to_e();
-                    // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
-                    // unset; every other failure flips the sticky bit so
-                    // `symlinkOrJunction` falls through to junctions next time.
-                    if !matches!(e, E::NOENT | E::EXIST) {
-                        WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
-                    }
-                    return Err(Error::from_code(e, Tag::symlink));
+                // `to_e()` falls back to `E::UNKNOWN` for Win32 codes not in
+                // the errno table. Filter drivers, network redirectors, and
+                // security software hooking `CreateSymbolicLinkW` can return
+                // codes outside the mapped set; treating those as success
+                // would leave the caller believing a symlink exists when it
+                // does not. Returning an error lets `symlink_or_junction`
+                // fall through to a junction.
+                let e: E = win_err.to_e();
+                // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
+                // unset; every other failure flips the sticky bit so
+                // `symlinkOrJunction` falls through to junctions next time.
+                if !matches!(e, E::NOENT | E::EXIST) {
+                    WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
                 }
-                // Win32 error without an errno mapping — treat as success
-                // (the `if let` yields `null`).
+                return Err(Error::from_code(e, Tag::symlink));
             }
             return Ok(());
         }

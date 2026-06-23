@@ -174,6 +174,68 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     }
   });
 
+  // Chunked transfer disables the libdeflate one-shot fast path, so the body
+  // is fed through the streaming Decompressor one 17-byte chunk at a time.
+  // Runs twice per encoding so the decoder's persistent state is exercised
+  // across both first-chunk init and subsequent re-seating.
+  describe.each(["gzip", "deflate", "br", "zstd"] as const)(
+    "streaming %s decompression over multiple chunks",
+    encoding => {
+      it.concurrent.each(["0", "1"])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", async noLibdeflate => {
+        // Body large enough that the compressed form spans many 17-byte writes.
+        const expected = JSON.stringify({
+          data: Array.from({ length: 64 }, (_, i) => ({ i, s: `item-${i}` })),
+        });
+        const compress = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync, zstd: zstdCompressSync };
+        const compressed = compress[encoding](expected);
+        const server = createNetServer(socket => {
+          socket.write(
+            "HTTP/1.1 200 OK\r\n" +
+              `Content-Encoding: ${encoding}\r\n` +
+              "Transfer-Encoding: chunked\r\n" +
+              "Content-Type: application/json\r\n" +
+              "Connection: close\r\n\r\n",
+          );
+          for (let i = 0; i < compressed.length; i += 17) {
+            const chunk = compressed.subarray(i, i + 17);
+            socket.write(chunk.length.toString(16) + "\r\n");
+            socket.write(chunk);
+            socket.write("\r\n");
+          }
+          socket.end("0\r\n\r\n");
+        });
+        await once(server.listen(0), "listening");
+        try {
+          const { port } = server.address() as import("node:net").AddressInfo;
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const res = await fetch(process.argv[1]);
+               if (res.status !== 200) throw new Error("status " + res.status);
+               process.stdout.write(await res.text());`,
+              `http://127.0.0.1:${port}/`,
+            ],
+            env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          expect({ stdout, stderr, exitCode }).toEqual({
+            stdout: expected,
+            stderr: "",
+            exitCode: 0,
+          });
+        } finally {
+          server.close();
+        }
+      });
+    },
+  );
+
   it("unknown Content-Encoding still passes through untouched", async () => {
     const server = createServer((req, res) => {
       res.setHeader("Content-Encoding", "foobar");

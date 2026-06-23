@@ -271,11 +271,11 @@ describe("close-delimited body through tunnel", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AbortSignal at every stage. We can't precisely target "mid inner-TLS
-// handshake" from the outside, so we fire the abort from the proxy's stage
-// hooks: when the proxy sees stage X, it signals the test to abort the
-// fetch. The fetch must reject with AbortError and the tunnel teardown must
-// not leave the request hung or the process crashed.
+// AbortSignal at every stage. A transparent proxy exposes its connection
+// record; the test polls bytesUp/bytesDown to detect each stage and
+// aborts when it's reached. The fetch must reject with AbortError and
+// the tunnel teardown must not leave the request hung or the process
+// crashed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("abort at each proxy stage", () => {
@@ -295,23 +295,13 @@ describe("abort at each proxy stage", () => {
       const ac = new AbortController();
       let stageReached = false;
       await using origin = await createAdversarialOrigin({ tls: true, body: "never" });
-      // Use onConnection + a per-stage promise: for request-received we can
-      // hook the connection record directly; for later stages, a separate
-      // adversarial proxy instance with `killClientAt` isn't right — we want
-      // the *client* to abort, not the proxy to close. So instead, we build
-      // a proxy that signals via a channel when the stage hits.
-      const { promise: stageHit, resolve: signalStage } = Promise.withResolvers<void>();
-      await using proxy = await createAdversarialProxy({
-        tls: proxyTls,
-        // Abuse the kill hooks as stage detectors by intercepting with
-        // onConnection for the early stage and a no-op kill for the rest.
-        // We need a real signal, so install a tiny override: the
-        // `killClientAt` hook is too blunt. Instead, run a transparent proxy
-        // and poll the connection record from the test side for the
-        // byte-count transitions.
-      });
+      // Run a transparent proxy and poll its connection record from the
+      // test side: the stage is inferred from record presence /
+      // bytesUp / bytesDown. The first three stages have no externally
+      // observable distinction from the record alone, so they collapse
+      // to "abort as soon as the proxy sees the request".
+      await using proxy = await createAdversarialProxy({ tls: proxyTls });
 
-      // Stage → predicate over the proxy connection record.
       const predicates: Record<ProxyStage, (c: (typeof proxy.connections)[number] | undefined) => boolean> = {
         "request-received": c => !!c,
         "upstream-connected": c => !!c,
@@ -319,20 +309,14 @@ describe("abort at each proxy stage", () => {
         "first-client-byte": c => !!c && c.bytesUp > 0,
         "first-upstream-byte": c => !!c && c.bytesDown > 0,
       };
-      // For the first three stages there's no externally observable
-      // distinction from the record alone; treat them as "abort as soon as
-      // the proxy sees the request", which covers the pre-tunnel window.
       const want = predicates[stage];
 
-      // Poll the connection record until the stage predicate flips, then
-      // abort. The poll is bounded by the hang guard.
       const poller = (async () => {
         while (!want(proxy.connections[0])) {
           await new Promise<void>(r => setImmediate(r));
         }
         stageReached = true;
         ac.abort();
-        signalStage();
       })();
 
       let code: string;
@@ -348,7 +332,6 @@ describe("abort at each proxy stage", () => {
       } catch (e) {
         code = errcode(e);
       }
-      await stageHit;
       await poller;
 
       expect(stageReached).toBe(true);

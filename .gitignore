@@ -200,3 +200,7 @@ test/integration/bun-types/fixture/bun.lock
 src/runtime/bake/generated.ts
 /target/
 *.heapsnapshot
+# Legacy codegen outputs (no longer written, but old build trees still have
+# them on disk; keep ignored so they don't show as untracked).
+src/jsc/bindings/GeneratedJS2Native.zig
+src/jsc/bindings/GeneratedBindings.zig

@@ -3006,10 +3006,7 @@ impl RunCommand {
                 Ok(bytes) => (bytes.into_boxed_slice(), resolved),
                 Err(_) => {
                     // Same first line as Node's loader for a missing --check target.
-                    pretty_errorln!(
-                        "Error: Cannot find module '{}'",
-                        bstr::BStr::new(&resolved)
-                    );
+                    pretty_errorln!("Error: Cannot find module '{}'", bstr::BStr::new(&resolved));
                     Output::flush();
                     Global::exit(1);
                 }

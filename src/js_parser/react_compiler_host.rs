@@ -105,7 +105,8 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn global_ref(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
-        // Runs after visiting, so current_scope == module_scope.
+        // current_scope is the component's FunctionBody here; find_symbol walks
+        // up to module scope.
         p.find_symbol(bun_ast::Loc::EMPTY, name).expect("oom").r#ref
     }
 

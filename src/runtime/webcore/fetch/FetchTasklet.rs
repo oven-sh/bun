@@ -1895,6 +1895,7 @@ impl FetchTasklet {
                 reject_unauthorized: Some(fetch_options.reject_unauthorized),
                 verbose: Some(fetch_options.verbose),
                 tls_props: fetch_options.ssl_config,
+                compress: fetch_options.compress,
             },
         )));
         // enable streaming the write side
@@ -2408,6 +2409,7 @@ pub struct FetchOptions {
     pub force_http3: bool,
     pub force_http1: bool,
     pub is_node_http_client: bool,
+    pub compress: Option<http::compress_body::CompressOption>,
 }
 
 impl Default for FetchOptions {
@@ -2442,6 +2444,7 @@ impl Default for FetchOptions {
             force_http3: false,
             force_http1: false,
             is_node_http_client: false,
+            compress: None,
         }
     }
 }

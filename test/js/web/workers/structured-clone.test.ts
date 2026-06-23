@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "bun:jsc";
-import { openSync } from "fs";
+import { closeSync, openSync } from "fs";
 import { bunEnv } from "harness";
 import { bunExe } from "js/bun/shell/test_builder";
 import { join } from "path";
@@ -9,7 +9,7 @@ function jscSerializeRoundtrip(value: any) {
   return cloned;
 }
 
-function jscSerializeRoundtripCrossProcess(original: any) {
+function jscSerializeRoundtripCrossProcess(original: any, stderr: "inherit" | "ignore" = "inherit") {
   const serialized = serialize(original);
 
   const result = Bun.spawnSync({
@@ -26,7 +26,7 @@ function jscSerializeRoundtripCrossProcess(original: any) {
     env: bunEnv,
     stdin: serialized,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr,
   });
   return deserialize(result.stdout);
 }
@@ -184,21 +184,64 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         const cloned = structuredCloneFn(blob);
         await compareBlobs(blob, cloned);
       });
-      test("file from path", async () => {
-        const blob = Bun.file(join(import.meta.dir, "example.txt"));
-        const cloned = structuredCloneFn(blob);
-        expect(cloned.lastModified).toBe(blob.lastModified);
-        expect(cloned.name).toBe(blob.name);
-        expect(cloned.size).toBe(blob.size);
-      });
-      test("file from fd", async () => {
-        const fd = openSync(join(import.meta.dir, "example.txt"), "r");
-        const blob = Bun.file(fd);
-        const cloned = structuredCloneFn(blob);
-        expect(cloned.lastModified).toBe(blob.lastModified);
-        expect(cloned.name).toBe(blob.name);
-        expect(cloned.size).toBe(blob.size);
-      });
+      // Path/fd-backed Blobs only round-trip through the in-process
+      // structuredClone path. The two bun:jsc serialize/deserialize variants
+      // hand the deserializer a raw byte buffer, and reconstructing a file
+      // handle from caller-supplied bytes is rejected (the path/fd embedded in
+      // the payload cannot be trusted).
+      if (structuredCloneFn === structuredClone) {
+        test("file from path", async () => {
+          const blob = Bun.file(join(import.meta.dir, "example.txt"));
+          const cloned = structuredCloneFn(blob);
+          expect(cloned.lastModified).toBe(blob.lastModified);
+          expect(cloned.name).toBe(blob.name);
+          expect(cloned.size).toBe(blob.size);
+        });
+        test("file from fd", async () => {
+          const fd = openSync(join(import.meta.dir, "example.txt"), "r");
+          try {
+            const blob = Bun.file(fd);
+            const cloned = structuredCloneFn(blob);
+            expect(cloned.lastModified).toBe(blob.lastModified);
+            expect(cloned.name).toBe(blob.name);
+            expect(cloned.size).toBe(blob.size);
+          } finally {
+            closeSync(fd);
+          }
+        });
+      } else if (structuredCloneFn === jscSerializeRoundtrip) {
+        test("file from path is rejected", () => {
+          const blob = Bun.file(join(import.meta.dir, "example.txt"));
+          expect(() => structuredCloneFn(blob)).toThrow();
+        });
+        test("file from fd is rejected", () => {
+          const fd = openSync(join(import.meta.dir, "example.txt"), "r");
+          try {
+            const blob = Bun.file(fd);
+            expect(() => structuredCloneFn(blob)).toThrow();
+          } finally {
+            closeSync(fd);
+          }
+        });
+      } else {
+        // Cross-process: the child process's deserialize() rejects the
+        // payload and exits without writing anything back, so the round trip
+        // never yields a file-backed Blob. The child's uncaught error is
+        // expected here, so its stderr is not echoed into the test runner's.
+        test("file from path is rejected", () => {
+          const blob = Bun.file(join(import.meta.dir, "example.txt"));
+          expect(jscSerializeRoundtripCrossProcess(blob, "ignore")).not.toBeInstanceOf(Blob);
+        });
+        test("file from fd is rejected", () => {
+          const fd = openSync(join(import.meta.dir, "example.txt"), "r");
+          try {
+            const blob = Bun.file(fd);
+            expect(jscSerializeRoundtripCrossProcess(blob, "ignore")).not.toBeInstanceOf(Blob);
+          } finally {
+            closeSync(fd);
+          }
+        });
+      }
       describe("dom file", async () => {
         test("without lastModified", async () => {
           const file = new File(["hi"], "example.txt", { type: "text/plain" });

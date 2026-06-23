@@ -19,7 +19,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // Node wraps Module._load in the "module.require" tracing channel
   // (wrapModuleLoad). The channel only exists once node:diagnostics_channel
   // has been loaded, so a process that never loads it skips this entirely.
-  const onRequire = require("internal/require_tracing").channel;
+  const onRequire = require("internal/module_tracing").requireChannel;
   if (onRequire !== undefined && onRequire.hasSubscribers) {
     return onRequire.traceSync(
       $overridableRequireImpl,

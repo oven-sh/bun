@@ -3481,16 +3481,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 }
 
-JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
-    JSModuleLoader*,
+static JSC::JSPromise* moduleLoaderImportModuleImpl(Zig::GlobalObject* globalObject,
     JSString* moduleNameValue,
     RefPtr<JSC::ScriptFetchParameters> parameters,
-    const SourceOrigin& sourceOrigin,
-    bool deferred)
+    const SourceOrigin& sourceOrigin)
 {
-    UNUSED_PARAM(deferred);
-    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
-
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -3597,6 +3592,84 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     ASSERT(result);
     return result;
+}
+
+JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader*,
+    JSString* moduleNameValue,
+    RefPtr<JSC::ScriptFetchParameters> parameters,
+    const SourceOrigin& sourceOrigin,
+    bool deferred)
+{
+    UNUSED_PARAM(deferred);
+    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+
+    // Node publishes the "module.import" tracing channel around dynamic import().
+    // Only consider it once node:diagnostics_channel has been loaded; otherwise
+    // dynamic import behaves exactly as before.
+    if (globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::Field::NodeDiagnosticsChannel).get()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue moduleTracing = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::Field::InternalModuleTracing).get();
+        if (moduleTracing && moduleTracing.isObject()) {
+            JSObject* moduleTracingObject = asObject(moduleTracing);
+            JSValue importChannel = moduleTracingObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importChannel"_s));
+            if (scope.exception()) [[unlikely]] {
+                return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+            }
+            bool hasSubscribers = false;
+            if (importChannel && importChannel.isObject()) {
+                JSValue hasSubscribersValue = importChannel.getObject()->get(globalObject, Identifier::fromString(vm, "hasSubscribers"_s));
+                if (scope.exception()) [[unlikely]] {
+                    return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+                }
+                hasSubscribers = hasSubscribersValue.toBoolean(globalObject);
+            }
+            if (hasSubscribers) {
+                JSValue traceImport = moduleTracingObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "traceImport"_s));
+                if (scope.exception()) [[unlikely]] {
+                    return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+                }
+                if (traceImport && traceImport.isCallable()) {
+                    // The doImport callback runs synchronously inside tracePromise, so the
+                    // captured arguments never outlive this stack frame.
+                    SourceOrigin sourceOriginCopy = sourceOrigin;
+                    auto* doImport = JSC::JSNativeStdFunction::create(vm, globalObject, 0, String(),
+                        [moduleNameValue, parameters, sourceOriginCopy](JSGlobalObject* lexicalGlobalObject, CallFrame*) -> JSC::EncodedJSValue {
+                            auto* global = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+                            RefPtr<JSC::ScriptFetchParameters> parametersCopy = parameters;
+                            return JSValue::encode(moduleLoaderImportModuleImpl(global, moduleNameValue, WTF::move(parametersCopy), sourceOriginCopy));
+                        });
+
+                    auto sourceURL = sourceOrigin.url();
+                    JSValue parentURL = sourceURL.isEmpty() ? jsEmptyString(vm) : jsString(vm, sourceURL.string());
+
+                    MarkedArgumentBuffer args;
+                    args.append(doImport);
+                    args.append(parentURL);
+                    args.append(moduleNameValue);
+
+                    auto callData = JSC::getCallData(traceImport);
+                    JSValue result = JSC::call(globalObject, traceImport, callData, moduleTracingObject, args);
+                    if (scope.exception()) [[unlikely]] {
+                        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+                    }
+                    if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
+                        return promise;
+                    }
+                    // tracePromise returns a promise for a promise-returning callback;
+                    // adopt whatever came back rather than importing a second time.
+                    JSPromise* adopted = JSPromise::resolvedPromise(globalObject, result);
+                    if (scope.exception()) [[unlikely]] {
+                        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+                    }
+                    return adopted;
+                }
+            }
+        }
+    }
+
+    return moduleLoaderImportModuleImpl(globalObject, moduleNameValue, WTF::move(parameters), sourceOrigin);
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)

@@ -2712,68 +2712,40 @@ impl<'a> HTTPClient<'a> {
         buffer: &mut bun_io::StreamBuffer,
         data: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // When tunneling through a proxy the stream body must go through
-        // the inner TLS session (ProxyTunnel::write), not the outer socket:
-        // writing plaintext to `socket` here would interleave it with the
-        // tunnel's TLS records and corrupt the stream at the origin.
-        // WantRead/WantWrite from the inner SSL are treated as backpressure
-        // so the next onWritable retries the flush. Encrypted bytes reach
-        // the outer socket via the SSLWrapper's write_encrypted callback,
-        // same as the ProxyHeaders/ProxyBody::Bytes paths.
+        // Through a proxy tunnel the stream body goes via the inner TLS,
+        // not the outer socket.
         if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-            // Same guard as the ProxyHeaders arm: inner TLS writes succeed
-            // at the SSL layer and buffer on a dead outer socket forever.
             if socket.is_closed() || socket.is_shutdown() {
                 return Err(err!(ConnectionClosed));
             }
             let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
-            let to_send_len = buffer.slice().len();
-            if to_send_len > 0 {
-                match ProxyTunnel::write(proxy, buffer.slice()) {
-                    Ok(amount) => {
-                        self.state.request_sent_len += amount;
-                        buffer.cursor += amount;
-                        if amount < to_send_len {
-                            if !data.is_empty() {
-                                let _ = buffer.write(data);
-                            }
-                            return Ok(true);
-                        }
-                        if buffer.is_empty() {
-                            buffer.reset();
-                        }
-                    }
-                    Err(e) if e == err!(WantRead) || e == err!(WantWrite) => {
-                        if !data.is_empty() {
-                            let _ = buffer.write(data);
-                        }
-                        return Ok(true);
-                    }
-                    // A fatal SSL_write error fires trigger_close_callback
-                    // before returning, which runs proxy on_close →
-                    // close_and_fail and may have freed *self via the
-                    // result callback. Match the other ProxyTunnel::write
-                    // callers: bail without touching self. Ok(true) makes
-                    // write_to_stream only release the (independently
-                    // allocated) stream buffer and return.
-                    Err(_) => return Ok(true),
+            // Any Err is backpressure: WantRead/WantWrite retry on the next
+            // on_writable, and a fatal SSL error already ran on_close (and
+            // may have freed *self), so bail via Ok(true) without touching
+            // self — same as the other ProxyTunnel::write callers.
+            let pending = buffer.slice().len();
+            if pending > 0 {
+                let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
+                    let _ = buffer.write(data);
+                    return Ok(true);
+                };
+                self.state.request_sent_len += n;
+                buffer.cursor += n;
+                if n < pending {
+                    let _ = buffer.write(data);
+                    return Ok(true);
                 }
+                buffer.reset();
             }
             if !data.is_empty() {
-                match ProxyTunnel::write(proxy, data) {
-                    Ok(sent) => {
-                        self.state.request_sent_len += sent;
-                        if sent < data.len() {
-                            let _ = buffer.write(&data[sent..]);
-                            return Ok(true);
-                        }
-                    }
-                    Err(e) if e == err!(WantRead) || e == err!(WantWrite) => {
-                        let _ = buffer.write(data);
-                        return Ok(true);
-                    }
-                    // See the matching arm above: on_close already ran.
-                    Err(_) => return Ok(true),
+                let Ok(n) = ProxyTunnel::write(proxy, data) else {
+                    let _ = buffer.write(data);
+                    return Ok(true);
+                };
+                self.state.request_sent_len += n;
+                if n < data.len() {
+                    let _ = buffer.write(&data[n..]);
+                    return Ok(true);
                 }
             }
             return Ok(false);

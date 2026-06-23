@@ -1382,9 +1382,24 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
     Bun__onPosixSignal(signalNumber);
 }
 
+extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
+extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
+        if (eventName == "memoryPressure") {
+            auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
+            if (isAdded) {
+                if (eventEmitter.listenerCount(eventName) == 1) {
+                    Bun__MemoryPressure__install(global);
+                }
+            } else if (eventEmitter.listenerCount(eventName) == 0) {
+                Bun__MemoryPressure__uninstall(global);
+            }
+            return;
+        }
+
         // IPC handlers
         if (eventName == "message" || eventName == "disconnect") {
             auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
@@ -4310,6 +4325,19 @@ extern "C" void Process__emitDisconnectEvent(Bun::GlobalObject* global)
     auto ident = Identifier::fromString(vm, "disconnect"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
+        process->wrapped().emit(ident, args);
+    }
+}
+
+extern "C" void Process__emitMemoryPressureEvent(Bun::GlobalObject* global, int level)
+{
+    auto* process = global->processObject();
+    auto& vm = JSC::getVM(global);
+    auto ident = Identifier::fromString(vm, "memoryPressure"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        // Level values match NOTE_MEMORYSTATUS_PRESSURE_WARN (2) / _CRITICAL (4).
+        args.append(jsString(vm, level == 2 ? String("warning"_s) : String("critical"_s)));
         process->wrapped().emit(ident, args);
     }
 }

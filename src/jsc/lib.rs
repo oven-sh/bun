@@ -1635,7 +1635,7 @@ pub use self::Node as node;
 #[track_caller]
 #[inline]
 pub fn mark_binding() {
-    if cfg!(debug_assertions) && bun_core::Global::JSC_SCOPE.is_visible() {
+    if bun_core::env::IS_DEBUG && bun_core::Global::JSC_SCOPE.is_visible() {
         let loc = core::panic::Location::caller();
         bun_core::Global::JSC_SCOPE.log(format_args!("[jsc] ({}:{})\n", loc.file(), loc.line()));
     }
@@ -1644,7 +1644,7 @@ pub fn mark_binding() {
 /// Like [`mark_binding`], with a class-name prefix.
 #[inline]
 pub fn mark_member_binding(class: &'static str, src: &core::panic::Location<'static>) {
-    if cfg!(debug_assertions) && bun_core::Global::JSC_SCOPE.is_visible() {
+    if bun_core::env::IS_DEBUG && bun_core::Global::JSC_SCOPE.is_visible() {
         bun_core::Global::JSC_SCOPE.log(format_args!(
             "[jsc] {} ({}:{})\n",
             class,

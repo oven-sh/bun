@@ -39,16 +39,17 @@ const defaultCpOptions = {
 };
 
 function decorateSystemError(err, prefix, context) {
-  let message = `${prefix}: ${context.syscall} returned ${context.code} (${context.message})`;
-  if (context.path !== undefined) message += ` ${context.path}`;
-  if (context.dest !== undefined) message += ` => ${context.dest}`;
+  const { syscall, code, message: ctxMessage, path, dest, errno } = context;
+  let message = `${prefix}: ${syscall} returned ${code} (${ctxMessage})`;
+  if (path !== undefined) message += ` ${path}`;
+  if (dest !== undefined) message += ` => ${dest}`;
   err.message = message;
   err.name = "SystemError";
   err.info = context;
-  err.errno = context.errno;
-  err.syscall = context.syscall;
-  if (context.path !== undefined) err.path = context.path;
-  if (context.dest !== undefined) err.dest = context.dest;
+  err.errno = errno;
+  err.syscall = syscall;
+  if (path !== undefined) err.path = path;
+  if (dest !== undefined) err.dest = dest;
   return err;
 }
 
@@ -133,8 +134,9 @@ function validateCpOptions(options) {
       'Option "dereference" cannot be used in combination with option "verbatimSymlinks"',
     );
   }
-  if (options.filter !== undefined) {
-    validateFunction(options.filter, "options.filter");
+  const { filter } = options;
+  if (filter !== undefined) {
+    validateFunction(filter, "options.filter");
   }
   options[kValidatedCpOptions] = true;
   return options;
@@ -245,6 +247,35 @@ function checkParentPathsSync(src, srcStat, dest) {
   return checkParentPathsSync(src, srcStat, destParent);
 }
 
+// The native recursive copy (a single clonefile() on macOS) copies symlinks
+// verbatim and clones special files, while node rewrites relative symlink
+// targets against the source tree and raises ERR_FS_CP_SOCKET /
+// ERR_FS_CP_FIFO_PIPE. It is therefore only node-equivalent for trees made of
+// regular files and directories; anything else — including entries whose type
+// the filesystem does not report — bails to the ported walker. Scan errors
+// also bail so the walker surfaces them the way node would.
+function treeContainsOnlyFilesAndDirsSync(root) {
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (entry.isDirectory()) {
+        stack.push(join(dir, entry.name));
+      } else if (!entry.isFile()) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // node-correct validation before handing off to the native fast path
 // (which performs the copy but does not implement node's cp error codes).
 function tryNativeFastPathSync(src, dest, opts) {
@@ -260,10 +291,20 @@ function tryNativeFastPathSync(src, dest, opts) {
       code: "EISDIR",
     });
   }
-  // The native copy is only node-equivalent for regular-file -> regular-file
-  // (or missing dest). Symlinks (node resolves relative link targets),
-  // directories (may contain symlinks), and special files (node-specific
-  // error codes) must go through the ported implementation.
+  if (srcStat.isDirectory()) {
+    // On macOS the native path clones the whole tree with a single
+    // clonefile(). Only take it when the result is indistinguishable from
+    // node's walker: dest must not exist (no merge semantics) and the tree
+    // must contain only regular files and directories.
+    return {
+      ok: process.platform === "darwin" && !destStat && treeContainsOnlyFilesAndDirsSync(src),
+      checked,
+    };
+  }
+  // The single-file native copy is only node-equivalent for regular-file ->
+  // regular-file (or missing dest). Symlinks (node resolves relative link
+  // targets) and special files (node-specific error codes) must go through
+  // the ported implementation.
   return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
 }
 

@@ -2115,10 +2115,7 @@ impl VirtualMachine {
         // of `Bun__GlobalObject__create` re-enters via `WTFTimer__create`/
         // `WTFTimer__update` (JSC's GC scheduler), which dereferences
         // `runtime_state().timer` — so this hook MUST run first or that path
-        // null-derefs. The post-global tail (`configureDebugger`,
-        // `Body.Value.HiveAllocator.init`) is gated TODO in
-        // the hook body and will need a separate post-global hook when
-        // un-gated.
+        // null-derefs.
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `vm` is the unique live VM on this
             // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
@@ -4399,10 +4396,16 @@ impl VirtualMachine {
         // each stored map and `deinit()`s the sibling `saved_source_map_table`.
         drop(core::mem::take(&mut self.source_mappings));
 
-        if let Some(rare) = self.rare_data.take() {
+        // Drain cron jobs BEFORE taking rare_data off `self`: the teardown
+        // hook reads `self.rare_data` to find the job list, so calling it
+        // after `take()` is a no-op and `RareData::drop`'s
+        // `debug_assert!(cron_jobs.is_empty())` fires.
+        if self.rare_data.is_some() {
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(self);
             }
+        }
+        if let Some(rare) = self.rare_data.take() {
             // Paired with `rare_data()`'s register_root_region. Without this,
             // every terminated Worker leaves a stale LSAN root entry pointing
             // into a freed arena.

@@ -46,6 +46,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         onAborted = nullptr;
         /* Also remove onWritable so that we do not emit when draining behind the scenes. */
         onWritable = nullptr;
+        writableUserData = nullptr;
         /* Ignore data after this point */
         inStream = nullptr;
 
@@ -68,7 +69,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         onWritable = [](uWS::HttpResponse<SSL>*, uint64_t, void*) {return true;};
 
         /* Run borrowed onWritable */
-        bool ret = borrowedOnWritable(response, offset, userData);
+        bool ret = borrowedOnWritable(response, offset, writableUserData);
 
         /* If we still have onWritable (the placeholder) then move back the real one */
         if (onWritable) {
@@ -90,8 +91,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_WROTE_TRANSFER_ENCODING_HEADER = 128, // used
     };
 
-    /* Shared context pointer */
+    /* Shared context pointer for onAborted/onTimeout/onData */
     void* userData = nullptr;
+    /* onWritable can be owned by a different object (the streaming body
+     * writer, e.g. Bun's HTTPServerWritable sink) than the one owning
+     * onAborted/onTimeout/onData (the RequestContext), and it can be armed
+     * mid-response when tryEnd() reports backpressure. Keep its context
+     * pointer in its own slot so arming it does not redirect the other
+     * callbacks to the wrong object. Mirrors Http3ResponseData. */
+    void* writableUserData = nullptr;
     void* socketData = nullptr;
 
     /* Per socket event handlers */

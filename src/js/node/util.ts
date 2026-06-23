@@ -34,8 +34,9 @@ const stripVTControlCharacters = utl.stripVTControlCharacters;
 
 var debugs = {};
 var debugEnvRegex = /^$/;
-if (process.env.NODE_DEBUG) {
-  debugEnv = process.env.NODE_DEBUG;
+const NODE_DEBUG = process.env.NODE_DEBUG;
+if (NODE_DEBUG) {
+  debugEnv = NODE_DEBUG;
   debugEnv = debugEnv
     .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
     .replace(/\*/g, ".*")
@@ -139,8 +140,9 @@ var inherits = function inherits(ctor, superCtor) {
     throw $ERR_INVALID_ARG_TYPE("superCtor", "function", superCtor);
   }
 
-  if (superCtor.prototype === undefined) {
-    throw $ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtor.prototype);
+  const superCtorPrototype = superCtor.prototype;
+  if (superCtorPrototype === undefined) {
+    throw $ERR_INVALID_ARG_TYPE("superCtor.prototype", "object", superCtorPrototype);
   }
   Object.defineProperty(ctor, "super_", {
     // @ts-ignore

@@ -410,7 +410,7 @@ JSC::EncodedJSValue V::validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGl
         }
     }
 
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
+    return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -515,12 +515,22 @@ pub mod generate_header {
 
         #[unsafe(no_mangle)]
         pub(crate) extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            // Android's per-app seccomp policy does not whitelist
+            // epoll_pwait2 (bionic SYSCALLS.TXT only lists epoll_pwait).
+            // https://github.com/oven-sh/bun/issues/32489
+            #[cfg(not(target_os = "linux"))]
             {
                 0
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            #[cfg(target_os = "linux")]
             {
+                if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2
+                    .get()
+                    .unwrap_or(false)
+                {
+                    return 0;
+                }
+
                 // https://man.archlinux.org/man/epoll_pwait2.2.en#HISTORY
                 let min_epoll_pwait2 = semver::Version {
                     major: 5,

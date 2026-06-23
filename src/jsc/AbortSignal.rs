@@ -251,11 +251,6 @@ impl AbortReason {
             AbortReason::Js(value) => value,
         }
     }
-
-    // `to_body_value_error` reaches into
-    // `bun_runtime::webcore::body::value::ValueError` (forward dep on
-    // `bun_runtime`). The conversion is trivial and is reconstructed at the
-    // call-site in `bun_runtime` once that tier un-gates.
 }
 
 // ──────────────────────────────────────────────────────────────────────────

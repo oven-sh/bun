@@ -1604,14 +1604,14 @@ pub fn parse_into_binary_lockfile(
         'err: {
             match &lockfile_version_expr.data {
                 ExprData::ENumber(num) => {
-                    if num.value < 0.0 || num.value > u32::MAX as f64 {
+                    if num.value() < 0.0 || num.value() > u32::MAX as f64 {
                         break 'err;
                     }
 
-                    if num.value.fract() != 0.0 {
+                    if num.value().fract() != 0.0 {
                         break 'err;
                     }
-                    break 'lockfile_version num.value as u32;
+                    break 'lockfile_version num.value() as u32;
                 }
                 _ => {}
             }

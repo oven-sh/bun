@@ -738,7 +738,7 @@ public:
     HttpResponse *onWritable(void* userData, HttpResponseData<SSL>::OnWritableCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        httpResponseData->userData = userData;
+        httpResponseData->writableUserData = userData;
         httpResponseData->onWritable = handler;
         return this;
     }
@@ -748,6 +748,7 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
+        httpResponseData->writableUserData = nullptr;
         return this;
     }
 
@@ -772,6 +773,7 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
+        httpResponseData->writableUserData = nullptr;
         httpResponseData->onAborted = nullptr;
         httpResponseData->onTimeout = nullptr;
 

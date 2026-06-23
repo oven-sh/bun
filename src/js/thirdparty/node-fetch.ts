@@ -155,12 +155,13 @@ async function fetch(
   // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
   // This is needed for libraries like `form-data` that use CombinedStream which extends
   // Node.js Stream but doesn't implement Symbol.asyncIterator.
-  if (init?.body && typeof init.body === "object" && !init.body[Symbol.asyncIterator]) {
+  const initBody = init?.body;
+  if (initBody && typeof initBody === "object" && !initBody[Symbol.asyncIterator]) {
     const { Readable, Stream, PassThrough } = require("node:stream");
-    if (init.body instanceof Stream || init.body instanceof Readable) {
+    if (initBody instanceof Stream || initBody instanceof Readable) {
       // For old-style streams that don't have asyncIterator (like CombinedStream used by form-data),
       // pipe through a PassThrough stream to convert to a Readable that can be converted to a web stream.
-      let readable = init.body;
+      let readable = initBody;
       if (!(readable instanceof Readable)) {
         const passthrough = new PassThrough();
         readable.pipe(passthrough);

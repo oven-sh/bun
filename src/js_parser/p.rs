@@ -2309,8 +2309,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ref_: entry.r#ref,
                     is_top_level: true,
                 });
-                // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                VecExt::append(&mut self.module_scope_mut().generated, entry.r#ref);
                 self.is_import_item.insert(entry.r#ref, ());
                 self.named_imports.put(
                     entry.r#ref,
@@ -3144,13 +3142,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let module_scope = self.module_scope_mut();
-        module_scope
+        self.module_scope_mut()
             .generated
             .ensure_unused_capacity(generated_symbols_count as usize * 3);
-        module_scope.members.ensure_unused_capacity(
-            generated_symbols_count as usize * 3 + module_scope.members.count(),
-        )?;
 
         self.exports_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
@@ -3213,13 +3207,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 options::ServerComponents::WrapExportsForServerReference => {}
             }
 
-            // Server-side components:
-            // Declare upfront the symbols for "Response" and "bun:app"
+            // Server-side components: declare "Response" / "bun:app" upfront.
+            // By-name ambient — see `declare_common_js_symbol`.
             match self.options.features.server_components {
                 options::ServerComponents::None | options::ServerComponents::ClientSide => {}
                 _ => {
                     self.response_ref =
-                        self.declare_generated_symbol(js_ast::symbol::Kind::Import, b"Response")?;
+                        self.declare_common_js_symbol(js_ast::symbol::Kind::Import, b"Response")?;
                     self.bun_app_namespace_ref =
                         self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app")?;
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
@@ -3244,28 +3238,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.runtime_imports.__require.is_empty() {
             return;
         }
-        // Call declare_symbol_maybe_generated with the hashed
-        // "__require" name directly, regardless of bundle mode. Do NOT route through
-        // declare_generated_symbol — that helper skips the hash when
-        // `options.bundle == true`, which would let a user-level
-        // `var __require` collide in `current_scope.members` and link the
-        // runtime require to the user symbol via the IS_GENERATED merge path.
-        // Runtime equivalent of `generated_symbol_name!("__require")`:
-        let hash = bun_wyhash::hash(b"__require");
-        let hashed: &'a [u8] = bun_alloc::arena_format!(
-            in self.arena,
-            "{}_{}",
-            bstr::BStr::new(b"__require".as_slice()),
-            bun_core::fmt::truncated_hash32(hash)
-        )
-        .into_bump_str()
-        .as_bytes();
         let ref_ = self
-            .declare_symbol_maybe_generated::<true>(
-                js_ast::symbol::Kind::Other,
-                bun_ast::Loc::EMPTY,
-                hashed,
-            )
+            .declare_generated_symbol(js_ast::symbol::Kind::Other, b"__require")
             .expect("oom");
         self.runtime_imports.__require = ref_;
         self.runtime_imports.put(b"__require", ref_);
@@ -4758,6 +4732,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle && self.options.output_format.is_esm()
     }
 
+    /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]
+    /// during visit (writes `module_scope.members[name]`). Use for parser-minted
+    /// symbols that user code references as a bare identifier: CJS wrapper vars
+    /// (`exports`, `module`, `require`, `__dirname`, `__filename`), jest globals,
+    /// `hmr`, server-components `Response`.
+    ///
+    /// Collision contract when a user binding already owns `name` in
+    /// `module_scope.members`:
+    /// - Both sides `Hoisted` and the file has no ESM syntax: not a collision
+    ///   (`var exports` inside the CJS wrapper merges with the `exports`
+    ///   argument). Returns the user's existing ref.
+    /// - Otherwise: returns a fresh ref appended to `module_scope.generated`
+    ///   (so generated code referencing it still gets a renamer-unique name)
+    ///   and leaves the user's member entry untouched.
+    ///
+    /// Callers that only want to emit when the ambient was actually reached
+    /// (e.g. the `Response` → `bun:app` import) check
+    /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed ref
+    /// is never recorded by `find_symbol`, so the count stays 0.
+    ///
+    /// Named for its original CJS-wrapper callers. For parser-generated symbols
+    /// consumed BY REF (never via `find_symbol`), use
+    /// [`Self::declare_generated_symbol`].
     pub fn declare_common_js_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
@@ -4819,22 +4816,52 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    /// Callers must pre-hash via `generated_symbol_name!`
-    /// and pass the result, OR (non-bundle) we runtime-hash into the bump arena.
+    /// Runtime equivalent of `generated_symbol_name!`. Same bytes as the
+    /// macro produces; arena-owned for symbol lifetime.
+    fn hash_generated_name(&self, name: &'static [u8]) -> &'a [u8] {
+        let hash = bun_wyhash::hash(name);
+        bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash))
+            .into_bump_str()
+            .as_bytes()
+    }
+
+    /// Create a parser-generated symbol (runtime/JSX auto-imports, fast-refresh
+    /// hooks, etc.) and register it on `module_scope.generated` only.
+    ///
+    /// Never inserts into `current_scope.members`, so a user binding of the
+    /// same name in any scope cannot capture it. Safe to call from the visit
+    /// pass where `current_scope` is nested.
+    ///
+    /// Name selection:
+    /// - [`Self::will_use_renamer`] (bundle or `minify_identifiers`): keep
+    ///   `name` as-is. Collision-free printing additionally requires the ref
+    ///   to land in some live `Part.declared_symbols` with `is_top_level =
+    ///   true` (or the file to be CJS-wrapped); callers do this via their
+    ///   import-stmt emitters (`generate_import_stmt` etc.).
+    ///   `module_scope.generated` alone is not read by `NumberRenamer`'s
+    ///   top-level pass for wrap=none/ESM.
+    /// - Otherwise: `printAst` uses `NoOpRenamer`, which prints
+    ///   `symbol.original_name` verbatim with no collision handling. The
+    ///   `generatedSymbolName` hash suffix appended here is the sole
+    ///   collision guard on that path.
+    ///
+    /// The `'static` bound is the line: generated symbols whose name is
+    /// computed at runtime (react-compiler temps, namespace refs from import
+    /// paths, `${name}` CJS-export shims) hand-roll `new_symbol` +
+    /// `module_scope.generated.append` instead.
     pub fn declare_generated_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
     ) -> Result<Ref, bun_core::Error> {
-        // The bundler runs the renamer, so it is ok to not append a hash
-        if self.options.bundle {
-            return self.declare_symbol_maybe_generated::<true>(kind, bun_ast::Loc::EMPTY, name);
-        }
-        // Runtime equivalent of `generated_symbol_name!`.
-        // Same bytes as the macro produces; arena-owned for symbol lifetime.
-        let hash = bun_wyhash::hash(name);
-        let hashed: &'a [u8] = bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
-        self.declare_symbol_maybe_generated::<true>(kind, bun_ast::Loc::EMPTY, hashed)
+        let ref_ = if self.will_use_renamer() {
+            self.new_symbol(kind, name)?
+        } else {
+            let hashed = self.hash_generated_name(name);
+            self.new_symbol(kind, hashed)?
+        };
+        VecExt::append(&mut self.module_scope_mut().generated, ref_);
+        Ok(ref_)
     }
 
     pub fn declare_symbol(
@@ -4843,28 +4870,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         name: &'a [u8],
     ) -> Result<Ref, bun_core::Error> {
-        self.declare_symbol_maybe_generated::<false>(kind, loc, name)
-    }
-
-    pub fn declare_symbol_maybe_generated<const IS_GENERATED: bool>(
-        &mut self,
-        kind: js_ast::symbol::Kind,
-        loc: bun_ast::Loc,
-        name: &'a [u8],
-    ) -> Result<Ref, bun_core::Error> {
         // p.checkForNonBMPCodePoint(loc, name)
-        if !IS_GENERATED {
-            // Forbid declaring a symbol with a reserved word in strict mode
-            if self.is_strict_mode()
-                && name.as_ptr() != arguments_str.as_ptr()
-                && bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
-            {
-                self.mark_strict_mode_feature(
-                    StrictModeFeature::ReservedWord,
-                    js_lexer::range_of_identifier(self.source, loc),
-                    name,
-                )?;
-            }
+
+        // Forbid declaring a symbol with a reserved word in strict mode
+        if self.is_strict_mode()
+            && name.as_ptr() != arguments_str.as_ptr()
+            && bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
+        {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(self.source, loc),
+                name,
+            )?;
         }
 
         // Allocate a new symbol
@@ -4895,59 +4912,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
 
-            if !IS_GENERATED {
-                use js_ast::scope::SymbolMergeResult as MR;
-                let merge = js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
-                    scope_kind,
-                    self.symbols[symbol_idx].kind,
-                    kind,
-                );
-                match merge {
-                    MR::Forbidden => {
-                        // Entry already holds `existing`; leave it untouched.
-                        // SAFETY: original_name is an arena-owned slice valid for 'a.
-                        let orig = self.symbols[symbol_idx].original_name.slice();
-                        self.log().add_symbol_already_declared_error(
-                            self.source,
-                            orig,
-                            loc,
-                            existing.loc,
-                        );
-                        return Ok(existing.ref_);
-                    }
-                    MR::KeepExisting => {
-                        ref_ = existing.ref_;
-                    }
-                    MR::ReplaceWithNew => {
-                        self.symbols[symbol_idx].link.set(ref_);
-
-                        // If these are both functions, remove the overwritten declaration
-                        if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
-                            self.symbols[symbol_idx]
-                                .set_remove_overwritten_function_declaration(true);
-                        }
-                    }
-                    MR::BecomePrivateGetSetPair => {
-                        ref_ = existing.ref_;
-                        self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateGetSetPair;
-                    }
-                    MR::BecomePrivateStaticGetSetPair => {
-                        ref_ = existing.ref_;
-                        self.symbols[symbol_idx].kind =
-                            js_ast::symbol::Kind::PrivateStaticGetSetPair;
-                    }
-                    MR::OverwriteWithNew => {}
+            use js_ast::scope::SymbolMergeResult as MR;
+            let merge = js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
+                scope_kind,
+                self.symbols[symbol_idx].kind,
+                kind,
+            );
+            match merge {
+                MR::Forbidden => {
+                    // Entry already holds `existing`; leave it untouched.
+                    // SAFETY: original_name is an arena-owned slice valid for 'a.
+                    let orig = self.symbols[symbol_idx].original_name.slice();
+                    self.log().add_symbol_already_declared_error(
+                        self.source,
+                        orig,
+                        loc,
+                        existing.loc,
+                    );
+                    return Ok(existing.ref_);
                 }
-            } else {
-                self.symbols[ref_.inner_index() as usize]
-                    .link
-                    .set(existing.ref_);
+                MR::KeepExisting => {
+                    ref_ = existing.ref_;
+                }
+                MR::ReplaceWithNew => {
+                    self.symbols[symbol_idx].link.set(ref_);
+
+                    // If these are both functions, remove the overwritten declaration
+                    if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
+                        self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
+                    }
+                }
+                MR::BecomePrivateGetSetPair => {
+                    ref_ = existing.ref_;
+                    self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateGetSetPair;
+                }
+                MR::BecomePrivateStaticGetSetPair => {
+                    ref_ = existing.ref_;
+                    self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateStaticGetSetPair;
+                }
+                MR::OverwriteWithNew => {}
             }
         }
         *entry.value_ptr = js_ast::scope::Member { ref_, loc };
-        if IS_GENERATED {
-            VecExt::append(&mut self.module_scope_mut().generated, ref_);
-        }
         Ok(ref_)
     }
 
@@ -5653,7 +5659,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.features.auto_polyfill_require {
             debug_assert!(self.options.features.allow_runtime);
             self.ensure_require_symbol();
-            let r = self.runtime_identifier_ref(bun_ast::Loc::EMPTY, b"__require");
+            let r = self.runtime_identifier_ref(b"__require");
             self.record_usage(r);
         }
     }
@@ -5661,7 +5667,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn ignore_usage_of_runtime_require(&mut self) {
         if self.options.features.auto_polyfill_require {
             debug_assert!(!self.runtime_imports.__require.is_empty());
-            let r = self.runtime_identifier_ref(bun_ast::Loc::EMPTY, b"__require");
+            let r = self.runtime_identifier_ref(b"__require");
             self.ignore_usage(r);
             self.symbols[self.require_ref.inner_index() as usize].use_count_estimate = self.symbols
                 [self.require_ref.inner_index() as usize]
@@ -6148,7 +6154,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
                     .expect("unreachable");
                 let loc_ref = LocRef { loc, ref_: new_ref };
-                VecExt::append(&mut self.module_scope_mut().generated, new_ref);
                 self.is_import_item.insert(new_ref, ());
                 self.jsx_imports.set(kind, loc_ref);
                 new_ref
@@ -6602,31 +6607,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn runtime_identifier_ref(&mut self, _loc: bun_ast::Loc, name: &'static [u8]) -> Ref {
+    pub fn runtime_identifier_ref(&mut self, name: &'static [u8]) -> Ref {
         self.has_called_runtime = true;
 
         if !self.runtime_imports.contains(name) {
-            if !self.options.bundle {
-                let generated_symbol = self
-                    .declare_generated_symbol(js_ast::symbol::Kind::Other, name)
-                    .expect("unreachable");
-                self.runtime_imports.put(name, generated_symbol);
-                generated_symbol
-            } else {
-                let ref_ = self
-                    .new_symbol(js_ast::symbol::Kind::Other, name)
-                    .expect("unreachable");
-                self.runtime_imports.put(name, ref_);
-                VecExt::append(&mut self.module_scope_mut().generated, ref_);
-                ref_
-            }
+            let ref_ = self
+                .declare_generated_symbol(js_ast::symbol::Kind::Other, name)
+                .expect("unreachable");
+            self.runtime_imports.put(name, ref_);
+            ref_
         } else {
             self.runtime_imports.at(name).unwrap()
         }
     }
 
     pub fn runtime_identifier(&mut self, loc: bun_ast::Loc, name: &'static [u8]) -> Expr {
-        let ref_ = self.runtime_identifier_ref(loc, name);
+        let ref_ = self.runtime_identifier_ref(name);
         self.record_usage(ref_);
         self.new_expr(E::ImportIdentifier::new(ref_, false), loc)
     }

@@ -143,6 +143,12 @@ impl Default for ParseResultFail {
 }
 
 /// The sourcemap spec says line and column offsets are zero-based.
+///
+/// `repr(C)` pins the field order to `[lines, columns]` so the SIMD mappings
+/// decoder (highway_sourcemap.cpp) can write `[i32; 2]` pairs that are
+/// byte-compatible with this struct and bulk-copy them into the
+/// `MultiArrayList` column.
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LineColumnOffset {
     /// The zero-based line offset

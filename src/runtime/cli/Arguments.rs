@@ -758,9 +758,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             if err == bun_core::err!("MissingValue")
                 && matches!(
                     cmd,
-                    CommandTag::AutoCommand
-                        | CommandTag::RunCommand
-                        | CommandTag::RunAsNodeCommand
+                    CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
                 )
             {
                 let node_flag: Option<&[u8]> = match (diag.short, diag.long.as_deref()) {
@@ -1211,26 +1209,26 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         // debugger target used when --inspect/--inspect-wait/--inspect-brk is
         // passed without its own [host:]port. They do not activate the
         // debugger on their own, matching Node.
-        let inspect_port_value: Option<&[u8]> = match (
-            args.option(b"--inspect-port"),
-            args.option(b"--debug-port"),
-        ) {
-            (Some(value), _) => {
-                if value.is_empty() {
-                    exit_node_requires_argument(b"--inspect-port=");
+        let inspect_port_value: Option<&[u8]> =
+            match (args.option(b"--inspect-port"), args.option(b"--debug-port")) {
+                (Some(value), _) => {
+                    if value.is_empty() {
+                        exit_node_requires_argument(b"--inspect-port=");
+                    }
+                    Some(value)
                 }
-                Some(value)
-            }
-            (None, Some(value)) => {
-                if value.is_empty() {
-                    exit_node_requires_argument(b"--debug-port=");
+                (None, Some(value)) => {
+                    if value.is_empty() {
+                        exit_node_requires_argument(b"--debug-port=");
+                    }
+                    Some(value)
                 }
-                Some(value)
-            }
-            (None, None) => None,
-        };
+                (None, None) => None,
+            };
         let default_debugger_target = || -> Box<[u8]> {
-            inspect_port_value.map(Box::<[u8]>::from).unwrap_or_default()
+            inspect_port_value
+                .map(Box::<[u8]>::from)
+                .unwrap_or_default()
         };
 
         if let Some(inspect_flag) = args.option(b"--inspect") {

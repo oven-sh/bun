@@ -326,13 +326,21 @@ describe("WritableStream", () => {
     it("start() returns a Promise whose @@species throws: the stream errors with the thrown value", async () => {
       const speciesError = new Error("species-boom");
       const p = Promise.resolve();
-      p.constructor = { get [Symbol.species]() { throw speciesError; } };
+      p.constructor = {
+        get [Symbol.species]() {
+          throw speciesError;
+        },
+      };
 
       let closedResult = "pending";
       const writer = new WritableStream({ start: () => p }).getWriter();
       writer.closed.then(
-        () => { closedResult = "fulfilled"; },
-        e => { closedResult = e; },
+        () => {
+          closedResult = "fulfilled";
+        },
+        e => {
+          closedResult = e;
+        },
       );
       // [[started]] settles within a bounded number of microtask rounds; poll
       // rather than awaiting writer.closed so a never-settling wrapper fails
@@ -349,7 +357,12 @@ describe("WritableStream", () => {
       Object.setPrototypeOf(p, null);
 
       let written = false;
-      const writer = new WritableStream({ start: () => p, write() { written = true; } }).getWriter();
+      const writer = new WritableStream({
+        start: () => p,
+        write() {
+          written = true;
+        },
+      }).getWriter();
       writer.write("x").catch(() => {});
       for (let i = 0; i < 20; i++) await Promise.resolve();
       expect(written).toBe(true);

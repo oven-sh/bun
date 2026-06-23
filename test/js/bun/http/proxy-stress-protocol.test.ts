@@ -15,7 +15,6 @@ import {
   clearProxyEnv,
   createAdversarialOrigin,
   createAdversarialProxy,
-  errcode,
   laxTls,
   makeBody,
   restoreProxyEnv,
@@ -290,26 +289,18 @@ describe("IPv6 literal origin through proxy", () => {
       });
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
       const scheme = originTls ? "https" : "http";
-      let outcome: string;
-      try {
-        const res = await fetch(`${scheme}://[::1]:${origin.port}/`, {
-          proxy: proxy.url,
-          keepalive: false,
-          tls: laxTls,
-          signal: AbortSignal.timeout(10_000),
-        });
-        outcome = `${res.status}:${await res.text()}`;
-      } catch (e) {
-        outcome = errcode(e);
-      }
-      // The proxy itself is IPv4-only (127.0.0.1) and dials the origin
-      // over IPv6 via `net.connect`. If the proxy's own upstream connect
-      // fails (host lacks ::1 routing) the client sees 502; otherwise a
-      // clean 200.
-      expect(["200:v6", "resolved:502"]).toContain(
-        outcome.startsWith("200:") ? outcome : `resolved:${outcome.split(":")[0]}`,
-      );
-      expect(outcome).not.toBe("TimeoutError");
+      const res = await fetch(`${scheme}://[::1]:${origin.port}/`, {
+        proxy: proxy.url,
+        keepalive: false,
+        tls: laxTls,
+        signal: AbortSignal.timeout(10_000),
+      });
+      expect(await res.text()).toBe("v6");
+      expect(res.status).toBe(200);
+      // The CONNECT target (or absolute-form URL) the client sent
+      // contained the bracketed IPv6 literal.
+      expect(proxy.connections.length).toBe(1);
+      expect(proxy.connections[0].target).toContain("[::1]");
     });
   }
 });
@@ -356,15 +347,18 @@ describe("many proxy.headers", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// `proxy: ""` explicitly bypasses any ambient proxy and goes direct.
+// `proxy: ""` is accepted and, with no ambient HTTP(S)_PROXY, goes direct.
+// Note: FetchTasklet.rs documents `proxy: ""` as "explicitly no proxy",
+// but the option parser (fetch.rs) treats an empty string the same as
+// absent, so ambient env proxies are NOT overridden. That discrepancy is
+// out of scope here; this test only covers the no-ambient case (env is
+// cleared by the file-level beforeAll).
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('proxy: "" forces direct', () => {
+describe('proxy: "" with no ambient env', () => {
   for (const originTls of [false, true] as const) {
-    test.concurrent(`${originTls ? "https" : "http"}-origin, proxy:"" bypasses`, async () => {
+    test.concurrent(`${originTls ? "https" : "http"}-origin, proxy:"" goes direct`, async () => {
       await using origin = await createAdversarialOrigin({ tls: originTls, body: "direct" });
-      // A proxy that, if used, would 502 everything.
-      await using proxy = await createAdversarialProxy({ connectStatus: 502 });
       const res = await fetch(origin.url, {
         proxy: "",
         keepalive: false,
@@ -372,7 +366,6 @@ describe('proxy: "" forces direct', () => {
       });
       expect(await res.text()).toBe("direct");
       expect(res.status).toBe(200);
-      expect(proxy.connections.length).toBe(0);
     });
   }
 });

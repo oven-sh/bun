@@ -2721,8 +2721,12 @@ impl<'a> HTTPClient<'a> {
         // the outer socket via the SSLWrapper's write_encrypted callback,
         // same as the ProxyHeaders/ProxyBody::Bytes paths.
         if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
+            // Same guard as the ProxyHeaders arm: inner TLS writes succeed
+            // at the SSL layer and buffer on a dead outer socket forever.
+            if socket.is_closed() || socket.is_shutdown() {
+                return Err(err!(ConnectionClosed));
+            }
             let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
-            let _ = socket; // outer socket unused on the tunnel path
             let to_send_len = buffer.slice().len();
             if to_send_len > 0 {
                 match ProxyTunnel::write(proxy, buffer.slice()) {

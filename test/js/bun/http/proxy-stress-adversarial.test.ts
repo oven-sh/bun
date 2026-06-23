@@ -327,7 +327,7 @@ describe("AbortSignal.timeout through proxy", () => {
         let code: string;
         const t0 = Date.now();
         try {
-          const res = await fetch(`${originTls ? "https" : "http"}://localhost:${originPort}/`, {
+          const res = await fetch(`${originTls ? "https" : "http"}://127.0.0.1:${originPort}/`, {
             proxy: proxy.url,
             keepalive: false,
             tls: laxTls,

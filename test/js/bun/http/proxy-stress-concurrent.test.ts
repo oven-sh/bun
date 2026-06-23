@@ -224,11 +224,16 @@ describe("reject_unauthorized pool gate", () => {
       expect(res.status).toBe(200);
       await res.arrayBuffer();
       // Invariant: the strict request never reused the lax tunnel
-      // (connectCount grew from 1 to ≥2 at step 2). Step 3 may or may
-      // not reuse depending on outer-socket pooling for https proxies.
+      // (connectCount grew from 1 to 2 at step 2). For an HTTP proxy,
+      // step 3 deterministically reuses the strict tunnel; HTTPS-proxy
+      // outer-socket pooling can force a third CONNECT (see above).
       const cc = proxy.connectCount();
-      expect(cc).toBeGreaterThanOrEqual(2);
-      expect(cc).toBeLessThanOrEqual(3);
+      if (proxyTls) {
+        expect(cc).toBeGreaterThanOrEqual(2);
+        expect(cc).toBeLessThanOrEqual(3);
+      } else {
+        expect(cc).toBe(2);
+      }
     }, 30_000);
   }
 });
@@ -332,10 +337,20 @@ test("idle pooled tunnel receiving data is evicted", async () => {
 
     // Tunnel is now parked. Push a stray byte into every live client
     // socket from the proxy side. The client's idle-data handler evicts
-    // the pooled entry.
-    for (const c of liveClients) c.write(Buffer.from([0x17, 0x03, 0x03, 0x00, 0x01, 0x00]));
-    // Give the eviction a tick.
-    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    // the pooled entry, which RSTs the proxy connection.
+    const parked = [...liveClients];
+    expect(parked.length).toBe(1);
+    const closed = Promise.all(
+      parked.map(
+        c =>
+          new Promise<void>(resolve => {
+            if (c.destroyed) return resolve();
+            c.once("close", () => resolve());
+          }),
+      ),
+    );
+    for (const c of parked) c.write(Buffer.from([0x17, 0x03, 0x03, 0x00, 0x01, 0x00]));
+    await closed;
 
     // Second request: must open a fresh CONNECT and succeed.
     res = await fetch(origin.url, {
@@ -346,6 +361,7 @@ test("idle pooled tunnel receiving data is evicted", async () => {
     expect(await res.text()).toBe("ok");
     expect(connects).toBe(2);
   } finally {
+    for (const c of liveClients) c.destroy();
     server.close();
   }
 });
@@ -411,7 +427,15 @@ describe("memory probe (subprocess)", () => {
       }
 
       expect(exitCode).toBe(0);
-      expect(result.completed + result.failed).toBeGreaterThanOrEqual(iterations);
+      expect(result.completed + result.failed).toBe(iterations);
+      // Non-abort modes must complete every request; abort modes must
+      // have actually aborted something.
+      if (mode.includes("abort")) {
+        expect(result.failed).toBeGreaterThan(0);
+      } else {
+        expect(result.failed).toBe(0);
+        expect(result.completed).toBe(iterations);
+      }
 
       // RSS leak check: after a warm-up, RSS should plateau. Allow a
       // generous 3× growth factor (ASAN, fragmentation, per-target pool

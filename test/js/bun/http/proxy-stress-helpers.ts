@@ -11,12 +11,6 @@
  * Origins are thin wrappers around `Bun.serve` / raw `tls`/`net` servers that
  * can shape the response (content-length / chunked / close-delimited,
  * optional compression) and track what the client actually sent.
- *
- * Shared by:
- *   - proxy-stress-matrix.test.ts      (protocol × body × encoding matrix)
- *   - proxy-stress-lifecycle.test.ts   (close / abort at every stage)
- *   - proxy-stress-errors.test.ts      (CONNECT failures, unreachable, TLS failures)
- *   - proxy-stress-concurrent.test.ts  (pool churn, leak detection)
  */
 
 import net from "node:net";
@@ -374,13 +368,22 @@ export async function createAdversarialProxy(opts: AdversarialProxyOptions = {})
         host = url.hostname;
         port = Number(url.port || "80");
       }
+      // IPv6 authority-form / URL.hostname keep the brackets; net.connect
+      // and getaddrinfo want the bare literal.
+      if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
 
       upstream = net.connect(port, host);
+      let clientEnded = false;
+      const endClient = () => {
+        if (clientEnded || client.destroyed) return;
+        clientEnded = true;
+        client.end();
+      };
       upstream.on("error", () => {
-        if (!tunneled && !client.destroyed) {
+        if (!tunneled && !client.destroyed && !clientEnded) {
           client.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         }
-        client.destroy();
+        endClient();
       });
       upstream.on("close", () => {
         if (opts.trickleDownstream) {
@@ -388,7 +391,7 @@ export async function createAdversarialProxy(opts: AdversarialProxyOptions = {})
           upstreamEnded = true;
           pumpTrickle();
         } else {
-          client.destroy();
+          endClient();
         }
       });
       client.on("close", () => upstream?.destroy());

@@ -218,18 +218,12 @@ describe("streamed response via reader", () => {
         expect(res.status).toBe(200);
         const reader = res.body!.getReader();
         let got = 0;
-        let chunks = 0;
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           got += value!.length;
-          chunks++;
         }
         expect(got).toBe(payload.length);
-        // With a 128KB body over loopback we should see at least a couple of
-        // separate reads. If this ever becomes 1, the body was buffered
-        // before being exposed to the stream, which defeats the point.
-        expect(chunks).toBeGreaterThanOrEqual(1);
       },
     );
   }

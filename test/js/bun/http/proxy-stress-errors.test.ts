@@ -267,6 +267,15 @@ describe("inner TLS verification", () => {
         expect(code).toMatch(/CERT|TLS|SSL|SELF_SIGNED|UNABLE_TO_VERIFY|DEPTH_ZERO/);
         // Inner handshake failed, so the origin saw no decrypted request.
         expect(origin.requests.length).toBe(0);
+        // For an HTTP proxy the outer leg has no TLS; the CONNECT must
+        // have been sent and the failure is the inner handshake. For an
+        // HTTPS proxy the same rejectUnauthorized:true + no CA would
+        // also reject the outer self-signed proxy cert before CONNECT;
+        // either way the fetch must not succeed, but only the http-proxy
+        // case proves the inner-TLS path specifically.
+        if (!proxyTls) {
+          expect(proxy.connectCount()).toBe(1);
+        }
       },
     );
 
@@ -293,6 +302,10 @@ describe("inner TLS verification", () => {
       }
       expect(code).toBe("pinned");
       expect(origin.requests.length).toBe(0);
+      // The tunnel was established before checkServerIdentity ran (it
+      // runs on the inner handshake, not the outer). The proxy saw the
+      // CONNECT; the origin saw no request.
+      expect(proxy.connectCount()).toBe(1);
     });
   }
 });

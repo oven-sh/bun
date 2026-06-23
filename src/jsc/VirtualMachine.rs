@@ -1465,11 +1465,12 @@ impl VirtualMachine {
         }
         // Note: this reset must cover BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
-        // while that callback runs so a re-entrant `uncaught_exception` from
-        // a user handler trips the recursion guard and hard-exits with code 7
-        // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `process_exit` →
-        // `panic!`, which never returns), so a linear reset here suffices.
+        // while that callback runs so a re-entrant `uncaught_exception` from a
+        // user handler trips the recursion guard above instead of recursing.
+        // That guard never re-enters this frame: `process_exit` either diverges
+        // or (under `--watch`/in a worker) returns after raising a termination
+        // exception, on which the guard returns `true`. So a linear reset here,
+        // rather than a scope guard, suffices.
         self.is_handling_uncaught_exception = false;
         handled
     }

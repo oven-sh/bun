@@ -245,11 +245,17 @@ impl Scope {
         SymbolMergeResult::Forbidden
     }
 
-    pub fn recursive_set_strict_mode(&mut self, kind: StrictModeKind) {
+    /// `use_strict_loc` is the directive location to stamp when `kind` is
+    /// `ExplicitStrictMode`; pass `Loc::EMPTY` for implicit-strict kinds (their
+    /// diagnostic location comes from the ESM/class keyword, not the scope).
+    /// Set together with `strict_mode` so child scopes already pushed for
+    /// parameter-default expressions carry the directive location too.
+    pub fn recursive_set_strict_mode(&mut self, kind: StrictModeKind, use_strict_loc: crate::Loc) {
         if self.strict_mode == StrictModeKind::SloppyMode {
             self.strict_mode = kind;
+            self.use_strict_loc = use_strict_loc;
             for child in self.children.slice_mut() {
-                child.recursive_set_strict_mode(kind);
+                child.recursive_set_strict_mode(kind, use_strict_loc);
             }
         }
     }

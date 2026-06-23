@@ -1516,9 +1516,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         if parent.kind == js_ast::scope::Kind::FunctionArgs
                                             && parent.strict_mode == StrictModeKind::SloppyMode
                                         {
-                                            parent.use_strict_loc = stmt.loc;
                                             parent.recursive_set_strict_mode(
                                                 StrictModeKind::ExplicitStrictMode,
+                                                stmt.loc,
                                             );
                                         }
                                     }

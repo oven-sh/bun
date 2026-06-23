@@ -3116,14 +3116,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
         if self.esm_import_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeImport);
+            self.module_scope_mut().recursive_set_strict_mode(
+                js_ast::StrictModeKind::ImplicitStrictModeImport,
+                bun_ast::Loc::EMPTY,
+            );
         } else if self.esm_export_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
+            self.module_scope_mut().recursive_set_strict_mode(
+                js_ast::StrictModeKind::ImplicitStrictModeExport,
+                bun_ast::Loc::EMPTY,
+            );
         } else if self.top_level_await_keyword.len > 0 {
-            self.module_scope_mut()
-                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
+            self.module_scope_mut().recursive_set_strict_mode(
+                js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait,
+                bun_ast::Loc::EMPTY,
+            );
         }
 
         self.hoist_symbols(self.module_scope_ref());

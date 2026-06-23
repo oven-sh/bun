@@ -2946,8 +2946,19 @@ class Foo {
       'function f(arguments) { "use strict" }',
       'Declarations with the name "arguments" cannot be used in strict mode',
     );
-    // Body "use strict" also reaches scopes pushed for parameter defaults
-    expectParseErrorWithNote('function f(x = (() => package)()) { "use strict" }', reservedPackage, useStrictNote);
+    // Body "use strict" also reaches scopes pushed for parameter defaults, and
+    // the note keeps a source location pointing at the directive there
+    {
+      let err;
+      try {
+        parsed('function f(x = (() => package)()) { "use strict" }', false, false);
+      } catch (e) {
+        err = e instanceof AggregateError ? e.errors[0] : e;
+      }
+      expect(err?.message).toBe(reservedPackage);
+      expect(err?.notes?.[0]?.message).toBe(useStrictNote);
+      expect(err?.notes?.[0]?.position).toMatchObject({ column: 37, length: 12 });
+    }
 
     // TypeScript constructs that lower to "var" declarations
     ts.expectParseError('"use strict"; enum package { A }', reservedPackage);

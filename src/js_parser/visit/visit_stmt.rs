@@ -1054,7 +1054,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = true;
         }
 
-        let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE);
+        let shadow_ref = p.visit_class(stmt.loc, &mut data.class, Ref::NONE);
 
         // Remove the export flag inside a namespace
         let was_export_inside_namespace = data.is_export && p.enclosing_namespace_arg_ref.is_some();
@@ -1066,8 +1066,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
 
         if !mark_as_dead || was_export_inside_namespace {
-            // Lower class field syntax for browsers that don't support it
-            stmts.extend_from_slice(lowered);
+            // When bundling, rewrite a top-level `class X {}` statement into
+            // `var X = class {}`. This lets the binding merge with adjacent
+            // `var` declarations, matching esbuild. Only applies when class
+            // lowering left the class as a single plain statement (no field or
+            // decorator lowering rewrote it into other statements).
+            if (p.options.bundle || p.will_wrap_module_in_try_catch_for_using)
+                && p.current_scope().parent.is_none()
+                && lowered.len() == 1
+                && let Some(mut sc) = lowered[0].data.s_class()
+            {
+                let loc = lowered[0].loc;
+                let name = sc
+                    .class
+                    .class_name
+                    .expect("infallible: class statement has a name");
+                // Keep a named class expression only when the class body refers
+                // to its own name; otherwise emit an anonymous class expression.
+                if shadow_ref.is_empty() {
+                    sc.class.class_name = None;
+                }
+                let is_export = sc.is_export;
+                let kind = p.select_local_kind(S::Kind::KLet);
+                let class_value = core::mem::take(&mut sc.class);
+                let class_expr = p.new_expr(class_value, loc);
+                let binding = p.b(B::Identifier { r#ref: name.ref_ }, name.loc);
+                stmts.push(p.s(
+                    S::Local {
+                        kind,
+                        is_export,
+                        decls: G::DeclList::from_slice(&[G::Decl {
+                            binding,
+                            value: Some(class_expr),
+                        }]),
+                        ..Default::default()
+                    },
+                    loc,
+                ));
+            } else {
+                // Lower class field syntax for browsers that don't support it
+                stmts.extend_from_slice(lowered);
+            }
         } else {
             let ref_ = data
                 .class

@@ -2578,7 +2578,11 @@ class ClientHttp2Stream extends Http2Stream {
 
   emit(event, ...args) {
     const frame = this.#asyncContextFrame;
-    if (frame === undefined) return super.emit(event, ...args);
+    // Skip the swap for events that EventEmitter fires synchronously from user
+    // .on()/.off() — those should observe the caller's current ALS context.
+    if (frame === undefined || event === "newListener" || event === "removeListener") {
+      return super.emit(event, ...args);
+    }
     const prev = $getInternalField($asyncContext, 0);
     $putInternalField($asyncContext, 0, frame);
     try {

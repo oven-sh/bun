@@ -494,17 +494,63 @@ async function runTests() {
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
-  // Kick off only the docker services this shard's tests need (mysql/postgres/
-  // redis/minio/…) so they've initialized by the time any test's ensure() runs.
-  // warmup-ci.ts maps test paths → services and does one `compose up -d` (no
-  // --wait); ensure()'s own `up --wait` is the synchronization point and
-  // returns fast when the container is already healthy. Linux-only — macOS /
-  // Windows CI don't run docker tests. Runs in the background while
-  // getVendorTests below installs vendor deps.
+  // Start the docker-service coordinator (test/docker/coordinator.ts). It
+  // owns every `docker compose` invocation for this shard — `compose up` is
+  // not concurrency-safe, so exactly one process runs it — and prestarts the
+  // services this shard's tests need (mysql/postgres/redis/minio/…) in the
+  // background while getVendorTests below installs vendor deps. Tests reach
+  // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
+  // spawned test process); ensure() waits for the coordinator's ready message
+  // instead of shelling out to compose itself. Without the env var, ensure()
+  // falls back to running compose directly. Linux-only — macOS / Windows CI
+  // don't run docker tests. Lifetime is tied to this process via the stdin
+  // pipe.
   if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
-    spawn(execPath, [join(cwd, "test", "docker", "warmup-ci.ts"), ...tests], {
-      stdio: ["ignore", "inherit", "inherit"],
-    }).on("error", err => console.warn("docker warmup spawn failed:", err.message));
+    const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);
+    const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {
+      stdio: ["pipe", "pipe", "inherit"],
+      env: { ...process.env, BUN_DOCKER_COORDINATOR_SOCKET: coordinatorSocket },
+    });
+    coordinator.on("error", err => console.warn("docker coordinator spawn failed:", err.message));
+    process.once("exit", () => coordinator.kill());
+
+    // Don't point tests at the socket until it's actually listening; if the
+    // coordinator never gets there, tests use the direct-compose fallback.
+    const ready = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(false), 15_000);
+      timer.unref?.();
+      let buffered = "";
+      coordinator.stdout.on("data", chunk => {
+        process.stdout.write(chunk);
+        if (buffered !== null) {
+          buffered += chunk;
+          if (buffered.includes("COORDINATOR_READY")) {
+            buffered = null;
+            clearTimeout(timer);
+            resolve(true);
+          }
+        }
+      });
+      coordinator.once("exit", () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+      coordinator.once("error", () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+    });
+    if (ready) {
+      process.env.BUN_DOCKER_COORDINATOR = coordinatorSocket;
+    } else {
+      console.warn("docker coordinator did not become ready; tests will run compose directly");
+      coordinator.kill();
+    }
+    // Never keep the runner alive on the coordinator's account; it exits on
+    // stdin EOF when the runner is gone.
+    coordinator.unref();
+    coordinator.stdin?.unref?.();
+    coordinator.stdout?.unref?.();
   }
 
   /** @type {VendorTest[] | undefined} */
@@ -1500,7 +1546,12 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts["cwd"],
-    timeout: isReallyTest ? timeout : 30_000,
+    // release-asan with debug-assertions on runs every spawned subprocess
+    // slower; give each file more headroom so tests with heavy beforeAll
+    // setup (napi node-gyp compiles) or many subprocess spawns don't hit
+    // the file wall before any individual test times out. Kept below the
+    // per-test multiplier so the overall shard stays inside the job timeout.
+    timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
     stdout: options.stdout,
     stderr: options.stderr,
@@ -1534,7 +1585,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  */
 function getTestTimeout(testPath) {
   if (
-    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic/i.test(
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
       testPath,
     )
   ) {

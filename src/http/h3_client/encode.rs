@@ -33,8 +33,11 @@ pub fn write_request(
     let href: &[u8] = client.url.href;
     let host: &[u8] = client.url.host;
     let reject_unauthorized = client.flags.reject_unauthorized;
+    // h3 body bytes flow into lsquic's send buffer asynchronously — compress
+    // into the Vec so the cursor stays valid across event-loop ticks.
+    client.compress_body_for_send(false)?;
     let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
-    let body_len = client.state.original_request_body.len();
+    let body_len = client.body_len_for_send();
     let is_streaming = client.state.original_request_body.is_stream();
     let is_bytes = matches!(
         client.state.original_request_body,

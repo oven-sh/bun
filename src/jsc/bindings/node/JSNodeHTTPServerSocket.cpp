@@ -64,6 +64,22 @@ void JSNodeHTTPServerSocket::close()
     }
 }
 
+void JSNodeHTTPServerSocket::upgradeToTunnelMode()
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return;
+    }
+    /* Reuse the CONNECT plumbing so the parser stops interpreting subsequent
+     * bytes as HTTP and routes them to the ondata callback as opaque data. */
+    if (is_ssl) {
+        auto* httpResponseData = (uWS::HttpResponseData<true>*)us_socket_ext(socket);
+        httpResponseData->isConnectRequest = true;
+    } else {
+        auto* httpResponseData = (uWS::HttpResponseData<false>*)us_socket_ext(socket);
+        httpResponseData->isConnectRequest = true;
+    }
+}
+
 bool JSNodeHTTPServerSocket::isClosed() const
 {
     return !socket || us_socket_is_closed(socket);

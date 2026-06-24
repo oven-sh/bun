@@ -309,7 +309,7 @@ pub fn ParseFn(
             // this if it wasn't already declared above because arguments are allowed to
             // be called "arguments", in which case the real "arguments" is inaccessible.
             if (!p.current_scope.members.contains("arguments")) {
-                func.arguments_ref = p.declareSymbolMaybeGenerated(.arguments, func.open_parens_loc, arguments_str, false) catch unreachable;
+                func.arguments_ref = p.declareSymbol(.arguments, func.open_parens_loc, arguments_str) catch unreachable;
                 p.symbols.items[func.arguments_ref.?.innerIndex()].must_not_be_renamed = true;
             }
 

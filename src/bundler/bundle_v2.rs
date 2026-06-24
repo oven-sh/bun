@@ -266,7 +266,7 @@ impl<'a> BundleV2<'a> {
         unsafe {
             match target {
                 Target::Browser => self.client_transpiler.unwrap().assume_mut(),
-                Target::BakeServerComponentsSsr => &mut *self.ssr_transpiler,
+                Target::ServerComponentsSsr => &mut *self.ssr_transpiler,
                 _ => &mut *self.transpiler,
             }
         }
@@ -1948,7 +1948,7 @@ pub mod bv2_impl {
                 }
             }
 
-            if cfg!(debug_assertions) && ReachableFiles.is_visible() {
+            if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
                 bun_core::scoped_log!(
                     ReachableFiles,
                     "Reachable count: {} / {}",
@@ -2460,9 +2460,9 @@ pub mod bv2_impl {
                         .unwrap()
                         .separate_ssr_graph;
                     let (ta, tb) = match target {
-                        Target::Browser => (main_target, Target::BakeServerComponentsSsr),
-                        Target::BakeServerComponentsSsr => (main_target, Target::Browser),
-                        _ => (Target::Browser, Target::BakeServerComponentsSsr),
+                        Target::Browser => (main_target, Target::ServerComponentsSsr),
+                        Target::ServerComponentsSsr => (main_target, Target::Browser),
+                        _ => (Target::Browser, Target::ServerComponentsSsr),
                     };
                     self.path_to_source_index_map(ta)
                         .put(&key_text, idx)
@@ -2777,16 +2777,14 @@ pub mod bv2_impl {
             this.linker.graph.bump = bun_ptr::BackRef::new(this.graph.heap);
             this.transpiler.log_mut().clone_line_text = true;
 
-            // We don't expose an option to disable this. Bake forbids tree-shaking
-            // since every export must is always exist in case a future module
-            // starts depending on it.
-            if this.transpiler.options.output_format == options::Format::InternalBakeDev {
-                this.transpiler.options.tree_shaking = false;
-                this.transpiler.resolver.opts.tree_shaking = false;
-            } else {
-                this.transpiler.options.tree_shaking = true;
-                this.transpiler.resolver.opts.tree_shaking = true;
-            }
+            // Bake forbids tree-shaking since every export must always exist in
+            // case a future module starts depending on it. The override is only
+            // set by `Bun.build({ treeShaking })` for tests/debugging.
+            let tree_shaking = this.transpiler.options.tree_shaking_override.unwrap_or(
+                this.transpiler.options.output_format != options::Format::InternalBakeDev,
+            );
+            this.transpiler.options.tree_shaking = tree_shaking;
+            this.transpiler.resolver.opts.tree_shaking = tree_shaking;
 
             // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
             // the resolver lives in `transpiler` which outlives `self` (same `'a`).
@@ -3025,7 +3023,7 @@ pub mod bv2_impl {
                     },
                     TargetCheck {
                         should_dispatch: flags.ssr(),
-                        target: Target::BakeServerComponentsSsr,
+                        target: Target::ServerComponentsSsr,
                     },
                 ];
 
@@ -3095,11 +3093,8 @@ pub mod bv2_impl {
                     )?;
                 }
                 if flags.ssr() {
-                    let _ = self.enqueue_entry_item(
-                        &mut resolved,
-                        true,
-                        Target::BakeServerComponentsSsr,
-                    )?;
+                    let _ =
+                        self.enqueue_entry_item(&mut resolved, true, Target::ServerComponentsSsr)?;
                 }
             }
             Ok(())
@@ -3549,7 +3544,7 @@ pub mod bv2_impl {
             let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
             // Compute borrow-heavy fields up front so the `&self` borrow taken by
             // `arena()` doesn't overlap `&mut self` uses inside the literal.
-            let jsx = if known_target == Target::BakeServerComponentsSsr
+            let jsx = if known_target == Target::ServerComponentsSsr
                 && !self
                     .framework
                     .as_ref()
@@ -4824,6 +4819,15 @@ pub mod bv2_impl {
                 }
             }
 
+            // `File.entry_bits` is `AutoBitSet::Dynamic` (global-heap) when
+            // entry points exceed the 64-bit static inline. The slab-only
+            // `MultiArrayList::drop` won't run its destructor.
+            for b in self.linker.graph.files.items_entry_bits_mut() {
+                if let bun_collections::AutoBitSet::Dynamic(d) = b {
+                    d.deinit();
+                }
+            }
+
             // Drop the lazily-created client transpiler (if any) before tearing
             // down workers — the slot
             // is invalidated ahead of `pool.workers_assignments` so no worker can
@@ -5979,7 +5983,7 @@ pub mod bv2_impl {
                     (
                         self.ssr_transpiler,
                         bake::Graph::Ssr,
-                        Target::BakeServerComponentsSsr,
+                        Target::ServerComponentsSsr,
                     )
                 } else {
                     (
@@ -7090,7 +7094,7 @@ pub mod bv2_impl {
                                 &this
                                     .path_with_pretty_initialized(
                                         &ssr_source.path,
-                                        Target::BakeServerComponentsSsr,
+                                        Target::ServerComponentsSsr,
                                     )
                                     .expect("oom"),
                             );
@@ -7098,7 +7102,7 @@ pub mod bv2_impl {
                                 .enqueue_parse_task2(
                                     &mut ssr_source,
                                     source_loader,
-                                    Target::BakeServerComponentsSsr,
+                                    Target::ServerComponentsSsr,
                                 )
                                 .expect("oom");
 
@@ -7505,7 +7509,7 @@ pub mod bv2_impl {
                 false,
             >(&mut **buf2, top_level_dir, path.text);
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            if target == options::Target::BakeServerComponentsSsr {
+            if target == options::Target::ServerComponentsSsr {
                 let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
                 let _ = fbs.write_all(b"ssr:");
                 let _ = fbs.write_all(rel);
@@ -7518,7 +7522,7 @@ pub mod bv2_impl {
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-            if target == options::Target::BakeServerComponentsSsr {
+            if target == options::Target::ServerComponentsSsr {
                 let _ = fbs.write_all(b"ssr:");
             }
             let _ = write_escaped_namespace(&mut fbs, path_clone.namespace);

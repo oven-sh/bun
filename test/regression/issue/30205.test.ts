@@ -19,14 +19,14 @@
 
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const napiAppDir = join(import.meta.dir, "..", "..", "napi", "napi-app");
 const addon = join(napiAppDir, "build", "Debug", "isolate_finalizer_addon.node");
 
-describe("#30205", () => {
+describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   beforeAll(() => {
     if (existsSync(addon)) return;
     // Same one-shot build pattern as test/napi/napi.test.ts; the addon is
@@ -99,6 +99,11 @@ describe("#30205", () => {
         stderr: "pipe",
       });
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A teardown-time abort happens AFTER the summary line, so the
+      // toContain assertions below still pass and only the exit code
+      // differs; print the captured stderr so the actual abort report
+      // (ASAN / JSC assertion) is visible in CI output.
+      if (exitCode !== 0) console.error("stderr:", stderr);
       // On crash the summary line is never reached; assert on it (and the pass
       // count) first so the diff is the actual crash output, not just "expected
       // 0, got 134".
@@ -122,6 +127,7 @@ describe("#30205", () => {
         stderr: "pipe",
       });
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) console.error("stderr:", stderr);
       expect(stderr).toContain("8 pass");
       expect(stderr).toContain("0 fail");
       expect(stderr).toContain("Ran 8 tests across 8 files.");

@@ -1,13 +1,13 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // This test verifies that Bun can load the same native module multiple times
 // Previously, the second load would fail with "symbol 'napi_register_module_v1' not found"
 // because static constructors only run once, so the module registration wasn't replayed
 
-describe("process.dlopen duplicate loads", () => {
+describe.skipIf(!canBuildNodeAddons())("process.dlopen duplicate loads", () => {
   let addonPath: string;
 
   beforeAll(() => {
@@ -60,7 +60,13 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
         version: "1.0.0",
         gypfile: true,
         scripts: {
-          install: "node-gyp rebuild",
+          // Run node-gyp under the bun being tested: the system Node on Windows
+          // is built with clang-cl and its process.config leaks thin-LTO flags
+          // into addon builds (link.exe fails on /opt:lldltojobs), and the
+          // system Node's ABI may not match ours at all (e.g. older macOS CI
+          // machines). gyp -D defines can't override target_defaults, so use
+          // bun's clean process.config instead.
+          install: `${JSON.stringify(bunExe())} --bun node-gyp rebuild`,
         },
         devDependencies: {
           "node-gyp": "^11.2.0",
@@ -82,7 +88,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
     }
 
     addonPath = join(dir, "build", "Release", "addon.node");
-  });
+  }, 180_000);
 
   test("should load the same module twice successfully", async () => {
     const testScript = `

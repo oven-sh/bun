@@ -17,9 +17,7 @@ use super::CSSWideKeyword;
 use super::custom::{CustomProperty, CustomPropertyName, UnparsedProperty};
 use super::properties_impl;
 
-// Leaf property modules (gated in mod.rs — these resolve to the inline
-// `pub mod $name { prop_value_stub!(...) }` bodies until the real .rs files
-// un-gate).
+// Leaf property modules.
 use super::align;
 use super::background;
 use super::border;
@@ -6193,7 +6191,6 @@ impl Property {
     /// Per-type `longhand` is not implemented yet, so the per-arm dispatch is
     /// routed through a no-op `lh!` (`return None`) until the
     /// `DefineShorthand` derive exists. There are no callers.
-    // blocked_on: shorthand_handler_port — leaf shorthand types lack `.longhand()`
     pub fn longhand(&self, property_id: &PropertyId) -> Option<Property> {
         #[inline(always)]
         fn lh<T: ?Sized>(_v: &T, _id: &PropertyId) -> Option<Property> {
@@ -6291,7 +6288,6 @@ impl Property {
         }
     }
 
-    // blocked_on: leaf_value_traits — un-gate once every payload type impls `generics::DeepClone`
     pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Property {
         match self {
             Property::BackgroundColor(v) => {
@@ -6868,7 +6864,6 @@ impl Property {
         }
     }
 
-    // blocked_on: leaf_value_traits — un-gate once every payload type impls `generics::CssEql`
     pub fn eql(&self, other: &Property) -> bool {
         match (self, other) {
             (Property::BackgroundColor(a), Property::BackgroundColor(b)) => css::generic::eql(a, b),
@@ -7401,9 +7396,7 @@ impl Property {
 
 // `declaration::placeholder_property()` (the moved-out slot
 // sentinel in `DeclarationBlock::minify`) is
-// `Property::All(CSSWideKeyword::RevertLayer)`. Expose it via `Default` so
-// the un-gated stub branch in `declaration.rs` keeps compiling against the
-// real enum.
+// `Property::All(CSSWideKeyword::RevertLayer)`.
 impl Default for Property {
     #[inline]
     fn default() -> Self {

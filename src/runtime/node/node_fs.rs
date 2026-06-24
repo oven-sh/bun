@@ -202,10 +202,8 @@ mod node {
     pub(super) use super::super::types::SliceWithUnderlyingString;
     pub(super) use super::super::{gid_t, uid_t};
 
-    /// `node::mode_from_js` — forwards to the real impl in
-    /// `super::types::mode_from_js` (now un-gated). Kept as a thin alias so
-    /// the dozens of call sites in `args::*::from_js` keep spelling
-    /// `node::mode_from_js`.
+    /// Thin alias to `super::types::mode_from_js` so the dozens of call
+    /// sites in `args::*::from_js` keep spelling `node::mode_from_js`.
     #[inline]
     pub(super) fn mode_from_js(
         ctx: &bun_jsc::JSGlobalObject,
@@ -500,9 +498,7 @@ pub enum Flavor {
 // ──────────────────────────────────────────────────────────────────────────
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
-// `cp` builtin). Un-gated so the sync `impl NodeFS` body — which references
-// `AsyncCpTask` / `AsyncReaddirRecursiveTask` directly — type-checks, and so
-// `ShellAsyncCpTask` is visible to `crate::shell::builtins::cp`.
+// `cp` builtin).
 mod _async_tasks {
     use super::*;
 
@@ -5666,18 +5662,12 @@ impl NodeFS {
     }
 
     pub fn lchown(&mut self, args: &args::LChown, _: Flavor) -> Maybe<ret::Lchown> {
-        #[cfg(windows)]
-        {
-            let _ = args;
-            return Maybe::<ret::Lchown>::todo();
-        }
-        #[cfg(not(windows))]
-        {
-            let path = args.path.slice_z(&mut self.sync_error_buf);
-            match Syscall::lchown(path, args.uid, args.gid) {
-                Err(err) => Err(err.with_path(args.path.slice())),
-                Ok(_) => Ok(()),
-            }
+        // On Windows `Syscall::lchown` routes through uv_fs_lchown, which is
+        // a no-op success, matching Node.
+        let path = args.path.slice_z(&mut self.sync_error_buf);
+        match Syscall::lchown(path, args.uid, args.gid) {
+            Err(err) => Err(err.with_path(args.path.slice())),
+            Ok(_) => Ok(()),
         }
     }
 
@@ -6629,6 +6619,8 @@ impl NodeFS {
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         let mut dirent_path_prev = BunString::EMPTY;
+        let mut spill: Vec<u8> = Vec::new();
+        let mut dirent_spill: Vec<u8> = Vec::new();
 
         loop {
             let current = match iterator.next() {
@@ -6653,23 +6645,19 @@ impl NodeFS {
 
             // The root subtask's basename *is* root_path; the caller passes
             // `is_root` explicitly.
-            if !is_root
-                && basename.as_bytes().len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
-            {
-                continue;
-            }
             let name_to_copy: &[u8] = if is_root {
                 utf8_name
             } else {
-                paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+                paths::resolve_path::join_z_buf_spill::<paths::platform::Auto>(
                     &mut buf[..],
+                    &mut spill,
                     &[basename.as_bytes(), utf8_name],
                 )
                 .as_bytes()
             };
             // SAFETY: both branches yield NUL-terminated storage — `utf8_name` is a
             // slice over the iterator's NUL-terminated dirent name, and
-            // `join_z_buf` writes a sentinel.
+            // `join_z_buf_spill` writes a sentinel.
             let name_to_copy_z =
                 unsafe { ZStr::from_raw(name_to_copy.as_ptr(), name_to_copy.len()) };
 
@@ -6713,10 +6701,10 @@ impl NodeFS {
             }
 
             if T::IS_DIRENT {
-                let joined = paths::resolve_path::join::<paths::platform::Auto>(&[
-                    root_basename,
-                    name_to_copy,
-                ]);
+                let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
+                    &mut dirent_spill,
+                    &[root_basename, name_to_copy],
+                );
                 let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                 if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                     dirent_path_prev.deref();
@@ -6765,6 +6753,9 @@ impl NodeFS {
         let root_fd: &mut FD = *_close_root;
         // The close guard captures `&mut root_fd`, so all reads below go
         // through the same place.
+
+        let mut spill: Vec<u8> = Vec::new();
+        let mut dirent_spill: Vec<u8> = Vec::new();
 
         while let Some(item) = stack.pop_front() {
             let is_root = first_is_root && item.is_empty();
@@ -6837,17 +6828,12 @@ impl NodeFS {
                 };
                 let utf8_name = current.name.slice();
 
-                // name_to_copy: bare name at root, else `basename/utf8_name` joined into `buf`.
-                if !is_root
-                    && basename_bytes.len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
-                {
-                    continue;
-                }
                 let name_to_copy: &[u8] = if is_root {
                     utf8_name
                 } else {
-                    paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+                    paths::resolve_path::join_z_buf_spill::<paths::platform::Auto>(
                         &mut buf[..],
+                        &mut spill,
                         &[basename_bytes, utf8_name],
                     )
                     .as_bytes()
@@ -6894,10 +6880,10 @@ impl NodeFS {
                 }
 
                 if T::IS_DIRENT {
-                    let joined = paths::resolve_path::join::<paths::platform::Auto>(&[
-                        root_basename.as_bytes(),
-                        name_to_copy,
-                    ]);
+                    let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
+                        &mut dirent_spill,
+                        &[root_basename.as_bytes(), name_to_copy],
+                    );
                     let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                         dirent_path_prev.deref();
@@ -9557,6 +9543,7 @@ impl ReaddirEntry for Buffer {
 fn map_anyerror_to_errno(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
+        "PermissionDenied" => E::EPERM,
         "FileTooBig" => E::EFBIG,
         "SymLinkLoop" => E::ELOOP,
         "ProcessFdQuotaExceeded" => E::ENFILE,
@@ -9579,6 +9566,7 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
 fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
+        "PermissionDenied" => E::EPERM,
         "FileTooBig" => E::EFBIG,
         "SymLinkLoop" => E::ELOOP,
         "ProcessFdQuotaExceeded" => E::ENFILE,

@@ -40,6 +40,22 @@ impl OverrideMap {
         self.map.get(&name_hash).map(|dep| dep.version.clone())
     }
 
+    /// Like `get().is_some()` but also compares the stored name so a hash
+    /// collision cannot produce a false positive.
+    pub(crate) fn contains_name(
+        &self,
+        name_hash: PackageNameHash,
+        name: &[u8],
+        buf: &[u8],
+    ) -> bool {
+        if self.map.count() == 0 {
+            return false;
+        }
+        self.map
+            .get(&name_hash)
+            .is_some_and(|dep| dep.name.slice(buf) == name)
+    }
+
     // Every caller already holds `&mut self` on `lockfile.overrides`, so
     // accept just the string buffer (the only lockfile field `sort` reads)
     // rather than the whole `Lockfile`.

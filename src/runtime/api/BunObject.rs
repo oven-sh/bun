@@ -405,6 +405,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_cwd => super::get_cwd,
         BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
         BunObject_lazyPropCb_enableANSIColors => super::enable_ansi_colors,
+        BunObject_lazyPropCb_isStandaloneExecutable => super::get_is_standalone_executable,
         BunObject_lazyPropCb_hash => super::get_hash_object,
         BunObject_lazyPropCb_inspect => super::get_inspect,
         BunObject_lazyPropCb_origin => super::get_origin,
@@ -1989,6 +1990,10 @@ pub(crate) fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObjec
     crate::api::bun_terminal_body::js::get_constructor(global_this)
 }
 
+pub(crate) fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    JSValue::js_boolean(global_this.bun_vm().standalone_module_graph.is_some())
+}
+
 pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     use crate::webcore::blob::{Blob, BlobExt as _};
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
@@ -2035,56 +2040,20 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
         }
     });
     for (i, index) in sort_indices.iter().enumerate() {
+        use crate::api::standalone_graph_jsc::FileJsc as _;
         let file: &mut GraphFile = &mut unsorted_files[*index as usize];
-        // NOTE (layering): the crate defining `StandaloneModuleGraph.File`
-        // can't depend on `bun_runtime::webcore::Blob`, so build the blob
-        // here from the file's `cached_blob` slot / contents.
-        let input_blob: *mut Blob = standalone_file_blob(file, global_this);
+        // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
+        // as the blob name, preserving any subdirectory from the asset template.
+        let input_blob: &mut Blob = file.file_blob(global_this);
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
-        // SAFETY: `standalone_file_blob` returns a non-null heap allocation.
-        let blob = Blob::new(unsafe { (*input_blob).dupe_with_content_type(true) });
+        let blob = Blob::new(input_blob.dupe_with_content_type(true));
         // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set((*input_blob).name.get().dupe_ref()) };
+        unsafe { (*blob).name.set(input_blob.name.get().dupe_ref()) };
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }
 
     Ok(array)
-}
-
-/// `StandaloneModuleGraph.File.blob()` — ported here (rather than upstream in
-/// `bun_standalone_graph`) because `Blob`/`Store` live in `bun_runtime::webcore`
-/// and would otherwise create a crate cycle.
-fn standalone_file_blob(
-    file: &mut bun_standalone_graph::File,
-    global: &JSGlobalObject,
-) -> *mut crate::webcore::blob::Blob {
-    use crate::webcore::blob::{Blob, Store, StoreRef};
-    if let Some(cached) = file.cached_blob {
-        return cached.as_ptr().cast::<Blob>();
-    }
-    let store: StoreRef = Store::init(file.contents.as_bytes().to_vec());
-    let blob_body = Blob::init_with_store(store, global);
-    // NOTE (cyclebreak): `MimeType::by_loader` takes the `#[repr(u8)]`
-    // discriminant and an extension.
-    let mime =
-        bun_http_types::MimeType::by_loader(file.loader as u8, bun_paths::extension(file.name));
-    // SAFETY: `mime.value` is `Cow<'static, [u8]>`; the slice pointer is
-    // stable for the life of `mime` (`'static` for the table-backed loaders).
-    blob_body
-        .content_type
-        .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
-    // Hold the (potentially owned) `Cow` for the lifetime of the cached blob.
-    // The `by_loader` table only returns `Borrowed(&'static ..)`, so leaking
-    // is a no-op for the static case and correct for the owned `OTHER` case.
-    let _mime = core::mem::ManuallyDrop::new(mime);
-    blob_body
-        .name
-        .set(BunString::clone_utf8(bun_paths::basename(file.name)));
-    let blob = Blob::new(blob_body);
-    // SAFETY: `Blob::new` heap-allocates; never null.
-    file.cached_blob = core::ptr::NonNull::new(blob.cast());
-    blob
 }
 
 pub(crate) fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2561,18 +2530,10 @@ pub mod JSZlib {
                 }
             }
             Library::Libdeflate => {
-                let decompressor_ptr = bun_libdeflate::Decompressor::alloc();
-                if decompressor_ptr.is_null() {
+                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
                     drop(list);
                     return Err(global_this.throw_out_of_memory());
-                }
-                // SAFETY: non-null per check above; freed via the scopeguard below.
-                let decompressor = unsafe { &mut *decompressor_ptr };
-                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| {
-                    // SAFETY: `p` is the non-null `Decompressor::alloc` pointer
-                    // checked above; this guard is its sole owner and runs once.
-                    unsafe { bun_libdeflate::Decompressor::destroy(p) }
-                });
+                };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {
@@ -2722,17 +2683,10 @@ pub mod JSZlib {
                 }
             }
             Library::Libdeflate => {
-                let compressor_ptr = bun_libdeflate::Compressor::alloc(level.unwrap_or(6));
-                if compressor_ptr.is_null() {
+                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
+                else {
                     return Err(global_this.throw_out_of_memory());
-                }
-                // SAFETY: non-null per check above; freed via the scopeguard below.
-                let compressor = unsafe { &mut *compressor_ptr };
-                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| {
-                    // SAFETY: `p` is the non-null `Compressor::alloc` pointer
-                    // checked above; this guard is its sole owner and runs once.
-                    unsafe { bun_libdeflate::Compressor::destroy(p) }
-                });
+                };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {

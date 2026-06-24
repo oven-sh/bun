@@ -8,9 +8,11 @@
 // This was done to make incremental updates as isolated as possible.
 import {
   __callDispose,
+  __EARLY_RETURN_SENTINEL,
   __legacyDecorateClassTS,
   __legacyDecorateParamTS,
   __legacyMetadataTS,
+  __MEMO_CACHE_SENTINEL,
   __name,
   __using,
 } from "../../runtime.bun";
@@ -298,7 +300,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = {
         id,
         exports: {},
-        require: mod.require.bind(this),
+        require: mod.require.bind(mod),
       };
       mod.exports = null;
     }
@@ -398,7 +400,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs = {
         id,
         exports: {},
-        require: mod.require.bind(this),
+        require: mod.require.bind(mod),
       };
       mod.exports = null;
     }
@@ -950,6 +952,8 @@ registerSynthetic("bun:wrap", {
   __legacyMetadataTS,
   __using,
   __callDispose,
+  __MEMO_CACHE_SENTINEL,
+  __EARLY_RETURN_SENTINEL,
 });
 
 if (side === "server") {

@@ -1209,6 +1209,10 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
   // image_version 1.0.0 and 409s if it already exists, so a re-run of
   // [publish images] would fail on every Windows variant that already
   // succeeded. Match the AWS path's deregister-then-recreate.
+  // CAUTION: unlike the AWS path (which only deregisters after the new
+  // create-image collides), this deletes the live version BEFORE Packer
+  // has produced a replacement. If this job is canceled or dies mid-bake,
+  // CI is left with no Windows image until a publish run completes.
   const versionPath = `${galleryPath}/versions/1.0.0`;
   const existing = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
     headers: { Authorization: `Bearer ${token}` },

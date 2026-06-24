@@ -1156,7 +1156,7 @@ impl<'a> ParserCtx<'a> {
         match expr.data {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
-            ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
+            ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
             ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
                 str.get(),
                 self.global,

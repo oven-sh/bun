@@ -1776,18 +1776,6 @@ pub struct RuntimeHooks {
     /// path. The caller gates the call on `vm.standalone_module_graph`.
     pub load_standalone_sourcemap:
         fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
-    /// `bake::production::PerThread` source-map JSON lookup
-    /// (`pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()`).
-    /// `pt` is the opaque `*mut PerThread` round-tripped through C++ via
-    /// `BakeGlobalObject__attachPerThreadData` / `…__getPerThreadData`;
-    /// `PerThread` lives in `bun_runtime::bake::production` (forward-dep
-    /// cycle), so `BakeSourceProvider::get_external_data` reaches it through
-    /// this slot. Returns the bundled `.map` JSON for `source_filename`, or
-    /// `None` if not in the table; the slice borrows
-    /// `PerThread.bundled_outputs` (lives for the bake build session, which
-    /// outlives any error-stack source-map resolution).
-    pub bake_per_thread_source_map:
-        unsafe fn(pt: *mut c_void, source_filename: &[u8]) -> Option<*const [u8]>,
     /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)`.
     /// Walks the active test file's
     /// scope tree and emits `reportTestFoundWithLocation` for every test
@@ -2128,10 +2116,7 @@ impl VirtualMachine {
         // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
         // `WTFTimer__update` (JSC's GC scheduler), which dereferences
         // `runtime_state().timer` — so this hook MUST run first or that path
-        // null-derefs. The post-global tail (`configureDebugger`,
-        // `Body.Value.HiveAllocator.init`) is gated TODO in
-        // the hook body and will need a separate post-global hook when
-        // un-gated.
+        // null-derefs.
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `vm` is the unique live VM on this
             // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
@@ -4412,10 +4397,16 @@ impl VirtualMachine {
         // each stored map and `deinit()`s the sibling `saved_source_map_table`.
         drop(core::mem::take(&mut self.source_mappings));
 
-        if let Some(rare) = self.rare_data.take() {
+        // Drain cron jobs BEFORE taking rare_data off `self`: the teardown
+        // hook reads `self.rare_data` to find the job list, so calling it
+        // after `take()` is a no-op and `RareData::drop`'s
+        // `debug_assert!(cron_jobs.is_empty())` fires.
+        if self.rare_data.is_some() {
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(self);
             }
+        }
+        if let Some(rare) = self.rare_data.take() {
             // Paired with `rare_data()`'s register_root_region. Without this,
             // every terminated Worker leaves a stale LSAN root entry pointing
             // into a freed arena.

@@ -129,11 +129,7 @@ fn parse_array(
         return Ok(SQLDataCell {
             tag: Tag::Array,
             value: Value {
-                array: Array {
-                    ptr: core::ptr::null_mut(),
-                    len: 0,
-                    cap: 0,
-                },
+                array: Array::default(),
             },
             ..Default::default()
         });
@@ -220,14 +216,10 @@ fn parse_array(
                     let date_str = &slice[1..current_idx];
                     let mut str = BunString::init(date_str);
                     // defer str.deref() → Drop on BunString
-                    array.push(SQLDataCell {
-                        tag: Tag::Date,
-                        value: Value {
-                            date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                                .map_err(crate::jsc::js_error_to_postgres)?,
-                        },
-                        ..Default::default()
-                    });
+                    array.push(SQLDataCell::date(
+                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                            .map_err(crate::jsc::js_error_to_postgres)?,
+                    ));
 
                     slice = try_slice(slice, current_idx + 1);
                     continue;
@@ -244,18 +236,7 @@ fn parse_array(
                     };
                     let unescaped = unescape_postgres_string(str_bytes, buffer)
                         .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-                    array.push(SQLDataCell {
-                        tag: Tag::Json,
-                        value: Value {
-                            json: if !unescaped.is_empty() {
-                                BunString::clone_utf8(unescaped).leak_wtf_impl()
-                            } else {
-                                core::ptr::null_mut()
-                            },
-                        },
-                        free_value: 1,
-                        ..Default::default()
-                    });
+                    array.push(SQLDataCell::json(unescaped));
                     slice = try_slice(slice, current_idx + 1);
                     continue;
                 }
@@ -264,14 +245,7 @@ fn parse_array(
             let str_bytes = &slice[1..current_idx];
             if str_bytes.is_empty() {
                 // empty string
-                array.push(SQLDataCell {
-                    tag: Tag::String,
-                    value: Value {
-                        string: core::ptr::null_mut(),
-                    },
-                    free_value: 1,
-                    ..Default::default()
-                });
+                array.push(SQLDataCell::string(b""));
                 slice = try_slice(slice, current_idx + 1);
                 continue;
             }
@@ -285,18 +259,7 @@ fn parse_array(
             };
             let string_bytes = unescape_postgres_string(str_bytes, buffer)
                 .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-            array.push(SQLDataCell {
-                tag: Tag::String,
-                value: Value {
-                    string: if !string_bytes.is_empty() {
-                        BunString::clone_utf8(string_bytes).leak_wtf_impl()
-                    } else {
-                        core::ptr::null_mut()
-                    },
-                },
-                free_value: 1,
-                ..Default::default()
-            });
+            array.push(SQLDataCell::string(string_bytes));
 
             slice = try_slice(slice, current_idx + 1);
             continue;
@@ -352,45 +315,22 @@ fn parse_array(
                     let element = &slice[0..current_idx];
                     // lets handle NULL case here, if is a string "NULL" it will have quotes, if its a NULL it will be just NULL
                     if element == b"NULL" {
-                        array.push(SQLDataCell {
-                            tag: Tag::Null,
-                            value: Value { null: 0 },
-                            ..Default::default()
-                        });
+                        array.push(SQLDataCell::null());
                         slice = try_slice(slice, current_idx);
                         continue;
                     }
                     if array_type == types::Tag::date_array {
                         let mut str = BunString::init(element);
-                        array.push(SQLDataCell {
-                            tag: Tag::Date,
-                            value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object).map_err(crate::jsc::js_error_to_postgres)? },
-                            ..Default::default()
-                        });
+                        array.push(SQLDataCell::date(
+                            crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                                .map_err(crate::jsc::js_error_to_postgres)?,
+                        ));
                     } else {
                         // the only escape sequency possible here is \b
                         if element == b"\\b" {
-                            array.push(SQLDataCell {
-                                tag: Tag::String,
-                                value: Value {
-                                    string: BunString::clone_utf8(b"\x08").leak_wtf_impl(),
-                                },
-                                free_value: 1,
-                                ..Default::default()
-                            });
+                            array.push(SQLDataCell::string(b"\x08"));
                         } else {
-                            array.push(SQLDataCell {
-                                tag: Tag::String,
-                                value: Value {
-                                    string: if !element.is_empty() {
-                                        BunString::clone_utf8(element).leak_wtf_impl()
-                                    } else {
-                                        core::ptr::null_mut()
-                                    },
-                                },
-                                free_value: 1,
-                                ..Default::default()
-                            });
+                            array.push(SQLDataCell::string(element));
                         }
                     }
                     slice = try_slice(slice, current_idx);
@@ -406,21 +346,13 @@ fn parse_array(
                             }
                             if slice.len() >= 4 {
                                 if &slice[0..4] == b"NULL" {
-                                    array.push(SQLDataCell {
-                                        tag: Tag::Null,
-                                        value: Value { null: 0 },
-                                        ..Default::default()
-                                    });
+                                    array.push(SQLDataCell::null());
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
                             }
                             if &slice[0..3] == b"NaN" {
-                                array.push(SQLDataCell {
-                                    tag: Tag::Float8,
-                                    value: Value { float8: f64::NAN },
-                                    ..Default::default()
-                                });
+                                array.push(SQLDataCell::float8(f64::NAN));
                                 slice = try_slice(slice, 3);
                                 continue;
                             }
@@ -433,21 +365,13 @@ fn parse_array(
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..5] == b"false" {
-                                    array.push(SQLDataCell {
-                                        tag: Tag::Bool,
-                                        value: Value { bool_: 0 },
-                                        ..Default::default()
-                                    });
+                                    array.push(SQLDataCell::bool_(false));
                                     slice = try_slice(slice, 5);
                                     continue;
                                 }
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
-                                array.push(SQLDataCell {
-                                    tag: Tag::Bool,
-                                    value: Value { bool_: 0 },
-                                    ..Default::default()
-                                });
+                                array.push(SQLDataCell::bool_(false));
                                 slice = try_slice(slice, 1);
                                 continue;
                             }
@@ -459,21 +383,13 @@ fn parse_array(
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..4] == b"true" {
-                                    array.push(SQLDataCell {
-                                        tag: Tag::Bool,
-                                        value: Value { bool_: 1 },
-                                        ..Default::default()
-                                    });
+                                    array.push(SQLDataCell::bool_(true));
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
-                                array.push(SQLDataCell {
-                                    tag: Tag::Bool,
-                                    value: Value { bool_: 1 },
-                                    ..Default::default()
-                                });
+                                array.push(SQLDataCell::bool_(true));
                                 slice = try_slice(slice, 1);
                                 continue;
                             }
@@ -485,17 +401,9 @@ fn parse_array(
                                     array_type,
                                     types::Tag::date_array | types::Tag::timestamp_array | types::Tag::timestamptz_array
                                 ) {
-                                    array.push(SQLDataCell {
-                                        tag: Tag::Date,
-                                        value: Value { date: f64::INFINITY },
-                                        ..Default::default()
-                                    });
+                                    array.push(SQLDataCell::date(f64::INFINITY));
                                 } else {
-                                    array.push(SQLDataCell {
-                                        tag: Tag::Float8,
-                                        value: Value { float8: f64::INFINITY },
-                                        ..Default::default()
-                                    });
+                                    array.push(SQLDataCell::float8(f64::INFINITY));
                                 }
                                 slice = try_slice(slice, 8);
                                 continue;
@@ -582,17 +490,9 @@ fn parse_array(
                                                     | types::Tag::timestamp_array
                                                     | types::Tag::timestamptz_array
                                             ) {
-                                                array.push(SQLDataCell {
-                                                    tag: Tag::Date,
-                                                    value: Value { date: val },
-                                                    ..Default::default()
-                                                });
+                                                array.push(SQLDataCell::date(val));
                                             } else {
-                                                array.push(SQLDataCell {
-                                                    tag: Tag::Float8,
-                                                    value: Value { float8: val },
-                                                    ..Default::default()
-                                                });
+                                                array.push(SQLDataCell::float8(val));
                                             }
                                             advance_after = Some(8 + (is_negative as usize));
                                             break;
@@ -616,52 +516,29 @@ fn parse_array(
                             }
                             let element = &slice[0..current_idx];
                             if is_float || array_type == types::Tag::float8_array {
-                                array.push(SQLDataCell {
-                                    tag: Tag::Float8,
-                                    value: Value {
-                                        float8: bun_core::parse_double(element).unwrap_or(f64::NAN),
-                                    },
-                                    ..Default::default()
-                                });
+                                array.push(SQLDataCell::float8(
+                                    bun_core::parse_double(element).unwrap_or(f64::NAN),
+                                ));
                                 slice = try_slice(slice, current_idx);
                                 continue;
                             }
                             match array_type {
                                 types::Tag::int8_array => {
                                     if bigint {
-                                        array.push(SQLDataCell {
-                                            tag: Tag::Int8,
-                                            value: Value {
-                                                int8: bun_core::fmt::parse_decimal::<i64>(element)
-                                                    .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
-                                            },
-                                            ..Default::default()
-                                        });
+                                        array.push(SQLDataCell::int8(
+                                            bun_core::fmt::parse_decimal::<i64>(element)
+                                                .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
+                                        ));
                                     } else {
-                                        array.push(SQLDataCell {
-                                            tag: Tag::String,
-                                            value: Value {
-                                                string: if !element.is_empty() {
-                                                    BunString::clone_utf8(element).leak_wtf_impl()
-                                                } else {
-                                                    core::ptr::null_mut()
-                                                },
-                                            },
-                                            free_value: 1,
-                                            ..Default::default()
-                                        });
+                                        array.push(SQLDataCell::string(element));
                                     }
                                     slice = try_slice(slice, current_idx);
                                     continue;
                                 }
                                 types::Tag::cid_array | types::Tag::xid_array | types::Tag::oid_array => {
-                                    array.push(SQLDataCell {
-                                        tag: Tag::Uint4,
-                                        value: Value {
-                                            uint4: bun_core::fmt::parse_decimal::<u32>(element).unwrap_or(0),
-                                        },
-                                        ..Default::default()
-                                    });
+                                    array.push(SQLDataCell::uint4(
+                                        bun_core::fmt::parse_decimal::<u32>(element).unwrap_or(0),
+                                    ));
                                     slice = try_slice(slice, current_idx);
                                     continue;
                                 }
@@ -669,13 +546,7 @@ fn parse_array(
                                     let value = bun_core::fmt::parse_decimal::<i32>(element)
                                         .ok_or(AnyPostgresError::UnsupportedArrayFormat)?;
 
-                                    array.push(SQLDataCell {
-                                        tag: Tag::Int4,
-                                        value: Value {
-                                            int4: value,
-                                        },
-                                        ..Default::default()
-                                    });
+                                    array.push(SQLDataCell::int4(value));
                                     slice = try_slice(slice, current_idx);
                                     continue;
                                 }
@@ -870,103 +741,58 @@ pub(crate) fn from_bytes(
         }
         T::int2 => {
             if binary {
-                Ok(SQLDataCell {
-                    tag: Tag::Int4,
-                    value: Value { int4: parse_binary_int2(bytes)? as i32 },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::int4(parse_binary_int2(bytes)? as i32))
             } else {
-                Ok(SQLDataCell {
-                    tag: Tag::Int4,
-                    value: Value { int4: bun_core::fmt::parse_decimal::<i32>(bytes).unwrap_or(0) },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::int4(
+                    bun_core::fmt::parse_decimal::<i32>(bytes).unwrap_or(0),
+                ))
             }
         }
         T::cid | T::xid | T::oid => {
             if binary {
-                Ok(SQLDataCell {
-                    tag: Tag::Uint4,
-                    value: Value { uint4: parse_binary_oid(bytes)? },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::uint4(parse_binary_oid(bytes)?))
             } else {
-                Ok(SQLDataCell {
-                    tag: Tag::Uint4,
-                    value: Value { uint4: bun_core::fmt::parse_decimal::<u32>(bytes).unwrap_or(0) },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::uint4(
+                    bun_core::fmt::parse_decimal::<u32>(bytes).unwrap_or(0),
+                ))
             }
         }
         T::int4 => {
             if binary {
-                Ok(SQLDataCell {
-                    tag: Tag::Int4,
-                    value: Value { int4: parse_binary_int4(bytes)? },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::int4(parse_binary_int4(bytes)?))
             } else {
-                Ok(SQLDataCell {
-                    tag: Tag::Int4,
-                    value: Value { int4: bun_core::fmt::parse_decimal::<i32>(bytes).unwrap_or(0) },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::int4(
+                    bun_core::fmt::parse_decimal::<i32>(bytes).unwrap_or(0),
+                ))
             }
         }
         // postgres when reading bigint as int8 it returns a string unless type: { bigint: postgres.BigInt is set
         T::int8 => {
             if bigint {
                 // .int8 is a 64-bit integer always string
-                Ok(SQLDataCell {
-                    tag: Tag::Int8,
-                    value: Value { int8: bun_core::fmt::parse_decimal::<i64>(bytes).unwrap_or(0) },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::int8(
+                    bun_core::fmt::parse_decimal::<i64>(bytes).unwrap_or(0),
+                ))
             } else {
-                Ok(SQLDataCell {
-                    tag: Tag::String,
-                    value: Value {
-                        string: if !bytes.is_empty() {
-                            BunString::clone_utf8(bytes).leak_wtf_impl()
-                        } else {
-                            core::ptr::null_mut()
-                        },
-                    },
-                    free_value: 1,
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::string(bytes))
             }
         }
         T::float8 => {
             if binary && bytes.len() == 8 {
-                Ok(SQLDataCell {
-                    tag: Tag::Float8,
-                    value: Value { float8: parse_binary_float8(bytes)? },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::float8(parse_binary_float8(bytes)?))
             } else {
-                let float8: f64 = bun_core::parse_double(bytes).unwrap_or(f64::NAN);
-                Ok(SQLDataCell {
-                    tag: Tag::Float8,
-                    value: Value { float8 },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::float8(
+                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                ))
             }
         }
         T::float4 => {
             if binary && bytes.len() == 4 {
-                Ok(SQLDataCell {
-                    tag: Tag::Float8,
-                    value: Value { float8: parse_binary_float4(bytes)? as f64 },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::float8(parse_binary_float4(bytes)? as f64))
             } else {
-                let float4: f64 = bun_core::parse_double(bytes).unwrap_or(f64::NAN);
-                Ok(SQLDataCell {
-                    tag: Tag::Float8,
-                    value: Value { float8: float4 },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::float8(
+                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                ))
             }
         }
         T::numeric => {
@@ -977,86 +803,37 @@ pub(crate) fn from_bytes(
                 // if is binary format lets display as a string because JS cant handle it in a safe way
                 let result = parse_binary_numeric(bytes, &mut numeric_buffer)
                     .map_err(|_| AnyPostgresError::UnsupportedNumericFormat)?;
-                Ok(SQLDataCell {
-                    tag: Tag::String,
-                    value: Value {
-                        string: BunString::clone_utf8(result.slice()).leak_wtf_impl(),
-                    },
-                    free_value: 1,
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::string(result.slice()))
             } else {
                 // nice text is actually what we want here
-                Ok(SQLDataCell {
-                    tag: Tag::String,
-                    value: Value {
-                        string: if !bytes.is_empty() {
-                            BunString::clone_utf8(bytes).leak_wtf_impl()
-                        } else {
-                            core::ptr::null_mut()
-                        },
-                    },
-                    free_value: 1,
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::string(bytes))
             }
         }
-        T::jsonb | T::json => Ok(SQLDataCell {
-            tag: Tag::Json,
-            value: Value {
-                json: if !bytes.is_empty() {
-                    BunString::clone_utf8(bytes).leak_wtf_impl()
-                } else {
-                    core::ptr::null_mut()
-                },
-            },
-            free_value: 1,
-            ..Default::default()
-        }),
+        T::jsonb | T::json => Ok(SQLDataCell::json(bytes)),
         T::bool => {
             if binary {
-                Ok(SQLDataCell {
-                    tag: Tag::Bool,
-                    value: Value { bool_: (!bytes.is_empty() && bytes[0] == 1) as u8 },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == 1))
             } else {
-                Ok(SQLDataCell {
-                    tag: Tag::Bool,
-                    value: Value { bool_: (!bytes.is_empty() && bytes[0] == b't') as u8 },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == b't'))
             }
         }
         tag @ (T::date | T::timestamp | T::timestamptz) => {
             if bytes.is_empty() {
-                return Ok(SQLDataCell {
-                    tag: Tag::Null,
-                    value: Value { null: 0 },
-                    ..Default::default()
-                });
+                return Ok(SQLDataCell::null());
             }
             if binary && bytes.len() == 8 {
                 match tag {
-                    T::timestamptz => Ok(SQLDataCell {
-                        tag: Tag::DateWithTimeZone,
-                        value: Value { date_with_time_zone: crate::postgres::types::date::from_binary(bytes) },
-                        ..Default::default()
-                    }),
-                    T::timestamp => Ok(SQLDataCell {
-                        tag: Tag::Date,
-                        value: Value { date: crate::postgres::types::date::from_binary(bytes) },
-                        ..Default::default()
-                    }),
+                    T::timestamptz => Ok(SQLDataCell::date_with_tz(
+                        crate::postgres::types::date::from_binary(bytes),
+                    )),
+                    T::timestamp => Ok(SQLDataCell::date(
+                        crate::postgres::types::date::from_binary(bytes),
+                    )),
                     _ => unreachable!(),
                 }
             } else {
                 if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
-                    return Ok(SQLDataCell {
-                        tag: Tag::Null,
-                        value: Value { null: 0 },
-                        ..Default::default()
-                    });
+                    return Ok(SQLDataCell::null());
                 }
                 // `timestamp` (without time zone) text carries no offset, so
                 // decode its components as UTC to match the binary path. `date`
@@ -1074,20 +851,12 @@ pub(crate) fn from_bytes(
                             .map_err(crate::jsc::js_error_to_postgres)?
                     }
                 };
-                Ok(SQLDataCell {
-                    tag: Tag::Date,
-                    value: Value { date },
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::date(date))
             }
         }
         tag @ (T::time | T::timetz) => {
             if bytes.is_empty() {
-                return Ok(SQLDataCell {
-                    tag: Tag::Null,
-                    value: Value { null: 0 },
-                    ..Default::default()
-                });
+                return Ok(SQLDataCell::null());
             }
             if binary {
                 if tag == T::time && bytes.len() == 8 {
@@ -1098,14 +867,7 @@ pub(crate) fn from_bytes(
                     let mut buffer = [0u8; 32];
                     let len = Postgres__formatTime(microseconds, &mut buffer, 32);
 
-                    Ok(SQLDataCell {
-                        tag: Tag::String,
-                        value: Value {
-                            string: BunString::clone_utf8(&buffer[0..len]).leak_wtf_impl(),
-                        },
-                        free_value: 1,
-                        ..Default::default()
-                    })
+                    Ok(SQLDataCell::string(&buffer[0..len]))
                 } else if tag == T::timetz && bytes.len() == 12 {
                     // PostgreSQL sends timetz as microseconds since midnight (8 bytes) + timezone offset in seconds (4 bytes)
                     let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes();
@@ -1115,31 +877,13 @@ pub(crate) fn from_bytes(
                     let mut buffer = [0u8; 48];
                     let len = Postgres__formatTimeTz(microseconds, tz_offset_seconds, &mut buffer, 48);
 
-                    Ok(SQLDataCell {
-                        tag: Tag::String,
-                        value: Value {
-                            string: BunString::clone_utf8(&buffer[0..len]).leak_wtf_impl(),
-                        },
-                        free_value: 1,
-                        ..Default::default()
-                    })
+                    Ok(SQLDataCell::string(&buffer[0..len]))
                 } else {
                     Err(AnyPostgresError::InvalidBinaryData)
                 }
             } else {
                 // Text format - just return as string
-                Ok(SQLDataCell {
-                    tag: Tag::String,
-                    value: Value {
-                        string: if !bytes.is_empty() {
-                            BunString::clone_utf8(bytes).leak_wtf_impl()
-                        } else {
-                            core::ptr::null_mut()
-                        },
-                    },
-                    free_value: 1,
-                    ..Default::default()
-                })
+                Ok(SQLDataCell::string(bytes))
             }
         }
 
@@ -1205,18 +949,7 @@ pub(crate) fn from_bytes(
         | T::timestamp_array
         | T::timestamptz_array
         | T::interval_array) => parse_array(bytes, bigint, tag, global_object, None, false, 0),
-        _ => Ok(SQLDataCell {
-            tag: Tag::String,
-            value: Value {
-                string: if !bytes.is_empty() {
-                    BunString::clone_utf8(bytes).leak_wtf_impl()
-                } else {
-                    core::ptr::null_mut()
-                },
-            },
-            free_value: 1,
-            ..Default::default()
-        }),
+        _ => Ok(SQLDataCell::string(bytes)),
     }
 }
 
@@ -1465,25 +1198,14 @@ impl<'a> Putter<'a> {
         result_mode: PostgresSQLQueryResultMode,
         cached_structure: Option<&PostgresCachedStructure>,
     ) -> Result<JSValue, AnyPostgresError> {
-        let mut names: *mut crate::jsc::ExternColumnIdentifier = core::ptr::null_mut();
-        let mut names_count: u32 = 0;
-        if let Some(c) = cached_structure {
-            if let Some(f) = c.fields.as_ref() {
-                names = f.as_ptr().cast_mut();
-                names_count = f.len() as u32;
-            }
-        }
-
-        SQLDataCell::construct_object_from_data_cell(
+        SQLDataCell::to_js_object(
             global_object,
             array,
             structure,
-            self.list.as_mut_ptr(),
-            self.fields.len() as u32,
+            self.list,
             flags,
             result_mode as u8,
-            names,
-            names_count,
+            cached_structure,
         )
         .map_err(crate::jsc::js_error_to_postgres)
     }
@@ -1536,11 +1258,7 @@ impl<'a> Putter<'a> {
                     self.global_object,
                 )?
             } else {
-                SQLDataCell {
-                    tag: Tag::Null,
-                    value: Value { null: 0 },
-                    ..Default::default()
-                }
+                SQLDataCell::null()
             };
         }
         self.count += 1;

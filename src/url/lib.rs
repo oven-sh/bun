@@ -514,6 +514,16 @@ impl<'a> URL<'a> {
         !self.hostname.is_empty() && !self.pathname.is_empty()
     }
 
+    #[inline]
+    #[allow(
+        invalid_value,
+        clippy::uninit_assumed_init,
+        clippy::undocumented_unsafe_blocks
+    )]
+    fn join_buf_uninit() -> [u8; 2048] {
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    }
+
     pub fn join_normalize<'b>(
         out: &'b mut [u8],
         prefix: &[u8],
@@ -521,7 +531,7 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> &'b [u8] {
-        let mut buf = [0u8; 2048];
+        let mut buf = Self::join_buf_uninit();
 
         let mut path_parts: [&[u8]; 10] = [b""; 10];
         let mut path_end: usize = 0;
@@ -570,7 +580,7 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> Result<(), bun_core::Error> {
-        let mut out = [0u8; 2048];
+        let mut out = Self::join_buf_uninit();
         let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
 
         writer.write_all(self.origin)?;
@@ -596,7 +606,7 @@ impl<'a> URL<'a> {
             v.extend_from_slice(absolute_path);
             Ok(v.into_boxed_slice())
         } else {
-            let mut out = [0u8; 2048];
+            let mut out = Self::join_buf_uninit();
             let normalized_path =
                 Self::join_normalize(&mut out, prefix, dirname, basename, extname);
             let mut v = Vec::with_capacity(self.origin.len() + 1 + normalized_path.len());

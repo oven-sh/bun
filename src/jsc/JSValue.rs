@@ -1210,7 +1210,7 @@ impl JSValue {
         match self.get(global, property)? {
             Some(v) if !v.is_undefined_or_null() => {
                 if !v.is_string() {
-                    return Err(global.throw_invalid_argument_type_value(property, b"string", v));
+                    return Err(global.throw_invalid_property_type(property, "string", v));
                 }
                 Ok(Some(v.to_slice(global)?))
             }
@@ -1641,8 +1641,6 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // Note: debug-only event-loop bookkeeping is
-        // omitted while VirtualMachine.rs is gated; restore when it un-gates.
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.

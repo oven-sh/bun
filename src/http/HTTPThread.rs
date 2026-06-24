@@ -282,29 +282,26 @@ pub struct CertCheckResumeMessage {
 }
 
 pub struct LibdeflateState {
-    pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
+    pub decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
+    pub compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
     pub shared_buffer: [u8; 512 * 1024],
 }
 
-// SAFETY: `*mut T` (null) and `[u8; N]` are both valid at the all-zero bit pattern.
+// SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
+// `NonNull`, so all-zero = `None`; `[u8; N]` is valid at the all-zero bit
+// pattern.
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
     /// Mutable access to the libdeflate decompressor handle.
     ///
-    /// INVARIANT: `decompressor` is set once in [`HttpThread::deflater`] from
-    /// `libdeflate_alloc_decompressor` (panics on null) and is never freed
-    /// until thread teardown. The handle is a separate C heap allocation
-    /// disjoint from `self`, so the returned `&mut` does not alias
-    /// `shared_buffer`. HTTP-thread-only — sole live borrow. Centralises the
-    /// raw `&mut *deflater.decompressor` upgrade repeated at every
-    /// `decompress` call site.
+    /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
+    /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut<'a>(
-        &self,
-    ) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.decompressor }
+    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+        self.decompressor
+            .as_deref_mut()
+            .expect("set in HttpThread::deflater()")
     }
 }
 
@@ -433,12 +430,10 @@ impl HttpThread {
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {
         if self.lazy_libdeflater.is_none() {
-            let decompressor = bun_libdeflate_sys::libdeflate::Decompressor::alloc();
-            if decompressor.is_null() {
-                bun_core::out_of_memory();
-            }
+            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
+                .unwrap_or_else(|| bun_core::out_of_memory());
             let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
-            state.decompressor = decompressor;
+            state.decompressor = Some(decompressor);
             self.lazy_libdeflater = Some(state);
         }
 
@@ -974,12 +969,15 @@ impl HttpThread {
     }
 
     pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {
-        bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", http.async_http_id);
+        self.schedule_shutdown_by_id(http.async_http_id);
+    }
+
+    pub fn schedule_shutdown_by_id(&mut self, async_http_id: u32) {
+        bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
         {
             let _guard = self.queued_shutdowns_lock.lock_guard();
-            self.queued_shutdowns.push(ShutdownMessage {
-                async_http_id: http.async_http_id,
-            });
+            self.queued_shutdowns
+                .push(ShutdownMessage { async_http_id });
         }
         self.wakeup();
     }
@@ -1049,6 +1047,7 @@ impl HttpThread {
                 let client = &mut (*nn.as_ptr()).async_http.client;
                 drop(core::mem::take(&mut client.redirect));
                 drop(core::mem::take(&mut client.prev_redirect));
+                drop(core::mem::take(&mut client.compressed_request_body));
                 if let Some(tunnel) = client.proxy_tunnel.take() {
                     (*tunnel.as_ptr()).detach_socket();
                     tunnel.deref();
@@ -1173,6 +1172,23 @@ fn start_queued_task(
 #[inline]
 fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
     crate::abort_tracker()
+}
+
+/// Debug+ASAN invariant check: every socket pointer in the abort tracker must
+/// point at live (unfreed) memory. A stale entry here means some socket-close
+/// path forgot `unregister_abort_tracker`, which later manifests as a
+/// use-after-free in `drain_queued_shutdowns`/`drain_queued_writes` when the
+/// JS thread aborts that request id. Runs before and after each loop tick so
+/// the report fires at the tick that leaked, not at the eventual abort.
+#[inline]
+fn assert_abort_tracker_sockets_alive() {
+    if cfg!(debug_assertions) {
+        for socket in abort_tracker().values() {
+            if let Some(usocket) = socket.socket().get() {
+                bun_core::asan::assert_unpoisoned(usocket);
+            }
+        }
+    }
 }
 
 use core::cell::Cell;
@@ -1347,12 +1363,14 @@ mod _event_loop_draft {
                     }
                 }
                 self.drain_events();
+                assert_abort_tracker_sockets_alive();
                 Output::flush();
 
                 let uws_loop = self.uws_loop_mut();
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();
+                assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {
                     Output::flush();

@@ -1,8 +1,5 @@
-//! cycle-5: un-gated `NewServer` struct + lifecycle skeleton (start/stop/listen),
-//! `AnyServer` dispatch, `AnyRoute`, and the per-file submodules. JS callback
-//! bodies (`on_request`, `on_upgrade`, `from_js`, …) and methods that need
-//! `bun_uws` write/close surface stay ``-gated inside each file.
-//! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
+//! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
+//! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
 use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
@@ -103,9 +100,6 @@ pub use request_context::RequestContext as NewRequestContext;
 #[path = "AnyRequestContext.rs"]
 pub mod any_request_context;
 pub use any_request_context::AnyRequestContext;
-
-#[path = "InspectorBunFrontendDevServerAgent.rs"]
-pub mod inspector_bun_frontend_dev_server_agent;
 
 // `server_body.rs` holds the large method bodies (`on_request`, `on_upgrade`,
 // route setup, …) split out to keep this module declaration file readable.
@@ -667,18 +661,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         server.on_pending_request();
 
-        // `vm.eventLoop().debug.enter()/exit()` is debug-build
-        // re-entrancy bookkeeping; `Debug::enter_scope` is the RAII pairing
-        // (no-op enter/exit in release builds).
-        let vm_ptr = server.vm_mut();
-        // SAFETY: vm backref is live for the server's lifetime; `event_loop()`
-        // returns the VM-owned `*mut EventLoop` whose `debug` field outlives
-        // this frame.
-        let _dbg_guard = unsafe {
-            bun_jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
-                (*(*vm_ptr).event_loop()).debug
-            ))
-        };
         req.set_yield(false);
         resp_ref.timeout(server.config.idle_timeout);
 
@@ -1173,12 +1155,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             core::ptr::NonNull::new(this).expect("on_node_http_request: this non-null"),
         );
         let vm = this_ref.vm_mut();
-        // SAFETY: `vm.event_loop()` returns the live VM-owned `*mut EventLoop`.
-        let _dbg = unsafe {
-            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
-                (*(*vm).event_loop()).debug
-            ))
-        };
         req.set_yield(false);
         resp.timeout(this_ref.config.idle_timeout);
 

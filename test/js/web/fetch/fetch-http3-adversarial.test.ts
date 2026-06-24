@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { tls } from "harness";
+import { isDebug, tls } from "harness";
 
 // Adversarial fuzzer-style coverage for the HTTP/3 large-body path. The server
 // binds UDP only (`http1: false`) so a fetch that silently fell back to HTTP/1.1
@@ -232,10 +232,11 @@ test("AbortController during 1MB upload", async () => {
 // followed by DATA reaches on_stream_data with status_code still 0. Before
 // this was guarded, deliver() returned without draining body_buffer and the
 // peer could grow it without bound. A conformant server cannot emit this
-// sequence, so the server-side x-bun-test-100-then-data hook in
+// sequence, so the debug-only x-bun-test-100-then-data server hook in
 // Http3Context.h writes HEADERS(100) then the header's value as DATA then
-// FIN, without ever sending a final response.
-test("DATA after only a 1xx HEADERS is rejected (RFC 9114 §4.1)", async () => {
+// FIN, without ever sending a final response. The hook is compiled out of
+// release builds, so this test only runs against debug builds.
+test.skipIf(!isDebug)("DATA after only a 1xx HEADERS is rejected (RFC 9114 §4.1)", async () => {
   using upstream = Bun.serve({
     port: 0,
     tls,

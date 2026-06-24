@@ -283,8 +283,8 @@ Timers are handled differently based on platform:
 
 ### POSIX (`event_loop.rs:396`)
 
-```zig
-ctx.timer.drainTimers(ctx);
+```rust
+ctx.timer.drain_timers(ctx);
 ```
 
 Timers are drained after I/O polling. Each timer callback:

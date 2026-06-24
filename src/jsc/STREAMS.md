@@ -39,16 +39,17 @@ Identifying the _source_ of a `ReadableStream` at the native level unlocks many 
 - **Mechanism:** Every `ReadableStream` in Bun holds a private field, `bunNativePtr`, which can point to a native Zig struct representing the stream's underlying source.
 - **Identification:** A C++ binding, `ReadableStreamTag__tagged` (from `ReadableStream.rs`), is the primary entry point for this identification. When native code needs to consume a stream (e.g., when sending a `Response` body), it calls this function on the JS `ReadableStream` object to determine its origin.
 
-```zig
+```rust
 // src/runtime/webcore/ReadableStream.rs
-pub const Tag = enum(i32) {
+#[repr(i32)]
+pub enum Tag {
     JavaScript = 0, // A generic, user-defined stream. This is the "slow path".
     Blob = 1,       // An in-memory blob. Fast path available.
     File = 2,       // Backed by a native file reader. Fast path available.
     Bytes = 4,      // Backed by a native network byte stream. Fast path available.
     Direct = 3,     // Internal native-to-native stream.
     Invalid = -1,
-};
+}
 ```
 
 This tag is the key that unlocks all subsequent optimizations. It allows the runtime to dispatch to the correct, most efficient implementation path.

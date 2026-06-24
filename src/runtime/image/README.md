@@ -16,7 +16,7 @@ off the JS thread.
 | `backend_wic.rs`                      | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
 | `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
 
-`system_backend` in `codecs.rs` is an `Option<Backend>` — `None` on Linux so the dispatch
+`system_backend` in `codecs.rs` is a cfg-gated module re-export — absent on Linux (callers gate on `HAS_SYSTEM_BACKEND`), so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns
 a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.

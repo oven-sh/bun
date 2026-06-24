@@ -753,10 +753,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   // ─── Windows .bin/ shim PE ───
-  // Replaces Zig's `mod.addAnonymousImport("bun_shim_impl.exe", ...)` (build.zig
-  // built `src/install/windows-shim/bun_shim_impl.zig` as a freestanding
-  // ReleaseFast PE and wired the artifact into `@embedFile`). The Rust port
-  // dropped emitZig entirely, so without this step `include_bytes!` embeds the
+  // Builds `src/install/windows-shim/bun_shim_impl.rs` as a freestanding
+  // ReleaseFast PE and wires the artifact into `include_bytes!`. Without this step `include_bytes!` embeds the
   // 0-byte placeholder and `bun install` writes empty `.exe`s into
   // `node_modules/.bin/`.
   //

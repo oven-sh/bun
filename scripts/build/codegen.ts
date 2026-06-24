@@ -650,8 +650,8 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(output);
   // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
-  // must wait on it — `rustInputs` is the implicit-dep list both zig and the
-  // cargo edge consume.
+  // must wait on it — `rustInputs` is the implicit-dep list the
+  // cargo edge consumes.
   o.rustInputs.push(output);
 }
 

@@ -92,15 +92,12 @@ export class ClassDefinition {
    */
   name: string;
   /**
-   * Which language implements the native side of this class.
+   * Legacy. All classes emit implementer thunks into `generated_classes.rs`;
+   * this field is accepted for backward compatibility but has no effect.
    *
-   * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
-   * regardless of this flag — it only selects whether the implementer thunks
-   * land in `generated_classes.rs`.
-   *
-   * @default "zig"
+   * @default "rust"
    */
-  lang?: "zig" | "rust";
+  lang?: "rust";
   /**
    * Fully-qualified Rust path of the native struct backing this class, e.g.
    * `crate::webcore::request::Request`. The codegen emits

@@ -127,10 +127,6 @@ sign.json
 src/bake/generated.ts
 src/jsc/bindings-obj
 src/bun.js/debug-bindings-obj
-src/deps/zig-clap/.gitattributes
-src/deps/zig-clap/.github
-src/deps/zig-clap/example
-src/deps/zig-clap/README.md
 src/fallback.version
 src/js/out/DebugPath.h
 src/js/out/functions*

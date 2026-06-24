@@ -3500,12 +3500,9 @@ function writeCppSerializers() {
   return output;
 }
 
-// ── Rust output: per-class thunks for `lang === "rust"` (default). ─────────
-// Zig output is still emitted for every class so the C++ side's `extern`
-// declarations stay satisfied; the Zig thunks for rust-lang classes simply go
-// unreferenced once the Rust crate links.
+// ── Rust output: per-class thunks ──────────────────────────────────────────
 {
-  const rustClasses = classes.filter(a => (a.lang ?? "rust") === "rust");
+  const rustClasses = classes;
   let totalSyms = 0;
   let resolved = 0;
   const blocks = rustClasses.map(a => {

@@ -117,7 +117,7 @@ pub fn color_for_bytes(name: &[u8]) -> Option<&'static str> {
 #[inline]
 pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> alloc::vec::Vec<u8> {
     // `* 2` covers the worst-case expansion: the shortest tags (`<r>`, `<b>`,
-    // 3 bytes) become 5-byte escapes, a ratio under 2.
+    // 3 bytes) become 4-byte escapes, a ratio under 2.
     let mut out = alloc::vec::Vec::with_capacity(fmt.len() * 2);
     let mut i = 0usize;
     while i < fmt.len() {

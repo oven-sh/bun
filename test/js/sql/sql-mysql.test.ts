@@ -1,9 +1,8 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { once } from "events";
 import { bunEnv, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
-import net from "net";
 import path from "path";
+import { listeningServer } from "./wire-frames";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
   "select.sql": `select CAST(1 AS SIGNED) as x`,
@@ -13,8 +12,7 @@ function rel(filename: string) {
 }
 
 // Assertions for the NEWDECIMAL decoder against a real server, used by the
-// docker-backed suite below. (The non-docker mock-server suite at the end of
-// this file drives a single canned column, so it asserts inline instead.)
+// docker-backed suite below.
 //
 // MySQL reports computed/aggregate NEWDECIMAL columns (SUM/AVG/CAST/arithmetic/
 // ROUND/literals, and SUM of an INT column) with the BINARY flag and charset
@@ -1159,13 +1157,16 @@ if (isDockerEnabled()) {
           sql.flush();
         });
 
+        // Fault-injection test: requires a server that refuses / drops / sends malformed
+        // frames, which a healthy container will not do on demand. DO NOT COPY THIS
+        // PATTERN — anything a real server can produce belongs in describeWithContainer.
+        // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+        // Buffer.alloc frame construction here.
         describe("timeouts", () => {
           test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
             "connection timeout key %p throws",
             async key => {
-              const server = net.createServer().listen();
-
-              const port = (server.address() as import("node:net").AddressInfo).port;
+              const { server, port } = await listeningServer(() => {});
 
               const sql = new SQL({ adapter: "mysql", port, host: "127.0.0.1", max: 1, [key]: 0.2 });
 
@@ -1193,191 +1194,3 @@ if (isDockerEnabled()) {
     );
   }
 }
-
-// The docker-backed suite above only runs where a docker daemon is available.
-// The NEWDECIMAL decode path does not need a real server to exercise, though:
-// the bug is a misclassification driven entirely by the column's wire metadata
-// (NEWDECIMAL + BINARY flag + charset 63). A minimal mock MySQL server can reply
-// with exactly that column so the decoder is exercised offline, with no docker
-// and no external database. This runs everywhere.
-describe("NEWDECIMAL decodes as a string (mock server, no docker)", () => {
-  const MYSQL_TYPE_NEWDECIMAL = 0xf6;
-  const BINARY_FLAG = 1 << 7; // ColumnFlags::BINARY
-  const BINARY_CHARSET = 63; // the "binary" pseudo-charset
-  // The exact wire metadata MySQL attaches to a computed/aggregate DECIMAL
-  // (SUM/AVG/CAST/arithmetic/ROUND/literal). Without the NEWDECIMAL special-case
-  // in the decoder, `BINARY_FLAG && charset == 63` routes this to a Buffer.
-  const DECIMAL_VALUE = "350.75";
-
-  function u16le(n: number): Buffer {
-    return Buffer.from([n & 0xff, (n >> 8) & 0xff]);
-  }
-  function u24le(n: number): Buffer {
-    return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff]);
-  }
-  function u32le(n: number): Buffer {
-    return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]);
-  }
-  function packet(seq: number, payload: Buffer): Buffer {
-    return Buffer.concat([u24le(payload.length), Buffer.from([seq]), payload]);
-  }
-  function lenenc(n: number): Buffer {
-    if (n < 0xfb) return Buffer.from([n]);
-    if (n < 0xffff) return Buffer.concat([Buffer.from([0xfc]), u16le(n)]);
-    throw new Error("lenenc: not needed for this test");
-  }
-  function lenencStr(s: string): Buffer {
-    const buf = Buffer.from(s, "utf-8");
-    return Buffer.concat([lenenc(buf.length), buf]);
-  }
-
-  const CLIENT_PROTOCOL_41 = 1 << 9;
-  const CLIENT_SECURE_CONNECTION = 1 << 15;
-  const CLIENT_PLUGIN_AUTH = 1 << 19;
-  const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 1 << 21;
-  const CLIENT_DEPRECATE_EOF = 1 << 24;
-  const SERVER_CAPS =
-    CLIENT_PROTOCOL_41 |
-    CLIENT_SECURE_CONNECTION |
-    CLIENT_PLUGIN_AUTH |
-    CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA |
-    CLIENT_DEPRECATE_EOF;
-
-  function handshakeV10(): Buffer {
-    const authData1 = Buffer.alloc(8, 0x61);
-    const authData2 = Buffer.alloc(13, 0x62);
-    authData2[12] = 0;
-    return packet(
-      0,
-      Buffer.concat([
-        Buffer.from([10]),
-        Buffer.from("mock-5.7.0\0"),
-        u32le(1),
-        authData1,
-        Buffer.from([0]),
-        u16le(SERVER_CAPS & 0xffff),
-        Buffer.from([0x2d]),
-        u16le(0x0002),
-        u16le((SERVER_CAPS >>> 16) & 0xffff),
-        Buffer.from([21]),
-        Buffer.alloc(10, 0),
-        authData2,
-        Buffer.from("mysql_native_password\0"),
-      ]),
-    );
-  }
-  function okPacket(seq: number, header = 0x00): Buffer {
-    return packet(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
-  }
-  // NEWDECIMAL column carrying the BINARY flag and the binary charset — the
-  // metadata computed decimals arrive with.
-  function decimalColumn(): Buffer {
-    return Buffer.concat([
-      lenencStr("def"),
-      lenencStr(""),
-      lenencStr("t"),
-      lenencStr("t"),
-      lenencStr("total"),
-      lenencStr("total"),
-      Buffer.from([0x0c]),
-      u16le(BINARY_CHARSET),
-      u32le(1024),
-      Buffer.from([MYSQL_TYPE_NEWDECIMAL]),
-      u16le(BINARY_FLAG),
-      Buffer.from([2]), // decimals
-      Buffer.from([0, 0]),
-    ]);
-  }
-  function stmtPrepareOK(startSeq: number, stmtId: number): Buffer {
-    let seq = startSeq;
-    return Buffer.concat([
-      packet(
-        seq++,
-        Buffer.concat([Buffer.from([0x00]), u32le(stmtId), u16le(1), u16le(0), Buffer.from([0x00]), u16le(0)]),
-      ),
-      packet(seq++, decimalColumn()),
-    ]);
-  }
-  // Binary result row: 0x00 header, 1-byte NULL bitmap (nothing null), then the
-  // value as a length-encoded string (how NEWDECIMAL is framed on the wire).
-  function binaryResultSet(startSeq: number): Buffer {
-    let seq = startSeq;
-    return Buffer.concat([
-      packet(seq++, Buffer.from([1])),
-      packet(seq++, decimalColumn()),
-      packet(seq++, Buffer.concat([Buffer.from([0x00]), Buffer.from([0x00]), lenencStr(DECIMAL_VALUE)])),
-      okPacket(seq++, 0xfe),
-    ]);
-  }
-  // Text result row: the value is a single length-encoded string.
-  function textResultSet(startSeq: number): Buffer {
-    let seq = startSeq;
-    return Buffer.concat([
-      packet(seq++, Buffer.from([1])),
-      packet(seq++, decimalColumn()),
-      packet(seq++, lenencStr(DECIMAL_VALUE)),
-      okPacket(seq++, 0xfe),
-    ]);
-  }
-
-  function startMockServer(): net.Server {
-    const server = net.createServer(socket => {
-      let buffered = Buffer.alloc(0);
-      let authed = false;
-      let stmtId = 0;
-      socket.write(handshakeV10());
-      socket.on("data", chunk => {
-        buffered = Buffer.concat([buffered, chunk]);
-        while (buffered.length >= 4) {
-          const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
-          if (buffered.length < 4 + len) break;
-          const seq = buffered[3];
-          const payload = buffered.subarray(4, 4 + len);
-          buffered = buffered.subarray(4 + len);
-          if (!authed) {
-            authed = true;
-            socket.write(okPacket(seq + 1));
-            continue;
-          }
-          const cmd = payload[0];
-          if (cmd === 0x16 /* COM_STMT_PREPARE */) {
-            socket.write(stmtPrepareOK(seq + 1, ++stmtId));
-          } else if (cmd === 0x17 /* COM_STMT_EXECUTE */) {
-            socket.write(binaryResultSet(seq + 1));
-          } else if (cmd === 0x03 /* COM_QUERY */) {
-            socket.write(textResultSet(seq + 1));
-          } else if (cmd === 0x19 /* COM_STMT_CLOSE */) {
-            // no response expected
-          } else {
-            socket.end();
-          }
-        }
-      });
-    });
-    server.listen(0, "127.0.0.1");
-    return server;
-  }
-
-  test("computed DECIMAL columns return strings, not Buffers", async () => {
-    const server = startMockServer();
-    await once(server, "listening");
-    const { port } = server.address() as net.AddressInfo;
-    try {
-      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-
-      // Binary protocol (prepared statement).
-      const [row] = await sql`SELECT SUM(balance) AS total FROM t`;
-      expect(row).toEqual({ total: DECIMAL_VALUE });
-
-      // Text protocol (`.simple()`) must decode the same way.
-      const [simpleRow] = await sql`SELECT SUM(balance) AS total FROM t`.simple();
-      expect(simpleRow).toEqual({ total: DECIMAL_VALUE });
-
-      // `.raw()` must still return the raw bytes.
-      const [rawRow] = await sql`SELECT SUM(balance) AS total FROM t`.raw();
-      expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from(DECIMAL_VALUE)));
-    } finally {
-      await new Promise<void>(r => server.close(() => r()));
-    }
-  });
-});

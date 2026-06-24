@@ -682,6 +682,7 @@ export function isReadableStreamDefaultController(controller) {
 export function readDirectStream(stream, sink, underlyingSource) {
   $putByIdDirectPrivate(stream, "underlyingSource", null); // doing this causes isReadableStreamDefaultController to return false
   $putByIdDirectPrivate(stream, "start", undefined);
+  var closePromiseCapability;
   function close(stream, reason) {
     const cancelFn = underlyingSource?.cancel;
     if (cancelFn) {
@@ -705,6 +706,12 @@ export function readDirectStream(stream, sink, underlyingSource) {
         $putByIdDirectPrivate(stream, "state", $streamClosed);
       }
       stream = undefined;
+    }
+
+    if (closePromiseCapability) {
+      const resolve = closePromiseCapability.resolve;
+      closePromiseCapability = undefined;
+      resolve.$call();
     }
   }
 
@@ -736,6 +743,17 @@ export function readDirectStream(stream, sink, underlyingSource) {
     }
 
     return maybePromise.then(() => {});
+  }
+
+  if ($getByIdDirectPrivate(stream, "state") === $streamReadable) {
+    // pull() returned synchronously without closing the sink: the producer
+    // kept the controller to write more data and call end() later
+    // (react-dom/server's renderToReadableStream does this while Suspense
+    // boundaries are still pending). Return a promise that settles when the
+    // sink closes so native consumers (Bun.serve, FileSink) wait for end()
+    // instead of finalizing the response early.
+    closePromiseCapability = $newPromiseCapability(Promise);
+    return closePromiseCapability.promise;
   }
 }
 

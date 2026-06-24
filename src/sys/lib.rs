@@ -5391,6 +5391,7 @@ pub mod linux {
     pub mod EPOLL {
         pub const IN: u32 = libc::EPOLLIN as u32;
         pub const OUT: u32 = libc::EPOLLOUT as u32;
+        pub const PRI: u32 = libc::EPOLLPRI as u32;
         pub const ERR: u32 = libc::EPOLLERR as u32;
         pub const HUP: u32 = libc::EPOLLHUP as u32;
         pub const RDHUP: u32 = libc::EPOLLRDHUP as u32;
@@ -5672,6 +5673,9 @@ pub mod darwin {
         pub const TIMER: i16 = libc::EVFILT_TIMER;
         pub const USER: i16 = libc::EVFILT_USER;
         pub const MACHPORT: i16 = libc::EVFILT_MACHPORT;
+        /// xnu-private filter used by libdispatch's `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE`.
+        /// Not in `<sys/event.h>` (only `<sys/event_private.h>`), so hard-code the value.
+        pub const MEMORYSTATUS: i16 = -14;
     }
     /// kqueue event flags (Darwin).
     pub mod EV {
@@ -5701,6 +5705,11 @@ pub mod darwin {
         pub const LINK: u32 = libc::NOTE_LINK;
         pub const RENAME: u32 = libc::NOTE_RENAME;
         pub const REVOKE: u32 = libc::NOTE_REVOKE;
+        /// `EVFILT_MEMORYSTATUS` fflags (xnu `<sys/event_private.h>`). Values are
+        /// ABI-stable; libdispatch depends on them for `DISPATCH_MEMORYPRESSURE_*`.
+        pub const MEMORYSTATUS_PRESSURE_NORMAL: u32 = 0x00000001;
+        pub const MEMORYSTATUS_PRESSURE_WARN: u32 = 0x00000002;
+        pub const MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
     }
     /// Re-export of the platform errno enum so `bun_threading::Futex` can
     /// match `c::E::INTR` etc. against `__ulock_*` return codes.

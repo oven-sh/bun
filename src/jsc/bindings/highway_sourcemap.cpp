@@ -142,6 +142,34 @@ enum : size_t {
     kStSlowBlocks = 9,
 };
 
+// Layout mirror of bun_highway::ParseMappingsState (#[repr(C)]). The kernel
+// indexes `state` as int32_t[10] via the kSt* constants above; the Rust side
+// reads named fields. These asserts pin the field order so a reorder on either
+// side fails the build instead of silently mis-seeding the scalar resume.
+struct ParseMappingsState {
+    int32_t gen_line;
+    int32_t gen_col;
+    int32_t orig_line;
+    int32_t orig_col;
+    int32_t src_idx;
+    int32_t name_idx;
+    int32_t needs_sort;
+    int32_t has_names;
+    int32_t fast_blocks;
+    int32_t slow_blocks;
+};
+static_assert(sizeof(ParseMappingsState) == 10 * sizeof(int32_t), "ParseMappingsState size changed; update kSt* and the Rust mirror in bun_highway");
+static_assert(offsetof(ParseMappingsState, gen_line) == kStGenLine * sizeof(int32_t), "kStGenLine out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, gen_col) == kStGenCol * sizeof(int32_t), "kStGenCol out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, orig_line) == kStOrigLine * sizeof(int32_t), "kStOrigLine out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, orig_col) == kStOrigCol * sizeof(int32_t), "kStOrigCol out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, src_idx) == kStSrcIdx * sizeof(int32_t), "kStSrcIdx out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, name_idx) == kStNameIdx * sizeof(int32_t), "kStNameIdx out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, needs_sort) == kStNeedsSort * sizeof(int32_t), "kStNeedsSort out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, has_names) == kStHasNames * sizeof(int32_t), "kStHasNames out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, fast_blocks) == kStFastBlocks * sizeof(int32_t), "kStFastBlocks out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, slow_blocks) == kStSlowBlocks * sizeof(int32_t), "kStSlowBlocks out of sync with bun_highway::ParseMappingsState");
+
 // VLQ sign recovery. Source-map VLQ is sign-magnitude (NOT zigzag): bit 0 is
 // the sign flag, bits 1.. are the magnitude. Written branch-free as
 // `(mag ^ s) - s` with `s = -(v & 1)`: s is 0 or -1, so XOR+SUB is either

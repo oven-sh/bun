@@ -274,6 +274,10 @@ pub struct RareData {
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
     pub node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
 
+    /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
+    /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
+    pub memory_pressure_watcher: Option<NonNull<c_void>>,
+
     /// Watch-mode restart needs to RST every listen socket so the new process
     /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
     /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
@@ -336,6 +340,7 @@ impl Default for RareData {
             default_client_ssl_ctx: None,
             mime_types: None,
             node_fs_stat_watcher_scheduler: None,
+            memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
             s3_default_client: Strong::empty(),
@@ -638,6 +643,12 @@ impl RareData {
     #[inline]
     pub fn node_fs_stat_watcher_scheduler_slot(&mut self) -> &mut Option<NonNull<c_void>> {
         &mut self.node_fs_stat_watcher_scheduler
+    }
+
+    /// Raw slot — lazy-init body lives in `bun_runtime::node::memory_pressure`.
+    #[inline]
+    pub fn memory_pressure_watcher_slot(&mut self) -> &mut Option<NonNull<c_void>> {
+        &mut self.memory_pressure_watcher
     }
 
     /// Raw slot — lazy-init body lives in `bun_http_jsc::WebSocketDeflate`.

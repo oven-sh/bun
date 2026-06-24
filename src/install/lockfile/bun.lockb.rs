@@ -427,6 +427,45 @@ pub(crate) fn load(
         ));
     }
 
+    // Per-package `dependencies`/`resolutions` and per-tree `dependencies`
+    // are `ExternalSlice` (off,len) pairs memcpy'd verbatim from disk; a
+    // crafted `off` past the backing buffer would otherwise reach
+    // `ExternalSlice::get` and panic. `tree.dependency_id` likewise indexes
+    // the dependencies buffer directly. Reject all of these here so the
+    // installer can warn + re-resolve.
+    {
+        let deps_len = lockfile.buffers.dependencies.len();
+        let res_len = lockfile.buffers.resolutions.len();
+        let hoisted_len = lockfile.buffers.hoisted_dependencies.len();
+        let trees_len = lockfile.buffers.trees.len();
+        for (dep_slice, res_slice) in lockfile
+            .packages
+            .items_dependencies()
+            .iter()
+            .zip(lockfile.packages.items_resolutions().iter())
+        {
+            if !dep_slice.in_bounds(deps_len) || !res_slice.in_bounds(res_len) {
+                return Err(bun_core::err!("InvalidLockfile"));
+            }
+        }
+        for tree in lockfile.buffers.trees.iter() {
+            if !tree.dependencies.in_bounds(hoisted_len) {
+                return Err(bun_core::err!("InvalidLockfile"));
+            }
+            let dep_id = tree.dependency_id;
+            if dep_id != super::tree::ROOT_DEP_ID
+                && dep_id != crate::invalid_dependency_id
+                && dep_id as usize >= deps_len
+            {
+                return Err(bun_core::err!("InvalidLockfile"));
+            }
+            let parent = tree.parent;
+            if parent != super::tree::INVALID_ID && parent as usize >= trees_len {
+                return Err(bun_core::err!("InvalidLockfile"));
+            }
+        }
+    }
+
     let has_workspace_name_hashes = false;
     // < Bun v1.0.4 stopped right here when reading the lockfile
     // So we add an extra 8 byte tag to say "hey, there's more data here"

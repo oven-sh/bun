@@ -1,5 +1,5 @@
 import { file, spawn, write } from "bun";
-import { afterAll, beforeAll, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { copyFile, exists, open, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, runBunInstall, stderrForInstall, VerdaccioRegistry } from "harness";
 import { join } from "path";
@@ -174,6 +174,113 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
   expect(code).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
   expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
+});
+
+describe("rejects crafted ExternalSlice offsets and tree indices in bun.lockb instead of panicking", () => {
+  // These offsets/indices are memcpy'd verbatim from disk and used to slice
+  // into / index the lockfile's backing buffers. A crafted value past the
+  // buffer end previously panicked in release builds (slice index order /
+  // bounds check) when a victim ran `bun install` in a repo carrying a
+  // tampered bun.lockb. Each case below must be rejected at load time so the
+  // installer warns + re-resolves rather than aborting.
+  async function lockbWithPkgs() {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+    // Local file: tarballs keep this hermetic; the crafted lockfile is the
+    // only thing being exercised.
+    await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(packageDir, "bar-0.0.2.tgz"));
+    await copyFile(join(__dirname, "baz-0.0.3.tgz"), join(packageDir, "baz-0.0.3.tgz"));
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "external-slice-lockb",
+        version: "1.0.0",
+        dependencies: {
+          "bar": "file:./bar-0.0.2.tgz",
+          "baz": "file:./baz-0.0.3.tgz",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+    const lockbPath = join(packageDir, "bun.lockb");
+    expect(await exists(lockbPath)).toBe(true);
+    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+    const fmt = lockb.readUInt32LE(42);
+    const N = Number(lockb.readBigUInt64LE(86));
+    const begin = Number(lockb.readBigUInt64LE(110));
+    const resolutionSize = fmt === 2 ? 64 : 72;
+    expect(N).toBeGreaterThanOrEqual(3);
+    return { packageDir, lockbPath, lockb, N, begin, resolutionSize };
+  }
+
+  async function expectRecovers(packageDir: string, lockbPath: string, lockb: Buffer) {
+    await write(lockbPath, lockb);
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--no-progress"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    const err = stderrForInstall(rawErr);
+
+    expect(err).toContain("Ignoring lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("bar@");
+    expect(out).toContain("baz@");
+    expect(code).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "bar"))).toBe(true);
+    expect(await exists(join(packageDir, "node_modules", "baz"))).toBe(true);
+  }
+
+  it.concurrent("package dependencies slice with off > buffer length", async () => {
+    const { packageDir, lockbPath, lockb, N, begin, resolutionSize } = await lockbWithPkgs();
+    // Dependencies column (ExternalSlice<Dependency>, 8 bytes each: off u32 + len u32).
+    const depsCol = begin + N * (8 + 8 + resolutionSize);
+    // Sanity: the root package's dependencies slice starts at 0.
+    expect(lockb.readUInt32LE(depsCol + 0 * 8)).toBe(0);
+    // Craft package[1].dependencies.off far past any plausible buffer end.
+    lockb.writeUInt32LE(0x7fffffff, depsCol + 1 * 8);
+    await expectRecovers(packageDir, lockbPath, lockb);
+  });
+
+  it.concurrent("package resolutions slice with off > buffer length", async () => {
+    const { packageDir, lockbPath, lockb, N, begin, resolutionSize } = await lockbWithPkgs();
+    // Resolutions column (ExternalSlice<PackageID>, 8 bytes each) follows Dependencies.
+    const resCol = begin + N * (8 + 8 + resolutionSize + 8);
+    expect(lockb.readUInt32LE(resCol + 0 * 8)).toBe(0);
+    lockb.writeUInt32LE(0x7fffffff, resCol + 1 * 8);
+    await expectRecovers(packageDir, lockbPath, lockb);
+  });
+
+  it.concurrent("package dependencies slice with off + len > buffer length", async () => {
+    const { packageDir, lockbPath, lockb, N, begin, resolutionSize } = await lockbWithPkgs();
+    const depsCol = begin + N * (8 + 8 + resolutionSize);
+    expect(lockb.readUInt32LE(depsCol + 0 * 8)).toBe(0);
+    // Craft package[1].dependencies.len far past the buffer end while
+    // leaving off in range, so `off..end` with only end clamped would
+    // succeed but the slice still addresses past the buffer.
+    lockb.writeUInt32LE(0x7fffffff, depsCol + 1 * 8 + 4);
+    await expectRecovers(packageDir, lockbPath, lockb);
+  });
+
+  it.concurrent("tree dependencies slice with off > hoisted buffer length", async () => {
+    const { packageDir, lockbPath, lockb } = await lockbWithPkgs();
+    // Trees are the first `Buffers` array, written as
+    // [start: u64][end: u64][ascii prefix][padding][20-byte records]. Each
+    // record is id(4) dependency_id(4) parent(4) off(4) len(4).
+    const prefixOff = lockb.indexOf("\n<install.lockfile.Tree>");
+    expect(prefixOff).toBeGreaterThan(16);
+    const treesStart = Number(lockb.readBigUInt64LE(prefixOff - 16));
+    const treesEnd = Number(lockb.readBigUInt64LE(prefixOff - 8));
+    expect((treesEnd - treesStart) % 20).toBe(0);
+    expect(treesEnd - treesStart).toBeGreaterThanOrEqual(20);
+    // tree[0].dependencies.off
+    lockb.writeUInt32LE(0x7fffffff, treesStart + 0 * 20 + 12);
+    await expectRecovers(packageDir, lockbPath, lockb);
+  });
 });
 
 it("rejects a binary lockfile whose patched-dependency flag byte is out of range", async () => {

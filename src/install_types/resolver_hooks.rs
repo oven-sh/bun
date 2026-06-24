@@ -109,18 +109,29 @@ impl<T> ExternalSlice<T> {
 
     #[inline]
     pub fn get(self, in_: &[T]) -> &[T] {
-        // Compute the sum in usize so
-        // the release-mode clamp applies instead of a debug u32-overflow panic.
+        // Both bounds are clamped: (off, len) may come straight off disk
+        // (bun.lockb, npm manifest cache), and a crafted `off > in_.len()`
+        // would otherwise panic in release even with `end` clamped.
+        let off = in_.len().min(self.off as usize);
         let end = in_.len().min(self.off as usize + self.len as usize);
         debug_assert!(self.off as usize + self.len as usize <= in_.len());
-        &in_[self.off as usize..end]
+        &in_[off..end]
     }
 
     #[inline]
     pub fn mut_(self, in_: &mut [T]) -> &mut [T] {
+        let off = in_.len().min(self.off as usize);
         let end = in_.len().min(self.off as usize + self.len as usize);
         debug_assert!(self.off as usize + self.len as usize <= in_.len());
-        &mut in_[self.off as usize..end]
+        &mut in_[off..end]
+    }
+
+    /// True when `(off, len)` addresses a subrange of a buffer of length
+    /// `buf_len`. Used by the lockfile loader to reject crafted slices before
+    /// they reach `get()`/`mut_()`.
+    #[inline]
+    pub fn in_bounds(self, buf_len: usize) -> bool {
+        self.off as usize + self.len as usize <= buf_len
     }
 
     #[inline]

@@ -90,7 +90,7 @@ pub(crate) fn depth_buf_uninit() -> DepthBuf {
 impl Tree {
     pub fn folder_name<'b>(&self, deps: &'b [Dependency], buf: &'b [u8]) -> &'b [u8] {
         let dep_id = self.dependency_id;
-        if dep_id == invalid_dependency_id {
+        if dep_id == invalid_dependency_id || dep_id as usize >= deps.len() {
             return b"";
         }
         deps[dep_id as usize].name.slice(buf)

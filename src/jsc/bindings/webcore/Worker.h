@@ -114,7 +114,7 @@ public:
     // Returns true if the task was accepted (queued to Pending or posted to
     // Running). Returns false if the worker is Closing/Closed or its context
     // is already gone — the caller must handle cleanup itself.
-    bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
+    bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&, Function<void()>&& abandon = nullptr);
 
     // -- State queries (safe from any thread; all loads are atomic) ----------
     bool wasTerminated() const { return m_state.load() >= State::Closing; }
@@ -167,9 +167,17 @@ private:
 
     // Messages posted before the worker reaches Running are queued here and
     // flushed by fireEarlyMessages(). The Pending→Running transition happens
-    // under this lock so postTaskToWorkerGlobalScope never loses a task.
+    // under this lock so postTaskToWorkerGlobalScope never loses a task. If the
+    // worker never reaches Running (entry threw / failed to load / unsettled
+    // TLA), dispatchExit drains the queue on the parent thread and runs each
+    // abandon callback so the caller can reject its promise + free the
+    // parent-VM Strong<> (which must not be touched from the worker thread).
+    struct PendingTask {
+        Function<void(ScriptExecutionContext&)> run;
+        Function<void()> abandon;
+    };
     Lock m_pendingTasksMutex;
-    Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
+    Deque<PendingTask> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
 
     MessageInbox m_toWorker; // messages parent → worker, drained on the worker thread
     MessageInbox m_toParent; // messages worker → parent, drained on the parent thread

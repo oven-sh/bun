@@ -389,14 +389,14 @@ void Worker::dispatchEvent(Event& event)
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
-bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
+bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task, Function<void()>&& abandon)
 {
     {
         Locker lock(m_pendingTasksMutex);
         switch (m_state.load()) {
         case State::Pending:
             // Worker VM not up yet; queue for fireEarlyMessages().
-            m_pendingTasks.append(WTF::move(task));
+            m_pendingTasks.append({ WTF::move(task), WTF::move(abandon) });
             return true;
         case State::Running:
             break;
@@ -471,13 +471,13 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 
     if (workerGlobalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
         for (auto& task : tasks) {
-            task(*thisContext);
+            task.run(*thisContext);
         }
         workerScheduleInitialDrain(*this, m_toWorker, *thisContext);
     } else {
         thisContext->postTask([tasks = WTF::move(tasks), protectedThis = Ref { *this }](auto& ctx) mutable {
             for (auto& task : tasks) {
-                task(ctx);
+                task.run(ctx);
             }
             workerScheduleInitialDrain(protectedThis.get(), protectedThis->m_toWorker, ctx);
         });
@@ -548,7 +548,24 @@ bool Worker::dispatchExit(int32_t exitCode)
             // handlers observe threadId == -1 and isOnline() == false while
             // postMessage() (gated only on Closed) still accepts and drops the
             // message, matching browser/Node and pre-refactor behaviour.
-            protectedThis->m_state.store(State::Closing);
+            //
+            // Drain m_pendingTasks first when the worker never reached Running:
+            // each abandon callback rejects its parent-side promise and frees
+            // the Strong<JSPromise>* on the parent thread (the only thread that
+            // may touch the parent VM's HandleSet). Take the queue under the
+            // same lock that flips m_state so a racing
+            // postTaskToWorkerGlobalScope either lands in the drained queue or
+            // sees Closing and returns false.
+            auto pending = [&]() {
+                Locker lock(protectedThis->m_pendingTasksMutex);
+                bool wasPending = protectedThis->m_state.load() == State::Pending;
+                protectedThis->m_state.store(State::Closing);
+                return wasPending ? std::exchange(protectedThis->m_pendingTasks, {}) : Deque<PendingTask> {};
+            }();
+            for (auto& task : pending) {
+                if (task.abandon)
+                    task.abandon();
+            }
 
             if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
                 auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);

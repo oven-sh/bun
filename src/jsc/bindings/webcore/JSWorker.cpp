@@ -688,6 +688,19 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref, (JSGlobalObject * lexi
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
+// Abandon callback for an introspection task queued into m_pendingTasks while
+// the worker is Pending: runs on the parent thread (from dispatchExit) when
+// the worker never reaches Running, so the Strong<> can be freed against its
+// own VM's HandleSet and the promise rejected to match Node.
+static Function<void()> makeWorkerNotRunningAbandon(Zig::GlobalObject* globalObject, Strong<JSPromise>* promiseHandle)
+{
+    return [globalObject, promiseHandle]() {
+        std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
+        handle->get()->reject(JSC::getVM(globalObject),
+            Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+    };
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -718,7 +731,10 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     // wait_for_promise_with_termination's tick()) while m_state is still
     // Pending. postTaskToWorkerGlobalScope queues into m_pendingTasks for
     // Pending and returns false only for Closing/Closed, which the !accepted
-    // reject below handles.
+    // reject below handles. If the worker never reaches Running (entry threw,
+    // failed to load, unsettled TLA), dispatchExit drains m_pendingTasks on
+    // the parent thread and runs each abandon callback to reject + free the
+    // Strong<>.
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
 
     // Keep the promise alive across the round-trip. Heap-allocate the Strong
@@ -753,7 +769,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
                 std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
                 handle->get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), snapshot));
             });
-    });
+    }, makeWorkerNotRunningAbandon(globalObject, promiseHandle));
     if (!accepted) {
         // postTaskToWorkerGlobalScope returns false only for Closing/Closed.
         // Still on the parent thread — safe to destroy the handle here.
@@ -806,7 +822,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
             set("total_allocated_bytes"_s, heapSize);
             handle->get()->resolve(go, pvm, o);
         });
-    });
+    }, makeWorkerNotRunningAbandon(globalObject, promiseHandle));
     if (!accepted) {
         delete promiseHandle;
         promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
@@ -829,7 +845,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
             std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
             handle->get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsUndefined());
         });
-    });
+    }, makeWorkerNotRunningAbandon(globalObject, promiseHandle));
     if (!accepted) {
         delete promiseHandle;
         promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
@@ -857,7 +873,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
             std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
             handle->get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), result));
         });
-    });
+    }, makeWorkerNotRunningAbandon(globalObject, promiseHandle));
     if (!accepted) {
         // Worker already gone: resolve with an empty profile rather than reject,
         // so a handle.stop() after terminate still yields parseable JSON.
@@ -915,7 +931,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
             o->putDirect(pvm, Identifier::fromString(pvm, "system"_s), jsNumber(sys));
             handle->get()->resolve(go, pvm, o);
         });
-    });
+    }, makeWorkerNotRunningAbandon(globalObject, promiseHandle));
     if (!accepted) {
         delete promiseHandle;
         promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));

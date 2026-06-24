@@ -522,6 +522,48 @@ describe("getHeapSnapshot", () => {
     });
   });
 
+  // "entry throws" is omitted: under `bun test`, isBunTest makes a worker's
+  // uncaught_exception return handled=true so spin() continues to
+  // fireEarlyMessages (the call resolves with real data). Under `bun -e`
+  // it rejects — see the test-worker-heapdump-failure.js vendored test for
+  // subprocess coverage. The two cases below take the shutdown() path
+  // directly so they exercise the m_pendingTasks abandon drain regardless.
+  test.each([
+    ["entry not found", undefined],
+    ["unsettled top-level await", "await new Promise(() => {})"],
+  ])("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (%s)", async (_, src) => {
+    const worker =
+      src === undefined ? new Worker("/nonexistent/__bun_worker_path__.js") : new Worker(src, { eval: true });
+    worker.on("error", () => {});
+    // Called immediately (m_state still Pending) so the task queues into
+    // m_pendingTasks; dispatchExit drains it on the parent thread when the
+    // worker never reaches Running and runs each abandon callback to reject.
+    // Capture the rejection synchronously (.catch) — it fires inside the same
+    // parent-side task that emits 'exit', so a later await would race the
+    // unhandledRejection check.
+    const captured = [
+      worker.getHeapSnapshot().then(
+        v => ({ resolved: v }),
+        e => e,
+      ),
+      worker.getHeapStatistics().then(
+        v => ({ resolved: v }),
+        e => e,
+      ),
+      worker.cpuUsage().then(
+        v => ({ resolved: v }),
+        e => e,
+      ),
+      worker.startCpuProfile().then(
+        v => ({ resolved: v }),
+        e => e,
+      ),
+    ];
+    for (const p of captured) {
+      expect(await p).toMatchObject({ code: "ERR_WORKER_NOT_RUNNING" });
+    }
+  });
+
   test("queues while the worker is starting and rejects once it has exited", async () => {
     const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
     // Called immediately after construction (m_state still Pending): node — and now

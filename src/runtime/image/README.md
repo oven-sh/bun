@@ -8,7 +8,7 @@ off the JS thread.
 | file                                  | owns                                                                                                            | touch when                               |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `Image.classes.ts`                    | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
-| `Image.rs`                            | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                    | new options, new chainable, new terminal |
+| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                    | new options, new chainable, new terminal |
 | `codecs.rs`                           | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
@@ -16,9 +16,9 @@ off the JS thread.
 | `backend_wic.rs`                      | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
 | `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
 
-`system_backend` in `codecs.rs` is `?type` — `null` on Linux so the dispatch
+`system_backend` in `codecs.rs` is an `Option<Backend>` — `None` on Linux so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns
-`error.BackendUnavailable` for anything it can't do (palette PNG, lossless
+a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
 The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspng,libwebp}.ts`.
@@ -39,8 +39,8 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 ## Adding a format
 
 1. New `scripts/build/deps/<lib>.ts` (copy `libspng.ts` for the simple case).
-2. Extend `Format` + `sniff()` + `mime()` in `codecs.rs`, add a `pub const
-<fmt> = struct { decode/encode }` block alongside the others.
+2. Extend `Format` + `sniff()` + `mime()` in `codecs.rs`, add a `<fmt>` module with
+`decode`/`encode` functions alongside the others.
 3. If the format carries EXIF, extend `exif.rs`.
 4. `LICENSE.md` row.
 

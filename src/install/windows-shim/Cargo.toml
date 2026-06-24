@@ -1,6 +1,6 @@
 # Standalone Windows binary-linking shim PE.
 #
-# This is built by `scripts/build/rust.ts` as a separate freestanding ReleaseFast
+# This is built by `scripts/build/rust.ts` as a separate freestanding release
 # `exe` artifact (no libc, single-threaded) and `include_bytes!`'d into bun.exe.
 # The same source file (`bun_shim_impl.rs`) is compiled *twice*:
 #

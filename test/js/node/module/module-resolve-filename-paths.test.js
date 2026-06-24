@@ -199,3 +199,48 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
     Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
   }).toThrow();
 });
+
+test("require.resolve resolves relative entries in options.paths against cwd", () => {
+  const { path: dir, cleanup } = createTempDir("require-resolve-relative-paths", {
+    "sub/node_modules/rel-path-pkg/package.json": JSON.stringify({ name: "rel-path-pkg", main: "index.js" }),
+    "sub/node_modules/rel-path-pkg/index.js": "module.exports = 'ok';",
+  });
+
+  const prevCwd = process.cwd();
+  try {
+    process.chdir(dir);
+    const resolved = require.resolve("rel-path-pkg", { paths: ["./sub"] });
+    expect(resolved).toBe(resolve(dir, "sub/node_modules/rel-path-pkg/index.js"));
+  } finally {
+    process.chdir(prevCwd);
+    cleanup();
+  }
+});
+
+test("require.resolve with non-absolute options.paths does not crash", () => {
+  let err;
+  try {
+    require.resolve("this-package-does-not-exist-anywhere", { paths: ["not-absolute-dir", ""] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeDefined();
+  expect(err.code).toBe("MODULE_NOT_FOUND");
+
+  // Non-string entries: Node throws ERR_INVALID_ARG_TYPE, Bun coerces to string.
+  // Either way this must throw, not crash the process.
+  expect(() => {
+    require.resolve("this-package-does-not-exist-anywhere", { paths: [Int16Array] });
+  }).toThrow();
+});
+
+test("Module._resolveFilename with non-absolute options.paths does not crash", () => {
+  let err;
+  try {
+    Module._resolveFilename("this-package-does-not-exist-anywhere", null, false, { paths: ["not-absolute-dir"] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeDefined();
+  expect(err.code).toBe("MODULE_NOT_FOUND");
+});

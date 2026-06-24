@@ -1206,8 +1206,17 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     $debug("Bun.Socket connectError");
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
-    req!.oncomplete(error.errno, self._handle, req, true, true);
     socket.data.req = undefined;
+    // doConnect dispatches connectError synchronously when the connect
+    // syscall (or the preceding bind) fails immediately. Surface that as
+    // kConnectTcp/Pipe's return value — the callers' Node-derived
+    // `if (err)` branches expect it — instead of re-entering oncomplete
+    // from inside the dispatch.
+    if (req!.dispatching) {
+      req.errno = error.errno || UV_ECANCELED;
+      return;
+    }
+    req!.oncomplete(error.errno, self._handle, req, true, true);
   },
 };
 
@@ -1236,7 +1245,7 @@ function serverHandlersFor(server) {
 
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
-  const promise = doConnect(self._handle, {
+  return kConnectDispatch(self, req, {
     hostname: address,
     port,
     localAddress: req.localAddress || undefined,
@@ -1252,16 +1261,11 @@ function kConnectTcp(self, addressType, req, address, port) {
     data: { self, req },
     socket: self[khandlers],
   });
-  promise.catch(_reason => {
-    // eat this so there's no unhandledRejection
-    // we already catch this in connectError and error
-  });
-  return 0;
 }
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
-  const promise = doConnect(self._handle, {
+  return kConnectDispatch(self, req, {
     hostname: address,
     unix: address,
     // Always half-open natively; see kConnect.
@@ -1270,10 +1274,27 @@ function kConnectPipe(self, req, address) {
     data: { self, req },
     socket: self[khandlers],
   });
+}
+
+function kConnectDispatch(self, req, opts) {
+  // Node's TCPWrap/PipeWrap return the errno when uv_*_connect fails
+  // synchronously, and otherwise guarantee oncomplete fires on a later
+  // tick. The native doConnect instead dispatches connectError from inside
+  // this call for syscall-level failures; bracket the call so connectError
+  // can hand the errno back here instead of re-entering oncomplete while
+  // the caller is still mid-dispatch.
+  req.dispatching = true;
+  const promise = doConnect(self._handle, opts);
+  req.dispatching = false;
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
   });
+  const errno = req.errno;
+  if (errno !== undefined) {
+    req.errno = undefined;
+    return errno;
+  }
   return 0;
 }
 
@@ -2848,6 +2869,16 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
+  // kConnectTcp returns the errno for a synchronous failure, so the if(err)
+  // branch above handles that. This catches the remaining ways the attempt
+  // can complete before this frame resumes: a synchronous open (success)
+  // through afterConnectMultiple, or a destroy() from a 'connectionAttempt'
+  // listener. Arming the timer afterward would capture a stale handle and
+  // overwrite whatever context[kTimeout] the next attempt set.
+  if (!self.connecting || context.current !== current + 1) {
+    return;
+  }
+
   // Match the single-address path (and Node): the 'net' perf entry starts when
   // the attempt is dispatched, not when it completes; the winning attempt's
   // context is transferred to the socket in afterConnectMultiple.
@@ -2868,6 +2899,12 @@ function internalConnectMultiple(context, canceled?) {
 }
 
 function internalConnectMultipleTimeout(context, req, handle) {
+  // Socket._destroy doesn't (and can't cheaply) reach the per-context timer,
+  // so a destroy() while an attempt is in flight leaves this callback armed.
+  // The attempt is over; don't emit a spurious timeout or close a handle the
+  // destroy path already released.
+  if (!context.socket.connecting) return;
+
   $debug("connect/multiple: connection to %s:%s timed out", req.address, req.port);
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 

@@ -40,7 +40,14 @@ function decorateErrorStack(err) {
     if (/^\s+at REPL\d*:\d+:\d+$/.test(lines[i])) anonIdx = i;
   }
   if (anonIdx !== -1) lines = lines.slice(0, anonIdx);
-  err.stack = lines.join("\n");
+  const newStack = lines.join("\n");
+  if (newStack !== err.stack) {
+    // Errors with a non-writable .stack (Object.freeze, getter-only) must
+    // not turn into a TypeError that escapes the REPL's error handler.
+    try {
+      err.stack = newStack;
+    } catch {}
+  }
   return err;
 }
 

@@ -35,6 +35,14 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
+            /* h3 client adversarial test hook: emit HEADERS(100) then DATA
+             * then FIN with no final response (RFC 9114 §4.1 violation). A
+             * conformant server cannot produce this sequence otherwise. */
+            std::string_view td = req.getHeader("x-bun-test-100-then-data");
+            if (!td.empty()) {
+                res->writeContinue();
+                return res->endAfterInformational(td);
+            }
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {

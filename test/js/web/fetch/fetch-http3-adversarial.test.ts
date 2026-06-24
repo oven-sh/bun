@@ -226,6 +226,51 @@ test("AbortController during 1MB upload", async () => {
   }
 });
 
+// RFC 9114 §4.1 / RFC 9110 §15.2: response content may only follow the final
+// (non-1xx) HEADERS frame. lsquic's client-side frame filter only checks that
+// *some* HEADERS preceded DATA, so a peer that sends HEADERS(:status 1xx)
+// followed by DATA reaches on_stream_data with status_code still 0. Before
+// this was guarded, deliver() returned without draining body_buffer and the
+// peer could grow it without bound. A conformant server cannot emit this
+// sequence, so the server-side x-bun-test-100-then-data hook in
+// Http3Context.h writes HEADERS(100) then the header's value as DATA then
+// FIN, without ever sending a final response.
+test("DATA after only a 1xx HEADERS is rejected (RFC 9114 §4.1)", async () => {
+  using upstream = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    // Unreached: the test hook short-circuits before routing.
+    fetch: () => new Response("handler-ran", { status: 200 }),
+  });
+  const origin = `https://127.0.0.1:${upstream.port}`;
+
+  let failure: unknown;
+  let delivered: { status: number; body: string } | undefined;
+  try {
+    const res = await fetch(`${origin}/`, {
+      ...h3,
+      headers: { "x-bun-test-100-then-data": "should-not-reach-application" },
+    });
+    delivered = { status: res.status, body: await res.text() };
+  } catch (e) {
+    failure = e;
+  }
+
+  // The malformed sequence must never surface as a Response. Without the
+  // client-side guard the fetch would instead resolve (if the hook were
+  // absent) or reject with HTTP3StreamReset after buffering the DATA.
+  expect(delivered).toBeUndefined();
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as any)?.code ?? (failure as any)?.name).toBe("HTTP3ProtocolError");
+
+  // A request without the hook header still completes normally on the same
+  // server, so the rejection above is about the malformed frame sequence.
+  const ok = await fetch(`${origin}/`, h3);
+  expect({ status: ok.status, body: await ok.text() }).toEqual({ status: 200, body: "handler-ran" });
+});
+
 describe("http3 response header field validation", () => {
   test("rejects a response carrying a connection-specific header field instead of delivering it", async () => {
     // RFC 9114 §4.2 forbids connection-specific fields in HTTP/3 responses. The

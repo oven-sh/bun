@@ -256,6 +256,13 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
 extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
+    // RFC 9114 §4.1: DATA before the final response HEADERS is malformed
+    // (a 1xx alone leaves status_code 0); lsquic only checks that *some*
+    // HEADERS preceded DATA, so a 1xx + DATA flood would grow unbounded.
+    if len > 0 && stream.status_code == 0 {
+        stream.session_mut().fail(stream, err!(HTTP3ProtocolError));
+        return;
+    }
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);

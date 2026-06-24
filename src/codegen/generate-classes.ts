@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
-import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
+import { writeIfNotChanged } from "./helpers";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -78,7 +78,6 @@ function DOMJITType(type) {
     ["JSValue"]: "JSC::SpecHeapTop",
   }[type];
 }
-
 
 function DOMJITReturnType(type) {
   return {
@@ -845,7 +844,6 @@ function renderCallbacksCppImpl(typeName, callbacks: Record<string, string>) {
 
   return rows.map(a => a.trim()).join("\n");
 }
-
 
 function renderDecls(symbolName, typeName, proto, supportsObjectCreate = false) {
   const rows = [];

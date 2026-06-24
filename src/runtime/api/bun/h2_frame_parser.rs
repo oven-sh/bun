@@ -5621,6 +5621,15 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
+    fn accept_stream(&self, _stream_id: u32) -> bool {
+        // Bound per-connection stream state before allocating: a peer flooding HEADERS with
+        // fresh odd ids would otherwise grow the legacy `streams` map (and the JS objects
+        // pinned by streamStart) without limit. Mirrors the maxSessionMemory check on the
+        // request() path; the engine answers with RST_STREAM(REFUSED_STREAM), never invokes
+        // on_stream_open, and budgets the refusal via on_stream_rejected.
+        self.get_session_memory_usage() <= self.max_session_memory.get() as usize
+    }
+
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.

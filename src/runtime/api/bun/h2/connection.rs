@@ -111,6 +111,13 @@ pub trait Sink {
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
     }
+    /// Called before allocating state for a new peer-initiated stream. `false` refuses the
+    /// stream with RST_STREAM(REFUSED_STREAM): no engine entry is inserted and `on_stream_open`
+    /// is never invoked. The header block is still decoded for HPACK-table sync (§4.3) and the
+    /// refusal is budgeted via `on_stream_rejected`.
+    fn accept_stream(&self, _stream_id: u32) -> bool {
+        true
+    }
 }
 
 pub struct Connection {
@@ -168,6 +175,9 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
+    /// `Sink::accept_stream` declined a new peer-initiated stream: the block is decoded for
+    /// HPACK sync only, then answered with RST_STREAM(REFUSED_STREAM) and `on_stream_rejected`.
+    header_refused: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -206,6 +216,7 @@ impl Connection {
             header_target: 0,
             header_push_parent: 0,
             header_stream_closed: false,
+            header_refused: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -724,6 +735,29 @@ impl Connection {
             );
             return true;
         }
+        // Bound peer-initiated streams before allocating: a peer flooding HEADERS with fresh
+        // odd ids would otherwise grow `streams` (and, via on_stream_open, any per-stream state
+        // the sink owns) without limit. Declined streams are answered with
+        // RST_STREAM(REFUSED_STREAM) after the block is decoded for HPACK-table sync (§4.3);
+        // on_stream_open is never invoked for them.
+        if is_new && self.is_server && !sink.accept_stream(hdr.stream_id) {
+            if hdr.stream_id > self.last_stream_id {
+                self.last_stream_id = hdr.stream_id;
+            }
+            self.header_block.clear();
+            self.header_block.extend_from_slice(&payload[off..end]);
+            self.header_end_stream = end_stream;
+            self.header_flags = hdr.flags;
+            self.header_target = hdr.stream_id;
+            self.header_push_parent = 0;
+            self.header_stream_closed = false;
+            self.header_refused = true;
+            if !end_headers {
+                self.continuation_stream = hdr.stream_id;
+                return false;
+            }
+            return self.finish_header_block(sink);
+        }
         let cur_state = self
             .streams
             .entry(hdr.stream_id)
@@ -771,6 +805,7 @@ impl Connection {
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
         self.header_stream_closed = stream_closed;
+        self.header_refused = false;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -814,6 +849,7 @@ impl Connection {
         }
         let block = std::mem::take(&mut self.header_block);
         let stream_closed = std::mem::take(&mut self.header_stream_closed);
+        let refused = std::mem::take(&mut self.header_refused);
         let mut off = 0usize;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
@@ -839,7 +875,7 @@ impl Connection {
                     }
                     // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
-                    if stream_closed {
+                    if stream_closed || refused {
                         continue;
                     }
                     // RFC 9113 §8.2.1/§8.2.2: connection-specific fields, a pseudo-header following a
@@ -912,6 +948,14 @@ impl Connection {
         self.header_block.clear();
         if fatal {
             return true;
+        }
+        if refused {
+            // The sink declined this peer-initiated stream (e.g. maxSessionMemory). No engine
+            // entry was inserted and on_stream_open was never called, so there is nothing to
+            // tear down beyond answering the peer and budgeting the rejection.
+            self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+            sink.on_stream_rejected(target);
+            return false;
         }
         if stream_closed {
             // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
@@ -1311,6 +1355,7 @@ impl Connection {
         self.header_target = promised;
         self.header_push_parent = hdr.stream_id;
         self.header_stream_closed = false;
+        self.header_refused = false;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;

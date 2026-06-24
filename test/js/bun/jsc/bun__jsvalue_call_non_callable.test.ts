@@ -16,11 +16,10 @@ import { bunEnv, bunExe, isWindows } from "harness";
 //   - Without the fix, ASSERT aborts (SIGABRT on POSIX, non-zero exit
 //     code with no stdout on Windows).
 //   - With the fix, the subprocess exits cleanly.
-// Skipped on Windows: the TCP accept-then-close sequence on windows-x64
-// runners schedules the close propagation later than on POSIX/ARM64, and
-// the onclose invocation sometimes beats the parent test timeout. The fix
-// is platform-agnostic C++ logic and is already exercised on
-// Linux/macOS/ASAN/Windows-ARM64.
+// Skipped on Windows: the TCP accept-then-close sequence on Windows
+// runners schedules the close propagation later than on POSIX, and the
+// onclose invocation sometimes beats the parent test timeout. The fix is
+// platform-agnostic C++ logic and is already exercised on Linux/macOS/ASAN.
 test.skipIf(isWindows)("Bun__JSValue__call on non-callable value does not abort", async () => {
   await using proc = spawn({
     cmd: [

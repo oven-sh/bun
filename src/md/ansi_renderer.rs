@@ -2721,6 +2721,12 @@ pub fn render_to_ansi<'a>(
     theme: Theme<'a>,
 ) -> Result<Option<Box<[u8]>>, crate::parser::ParserError> {
     use crate::parser::ParserError;
+    // AnsiRenderer::init reserves ~1.5 * text.len() bytes for output; reject
+    // oversized input before that reserve so strict-commit systems don't
+    // abort in handle_alloc_error before Parser::init's own check fires.
+    if text.len() > crate::parser::MAX_INPUT_SIZE {
+        return Err(ParserError::InputTooLarge);
+    }
     let mut renderer = AnsiRenderer::init(text, theme);
     match root::render_with_renderer(text, options, renderer.renderer()) {
         Ok(()) => {}

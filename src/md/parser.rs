@@ -129,8 +129,8 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser`'s error type: the union
-/// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
+/// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
+/// with `{ StackOverflow, InputTooLarge }`.
 // (`bun_jsc::JsError` covers the first three, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;

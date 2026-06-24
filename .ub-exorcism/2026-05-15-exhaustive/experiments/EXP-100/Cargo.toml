@@ -1,0 +1,7 @@
+[package]
+name = "exp-100-upgraded-duplex-wrapper-reentry"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+

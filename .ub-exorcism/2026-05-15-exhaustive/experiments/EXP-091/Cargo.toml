@@ -1,0 +1,6 @@
+[package]
+name = "exp091-bindgen-array-layout-mismatch"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]

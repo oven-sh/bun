@@ -1,0 +1,11 @@
+[package]
+name = "exp-088-bun-ast-crate"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+bun_ast = { path = "/data/projects/bun/src/ast" }
+

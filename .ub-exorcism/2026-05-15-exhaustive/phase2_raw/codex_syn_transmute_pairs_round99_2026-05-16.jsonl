@@ -1,0 +1,24 @@
+{"file": "/data/projects/bun/src/boringssl_sys/boringssl.rs", "line": 496, "kind": "typed", "generics": " unsafe extern \"C\" fn (* mut c_void) , sk_GENERAL_NAME_free_func "}
+{"file": "/data/projects/bun/src/boringssl_sys/boringssl.rs", "line": 512, "kind": "typed", "generics": " sk_GENERAL_NAME_free_func , unsafe extern \"C\" fn (* mut c_void) , "}
+{"file": "/data/projects/bun/src/bun_alloc/lib.rs", "line": 560, "kind": "typed", "generics": " std :: sync :: MutexGuard < '_ , () > , std :: sync :: MutexGuard < 'static , () > "}
+{"file": "/data/projects/bun/src/bundler/LinkerContext.rs", "line": 2288, "kind": "typed", "generics": " renamer :: Renamer < '_ , '_ > , renamer :: Renamer < '_ , '_ > "}
+{"file": "/data/projects/bun/src/bundler/linker_context/scanImportsAndExports.rs", "line": 1682, "kind": "typed", "generics": " u16 , PropertyIdTag "}
+{"file": "/data/projects/bun/src/bundler/transpiler.rs", "line": 308, "kind": "typed", "generics": " options :: BundleOptions < '_ > , options :: BundleOptions < 'a > "}
+{"file": "/data/projects/bun/src/cares_sys/c_ares.rs", "line": 2049, "kind": "typed", "generics": " i32 , Error "}
+{"file": "/data/projects/bun/src/css/css_parser.rs", "line": 2718, "kind": "typed", "generics": " CssModuleExports < '_ > , CssModuleExports < 'static > "}
+{"file": "/data/projects/bun/src/css/css_parser.rs", "line": 2723, "kind": "typed", "generics": " CssModuleReferences < '_ > , CssModuleReferences < 'static > "}
+{"file": "/data/projects/bun/src/errno/lib.rs", "line": 310, "kind": "typed", "generics": " u16 , SystemErrno "}
+{"file": "/data/projects/bun/src/errno/windows_errno.rs", "line": 254, "kind": "typed", "generics": " u16 , E "}
+{"file": "/data/projects/bun/src/errno/linux_errno.rs", "line": 192, "kind": "typed", "generics": " u16 , E "}
+{"file": "/data/projects/bun/src/event_loop/AnyTask.rs", "line": 69, "kind": "typed", "generics": " fn (* mut T) -> JsResult < () > , fn (* mut c_void) -> JsResult < () > "}
+{"file": "/data/projects/bun/src/libuv_sys/libuv.rs", "line": 292, "kind": "typed", "generics": " c_int , HandleType "}
+{"file": "/data/projects/bun/src/libuv_sys/libuv.rs", "line": 623, "kind": "typed", "generics": " unsafe extern \"C\" fn (* mut Self) , unsafe extern \"C\" fn (* mut uv_handle_t) , "}
+{"file": "/data/projects/bun/src/libuv_sys/libuv.rs", "line": 989, "kind": "typed", "generics": " usize , fn (* mut T , ReturnCode) "}
+{"file": "/data/projects/bun/src/perf/tracy.rs", "line": 726, "kind": "typed", "generics": " * mut c_void , T "}
+{"file": "/data/projects/bun/src/perf/tracy.rs", "line": 798, "kind": "typed", "generics": " * mut c_void , T "}
+{"file": "/data/projects/bun/src/resolver/lib.rs", "line": 4260, "kind": "typed", "generics": " Option < & '_ dyn StandaloneModuleGraph > , Option < & 'a dyn StandaloneModuleGraph > , "}
+{"file": "/data/projects/bun/src/runtime/ffi/FFIObject.rs", "line": 28, "kind": "typed", "generics": " usize , jsc :: c :: JSTypedArrayBytesDeallocator "}
+{"file": "/data/projects/bun/src/runtime/image/backend_wic.rs", "line": 923, "kind": "typed", "generics": " _ , WICConvertBitmapSourceFn "}
+{"file": "/data/projects/bun/src/runtime/node/fs_events.rs", "line": 164, "kind": "typed", "generics": " * mut c_void , T "}
+{"file": "/data/projects/bun/src/sys/lib.rs", "line": 5923, "kind": "typed", "generics": " * mut c_void , T "}
+{"file": "/data/projects/bun/src/sys/linux_syscall.rs", "line": 209, "kind": "typed", "generics": " rustix :: fs :: Stat , libc :: stat "}

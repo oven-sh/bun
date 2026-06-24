@@ -1,0 +1,10 @@
+   Compiling exp_052_unbounded_queue_loom v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-052)
+    Finished `release` profile [optimized] target(s) in 0.97s
+     Running tests/unbounded_queue_loom.rs (/tmp/cargo-target/release/deps/unbounded_queue_loom-56f789932db1417a)
+
+running 2 tests
+test racy_relaxed_negative_control ... ok
+test correct_orderings_are_sound ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+

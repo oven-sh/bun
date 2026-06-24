@@ -1,0 +1,30 @@
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `basename` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `basename` in the value namespace is also re-exported here
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+   Compiling bun_collections v0.0.0 (/data/projects/bun/src/collections)
+   Compiling bun_sys v0.0.0 (/data/projects/bun/src/sys)
+warning: `bun_paths` (lib) generated 2 warnings
+   Compiling bun_threading v0.0.0 (/data/projects/bun/src/threading)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.69s
+     Running unittests lib.rs (/tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_threading-d4cf9b4b7449e602)
+
+running 2 tests
+test rwlock::tests::raw_internal_state ... ok
+test rwlock::tests::smoke ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+

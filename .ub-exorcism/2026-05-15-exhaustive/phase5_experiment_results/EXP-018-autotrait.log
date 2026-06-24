@@ -1,0 +1,21 @@
+    Checking exp_018_guarded_lock_send_witness v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-018)
+warning: method `lock` is never used
+ --> src/main.rs:4:8
+  |
+3 | trait RawMutex {
+  |       -------- method in this trait
+4 |     fn lock(&self);
+  |        ^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `unsynchronized_value` is never read
+  --> src/main.rs:20:5
+   |
+19 | struct GuardedBy<Value, M: RawMutex> {
+   |        --------- field in this struct
+20 |     unsynchronized_value: UnsafeCell<Value>,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: `exp_018_guarded_lock_send_witness` (bin "exp_018_guarded_lock_send_witness") generated 2 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s

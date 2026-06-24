@@ -1,0 +1,16 @@
+   Compiling exp_035_standalone_graph_enum_validity v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-035)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/repro`
+error: Undefined Behavior: constructing invalid value of type CompiledModuleGraphFile: at .loader.<enum-tag>, encountered 0xff, but expected a valid enum tag
+   --> src/main.rs:104:18
+    |
+104 |         unsafe { core::ptr::read_unaligned(tampered.as_ptr().cast::<CompiledModuleGraphFile>()) };
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+    |
+    = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+    = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

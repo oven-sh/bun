@@ -1,0 +1,30 @@
+   --> src/collections/linear_fifo.rs:883:74
+    |
+883 |         let mut fifo: LinearFifo<u8, StaticBuffer<u8, 32>> = LinearFifo::init();
+    |                                                                          ^^^^ multiple `init` found
+    |
+note: candidate #1 is defined in an impl for the type `linear_fifo::LinearFifo<T, linear_fifo::DynamicBuffer<T>>`
+   --> src/collections/linear_fifo.rs:237:5
+    |
+237 |     pub fn init() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `linear_fifo::LinearFifo<T, linear_fifo::SliceBuffer<'a, T>>`
+   --> src/collections/linear_fifo.rs:224:5
+    |
+224 |     pub fn init(buf: &'a mut [T]) -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #3 is defined in an impl for the type `linear_fifo::LinearFifo<T, linear_fifo::StaticBuffer<T, N>>`
+   --> src/collections/linear_fifo.rs:212:5
+    |
+212 |     pub fn init() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+error: aborting due to 4 previous errors
+
+Some errors have detailed explanations: E0034, E0433.
+For more information about an error, try `rustc --explain E0034`.
+error: test failed, to rerun pass `--lib`
+
+Caused by:
+  process didn't exit successfully: `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_collections-86b29d134b19a05b` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.

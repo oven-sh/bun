@@ -1,0 +1,7 @@
+[package]
+name = "exp-014-multi-array-list-slice-copy-alias"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+

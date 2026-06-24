@@ -1,0 +1,88 @@
+---src/bun_core---
+
+Caused by:
+  unable to update /data/projects/bun/vendor/lolhtml/c-api
+
+Caused by:
+  failed to read `/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+
+---src/collections---
+
+Caused by:
+  unable to update /data/projects/bun/vendor/lolhtml/c-api
+
+Caused by:
+  failed to read `/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+
+---src/semver---
+
+Caused by:
+  unable to update /data/projects/bun/vendor/lolhtml/c-api
+
+Caused by:
+  failed to read `/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+
+---src/safety---
+
+Caused by:
+  unable to update /data/projects/bun/vendor/lolhtml/c-api
+
+Caused by:
+  failed to read `/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+
+---src/threading---
+
+Caused by:
+  unable to update /data/projects/bun/vendor/lolhtml/c-api
+
+Caused by:
+  failed to read `/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+
+---src/bun_alloc---
+
+Caused by:
+  unable to update /data/projects/bun/vendor/lolhtml/c-api
+
+Caused by:
+  failed to read `/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+
+---src/picohttp---
+
+Caused by:
+  unable to update /data/projects/bun/vendor/lolhtml/c-api
+
+Caused by:
+  failed to read `/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+
+---src/exe_format---
+
+Caused by:
+  unable to update /data/projects/bun/vendor/lolhtml/c-api
+
+Caused by:
+  failed to read `/data/projects/bun/vendor/lolhtml/c-api/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+

@@ -1,0 +1,9 @@
+id: copy-nonoverlapping-bare
+language: rust
+severity: warning
+message: ptr::copy_nonoverlapping without preceding bounds/non-null guards. Requires non-null, aligned, and non-overlapping ranges.
+rule:
+  any:
+    - pattern: std::ptr::copy_nonoverlapping($$$)
+    - pattern: core::ptr::copy_nonoverlapping($$$)
+    - pattern: ptr::copy_nonoverlapping($$$)

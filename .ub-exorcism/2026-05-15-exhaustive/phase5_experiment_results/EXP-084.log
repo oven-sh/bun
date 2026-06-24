@@ -1,0 +1,11 @@
+   Compiling exp_084_virtual_machine_send_sync_tls_trap v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-084)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_084_virtual_machine_send_sync_tls_trap`
+
+thread '<unnamed>' (1001) panicked at src/main.rs:28:9:
+assertion failed: Self::get_or_null().is_some()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+note: in Miri, you may have to set `MIRIFLAGS=-Zmiri-env-forward=RUST_BACKTRACE` for the environment variable to have an effect
+
+thread 'main' (1000) panicked at src/main.rs:52:5:
+a scoped thread panicked

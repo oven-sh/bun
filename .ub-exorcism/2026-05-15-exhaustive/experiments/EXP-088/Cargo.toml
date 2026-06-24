@@ -1,0 +1,8 @@
+[package]
+name = "exp-088-estring-utf16-public-fields"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[workspace]

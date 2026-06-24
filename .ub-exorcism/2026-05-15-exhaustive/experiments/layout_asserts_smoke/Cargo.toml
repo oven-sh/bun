@@ -1,0 +1,19 @@
+[package]
+name = "layout_asserts_smoke"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone — NOT a workspace member. Excluded explicitly so `cargo` doesn't
+# try to inherit workspace metadata from the parent Cargo.toml.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+# All three target crates are bun workspace members. Pull them in via
+# absolute path so this auxiliary smoke crate does not need to be a member.
+[dependencies]
+bun_windows_sys   = { path = "../../../../src/windows_sys" }
+bun_boringssl_sys = { path = "../../../../src/boringssl_sys" }
+bun_libuv_sys     = { path = "../../../../src/libuv_sys" }

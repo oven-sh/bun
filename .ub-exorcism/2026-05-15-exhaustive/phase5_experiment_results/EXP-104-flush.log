@@ -1,0 +1,49 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp104-windows-named-pipe-wrapper-busy flush-bad`
+error: Undefined Behavior: reborrow through <1435> at alloc755[0x30] is forbidden
+  --> src/main.rs:57:29
+   |
+57 |         let this = unsafe { &mut *this };
+   |                             ^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <1435> is foreign to the protected tag <1520> (i.e., it is not a child)
+   = help: this reborrow (acting as a foreign read access) would cause the protected tag <1520> (currently Unique) to become Disabled
+   = help: protected tags must never be Disabled
+help: the accessed tag <1435> was created here
+  --> src/main.rs:33:19
+   |
+33 |           let raw = Box::into_raw(Box::new(Self {
+   |  ___________________^
+34 | |             wrapper: None,
+35 | |             wrapper_busy: false,
+36 | |             closed: false,
+37 | |             writer: Vec::new(),
+38 | |         }));
+   | |___________^
+help: the protected tag <1520> was created here, in the initial state Reserved
+  --> src/main.rs:72:18
+   |
+72 |     fn flush_bad(&mut self) {
+   |                  ^^^^^^^^^
+help: the protected tag <1520> later transitioned to Unique due to a child write access at offsets [0x30..0x31]
+  --> src/main.rs:78:13
+   |
+78 |             self.wrapper_busy = true;
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: this transition corresponds to the first write to a 2-phase borrowed mutable reference
+   = note: stack backtrace:
+           0: WindowsNamedPipe::ssl_write
+               at src/main.rs:57:29: 57:39
+           1: Wrapper::flush
+               at src/main.rs:12:9: 12:46
+           2: WindowsNamedPipe::flush_bad
+               at src/main.rs:79:22: 79:34
+           3: main
+               at src/main.rs:146:28: 146:56
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

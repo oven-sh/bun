@@ -1,0 +1,7 @@
+    Blocking waiting for file lock on build directory
+   Compiling libc v0.2.186
+   Compiling rustix v0.38.44
+    Checking bitflags v2.11.1
+    Checking linux-raw-sys v0.4.15
+    Checking codex-stat-layout v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/CODEX-stat-layout)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.52s

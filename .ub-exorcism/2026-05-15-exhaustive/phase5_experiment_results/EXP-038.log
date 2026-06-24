@@ -1,0 +1,40 @@
+   Compiling exp_038_windows_watcher_action_enum_validity v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-038)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_038_windows_watcher_action_enum_validity`
+warning: variants `Added`, `Removed`, `Modified`, `RenamedOld`, and `RenamedNew` are never constructed
+  --> src/main.rs:19:5
+   |
+18 | enum Action {
+   |      ------ variants in this enum
+19 |     Added = 1,
+   |     ^^^^^
+20 |     Removed = 2,
+   |     ^^^^^^^
+21 |     Modified = 3,
+   |     ^^^^^^^^
+22 |     RenamedOld = 4,
+   |     ^^^^^^^^^^
+23 |     RenamedNew = 5,
+   |     ^^^^^^^^^^
+   |
+   = note: `Action` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+error: Undefined Behavior: constructing invalid value of type Action: at .<enum-tag>, encountered 0xdeadbeef, but expected a valid enum tag
+  --> src/main.rs:29:14
+   |
+29 |     unsafe { core::mem::transmute::<[u8; 4], Action>(*bytes) }
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: read_action_from_kernel_buffer
+               at src/main.rs:29:14: 29:61
+           1: main
+               at src/main.rs:38:18: 38:63
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+

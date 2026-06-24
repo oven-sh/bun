@@ -1,0 +1,22 @@
+   Compiling exp_001_linear_fifo_niche v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-001)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/repro`
+view.len() = 4
+error: Undefined Behavior: reading memory at alloc119[0x0..0x4], but memory is uninitialized at [0x0..0x4], and this operation requires initialized memory
+  --> src/main.rs:21:13
+   |
+21 |     let _ = view[0].get(); // UB: reads uninit niche
+   |             ^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+
+Uninitialized memory occurred at alloc119[0x0..0x4], in this allocation:
+alloc119 (stack variable, size: 16, align: 4) {
+    __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ │ ░░░░░░░░░░░░░░░░
+}
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

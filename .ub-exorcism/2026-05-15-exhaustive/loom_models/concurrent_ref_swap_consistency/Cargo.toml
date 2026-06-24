@@ -1,0 +1,15 @@
+[package]
+name = "loom-concurrent-ref-swap-consistency"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+path = "src/main.rs"
+
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[profile.release]
+debug = true

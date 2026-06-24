@@ -1,0 +1,7 @@
+[package]
+name = "exp-081-posix-dir-iterator-name"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+

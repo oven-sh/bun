@@ -1,0 +1,10 @@
+[package]
+name = "exp-081-bun-sys-crate"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+bun_sys = { path = "../../../../src/sys" }
+libc = "0.2"

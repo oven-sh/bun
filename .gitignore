@@ -207,3 +207,38 @@ test/integration/bun-types/fixture/bun.lock
 src/runtime/bake/generated.ts
 /target/
 *.heapsnapshot
+
+# bv (beads viewer) local config and caches
+.bv/
+
+# Per-run Cargo build dirs inside the UB-exorcism audit workspace.
+# Each experiment in .ub-exorcism/<run>/experiments/<EXP-NNN>/ is a
+# standalone Cargo project; their build trees should not be committed.
+# A few experiments (e.g. EXP-016, EXP-018) use named variants like
+# target-needs-drop/ or target-source-faithful/; ignore those too.
+.ub-exorcism/*/target/
+.ub-exorcism/*/target-*/
+.ub-exorcism/*/experiments/*/target/
+.ub-exorcism/*/experiments/*/target-*/
+
+# Local state inside .ub-exorcism/: Python bytecode caches and stale
+# soak-worker PID files. Audit content (logs, *.md, scripts) is committed;
+# this just trims the runtime crud.
+.ub-exorcism/**/__pycache__/
+.ub-exorcism/**/*.pyc
+.ub-exorcism/**/*.pid
+
+# Exception: audit witness logs ARE evidence (captured Miri / sanitizer /
+# loom output from the audited base). They override the global `*.log`
+# exclusion above for paths inside `.ub-exorcism/`; without this the audit's
+# phase5_experiment_results/, phase11_artifacts/, and phase2_raw/ logs are
+# silently filtered out, which makes the registry's `Raw log: ...` citations
+# point at files that never landed.
+!.ub-exorcism/**/*.log
+
+# Keep the large raw ast-grep detector dumps out of the PR even though normal
+# audit witness logs are allowed above. The reviewed triage docs preserve the
+# actionable signal and include regeneration instructions.
+.ub-exorcism/**/phase2_raw/codex_ast_grep_ub_patterns*.log
+.ub-exorcism/**/phase3_raw/codex_ast_grep_ub_patterns*.txt
+.ub-exorcism/**/codex_sweeps/ast_grep_ub_patterns*.txt

@@ -1,0 +1,8 @@
+[package]
+name = "exp_058_source_writer_escape"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+
+[workspace]

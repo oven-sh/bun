@@ -1,0 +1,10 @@
+[package]
+name = "exp-098-bun-core-crate"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+bun_core = { path = "/data/projects/bun/src/bun_core" }

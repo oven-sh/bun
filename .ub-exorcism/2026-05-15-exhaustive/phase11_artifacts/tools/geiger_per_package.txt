@@ -1,0 +1,20 @@
+---bun_install---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_runtime---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_jsc---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_core---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_bundler---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_collections---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_semver---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_threading---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_io---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace
+---bun_uws_sys---
+manifest path `/data/projects/bun/Cargo.toml` is a virtual manifest, but this command requires running against an actual package in this workspace

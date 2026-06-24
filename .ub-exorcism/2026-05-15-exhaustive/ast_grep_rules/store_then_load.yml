@@ -1,0 +1,10 @@
+id: store-then-load
+language: rust
+severity: warning
+message: Atomic store(Relaxed) immediately followed by load(Acquire) — may indicate missing release/acquire pairing.
+rule:
+  pattern: |
+    $A.store($V, Ordering::Relaxed);
+    $$$
+    $B.load(Ordering::Acquire)
+  kind: block

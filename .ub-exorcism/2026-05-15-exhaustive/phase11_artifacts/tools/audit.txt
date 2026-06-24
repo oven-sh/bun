@@ -1,0 +1,30 @@
+    ├── bun_ast 0.0.0
+    │   ├── bun_standalone_graph 0.0.0
+    │   ├── bun_sourcemap_jsc 0.0.0
+    │   ├── bun_sourcemap 0.0.0
+    │   ├── bun_runtime 0.0.0
+    │   ├── bun_router 0.0.0
+    │   ├── bun_resolver 0.0.0
+    │   ├── bun_resolve_builtins 0.0.0
+    │   ├── bun_parsers 0.0.0
+    │   ├── bun_options_types 0.0.0
+    │   ├── bun_jsc 0.0.0
+    │   ├── bun_js_printer 0.0.0
+    │   ├── bun_js_parser_jsc 0.0.0
+    │   ├── bun_js_parser 0.0.0
+    │   ├── bun_install_types 0.0.0
+    │   ├── bun_install_jsc 0.0.0
+    │   ├── bun_install 0.0.0
+    │   ├── bun_ini 0.0.0
+    │   ├── bun_http 0.0.0
+    │   ├── bun_dotenv 0.0.0
+    │   ├── bun_css_jsc 0.0.0
+    │   ├── bun_css 0.0.0
+    │   ├── bun_crash_handler 0.0.0
+    │   ├── bun_bunfig 0.0.0
+    │   ├── bun_bundler_jsc 0.0.0
+    │   ├── bun_bundler 0.0.0
+    │   └── bun_ast_jsc 0.0.0
+    └── bun_api 0.0.0
+
+warning: 1 allowed warning found

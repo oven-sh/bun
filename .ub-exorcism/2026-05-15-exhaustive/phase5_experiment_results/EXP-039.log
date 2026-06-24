@@ -1,0 +1,72 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_039_any_task_job_panic_safety`
+warning: integer-to-pointer cast
+   --> src/main.rs:110:22
+    |
+110 |             run_task(task_addr as *mut AnyTaskJob);
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ integer-to-pointer cast
+    |
+    = help: this program is using integer-to-pointer casts or (equivalently) `ptr::with_exposed_provenance`, which means that Miri might miss pointer bugs in this program
+    = help: see https://doc.rust-lang.org/nightly/std/ptr/fn.with_exposed_provenance.html for more details on that operation
+    = help: to ensure that Miri does not miss bugs in your program, use Strict Provenance APIs (https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance, https://crates.io/crates/sptr) instead
+    = help: you can then set `MIRIFLAGS=-Zmiri-strict-provenance` to ensure you are not relying on `with_exposed_provenance` semantics
+    = help: alternatively, `MIRIFLAGS=-Zmiri-permissive-provenance` disables this warning
+    = note: this is on thread `unnamed-1`
+    = note: stack backtrace:
+            0: main::{closure#0}::{closure#0}
+                at src/main.rs:110:22: 110:50
+            1: <{closure@src/main.rs:109:46: 109:53} as std::ops::FnOnce<()>>::call_once - shim
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5: 250:71
+            2: <std::panic::AssertUnwindSafe<{closure@src/main.rs:109:46: 109:53}> as std::ops::FnOnce<()>>::call_once
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/panic/unwind_safe.rs:275:9: 275:19
+            3: std::panicking::catch_unwind::do_call::<std::panic::AssertUnwindSafe<{closure@src/main.rs:109:46: 109:53}>, ()>
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs:581:40: 581:43
+            4: std::panicking::catch_unwind::<(), std::panic::AssertUnwindSafe<{closure@src/main.rs:109:46: 109:53}>>
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs:544:19: 544:88
+            5: std::panic::catch_unwind::<std::panic::AssertUnwindSafe<{closure@src/main.rs:109:46: 109:53}>, ()>
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panic.rs:359:14: 359:40
+            6: main::{closure#0}
+                at src/main.rs:109:9: 111:12
+note: the last function in that backtrace got called indirectly due to this code
+   --> src/main.rs:108:16
+    |
+108 |       let join = std::thread::spawn(move || {
+    |  ________________^
+109 | |         panic::catch_unwind(AssertUnwindSafe(move || {
+110 | |             run_task(task_addr as *mut AnyTaskJob);
+111 | |         }))
+112 | |     });
+    | |______^
+
+
+thread '<unnamed>' (1001) panicked at src/main.rs:46:9:
+simulated panic inside C::run on WorkPool thread
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+note: in Miri, you may have to set `MIRIFLAGS=-Zmiri-env-forward=RUST_BACKTRACE` for the environment variable to have an effect
+EXP-039 CONFIRMED: panic in C::run skipped enqueue_task_concurrent;
+  - teardown_enqueues = 0
+  - leaked AnyTaskJob count = 1
+FFI-cross UB (panic into C++ WorkPool dispatcher) is CONTRACTUAL
+  and cannot be witnessed in a standalone Rust repro.
+error: memory leaked: alloc254 (Rust heap, size: 8, align: 8), allocated here:
+  --> src/main.rs:63:23
+   |
+63 |           Box::into_raw(Box::new(AnyTaskJob {
+   |  _______________________^
+64 | |             ctx: PanickyCtx,
+65 | |             _keep_alive: Box::new(()),
+66 | |         }))
+   | |__________^
+   |
+   = note: stack backtrace:
+           0: AnyTaskJob::new
+               at src/main.rs:63:23: 66:11
+           1: main
+               at src/main.rs:92:33: 92:50
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+note: set `MIRIFLAGS=-Zmiri-ignore-leaks` to disable this check
+
+error: aborting due to 1 previous error; 1 warning emitted
+

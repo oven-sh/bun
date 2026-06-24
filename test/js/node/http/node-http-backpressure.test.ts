@@ -5,7 +5,6 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";

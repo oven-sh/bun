@@ -485,17 +485,20 @@ This function is the foundation of Bun's module compatibility system, ensuring t
 
 **Why the Ref System Exists**: Bun's `Ref` struct solves the parallel parsing problem that occurs when processing thousands of files simultaneously:
 
-```zig
-pub const Ref = packed struct(u64) {
-    inner_index: u31,        // Symbol index within the source file
-    tag: enum(u2) {          // Type of reference (symbol, invalid, etc.)
-        invalid,
-        allocated_name,
-        source_contents_slice,
-        symbol,
-    },
-    source_index: u31,       // Index of the source file containing the symbol
+```rust
+// Single packed u64: inner_index | tag | source_index
+#[repr(C, packed(4))]
+pub struct Ref(u64);
+
+pub enum RefTag {
+    Invalid = 0,
+    AllocatedName = 1,
+    SourceContentsSlice = 2,
+    Symbol = 3,
 }
+// ref.inner_index()  -> symbol index within the source file
+// ref.tag()          -> RefTag
+// ref.source_index() -> index of the source file containing the symbol
 ```
 
 **Core Algorithm**: The function operates by analyzing all symbols within a chunk, computing reserved names that cannot be used, and then applying either minification-based renaming (for optimized builds) or number-based renaming (for readable builds).
@@ -533,11 +536,11 @@ _What happens_:
 
 _StableRef structure_:
 
-```zig
+```rust
 // Enables deterministic cross-chunk symbol ordering
-StableRef {
-    stable_source_index: u32,  // Consistent index across builds
-    ref: Ref,                  // Original symbol reference
+pub struct StableRef {
+    pub stable_source_index: IndexInt, // Consistent index across builds
+    pub r#ref: Ref,                    // Original symbol reference
 }
 ```
 
@@ -675,20 +678,20 @@ if (development) {
 
 _Essential Ref methods used throughout_:
 
-- `ref.isValid()` - returns `this.tag != .invalid`
-- `ref.sourceIndex()` - returns which file the symbol originated from
-- `ref.innerIndex()` - returns the symbol's index within that file
-- `ref.getSymbol(symbol_table)` - retrieves the actual symbol data
+- `ref.is_valid()` - returns `self.tag() != RefTag::Invalid`
+- `ref.source_index()` - returns which file the symbol originated from
+- `ref.inner_index()` - returns the symbol's index within that file
+- `ref.get_symbol(symbol_table)` - retrieves the actual symbol data
 
 _Symbol table organization_:
 
-```zig
+```rust
 // Two-dimensional array structure enables fast parallel merging
 symbol_table[source_index][inner_index] = Symbol {
     original_name: "myVariable",
     link: renamed_symbol_ref,  // Points to final renamed version
     // ... other symbol data
-}
+};
 ```
 
 **Error Handling and Edge Cases**:

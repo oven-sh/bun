@@ -318,17 +318,17 @@ This is because:
 
 The event loop uses a counter to track when to drain microtasks:
 
-```zig
-pub fn enter(this: *EventLoop) void {
-    this.entered_event_loop_count += 1;
+```rust
+pub fn enter(&mut self) {
+    self.entered_event_loop_count += 1;
 }
 
-pub fn exit(this: *EventLoop) void {
-    const count = this.entered_event_loop_count;
-    if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
-        this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm) catch {};
+pub fn exit(&mut self) {
+    let count = self.entered_event_loop_count;
+    if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
+        let _ = self.drain_microtasks();
     }
-    this.entered_event_loop_count -= 1;
+    self.entered_event_loop_count -= 1;
 }
 ```
 

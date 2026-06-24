@@ -36,7 +36,7 @@ To understand Bun's stream optimizations, two foundational concepts must be unde
 
 Identifying the _source_ of a `ReadableStream` at the native level unlocks many optimization opportunities. This is achieved by "tagging" the stream object internally.
 
-- **Mechanism:** Every `ReadableStream` in Bun holds a private field, `bunNativePtr`, which can point to a native Zig struct representing the stream's underlying source.
+- **Mechanism:** Every `ReadableStream` in Bun holds a private field, `bunNativePtr`, which can point to a native Rust struct representing the stream's underlying source.
 - **Identification:** A C++ binding, `ReadableStreamTag__tagged` (from `ReadableStream.rs`), is the primary entry point for this identification. When native code needs to consume a stream (e.g., when sending a `Response` body), it calls this function on the JS `ReadableStream` object to determine its origin.
 
 ```rust
@@ -56,7 +56,7 @@ This tag is the key that unlocks all subsequent optimizations. It allows the run
 
 ### 2.2. The `Body` Mixin: An Intelligent Gateway
 
-The `Body` mixin (used by `Request` and `Response`) is not merely a stream container; it's a sophisticated state machine and the primary API gateway to Bun's optimization paths. A `Body`'s content is represented by the `Body.Value` union in Zig, which can be a static buffer (`.InternalBlob`, `.WTFStringImpl`) or a live stream (`.Locked`).
+The `Body` mixin (used by `Request` and `Response`) is not merely a stream container; it's a sophisticated state machine and the primary API gateway to Bun's optimization paths. A `Body`'s content is represented by the `Body.Value` union in native code, which can be a static buffer (`.InternalBlob`, `.WTFStringImpl`) or a live stream (`.Locked`).
 
 Methods like `.text()`, `.json()`, and `.arrayBuffer()` are not simple stream consumers. They are entry points to a decision tree that aggressively seeks the fastest possible way to fulfill the request.
 
@@ -181,7 +181,7 @@ graph TD
         subgraph js["🟨 JavaScript Layer"]
             C["📄 new Response(file.stream())"]
         end
-        subgraph native["⚡ Native Layer (Zig)"]
+        subgraph native["⚡ Native Layer (Rust)"]
             A["💾 Disk I/O<br><b>FileReader Source</b>"]
             B["🔌 Socket Buffer<br><b>HTTPSResponseSink</b>"]
             A -."🚀 Zero-Copy View<br>streams.Result.temporary".-> B
@@ -208,8 +208,8 @@ graph TD
 1.  **Scenario:** A server handler returns `new Response(Bun.file("video.mp4").stream())`.
 2.  **Tagging:** The stream is created with a `File` tag, and its `bunNativePtr` points to a native `webcore.FileReader` struct. The HTTP server's response sink is a native `HTTPSResponseSink`.
 3.  **Connection via `assignToStream`:** The server's internal logic triggers `assignToStream` (`ReadableStreamInternals.ts`). This function detects the native source via its tag and dispatches to `readDirectStream`.
-4.  **Native Handoff:** `readDirectStream` calls the C++ binding `$startDirectStream`, which passes pointers to the native `FileReader` (source) and `HTTPSResponseSink` (sink) to the Zig engine.
-5.  **Zero-Copy Native Data Flow:** The Zig layer takes over. The `FileReader` reads a chunk from the disk. It yields a `streams.Result.temporary` variant, which is a **zero-copy view** into a shared read buffer. This view is passed directly to the `HTTPSResponseSink.write()` method, which appends it to its internal socket write buffer. When possible, Bun will skip the FileReader and use the `sendfile` system call for even less system call interactions.
+4.  **Native Handoff:** `readDirectStream` calls the C++ binding `$startDirectStream`, which passes pointers to the native `FileReader` (source) and `HTTPSResponseSink` (sink) to the Rust engine.
+5.  **Zero-Copy Native Data Flow:** The Rust layer takes over. The `FileReader` reads a chunk from the disk. It yields a `streams.Result.temporary` variant, which is a **zero-copy view** into a shared read buffer. This view is passed directly to the `HTTPSResponseSink.write()` method, which appends it to its internal socket write buffer. When possible, Bun will skip the FileReader and use the `sendfile` system call for even less system call interactions.
 
 **Architectural Impact:**
 
@@ -279,11 +279,11 @@ flowchart TB
 
 ### **4. Low-Level Implementation Details**
 
-The high-level optimizations are made possible by a robust and carefully designed native foundation in Zig.
+The high-level optimizations are made possible by a robust and carefully designed native foundation in Rust.
 
 #### **4.1. The Native Language: `streams.rs` Primitives**
 
-The entire native architecture is built upon a set of generic, powerful Zig primitives that define the contracts for data flow.
+The entire native architecture is built upon a set of generic, powerful Rust primitives that define the contracts for data flow.
 
 - **`streams.Result` Union:** This is the universal data-carrying type for all native stream reads. Its variants are not just data containers; they are crucial signals from the source to the sink.
   - `owned: bun.ByteList`: Represents a heap-allocated buffer. The receiver is now responsible for freeing this memory. This is used when data must outlive the current scope.

@@ -300,7 +300,7 @@ it("start() with arbitrary objects does not hit the invalid-fd debug assertion",
       `,
     ],
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

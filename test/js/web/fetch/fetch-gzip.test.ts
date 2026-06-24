@@ -502,11 +502,7 @@ describe("BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const firstWord = stdout.trim().split(" ", 1)[0];
       expect({ stdout: firstWord, raw: stdout.trim(), stderr, exitCode }).toEqual({
         stdout: "REJECTED",
@@ -527,11 +523,7 @@ describe("BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: `RESOLVED ${UNCOMPRESSED_SIZE}`,
       stderr: expect.any(String),

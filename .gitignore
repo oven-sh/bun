@@ -142,8 +142,6 @@ tsconfig.tsbuildinfo
 txt.js
 x64
 yarn.lock
-zig-cache
-zig-out
 test/node.js/upstream
 scripts/env.local
 *.generated.ts

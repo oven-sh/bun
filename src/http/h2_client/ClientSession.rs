@@ -634,7 +634,7 @@ impl ClientSession {
                 continue;
             }
             if s.client_ref()
-                .is_some_and(|c| c.signals.get(signals::Field::ReceivePaused))
+                .is_some_and(|c| c.signals.is_receive_paused())
             {
                 continue;
             }

@@ -269,7 +269,7 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     let Some(client) = stream.client else { return };
     if super::client_session::client_mut(client)
         .signals
-        .get(crate::signals::Field::ReceivePaused)
+        .is_receive_paused()
     {
         stream.read_paused = true;
         s.want_read(false);

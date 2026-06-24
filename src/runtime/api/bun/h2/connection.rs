@@ -740,62 +740,51 @@ impl Connection {
         // the sink owns) without limit. Declined streams are answered with
         // RST_STREAM(REFUSED_STREAM) after the block is decoded for HPACK-table sync (§4.3);
         // on_stream_open is never invoked for them.
-        if is_new && self.is_server && !sink.accept_stream(hdr.stream_id) {
+        let refused = is_new && self.is_server && !sink.accept_stream(hdr.stream_id);
+        let mut stream_closed = false;
+        if refused {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            self.header_block.clear();
-            self.header_block.extend_from_slice(&payload[off..end]);
-            self.header_end_stream = end_stream;
-            self.header_flags = hdr.flags;
-            self.header_target = hdr.stream_id;
-            self.header_push_parent = 0;
-            self.header_stream_closed = false;
-            self.header_refused = true;
-            if !end_headers {
-                self.continuation_stream = hdr.stream_id;
-                return false;
-            }
-            return self.finish_header_block(sink);
-        }
-        let cur_state = self
-            .streams
-            .entry(hdr.stream_id)
-            .or_insert_with(|| Stream::new(send_init, recv_init))
-            .state;
-        let ev = if end_stream {
-            stream::Event::RecvHeadersEndStream
         } else {
-            stream::Event::RecvHeaders
-        };
-        let mut stream_closed = false;
-        match stream::transition(cur_state, ev) {
-            Ok(next) => {
-                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                    s.state = next;
+            let cur_state = self
+                .streams
+                .entry(hdr.stream_id)
+                .or_insert_with(|| Stream::new(send_init, recv_init))
+                .state;
+            let ev = if end_stream {
+                stream::Event::RecvHeadersEndStream
+            } else {
+                stream::Event::RecvHeaders
+            };
+            match stream::transition(cur_state, ev) {
+                Ok(next) => {
+                    if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+                        s.state = next;
+                    }
+                }
+                Err(stream::TransitionError::Protocol) => {
+                    self.send_go_away(
+                        sink,
+                        ErrorCode::ProtocolError,
+                        b"HEADERS in invalid stream state",
+                    );
+                    return true;
+                }
+                Err(stream::TransitionError::StreamClosed) => {
+                    // §4.3: the field block must still be decompressed even though the frames are
+                    // discarded - skipping it would desync the connection-scoped HPACK table and
+                    // corrupt the next valid stream's headers. Buffer/decode the block, then
+                    // finish_header_block refuses it with RST_STREAM(STREAM_CLOSED).
+                    stream_closed = true;
                 }
             }
-            Err(stream::TransitionError::Protocol) => {
-                self.send_go_away(
-                    sink,
-                    ErrorCode::ProtocolError,
-                    b"HEADERS in invalid stream state",
-                );
-                return true;
+            if is_new {
+                if hdr.stream_id > self.last_stream_id {
+                    self.last_stream_id = hdr.stream_id;
+                }
+                sink.on_stream_open(hdr.stream_id);
             }
-            Err(stream::TransitionError::StreamClosed) => {
-                // §4.3: the field block must still be decompressed even though the frames are
-                // discarded - skipping it would desync the connection-scoped HPACK table and
-                // corrupt the next valid stream's headers. Buffer/decode the block, then
-                // finish_header_block refuses it with RST_STREAM(STREAM_CLOSED).
-                stream_closed = true;
-            }
-        }
-        if is_new {
-            if hdr.stream_id > self.last_stream_id {
-                self.last_stream_id = hdr.stream_id;
-            }
-            sink.on_stream_open(hdr.stream_id);
         }
 
         self.header_block.clear();
@@ -805,7 +794,7 @@ impl Connection {
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
         self.header_stream_closed = stream_closed;
-        self.header_refused = false;
+        self.header_refused = refused;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;

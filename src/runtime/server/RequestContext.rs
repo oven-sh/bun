@@ -2661,6 +2661,49 @@ where
     pub fn handle_resolve_stream(req: &mut Self) {
         stream_log!("handleResolveStream");
 
+        // endFromJS() can hit transport backpressure (common on QUIC right
+        // after the HEADERS frame) and park a pending_flush promise while
+        // onWritable drains the remaining bytes. Tearing the sink down now
+        // would discard those bytes and truncate the response, so wait for
+        // the flush to settle and re-enter. On abort, flushPromise() has
+        // already settled pending_flush, so this never waits on a dead
+        // socket.
+        if let Some(wrapper) = req.sink_mut() {
+            if !req.flags.aborted() && !wrapper.sink.aborted {
+                // Only defer when there is still a live response to drain the
+                // flush through: on_writable (which resolves the flush via
+                // flush_promise) is armed on `resp`. With no response the flush
+                // can never settle, so taking a ref and attaching here would
+                // leak the ref and hang the request; fall through to teardown.
+                if let (Some(flush), Some(resp)) = (wrapper.sink.pending_flush, req.resp) {
+                    stream_log!("handleResolveStream: waiting for pending flush");
+                    debug_assert!(req.server.is_some());
+                    // SAFETY: BACKREF
+                    let global_this = req.server().global_this();
+                    // The sink no longer registers its own drain callback;
+                    // RequestContext owns it (see on_writable_response_stream).
+                    // do_render_stream only arms it on the Pending branch, but
+                    // a fulfilled pull() reaches here directly, so arm it now
+                    // or the parked flush never drains. Re-arming with the same
+                    // handler is idempotent in uWS.
+                    resp.on_writable(
+                        |this, off, resp| Self::on_writable_response_stream(this, off, resp),
+                        std::ptr::from_mut::<Self>(req),
+                    );
+                    req.ref_();
+                    let cell = NativePromiseContext::create(global_this, req);
+                    // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                    jsc::JSPromise::opaque_ref(flush).to_js().then_with_value(
+                        global_this,
+                        cell,
+                        Self::ON_RESOLVE_STREAM,
+                        Self::ON_REJECT_STREAM,
+                    );
+                    return;
+                }
+            }
+        }
+
         let mut wrote_anything = false;
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
@@ -3022,30 +3065,10 @@ where
         this.do_render_blob();
     }
 
-    pub fn on_pipe(this: &mut Self, mut stream: WebCore::streams::Result) {
-        let stream_needs_deinit = matches!(
-            stream,
-            WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_)
-        );
+    pub fn on_pipe(this: &mut Self, stream: &WebCore::streams::Result) {
         let is_done = stream.is_done();
-        // NOTE: reshaped for borrowck — the defer reads `stream` through a
-        // raw ptr so the body below can keep borrowing it.
-        let stream_ptr: *mut WebCore::streams::Result = &raw mut stream;
         // Drop one ref only when the stream signals completion.
         let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
-        scopeguard::defer! {
-            if stream_needs_deinit {
-                // SAFETY: stream lives on the caller's stack frame past the guard.
-                match unsafe { &mut *stream_ptr } {
-                    WebCore::streams::Result::OwnedAndDone(owned)
-                    | WebCore::streams::Result::Owned(owned) => {
-                        // Vec::deinit → Drop in Rust.
-                        *owned = Vec::<u8>::default();
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
 
         if this.is_aborted_or_ended() {
             return;
@@ -3628,11 +3651,9 @@ where
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
-                    let js_err = err.to_js(global_this);
-                    js_err.ensure_still_alive();
                     // TODO: properly propagate exception upwards
                     let _ = bytes.on_data(WebCore::streams::Result::Err(
-                        WebCore::streams::StreamError::JSValue(js_err),
+                        err.to_stream_error(global_this),
                     ));
                     err.reset();
                 }
@@ -4088,7 +4109,7 @@ where
     fn on_pipe(&mut self, stream: WebCore::streams::Result) {
         // Forward to the inherent associated fn (not method-dispatched to avoid
         // recursing into this trait impl).
-        RequestContext::on_pipe(self, stream)
+        RequestContext::on_pipe(self, &stream)
     }
 }
 

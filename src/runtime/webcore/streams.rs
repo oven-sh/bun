@@ -319,48 +319,29 @@ pub enum StreamResult {
 }
 
 impl StreamResult {
-    // Intentionally not Drop — Result is bitwise-copied in the to_js() shutdown path, so
-    // ownership is contextual and a Drop impl would double-free.
-    // Named `release` (not `deinit`) per PORTING.md — `pub fn deinit` is forbidden as a public API.
     pub fn release(&mut self) {
         match self {
-            StreamResult::Owned(owned) => owned.clear_and_free(),
-            StreamResult::OwnedAndDone(owned_and_done) => owned_and_done.clear_and_free(),
-            StreamResult::Err(err) => {
-                if let StreamError::JSValue(v) = err {
-                    v.unprotect();
-                }
+            StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) => {
+                owned.clear_and_free()
             }
+            StreamResult::Err(StreamError::JSValue(s)) => s.deinit(),
             _ => {}
         }
     }
 }
 
-#[derive(Clone)]
 pub enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),
-    // TODO: use an explicit jsc.Strong.Optional here.
-    JSValue(JSValue),
-    WeakJSValue(JSValue),
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum WasStrong {
-    Strong,
-    Weak,
+    JSValue(jsc::strong::Optional),
 }
 
 impl StreamError {
-    pub fn to_js_weak(&self, global_object: &JSGlobalObject) -> (JSValue, WasStrong) {
+    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         match self {
-            StreamError::Error(err) => (err.to_js(global_object), WasStrong::Weak),
-            StreamError::JSValue(v) => (*v, WasStrong::Strong),
-            StreamError::WeakJSValue(v) => (*v, WasStrong::Weak),
-            StreamError::AbortReason(reason) => {
-                let value = reason.to_js(global_object);
-                (value, WasStrong::Weak)
-            }
+            StreamError::Error(err) => err.to_js(global_object),
+            StreamError::JSValue(v) => v.get().unwrap_or(JSValue::UNDEFINED),
+            StreamError::AbortReason(reason) => reason.to_js(global_object),
         }
     }
 }
@@ -817,14 +798,8 @@ impl StreamResult {
 
         match result {
             StreamResult::Err(err) => {
-                let value = 'brk: {
-                    let (js_err, was_strong) = err.to_js_weak(global_this);
-                    js_err.ensure_still_alive();
-                    if was_strong == WasStrong::Strong {
-                        js_err.unprotect();
-                    }
-                    break 'brk js_err;
-                };
+                let value = err.to_js(global_this);
+                value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut`
                 // deref. Fresh temp `&mut` is the sole borrow across this
@@ -909,10 +884,7 @@ impl StreamResult {
                 Ok(promise_js)
             }
             StreamResult::Err(err) => {
-                let (js_err, was_strong) = err.to_js_weak(global_this);
-                if was_strong == WasStrong::Strong {
-                    js_err.unprotect();
-                }
+                let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
                 Ok(JSPromise::rejected_promise(global_this, js_err).to_js())
             }
@@ -2507,7 +2479,7 @@ impl BufferAction {
         err: &StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js_weak(global).0))
+        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
     }
 
     pub fn resolve(

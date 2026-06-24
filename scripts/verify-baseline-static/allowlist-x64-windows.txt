@@ -640,6 +640,24 @@ bun::N_AVX3_ZEN4::VisibleUTF16WidthImpl                              [AVX, AVX2,
 
 
 # ----------------------------------------------------------------------------
+# Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
+# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (12 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::CountDelimsImpl                                         [AVX, AVX2]
+bun::N_AVX2::ParseMappingsImpl                                       [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX3::CountDelimsImpl                                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3::ParseMappingsImpl                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX10_2::CountDelimsImpl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX10_2::ParseMappingsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::CountDelimsImpl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_DL::ParseMappingsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::CountDelimsImpl                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_SPR::ParseMappingsImpl                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::CountDelimsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+
+# ----------------------------------------------------------------------------
 # BoringSSL AES.
 # (14 symbols)
 # ----------------------------------------------------------------------------
@@ -853,6 +871,23 @@ tanh_fma                    [AVX, FMA]
 tanhf_fma                   [AVX, FMA]
 wcslen                      [AVX, AVX2]
 wcsnlen                     [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# JSC LLInt. Data-in-.text false positive, NOT a gate.
+#
+# ENABLE(LLINT_EMBEDDED_OPCODE_ID) is on for x86_64 (WTF/wtf/PlatformEnable.h),
+# so every LLInt opcode handler inside llint_entry starts with a raw 4-byte
+# ".int <opcode_id>" (LowLevelInterpreter.cpp: EMBED_OPCODE_ID_IF_NEEDED). The
+# linear-sweep decoder desyncs on those ~900 embedded ints and, depending on
+# how preceding .text code aligns, can decode a stray VEX-encoded instruction
+# out of the garbage. offlineasm's x86 backend emits SSE2 cvttsd2si (not VEX),
+# and the Intel SDE Nehalem emulation step in this same job exercises the LLInt
+# and passes, so any single-digit hit here is decode noise. Ceiling [AVX] so a
+# multi-feature leak still fails.
+# (1 symbol)
+# ----------------------------------------------------------------------------
+llint_entry  [AVX]
 
 
 # ----------------------------------------------------------------------------

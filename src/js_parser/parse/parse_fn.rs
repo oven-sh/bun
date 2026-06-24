@@ -358,7 +358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // be called "arguments", in which case the real "arguments" is inaccessible.
         if !p.current_scope().members.contains_key(arguments_str) {
             func.arguments_ref = p
-                .declare_symbol_maybe_generated::<false>(
+                .declare_symbol(
                     js_ast::symbol::Kind::Arguments,
                     func.open_parens_loc,
                     arguments_str,

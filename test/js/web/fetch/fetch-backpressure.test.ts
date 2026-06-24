@@ -131,55 +131,63 @@ async function spawnClient(url: string, kind: Kind, script: string) {
   return { ...JSON.parse(stdout), stderr, exitCode };
 }
 
-const STALL_READER = /* js */ `
+const SETTLE_RSS = /* js */ `
+  async function settleRss() {
+    const before = process.memoryUsage.rss();
+    let last = before, stable = 0;
+    while (stable < 3) {
+      await Bun.sleep(20);
+      const now = process.memoryUsage.rss();
+      stable = Math.abs(now - last) < (1 << 20) ? stable + 1 : 0;
+      last = now;
+    }
+    return last - before;
+  }
+`;
+
+const STALL_READER =
+  SETTLE_RSS +
+  /* js */ `
   const res = await fetch(url, opts);
   const reader = res.body.getReader();
   const first = await reader.read();
-  const before = process.memoryUsage.rss();
-  await Bun.sleep(200);
-  const peak = process.memoryUsage.rss() - before;
+  const peak = await settleRss();
   let total = first.value.byteLength;
   for (let r; !(r = await reader.read()).done; ) total += r.value.byteLength;
   process.stdout.write(JSON.stringify({ peak, total }));
 `;
 
-const STALL_PIPE_TO = /* js */ `
+const STALL_PIPE_TO =
+  SETTLE_RSS +
+  /* js */ `
   const res = await fetch(url, opts);
-  let peak = 0, total = 0, before = 0, first = true;
+  let peak = 0, total = 0, first = true;
   await res.body.pipeTo(new WritableStream({
     async write(chunk) {
       total += chunk.byteLength;
-      if (first) {
-        first = false;
-        before = process.memoryUsage.rss();
-        await Bun.sleep(200);
-        peak = process.memoryUsage.rss() - before;
-      }
+      if (first) { first = false; peak = await settleRss(); }
     },
   }));
   process.stdout.write(JSON.stringify({ peak, total }));
 `;
 
-const STALL_FOR_AWAIT = /* js */ `
+const STALL_FOR_AWAIT =
+  SETTLE_RSS +
+  /* js */ `
   const res = await fetch(url, opts);
-  let peak = 0, total = 0, before = 0, first = true;
+  let peak = 0, total = 0, first = true;
   for await (const chunk of res.body) {
     total += chunk.byteLength;
-    if (first) {
-      first = false;
-      before = process.memoryUsage.rss();
-      await Bun.sleep(200);
-      peak = process.memoryUsage.rss() - before;
-    }
+    if (first) { first = false; peak = await settleRss(); }
   }
   process.stdout.write(JSON.stringify({ peak, total }));
 `;
 
-const STALL_NO_CONSUMER = /* js */ `
+const STALL_NO_CONSUMER =
+  SETTLE_RSS +
+  /* js */ `
   const response = await fetch(url, opts);
-  const before = process.memoryUsage.rss();
-  await Bun.sleep(200);
-  const peak = process.memoryUsage.rss() - before;
+  const peak = await settleRss();
   const total = (await response.arrayBuffer()).byteLength;
   process.stdout.write(JSON.stringify({ peak, total }));
 `;

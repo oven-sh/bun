@@ -279,11 +279,11 @@ it("start() without path/fd on an already-open writer does not crash", async () 
   expect(await Bun.file(path).text()).toBe("hello");
 });
 
-it("start() with arbitrary objects does not hit the invalid-fd debug assertion", async () => {
-  // Fuzzilli drove FileSink.start() with the Bun global and other objects that have
-  // no path/fd, routing Fd::INVALID into sys::dup → Error::with_fd. The placeholder fd
-  // should be treated as "no fd attached" rather than asserting in debug builds.
-  // Run in a subprocess so a debug assertion (which aborts the process) fails the test.
+it("start() with arbitrary objects does not crash", async () => {
+  // Fuzzilli hit the with_fd(Fd::INVALID) debug assertion via FileSink.start() under
+  // REPRL state that doesn't reproduce standalone; the #30953 guard now short-circuits
+  // these args before setup(). Keep as smoke coverage for start() with arbitrary
+  // objects; the direct with_fd regression guard is the unit test in src/sys/Error.rs.
   const path = join(tmpdirSync(), "filesink-start-args.txt");
   await using proc = Bun.spawn({
     cmd: [

@@ -217,17 +217,20 @@ for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind
 
     if (kind === "h1" || kind === "h1-chunked" || kind === "h1-tls") {
       test("server stops writing while the reader is stalled, then drains", async () => {
-        // Body must exceed kernel loopback send+recv buffers so res.write()
-        // returns false before the body is fully sent.
-        const big = 1024;
+        // Body must exceed kernel loopback send+recv autotuning; debian-13 CI
+        // has been observed soaking 64 MiB without the server seeing a stall.
+        const big = 4096;
         await using server = await serve(kind, big);
         const res = await fetch(server.url, fetchOpts(kind));
         const reader = res.body!.getReader();
         const first = await reader.read();
         let last = -1;
-        while (server.sent() !== last) {
-          last = server.sent();
+        let stable = 0;
+        while (stable < 2) {
           await Bun.sleep(10);
+          const now = server.sent();
+          stable = now === last ? stable + 1 : 0;
+          last = now;
         }
         expect(server.sent()).toBeLessThan(CHUNK * big);
         let total = first.value!.byteLength;

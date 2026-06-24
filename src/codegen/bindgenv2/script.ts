@@ -42,7 +42,6 @@ function cppSourcePath(type: NamedType): string {
   return `${codegenPath}/Generated${type.name}.cpp`;
 }
 
-
 function toZigNamespace(name: string): string {
   const result = name
     .replace(/([^A-Z_])([A-Z])/g, "$1_$2")

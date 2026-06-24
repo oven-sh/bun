@@ -610,17 +610,8 @@ extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
 
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {
-    // Flip m_state to Running BEFORE the entryEvaluated hook below: the hook
-    // re-enters JS and drains microtasks, which can run async work scheduled
-    // by the entry module (e.g. the inspector's NodeWorker.attachedToWorker
-    // callback in test-worker-heap-statistics.js) that posts to the parent.
-    // A fast parent receiving that message before this state flip would see
-    // isOnline() == false and reject getHeapStatistics() with
-    // ERR_WORKER_NOT_RUNNING.
-    worker->dispatchOnline(globalObject);
-
     // The entry module just finished its top-level evaluation. Flush the
-    // worker_threads hub's deferred cross-thread deliveries: node's
+    // worker_threads hub's deferred cross-thread deliveries first: node's
     // bootstrap runs the synchronous CJS main before any port delivery, so a
     // routed message must not observe "no listeners" while the entry that
     // registers them is still loading.
@@ -639,6 +630,8 @@ extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* glo
             CLEAR_IF_EXCEPTION(scope);
         }
     }
+
+    worker->dispatchOnline(globalObject);
 }
 
 extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* globalObject)

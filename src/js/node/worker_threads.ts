@@ -887,66 +887,71 @@ class Worker extends EventEmitter {
       filename = validateWorkerFilename(filename);
     }
 
-    // Neuter transferred FileHandles only AFTER name/filename validation so a
-    // validation throw above leaves them intact (matching node, which validates
-    // before processing the transferList). Past this point every throw goes
-    // through the catch below, which calls kRestoreJSTransferables.
-    options = packJSTransferables(options);
-
-    // Captured stdio: one control MessageChannel per requested stream; the parent keeps
-    // one end, the other rides in workerData and the worker rebinds its stdio to it.
-    const stdioForWorker: any = {};
-    const stdioTransfer: any[] = [];
-    if (options.stdin) {
-      const channel = new MessageChannel();
-      this.#stdinPort = channel.port1;
-      stdioForWorker.stdin = channel.port2;
-      stdioTransfer.push(channel.port2);
-    }
-    // worker.stdout/stderr are always Readables fed by the worker; without capture
-    // they auto-pipe to the parent's stdio so output still surfaces.
-    {
-      const channel = new MessageChannel();
-      this.#stdoutPort = channel.port1;
-      stdioForWorker.stdout = channel.port2;
-      stdioTransfer.push(channel.port2);
-      if (!options.stdout) this.#stdoutAutoPipe = true;
-    }
-    {
-      const channel = new MessageChannel();
-      this.#stderrPort = channel.port1;
-      stdioForWorker.stderr = channel.port2;
-      stdioTransfer.push(channel.port2);
-      if (!options.stderr) this.#stderrAutoPipe = true;
-    }
-    // Control channel for postMessageToThread; wrap workerData so the control and
-    // stdio ports ride along transferred.
-    const { portToMain, portToWorker } = messaging.createMessagingChannel();
-    const workerDataWrapper: any = { [BUN_WORKER_MESSAGING_KEY]: portToWorker, data: options.workerData };
-    // stdout/stderr always create channels (stdin only when requested), so the
-    // worker always receives a stdio control object.
-    workerDataWrapper[BUN_WORKER_STDIO_KEY] = stdioForWorker;
-    options = {
-      ...options,
-      // Pass the parent's already-normalized/validated name so the worker can
-      // use it verbatim (native cannot distinguish omitted from explicit "").
-      name: this.#name,
-      workerData: workerDataWrapper,
-      transferList: options.transferList
-        ? [...options.transferList, portToWorker, ...stdioTransfer]
-        : [portToWorker, ...stdioTransfer],
-    };
-
-    // env: SHARE_ENV becomes a native boolean flag so it passes native option
-    // validation and the native side skips the env snapshot and shares the store.
-    if ((options as any).env === SHARE_ENV) {
-      options = { ...options, env: undefined, shareEnv: true } as NodeWorkerOptions;
-    } else if ((options as any).shareEnv !== undefined) {
-      // shareEnv is internal — only `env: SHARE_ENV` may enable it. Strip a
-      // user-supplied value so it can't trigger env sharing on its own.
-      options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
-    }
+    let portToMain;
     try {
+      // Neuter transferred FileHandles only AFTER name/filename validation so a
+      // validation throw above leaves them intact (matching node, which validates
+      // before processing the transferList). Past this point every throw goes
+      // through the catch below, which calls kRestoreJSTransferables — and revokes
+      // the eval blob URL when packJSTransferables itself throws (duplicate
+      // transferList entry or a busy FileHandle's kTransfer()).
+      options = packJSTransferables(options);
+
+      // Captured stdio: one control MessageChannel per requested stream; the parent keeps
+      // one end, the other rides in workerData and the worker rebinds its stdio to it.
+      const stdioForWorker: any = {};
+      const stdioTransfer: any[] = [];
+      if (options.stdin) {
+        const channel = new MessageChannel();
+        this.#stdinPort = channel.port1;
+        stdioForWorker.stdin = channel.port2;
+        stdioTransfer.push(channel.port2);
+      }
+      // worker.stdout/stderr are always Readables fed by the worker; without capture
+      // they auto-pipe to the parent's stdio so output still surfaces.
+      {
+        const channel = new MessageChannel();
+        this.#stdoutPort = channel.port1;
+        stdioForWorker.stdout = channel.port2;
+        stdioTransfer.push(channel.port2);
+        if (!options.stdout) this.#stdoutAutoPipe = true;
+      }
+      {
+        const channel = new MessageChannel();
+        this.#stderrPort = channel.port1;
+        stdioForWorker.stderr = channel.port2;
+        stdioTransfer.push(channel.port2);
+        if (!options.stderr) this.#stderrAutoPipe = true;
+      }
+      // Control channel for postMessageToThread; wrap workerData so the control and
+      // stdio ports ride along transferred.
+      const channel = messaging.createMessagingChannel();
+      portToMain = channel.portToMain;
+      const portToWorker = channel.portToWorker;
+      const workerDataWrapper: any = { [BUN_WORKER_MESSAGING_KEY]: portToWorker, data: options.workerData };
+      // stdout/stderr always create channels (stdin only when requested), so the
+      // worker always receives a stdio control object.
+      workerDataWrapper[BUN_WORKER_STDIO_KEY] = stdioForWorker;
+      options = {
+        ...options,
+        // Pass the parent's already-normalized/validated name so the worker can
+        // use it verbatim (native cannot distinguish omitted from explicit "").
+        name: this.#name,
+        workerData: workerDataWrapper,
+        transferList: options.transferList
+          ? [...options.transferList, portToWorker, ...stdioTransfer]
+          : [portToWorker, ...stdioTransfer],
+      };
+
+      // env: SHARE_ENV becomes a native boolean flag so it passes native option
+      // validation and the native side skips the env snapshot and shares the store.
+      if ((options as any).env === SHARE_ENV) {
+        options = { ...options, env: undefined, shareEnv: true } as NodeWorkerOptions;
+      } else if ((options as any).shareEnv !== undefined) {
+        // shareEnv is internal — only `env: SHARE_ENV` may enable it. Strip a
+        // user-supplied value so it can't trigger env sharing on its own.
+        options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
+      }
       // node runs its worker bootstrap before user code; preload the
       // worker_threads module so process.stdin/stdout/stderr are always rebound,
       // even when the worker never requires it.

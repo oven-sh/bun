@@ -713,14 +713,13 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         }
     }
 
+    // No up-front isOnline() gate: a worker can post to its parent (e.g. from
+    // a microtask the entry module scheduled, drained inside
+    // wait_for_promise_with_termination's tick()) while m_state is still
+    // Pending. postTaskToWorkerGlobalScope queues into m_pendingTasks for
+    // Pending and returns false only for Closing/Closed, which the !accepted
+    // reject below handles.
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    if (!worker.isOnline()) {
-        promise->reject(vm,
-            Bun::createError(globalObject,
-                Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
-                "Worker instance not running"_s));
-        return JSValue::encode(promise);
-    }
 
     // Keep the promise alive across the round-trip. Heap-allocate the Strong
     // and pass only the raw pointer through the cross-thread lambdas so the
@@ -825,10 +824,6 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     auto& vm = JSC::getVM(globalObject);
     auto& worker = castedThis->wrapped();
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    if (!worker.isOnline()) {
-        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
-        return JSValue::encode(promise);
-    }
     auto* promiseHandle = new Strong<JSPromise>(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
@@ -856,7 +851,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     auto* promiseHandle = new Strong<JSPromise>(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    bool accepted = worker.isOnline() && worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
+    bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
         WTF::String result;
         if (Bun::isCPUProfilerRunning())
             Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
@@ -882,10 +877,6 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
     auto& vm = JSC::getVM(globalObject);
     auto& worker = castedThis->wrapped();
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    if (!worker.isOnline()) {
-        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
-        return JSValue::encode(promise);
-    }
     auto* promiseHandle = new Strong<JSPromise>(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext&) {

@@ -38,6 +38,7 @@ const ErrorCode = {
   REFUSED_STREAM: 0x7,
   CANCEL: 0x8,
   COMPRESSION_ERROR: 0x9,
+  ENHANCE_YOUR_CALM: 0xb,
 } as const;
 
 type Frame = { length: number; type: number; flags: number; streamId: number; payload: Buffer };
@@ -484,7 +485,7 @@ describe("stream concurrency (§5.1.2)", () => {
       c.send(buf);
       // The server answers the flood with GOAWAY(ENHANCE_YOUR_CALM) and closes.
       const goaway = await c.waitForGoaway(3500);
-      expect(goawayErrorCode(goaway)).toBe(0xb /* ENHANCE_YOUR_CALM */);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
       await c.waitClosed(3500);
       expect(c.closed).toBe(true);
     } finally {

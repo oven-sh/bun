@@ -174,7 +174,8 @@ impl<'a> Renderer<'a> {
 }
 
 /// Detail data for span events (links, images, wikilinks).
-/// `href`/`title` borrow from the source text.
+/// `href`/`title` are valid only for the duration of `enter_span`;
+/// renderers that retain them past that call must copy.
 #[derive(Copy, Clone)]
 pub struct SpanDetail<'a> {
     pub href: &'a [u8],

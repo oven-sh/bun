@@ -807,6 +807,35 @@ const CHUNKED_ENCODED_HEADER: picohttp::Header =
 const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"keep-alive");
 const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ConnectionDirective {
+    None,
+    KeepAlive,
+    Close,
+}
+
+fn connection_directive(value: &[u8]) -> ConnectionDirective {
+    let mut saw_keep_alive = false;
+
+    for token in value.split(|byte| *byte == b',') {
+        let token = bun_core::strings::trim(token, b" \t");
+
+        if bun_core::strings::eql_case_insensitive_ascii_check_length(token, b"close") {
+            return ConnectionDirective::Close;
+        }
+
+        if bun_core::strings::eql_case_insensitive_ascii_check_length(token, b"keep-alive") {
+            saw_keep_alive = true;
+        }
+    }
+
+    if saw_keep_alive {
+        ConnectionDirective::KeepAlive
+    } else {
+        ConnectionDirective::None
+    }
+}
+
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
 const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
 const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
@@ -2148,16 +2177,14 @@ impl<'a> HTTPClient<'a> {
                     if will_append {
                         override_connection_header = true;
                         let connection_value = self.header_str(header_values[i]);
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"close",
-                        ) {
-                            self.flags.disable_keepalive = true;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            connection_value,
-                            b"keep-alive",
-                        ) {
-                            self.flags.disable_keepalive = false;
+                        match connection_directive(connection_value) {
+                            ConnectionDirective::Close => {
+                                self.flags.disable_keepalive = true;
+                            }
+                            ConnectionDirective::KeepAlive if !self.flags.disable_keepalive => {
+                                self.flags.disable_keepalive = false;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -4682,17 +4709,16 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Connection") => {
                     if response.status_code >= 200 && response.status_code <= 299 {
-                        // HTTP headers are case-insensitive (RFC 7230)
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"close",
-                        ) {
-                            self.state.flags.allow_keepalive = false;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"keep-alive",
-                        ) {
-                            self.state.flags.allow_keepalive = true;
+                        // Connection is a comma-separated token list; `close`
+                        // must win over `keep-alive` if both are present.
+                        match connection_directive(header.value()) {
+                            ConnectionDirective::Close => {
+                                self.state.flags.allow_keepalive = false;
+                            }
+                            ConnectionDirective::KeepAlive if self.state.flags.allow_keepalive => {
+                                self.state.flags.allow_keepalive = true;
+                            }
+                            _ => {}
                         }
                     }
                 }

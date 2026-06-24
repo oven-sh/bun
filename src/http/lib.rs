@@ -3799,6 +3799,7 @@ impl<'a> HTTPClient<'a> {
     fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if self.state.flags.receive_paused
             || self.proxy_tunnel.is_some()
+            || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
             || !self.signals.is_receive_paused()
             || socket.is_closed_or_has_error()
         {

@@ -713,6 +713,7 @@ impl FetchTasklet {
                 if self.result.has_more {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
                     bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                    self.drop_backpressure_if_unobserved(&readable, &bytes);
                 } else {
                     self.clear_stream_handlers();
                     let prev = core::mem::take(&mut self.readable_stream_ref);
@@ -740,6 +741,7 @@ impl FetchTasklet {
 
                     if self.result.has_more {
                         bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                        self.drop_backpressure_if_unobserved(&readable, &bytes);
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
@@ -1527,6 +1529,10 @@ impl FetchTasklet {
             return DrainResult::Aborted;
         }
 
+        // A body consumer is attaching; keep the process alive until the
+        // body finishes (undone in `on_progress_update` when `is_done`).
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
+
         if let Some(http_) = this.http.as_mut() {
             http_.enable_response_body_streaming();
 
@@ -1599,6 +1605,7 @@ impl FetchTasklet {
 
     fn on_start_buffering_callback(ctx: *mut c_void) {
         let this = Self::from_ctx(ctx);
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
         if this
             .signal_store
             .set_receive_mode_terminal(BodyReceiveMode::BufferAll)
@@ -1611,6 +1618,31 @@ impl FetchTasklet {
         if let Some(http_) = self.http.as_ref() {
             http::http_thread().schedule_receive_resume(http_.async_http_id);
         }
+    }
+
+    /// After a body chunk has been delivered to the ByteStream with
+    /// `has_more == true`, flip to `BufferAll` if the stream has no lock,
+    /// no pipe, and no buffer action. An unlocked stream has no reader, so
+    /// there is nothing to apply backpressure against; let the body
+    /// complete so this tasklet (and the source it roots) can be freed.
+    fn drop_backpressure_if_unobserved(
+        &self,
+        readable: &ReadableStream,
+        bytes: &crate::webcore::ByteStream,
+    ) {
+        if self.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
+            return;
+        }
+        if bytes.pipe.get().ctx.is_some()
+            || bytes.buffer_action.get().is_some()
+            || bytes.pending.get().state == crate::webcore::streams::PendingState::Pending
+            || readable.is_locked(&self.global_this)
+        {
+            return;
+        }
+        self.signal_store
+            .set_receive_mode_terminal(BodyReceiveMode::BufferAll);
+        self.schedule_receive_resume();
     }
 
     fn to_body_value(&mut self) -> BodyValue {
@@ -1722,6 +1754,13 @@ impl FetchTasklet {
     pub(crate) fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
         let response = bun_core::heap::into_raw(Box::new(self.to_response()));
+        // The fetch() promise is about to resolve; from here the paused
+        // transport should not by itself keep the event loop alive. The body
+        // consumer hooks (`on_start_streaming_http_response_body_callback`,
+        // `on_start_buffering_callback`) re-ref if the caller reads the body.
+        if self.is_waiting_body {
+            self.poll_ref.unref(bun_io::js_vm_ctx());
+        }
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
         // SAFETY: `response` is freshly allocated above; ownership transfers to JSC.
@@ -2402,7 +2441,10 @@ impl FetchTasklet {
             //
             // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
             if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
-                // Scenario 1 or 3.
+                // Scenario 1 or 3. A paused transport in Scenario 1 is
+                // unstuck by `drop_backpressure_if_unobserved` once the next
+                // already-scheduled chunk reaches `on_body_received` and
+                // finds the stream unlocked.
                 return;
             }
 

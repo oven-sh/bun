@@ -21,6 +21,11 @@ async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: ()
 
   if (kind === "h2") {
     const srv = createSecureServer({ ...tls, allowHTTP1: false });
+    const sockets = new Set<import("node:net").Socket>();
+    srv.on("connection", s => {
+      sockets.add(s);
+      s.on("close", () => sockets.delete(s));
+    });
     srv.on("stream", stream => {
       stream.respond({ ":status": 200, "content-type": "application/octet-stream" });
       stream.on("error", () => {});
@@ -41,7 +46,10 @@ async function serve(kind: Kind, count = COUNT): Promise<{ url: string; sent: ()
     return {
       url: `https://localhost:${port}/`,
       sent: () => sent,
-      [Symbol.asyncDispose]: async () => void (await new Promise(r => srv.close(r))),
+      [Symbol.asyncDispose]: async () => {
+        for (const s of sockets) s.destroy();
+        await new Promise(r => srv.close(r));
+      },
     };
   }
 
@@ -295,15 +303,21 @@ describe.concurrent("fetch() receive backpressure — buffered consumers are not
 });
 
 describe.concurrent("fetch() receive backpressure — streaming consumer shapes", () => {
-  test("reader.cancel() resumes the socket for keep-alive reuse", async () => {
+  test("reader.cancel() resumes the socket so the abandoned body drains", async () => {
     await using server = await serve("h1");
     const r1 = await fetch(server.url, { keepalive: true });
     const reader = r1.body!.getReader();
     await reader.read();
     await Bun.sleep(50);
     await reader.cancel();
+    // The cancelled body must drain before the connection is poolable;
+    // poll server.sent() instead of asserting a connection count.
+    while (server.sent() < TOTAL) await Bun.sleep(5);
     const buf = await (await fetch(server.url, { keepalive: true })).arrayBuffer();
-    expect(buf.byteLength).toBe(TOTAL);
+    expect({ byteLength: buf.byteLength, sent: server.sent() }).toEqual({
+      byteLength: TOTAL,
+      sent: 2 * TOTAL,
+    });
   });
 
   test("res.body.tee() both branches drain", async () => {
@@ -323,11 +337,11 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
     await using server = await serve("h1");
     for (let i = 0; i < 2; i++) {
       const reader = (await fetch(server.url, { keepalive: true })).body!.getReader();
-      await reader.read();
+      const first = await reader.read();
       await Bun.sleep(20);
-      let total = 0;
+      let total = first.value!.byteLength;
       for (let r; !(r = await reader.read()).done; ) total += r.value.byteLength;
-      expect(total).toBeGreaterThan(0);
+      expect(total).toBe(TOTAL);
     }
   });
 });

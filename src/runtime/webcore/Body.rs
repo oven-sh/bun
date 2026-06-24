@@ -2494,6 +2494,13 @@ impl<'a> ValueBufferer<'a> {
         };
 
         if locked.on_receive_value.is_some() || locked.task.is_some() {
+            // ValueBufferer wants the whole body; tell the producer to never
+            // pause for JS backpressure before the stream is materialised.
+            if let (Some(on_start_buffering), Some(task)) =
+                (locked.on_start_buffering.take(), locked.task)
+            {
+                on_start_buffering(task);
+            }
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             let readable = value
                 .to_readable_stream(self.global)

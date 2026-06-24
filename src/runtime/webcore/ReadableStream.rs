@@ -654,6 +654,9 @@ pub struct NewSource<C: SourceContext> {
     pub cancel_ctx: Cell<Option<*mut c_void>>,
     pub drain_handler: Cell<Option<fn(Option<*mut c_void>)>>,
     pub drain_ctx: Cell<Option<*mut c_void>>,
+    // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
+    // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
+    // projection without propagating a lifetime parameter into FFI codegen.
     pub global_this: Option<bun_ptr::BackRef<JSGlobalObject>>,
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is

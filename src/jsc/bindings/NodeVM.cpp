@@ -2061,13 +2061,13 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
 
             if (auto* contextExtensionsObject = asObject(contextExtensionsValue)) {
                 if (!isArray(globalObject, contextExtensionsObject))
-                    return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+                    return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
 
                 // Validate that all items in the array are objects
                 auto* contextExtensionsArray = dynamicDowncast<JSArray>(contextExtensionsValue);
                 if (!contextExtensionsArray) [[unlikely]] {
                     // isArray() accepts Proxy->Array, but jsDynamicCast returns null.
-                    return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+                    return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
                 }
                 unsigned length = contextExtensionsArray->length();
                 for (unsigned i = 0; i < length; i++) {
@@ -2077,7 +2077,7 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
                         return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions[0]"_s, "object"_s, extension);
                 }
             } else {
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
             }
 
             this->contextExtensions = contextExtensionsValue;

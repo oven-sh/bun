@@ -365,7 +365,11 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
 
     bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!isArray) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+    if (!isArray) {
+        auto nameString = name.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, nameString, "Array"_s, value);
+    }
 
     auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
     RETURN_IF_EXCEPTION(scope, {});
@@ -386,7 +390,7 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
 
     bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!isArray) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+    if (!isArray) return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, name, "Array"_s, value);
 
     auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
     RETURN_IF_EXCEPTION(scope, {});

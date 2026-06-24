@@ -2796,9 +2796,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globa
     auto offsetVal = callFrame->argument(1);
     auto byteLengthVal = callFrame->argument(2);
 
-    ssize_t offset;
-    Bun::V::validateInteger(scope, globalObject, offsetVal, "offset"_s, jsUndefined(), jsUndefined(), &offset);
-    RETURN_IF_EXCEPTION(scope, {});
+    // Mirrors Node's read-path validation (lib/internal/buffer.js): validateNumber
+    // on the offset, then boundsError(). A non-integer offset (NaN, 1.01) reports
+    // "an integer", but a finite-floor value like Infinity or a negative integer
+    // reports the ">= 0 and <= N" range, matching boundsError's MathFloor check.
+    if (!offsetVal.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "offset"_s, "number"_s, offsetVal);
+    double offset = offsetVal.asNumber();
 
     if (!bufVal.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buf"_s, "Buffer"_s, bufVal);
     auto* buf = dynamicDowncast<JSC::JSArrayBufferView>(bufVal.asCell());
@@ -2806,12 +2809,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globa
     size_t byteLength = byteLengthVal.asNumber();
     ssize_t type = ((ssize_t)buf->length()) - byteLength;
 
-    if (!(offset >= 0 && offset <= type)) {
-        if (std::floor(offset) != offset) {
-            Bun::V::validateNumber(scope, globalObject, offsetVal, jsUndefined(), jsUndefined(), jsUndefined());
-            RETURN_IF_EXCEPTION(scope, {});
-            return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, "an integer"_s, offsetVal);
-        }
+    // A non-integer offset (NaN, 1.01) is "an integer" even when numerically
+    // within bounds — the caller only reaches here because buf[offset] was
+    // undefined, which for a fractional index happens regardless of bounds.
+    if (std::floor(offset) != offset) {
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, "an integer"_s, offsetVal);
+    }
+    if (!(offset >= 0 && offset <= (double)type)) {
         if (type < 0) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, globalObject, ""_s);
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, makeString(">= 0 and <= "_s, type), offsetVal);
     }

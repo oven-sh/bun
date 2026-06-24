@@ -1,5 +1,5 @@
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_core::{Error as BunError, err};
@@ -53,6 +53,17 @@ bun_output::declare_scope!(FetchTasklet, visible);
 
 pub(crate) type ResumableSink = ResumableFetchSink;
 
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum BodyReceiveMode {
+    /// Pause the transport after each delivered body chunk until JS pulls.
+    AutoPause = 0,
+    /// `.arrayBuffer()`/`.text()`/etc attached — never pause.
+    BufferAll = 1,
+    /// Cancelled or abandoned — never pause, callback discards bytes.
+    Ignore = 2,
+}
+
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
@@ -82,7 +93,6 @@ pub struct FetchTasklet {
     /// native response ref if we still need it when JS is discarted
     // Response is intrusively refcounted; modeled as a raw ptr.
     pub native_response: Option<*mut Response>,
-    pub ignore_data: bool,
     /// stream strong ref if any is available
     pub readable_stream_ref: ReadableStreamStrong,
     pub request_headers: Headers,
@@ -106,7 +116,7 @@ pub struct FetchTasklet {
     pub signals: Signals,
     pub signal_store: http::signals::Store,
     pub has_schedule_callback: AtomicBool,
-    pub is_buffering_body: AtomicBool,
+    pub body_receive_mode: AtomicU8,
 
     // must be stored because AbortSignal stores reason weakly
     pub abort_reason: StrongOptional,
@@ -1581,7 +1591,7 @@ impl FetchTasklet {
 
     fn on_stream_cancelled_callback(ctx: Option<*mut c_void>) {
         let this = Self::from_ctx(ctx.expect("ctx"));
-        if this.ignore_data {
+        if this.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
         this.ignore_remaining_response_body();
@@ -1593,8 +1603,22 @@ impl FetchTasklet {
 
     fn on_start_buffering_callback(ctx: *mut c_void) {
         let this = Self::from_ctx(ctx);
-        this.is_buffering_body.store(true, Ordering::Release);
+        this.set_body_receive_mode(BodyReceiveMode::BufferAll);
         this.resume_receive_if_paused();
+    }
+
+    #[inline]
+    fn body_receive_mode(&self) -> BodyReceiveMode {
+        match self.body_receive_mode.load(Ordering::Acquire) {
+            1 => BodyReceiveMode::BufferAll,
+            2 => BodyReceiveMode::Ignore,
+            _ => BodyReceiveMode::AutoPause,
+        }
+    }
+
+    #[inline]
+    fn set_body_receive_mode(&self, mode: BodyReceiveMode) {
+        self.body_receive_mode.store(mode as u8, Ordering::Release);
     }
 
     fn resume_receive_if_paused(&self) {
@@ -1693,11 +1717,17 @@ impl FetchTasklet {
         }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
+        self.set_body_receive_mode(BodyReceiveMode::Ignore);
         if let Some(http_) = self.http.as_mut() {
             http_.enable_response_body_streaming();
+            // Unconditional: a concurrent callback may have loaded
+            // `AutoPause` before the store above and set `receive_paused`
+            // after our swap would have observed it.
+            self.signal_store
+                .receive_paused
+                .store(false, Ordering::Release);
+            http::http_thread().schedule_receive_resume(http_.async_http_id);
         }
-        self.is_buffering_body.store(true, Ordering::Release);
-        self.resume_receive_if_paused();
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
@@ -1710,8 +1740,6 @@ impl FetchTasklet {
             // SAFETY: `response` is the +1 ref held in `native_response`.
             Response::unref(response);
         }
-
-        self.ignore_data = true;
     }
 
     pub(crate) fn on_resolve(&mut self) -> JSValue {
@@ -1758,7 +1786,6 @@ impl FetchTasklet {
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
             native_response: None,
-            ignore_data: false,
             readable_stream_ref: ReadableStreamStrong::default(),
             request_headers: fetch_options.headers,
             promise,
@@ -1770,7 +1797,7 @@ impl FetchTasklet {
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
-            is_buffering_body: AtomicBool::new(false),
+            body_receive_mode: AtomicU8::new(BodyReceiveMode::AutoPause as u8),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
@@ -2227,9 +2254,9 @@ impl FetchTasklet {
 
         bun_output::scoped_log!(
             FetchTasklet,
-            "callback success={} ignore_data={} has_more={} bytes={}",
+            "callback success={} receive_mode={:?} has_more={} bytes={}",
             result.is_success(),
-            task_ref.ignore_data,
+            task_ref.body_receive_mode(),
             result.has_more,
             result.body.as_ref().map(|b| b.list.len()).unwrap_or(0)
         );
@@ -2281,7 +2308,8 @@ impl FetchTasklet {
         // above before the lifetime-erasing assignment; the bytes are already in place, so
         // no copy is needed and the `reset()` calls below operate on the right allocation.
 
-        if task_ref.ignore_data {
+        let receive_mode = task_ref.body_receive_mode();
+        if receive_mode == BodyReceiveMode::Ignore {
             task_ref.response_buffer.reset();
 
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
@@ -2304,8 +2332,8 @@ impl FetchTasklet {
                         .write(task_ref.response_buffer.list.as_slice()),
                 );
                 if task_ref.result.has_more
+                    && receive_mode == BodyReceiveMode::AutoPause
                     && !task_ref.scheduled_response_buffer.list.is_empty()
-                    && !task_ref.is_buffering_body.load(Ordering::Relaxed)
                 {
                     task_ref
                         .signal_store

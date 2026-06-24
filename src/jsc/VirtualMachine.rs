@@ -1006,7 +1006,13 @@ impl VirtualMachine {
 
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
-        if self.is_shutting_down {
+        // A `--watch` `process.exit()` ends the current run: callbacks queued
+        // before it (timers, cron, socket/stat-watcher) must not resume while
+        // the watcher waits for the next change, on any platform. On Windows JS
+        // timers are driven by libuv inside `tick_possibly_forever`'s `uv_run`,
+        // so the termination exception alone (cleared so the loop can keep
+        // ticking) would not stop them; this kill-switch does.
+        if self.is_shutting_down || self.watch_exit_requested {
             return crate::ScriptExecutionStatus::Stopped;
         }
 

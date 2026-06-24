@@ -63,16 +63,6 @@ useSystemBun = inlineEnv.get("USE_SYSTEM_BUN") ?? useSystemBun;
 // Get the executable name (argv0)
 const argv0 = basename(tokens[0], extname(tokens[0]));
 
-// Check if it's zig or zig.exe
-if (argv0 === "zig") {
-  // Filter out flags (starting with -) to get positional arguments
-  const positionalArgs = tokens.slice(1).filter(arg => !arg.startsWith("-"));
-
-  // Check if the positional args contain "build" followed by "obj"
-  if (positionalArgs.length >= 2 && positionalArgs[0] === "build" && positionalArgs[1] === "obj") {
-    denyWithReason("error: Use `bun bd` to build Bun and wait patiently");
-  }
-}
 
 // Disallow direct `rustfmt`: it doesn't read the workspace edition from
 // Cargo.toml the way `cargo fmt` does, so its output can disagree with CI's

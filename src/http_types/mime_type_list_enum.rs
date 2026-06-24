@@ -1,5 +1,4 @@
-//! Generated from `mime_type_list.txt` (hand-rolled stand-in until
-//! `src/codegen/generate-compact-string-table.ts` learns `.rs` output).
+//! Hand-maintained; derived from `mime_type_list.txt`.
 //!
 //! PERF: a packed `enum(u14)` (length-group:7 + position:7)
 //! indexing into one contiguous byte blob would be 2 bytes/entry. This stand-in

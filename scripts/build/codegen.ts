@@ -115,7 +115,7 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   // ship with the build host's platform baked in.
   //
   // restat = 1 because most scripts use writeIfNotChanged(). Scripts that
-  // don't (generate-jssink, ci_info) always write → restat is a no-op for
+  // don't (generate-jssink) always write → restat is a no-op for
   // them, no harm.
   const env = hostWin
     ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `

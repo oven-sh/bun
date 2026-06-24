@@ -19,10 +19,9 @@ mod loader_disc {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
-// hand-rolled stand-in (`&'static str` newtype) until
-// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See the
-// note at the top of `mime_type_list_enum.rs`.
+// `Table` (= `mime_type_list_enum::MimeTypeList`). Hand-maintained `&'static
+// str` newtype derived from `mime_type_list.txt`; see the note at the top of
+// `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;

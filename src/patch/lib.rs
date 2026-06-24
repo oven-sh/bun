@@ -466,9 +466,20 @@ fn open_beneath(
     }
 
     // The Windows NtCreateFile path drops FILE_SYNCHRONOUS_IO_NONALERT when
-    // O::NOFOLLOW is set, which makes subsequent synchronous WriteFile fail;
-    // rely on `verify_fd_beneath_patch_dir` for containment there instead.
+    // O::NOFOLLOW is set, which makes subsequent synchronous WriteFile fail.
+    // Reject a final-component symlink via lstatat so `O_CREAT` below cannot
+    // create the link target, then rely on `verify_fd_beneath_patch_dir` for
+    // the remaining containment on Windows.
     let nofollow = if cfg!(windows) { 0 } else { sys::O::NOFOLLOW };
+    if cfg!(windows)
+        && flags & sys::O::CREAT != 0
+        && let sys::Result::Ok(st) = sys::lstatat(patch_dir, path)
+        && sys::S::ISLNK(st.st_mode as u32)
+    {
+        return sys::Result::Err(
+            sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).with_path(path.as_bytes()),
+        );
+    }
     let fd = sys::openat(patch_dir, path, flags | nofollow, mode)?;
     if let Err(e) = verify_fd_beneath_patch_dir(patch_dir, fd, state) {
         fd.close();
@@ -491,7 +502,7 @@ fn verify_parent_beneath_patch_dir(
 ) -> sys::Result<()> {
     let mut dirname = paths::dirname_simple(path);
     loop {
-        if dirname.is_empty() {
+        if dirname.is_empty() || dirname == b"." {
             return sys::Result::Ok(());
         }
         let parent_z = ZBox::from_vec_with_nul(dirname.to_vec());
@@ -514,7 +525,7 @@ fn verify_parent_beneath_patch_dir(
 fn verify_fd_beneath_patch_dir(patch_dir: Fd, fd: Fd, state: &mut ApplyState) -> sys::Result<()> {
     let dir_path = state.patch_dir_abs_path(patch_dir)?.as_bytes();
     let mut dir_len = dir_path.len();
-    while dir_len > 0 && paths::is_sep_any(dir_path[dir_len - 1]) {
+    while dir_len > 0 && paths::is_sep_native(dir_path[dir_len - 1]) {
         dir_len -= 1;
     }
     let dir_path = &dir_path[..dir_len];
@@ -523,7 +534,7 @@ fn verify_fd_beneath_patch_dir(patch_dir: Fd, fd: Fd, state: &mut ApplyState) ->
     let fd_path = sys::get_fd_path(fd, &mut buf)?;
 
     if fd_path.len() > dir_path.len()
-        && paths::is_sep_any(fd_path[dir_path.len()])
+        && paths::is_sep_native(fd_path[dir_path.len()])
         && strings::starts_with(fd_path, dir_path)
     {
         return sys::Result::Ok(());

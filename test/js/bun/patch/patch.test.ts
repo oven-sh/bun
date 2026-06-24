@@ -854,6 +854,22 @@ describe("apply", () => {
       await apply(patch, pkgDir);
       expect(await fs.readFile(join(pkgDir, "sub", "new.txt"), "utf8")).toBe("hello\n");
     });
+
+    test("still applies paths with a ./ prefix", async () => {
+      const { pkgDir } = setup();
+
+      const patch =
+        "diff --git a/./real.txt b/./real.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/./real.txt\n" +
+        "+++ b/./real.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+OK\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "real.txt"), "utf8")).toBe("OK\n");
+    });
   });
 });
 

@@ -427,12 +427,9 @@ pub(crate) fn load(
         ));
     }
 
-    // Per-package `dependencies`/`resolutions` and per-tree `dependencies`
-    // are `ExternalSlice` (off,len) pairs memcpy'd verbatim from disk; a
-    // crafted `off` past the backing buffer would otherwise reach
-    // `ExternalSlice::get` and panic. `tree.dependency_id` likewise indexes
-    // the dependencies buffer directly. Reject all of these here so the
-    // installer can warn + re-resolve.
+    // Per-package and per-tree `ExternalSlice` (off,len) pairs and tree
+    // indices are memcpy'd verbatim from disk; reject out-of-range ones so
+    // the installer warns + re-resolves instead of panicking at use.
     {
         let deps_len = lockfile.buffers.dependencies.len();
         let res_len = lockfile.buffers.resolutions.len();

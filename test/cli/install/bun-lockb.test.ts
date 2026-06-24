@@ -177,12 +177,9 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
 });
 
 describe("rejects crafted ExternalSlice offsets and tree indices in bun.lockb instead of panicking", () => {
-  // These offsets/indices are memcpy'd verbatim from disk and used to slice
-  // into / index the lockfile's backing buffers. A crafted value past the
-  // buffer end previously panicked in release builds (slice index order /
-  // bounds check) when a victim ran `bun install` in a repo carrying a
-  // tampered bun.lockb. Each case below must be rejected at load time so the
-  // installer warns + re-resolves rather than aborting.
+  // Disk-loaded (off,len) slices and tree indices past their backing buffer
+  // must be rejected at load time so a tampered bun.lockb warns + re-resolves
+  // instead of panicking on the slice index.
   async function lockbWithPkgs() {
     const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
     // Local folder deps keep this hermetic and produce a second Tree node

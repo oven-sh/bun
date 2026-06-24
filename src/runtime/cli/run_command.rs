@@ -2965,7 +2965,10 @@ impl RunCommand {
             // collide with the bundled bootstrap's top-level wrapper vars
             // (`__commonJS`/`__require` in debug, minifier-chosen short names
             // in release); the bootstrap itself ends in `export default …` so
-            // it must remain at the module's top level.
+            // it must remain at the module's top level. The block also means a
+            // static `import`/`export` in the user script is a syntax error
+            // (matching `node -i -e`, whose eval is CJS) — use
+            // `await import()` / `require()` instead.
             script.extend_from_slice(b"{\n");
             script.extend_from_slice(&user);
             script.extend_from_slice(b"\n};\n");

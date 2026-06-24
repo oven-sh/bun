@@ -794,6 +794,28 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  it("Reflect.construct returns an object when the implementation does not", () => {
+    const noImpl = jest.fn();
+    expect(typeof Reflect.construct(noImpl, [])).toBe("object");
+    expect(typeof new noImpl()).toBe("object");
+
+    const primitiveImpl = jest.fn(() => 42);
+    expect(typeof Reflect.construct(primitiveImpl, [])).toBe("object");
+    expect(typeof new primitiveImpl()).toBe("object");
+
+    const returnsPrimitive = jest.fn().mockReturnValue(42);
+    expect(typeof Reflect.construct(returnsPrimitive, [])).toBe("object");
+    expect(typeof new returnsPrimitive()).toBe("object");
+
+    const sentinel = {};
+    const objectImpl = jest.fn(() => sentinel);
+    expect(Reflect.construct(objectImpl, [])).toBe(sentinel);
+    expect(new objectImpl()).toBe(sentinel);
+
+    expect(noImpl()).toBeUndefined();
+    expect(primitiveImpl()).toBe(42);
+  });
 });
 
 describe("spyOn", () => {

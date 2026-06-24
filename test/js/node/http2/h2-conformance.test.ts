@@ -420,8 +420,7 @@ describe("frame size limit (checklist §4.2)", () => {
 
   // §4.2: the max-frame-size check applies to every frame type and is enforced from the
   // header alone, before the payload is buffered. A 9-byte header declaring a ~16 MiB
-  // payload must be rejected immediately; otherwise a peer could pin up to 16 MiB of
-  // reassembly buffer per connection while dribbling the body.
+  // payload must be rejected immediately.
   function oversizedHeader(type: number, streamId: number, length: number): Buffer {
     const b = Buffer.alloc(9);
     b.writeUIntBE(length, 0, 3);

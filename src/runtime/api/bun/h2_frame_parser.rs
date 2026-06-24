@@ -5135,9 +5135,8 @@ impl H2FrameParser {
         add: usize,
     ) -> JsResult<usize> {
         // RFC 9113 §4.2: refuse any frame whose declared length exceeds
-        // SETTINGS_MAX_FRAME_SIZE before handle_incomming_payload buffers it.
-        // Bounds every handler (SETTINGS/ALTSVC/ORIGIN/unknown included), so a
-        // 9-byte header cannot pin up to 16 MiB of read_buffer per connection.
+        // SETTINGS_MAX_FRAME_SIZE before handle_incomming_payload can buffer it,
+        // so a 9-byte header cannot pin ~16 MiB of read_buffer per connection.
         if header.length > self.local_settings.get().max_frame_size {
             self.send_go_away(
                 header.stream_identifier,

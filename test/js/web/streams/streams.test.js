@@ -345,7 +345,11 @@ describe("WritableStream", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "speciesError", exitCode: 0 });
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "speciesError",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
     });
 
     // Resolve(x) does Get(x, "then"); a null-proto Promise has no .then, so
@@ -1442,7 +1446,10 @@ it("wrapping an async stream callback result observes Promise.prototype.then (We
        Promise.prototype.then = function (...args) { counter++; return _then.apply(this, args); };
        new ReadableStream({ async start() {} });
        new WritableStream({ async start() {} });
-       await Bun.sleep(0);
+       // The PromiseResolveThenableJob runs as a microtask; drain enough
+       // rounds for both assimilations to complete. await on a non-thenable
+       // doesn't reach the patched .then.
+       for (let i = 0; i < 20; i++) await 1;
        Promise.prototype.then = _then;
        console.log(counter);`,
     ],
@@ -1453,5 +1460,9 @@ it("wrapping an async stream callback result observes Promise.prototype.then (We
   // Exactly one assimilation per async start() result. A larger count would
   // indicate a double-wrap regression (the FromUnderlyingSink change exists
   // to prevent that).
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "2", exitCode: 0 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "2",
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 });

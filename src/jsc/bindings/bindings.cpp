@@ -2984,8 +2984,10 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     ASSERT_WITH_MESSAGE(jsObject.isCallable(), "Function passed to .call must be callable.");
     ASSERT(callData.type != JSC::CallData::Type::None);
-    if (callData.type == JSC::CallData::Type::None)
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, jsObject));
         return {};
+    }
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
 

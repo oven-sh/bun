@@ -665,10 +665,22 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   checkNotInsideTest(ctx, "test");
   const context = new TestContext(true, name, Bun.main, ctx);
 
+  // Node's node:test passes a second `done` callback argument when the test
+  // function declares two or more parameters, e.g. `test('name', (t, done) => ...)`.
+  // Detect that here so we can both forward `done` to the user and avoid
+  // auto-completing the test synchronously while it waits on the callback.
+  // https://nodejs.org/api/test.html#testname-options-fn
+  const useCallback = typeof fn === "function" && fn.length >= 2;
+
   const runTest = (done: (error?: unknown) => void) => {
     const originalContext = ctx;
     ctx = context;
+    let ended = false;
     const endTest = (error?: unknown) => {
+      // Calling done() and also returning a value (or throwing) must not
+      // complete the test twice. Make endTest idempotent.
+      if (ended) return;
+      ended = true;
       try {
         done(error);
       } finally {
@@ -678,16 +690,18 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
 
     let result: unknown;
     try {
-      result = fn(context);
+      result = useCallback ? fn(context, endTest) : fn(context);
     } catch (error) {
       endTest(error);
       return;
     }
     if (result instanceof Promise) {
       (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
-    } else {
+    } else if (!useCallback) {
       endTest();
     }
+    // useCallback + sync return: wait for the user to invoke done().
+    // bun:test enforces the test timeout if done is never called.
   };
 
   return { name, options, fn: runTest };
@@ -756,7 +770,7 @@ function createHook(arg0: unknown, arg1: unknown) {
   return { options, fn: runHook };
 }
 
-type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;
+type TestFn = (ctx: TestContext, done?: (error?: unknown) => void) => unknown | Promise<unknown>;
 type HookFn = () => unknown | Promise<unknown>;
 
 type TestOptions = {

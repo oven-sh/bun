@@ -52,6 +52,14 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should pass a done() callback to tests whose function takes two parameters", async () => {
+    const { exitCode, stderr } = await runTests(["06-callback-tests.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 });
 
 async function runTests(filenames: string[]) {

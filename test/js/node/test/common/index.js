@@ -1286,12 +1286,6 @@ function installBunExposeInternalsShim() {
   } catch {
     // http2 may be unavailable in some builds; the shim then only provides symbols.
   }
-  class NghttpError extends Error {
-    constructor(message) {
-      super(message);
-      this.code = "ERR_HTTP2_ERROR";
-    }
-  }
   Bun.plugin({
     name: "node-test-expose-internals",
     setup(build) {
@@ -1300,7 +1294,6 @@ function installBunExposeInternalsShim() {
         exports: {
           // The same registered symbol node:http2 stores the raw socket under.
           kSocket: Symbol.for("::bunhttp2socket::"),
-          NghttpError,
           ...(http2Internals.util ?? {}),
         },
       }));
@@ -1308,6 +1301,8 @@ function installBunExposeInternalsShim() {
         loader: "object",
         exports: { ...(http2Internals.core ?? {}) },
       }));
+      // `internal/test/binding` is a real Bun built-in (src/js/internal/test/binding.ts)
+      // that already wins over a Bun.plugin virtual module; it handles `http2` there.
       build.module("internal/timers", () => ({
         loader: "object",
         exports: { kTimeout: Symbol.for("::buntimeout::") },

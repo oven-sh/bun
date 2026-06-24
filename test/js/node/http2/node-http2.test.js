@@ -290,6 +290,8 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         it("constants", () => {
           expect(http2.constants).toEqual({
             "NGHTTP2_ERR_FRAME_SIZE_ERROR": -522,
+            "NGHTTP2_NV_FLAG_NONE": 0,
+            "NGHTTP2_NV_FLAG_NO_INDEX": 1,
             "NGHTTP2_SESSION_SERVER": 0,
             "NGHTTP2_SESSION_CLIENT": 1,
             "NGHTTP2_STREAM_STATE_IDLE": 1,

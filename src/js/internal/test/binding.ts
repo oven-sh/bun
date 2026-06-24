@@ -21,6 +21,11 @@ function internalBinding(name: string) {
           TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
         },
       };
+    // The slot node:http2 populates for the --expose-internals tests
+    // (constants, nghttp2ErrorString, optionsBuffer). Required lazily so
+    // unrelated internalBinding() callers don't pay for node:http2.
+    case "http2":
+      return require("node:http2")[Symbol.for("::bunhttp2internals::")].binding;
     default:
       throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }

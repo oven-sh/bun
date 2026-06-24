@@ -936,7 +936,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
     if (callFrame->argumentCount() > 0 && !arg0.isUndefined()) {
         JSArray* relativeArray = dynamicDowncast<JSC::JSArray>(arg0);
         if (!relativeArray) {
-            return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "time"_s, "Array"_s, arg0);
+            return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, globalObject, "time"_s, "Array"_s, arg0);
         }
         if (relativeArray->length() != 2) return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject_, "time"_s, "2"_s, jsNumber(relativeArray->length()));
 
@@ -1382,9 +1382,24 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
     Bun__onPosixSignal(signalNumber);
 }
 
+extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
+extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
+        if (eventName == "memoryPressure") {
+            auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
+            if (isAdded) {
+                if (eventEmitter.listenerCount(eventName) == 1) {
+                    Bun__MemoryPressure__install(global);
+                }
+            } else if (eventEmitter.listenerCount(eventName) == 0) {
+                Bun__MemoryPressure__uninstall(global);
+            }
+            return;
+        }
+
         // IPC handlers
         if (eventName == "message" || eventName == "disconnect") {
             auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
@@ -3136,7 +3151,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     auto* groupsArray = dynamicDowncast<JSC::JSArray>(groups);
     if (!groupsArray) [[unlikely]] {
         // validateArray uses JSC::isArray() which accepts Proxy->Array, but jsDynamicCast returns null.
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "groups"_s, "Array"_s, groups);
+        return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "groups"_s, "Array"_s, groups);
     }
     auto count = groupsArray->length();
     gid_t groupsStack[64];
@@ -4310,6 +4325,19 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
     auto ident = Identifier::fromString(vm, "disconnect"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
+        process->wrapped().emit(ident, args);
+    }
+}
+
+extern "C" void Process__emitMemoryPressureEvent(Zig::GlobalObject* global, int level)
+{
+    auto* process = global->processObject();
+    auto& vm = JSC::getVM(global);
+    auto ident = Identifier::fromString(vm, "memoryPressure"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        // Level values match NOTE_MEMORYSTATUS_PRESSURE_WARN (2) / _CRITICAL (4).
+        args.append(jsString(vm, level == 2 ? String("warning"_s) : String("critical"_s)));
         process->wrapped().emit(ident, args);
     }
 }

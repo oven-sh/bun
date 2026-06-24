@@ -2312,21 +2312,15 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         if bun_zstd::is_error(bound) {
             return Err(err!("SourceMapTooLarge"));
         }
-        // SAFETY: zstd writes only into the spare slice and reports the byte
-        // count on success; on error we commit 0 and `Output::panic` diverges.
-        unsafe {
-            bun_core::vec::fill_spare(string_payload, bound, |spare| {
-                match bun_zstd::compress(spare, utf8, Some(1)) {
-                    bun_zstd::Result::Err(err_msg) => {
-                        Output::panic(format_args!(
-                            "Unexpected error compressing sourcemap: {}",
-                            bstr::BStr::new(err_msg.as_bytes())
-                        ));
-                    }
-                    bun_zstd::Result::Success(n) => (n, ()),
-                }
-            })
-        };
+        string_payload.reserve(bound);
+        if let bun_zstd::Result::Err(err_msg) =
+            bun_zstd::compress_append(string_payload, utf8, Some(1))
+        {
+            Output::panic(format_args!(
+                "Unexpected error compressing sourcemap: {}",
+                bstr::BStr::new(err_msg.as_bytes())
+            ));
+        }
 
         let slice = StringPointer {
             offset: u32::try_from(offset + string_payload_start_location)

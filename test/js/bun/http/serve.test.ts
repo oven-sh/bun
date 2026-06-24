@@ -2587,14 +2587,15 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
             // write() returns a negative number when the socket is backed up;
             // await flush(true) (the pending-flush promise) to pause until the
             // drain.
-            if (controller.write(CHUNK) < 0) {
+            const n = controller.write(CHUNK);
+            if (typeof n === "number" && n < 0) {
               await controller.flush(true);
             }
             writes++;
           }
           await controller.end();
         },
-      } as any);
+      });
       return new Response(stream);
     },
   });
@@ -2712,13 +2713,14 @@ it("type: direct stream — small write queued under backpressure is delivered i
           // below highWaterMark — it lands in the sink's local buffer while
           // pending_flush is already parked.
           for (let i = 0; i < 256 && !hitBackpressure; i++) {
-            if (controller.write(BIG) < 0) hitBackpressure = true;
+            const n = controller.write(BIG);
+            if (typeof n === "number" && n < 0) hitBackpressure = true;
           }
           controller.write(SMALL);
           await controller.flush(true);
           await controller.end();
         },
-      } as any);
+      });
       return new Response(stream);
     },
   });

@@ -3,18 +3,27 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
 
 // Writing an S3 source with no credentials to a file-backed Blob routes
-// through pipe_readable_stream_to_blob. The S3 stream's pull() fails
-// synchronously with ERR_S3_MISSING_CREDENTIALS, which ends the sink and
-// detaches the controller before assignToStream returns. This used to trip a
-// debug assertion that the signal was still live.
+// through pipe_readable_stream_to_blob. The S3 stream fails synchronously
+// with ERR_S3_MISSING_CREDENTIALS, which ends the sink and detaches the
+// controller before assignToStream returns. This used to trip a debug
+// assertion that the signal was still live.
+//
+// Today the credential error is swallowed by ByteStream::on_start() returning
+// Start::Empty without checking pending.result, so write() resolves to 0.
+// Accept either outcome here so a future fix that surfaces the error does not
+// trip this test.
 test("Bun.file().write(S3 file) when the S3 stream closes synchronously", async () => {
   using dir = tempDir("s3-write-sync-close", {});
   const dest = path.join(String(dir), "out.bin");
 
   const fixture = `
-    const s3 = Bun.S3Client.file("key");
-    const result = await Bun.file(${JSON.stringify(dest)}).write(s3);
-    console.log(typeof result);
+    try {
+      const s3 = Bun.S3Client.file("key");
+      await Bun.file(${JSON.stringify(dest)}).write(s3);
+      console.log("resolved");
+    } catch (e) {
+      console.log("rejected:" + (e?.code ?? e?.name ?? "Error"));
+    }
   `;
 
   await using proc = Bun.spawn({
@@ -43,9 +52,11 @@ test("Bun.file().write(S3 file) when the S3 stream closes synchronously", async 
   expect({
     stdout: normalizeBunSnapshot(stdout),
     stderr: normalizeBunSnapshot(stderr),
+    signalCode: proc.signalCode,
   }).toEqual({
-    stdout: "number",
+    stdout: expect.stringMatching(/^(resolved|rejected:ERR_S3_MISSING_CREDENTIALS)$/),
     stderr: "",
+    signalCode: null,
   });
   expect(exitCode).toBe(0);
 });

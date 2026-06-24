@@ -189,7 +189,19 @@ let builtinLibs;
 
 function getBuiltinLibs() {
   if (!builtinLibs) {
-    builtinLibs = Module.builtinModules.filter(id => !id.startsWith("_") && !id.startsWith("node:"));
+    // Bun's Module.builtinModules also lists `bun`, `bun:*`, and the bundled
+    // third-party shims (`undici`, `ws`); none of these resolve under the
+    // `node:` scheme and none exist in a Node REPL, so exclude them here so
+    // tab completion doesn't offer e.g. `node:undici` and the REPL global
+    // scope matches Node's.
+    builtinLibs = Module.builtinModules.filter(
+      id =>
+        !id.startsWith("_") &&
+        !id.startsWith("node:") &&
+        !id.startsWith("bun") &&
+        id !== "undici" &&
+        id !== "ws",
+    );
   }
   return builtinLibs;
 }
@@ -451,6 +463,7 @@ export default {
   Module: CJSModuleShim,
   // internal/modules/helpers
   addBuiltinLibsToObject,
+  getBuiltinLibs,
   makeRequireFunction,
   // internal/vm
   makeContextifyScript,

@@ -19,7 +19,6 @@ const {
   StringPrototypeLastIndexOf,
   StringPrototypeReplaceAll,
   StringPrototypeSlice,
-  StringPrototypeStartsWith,
   StringPrototypeToLowerCase,
   StringPrototypeTrim,
   Symbol,
@@ -27,7 +26,7 @@ const {
 
 const { tokTypes: tt, Parser: AcornParser } = require("internal/repl/acorn");
 
-const { sendInspectorCommand } = require("internal/repl/node-shims");
+const { sendInspectorCommand, getBuiltinLibs } = require("internal/repl/node-shims");
 
 const { ERR_INSPECTOR_NOT_AVAILABLE } = require("internal/repl/node-errors").codes;
 
@@ -800,10 +799,12 @@ function getREPLResourceName() {
 
 const globalBuiltins = new SafeSet(vm.runInNewContext("Object.getOwnPropertyNames(globalThis)"));
 
-let _builtinLibs = ArrayPrototypeFilter(
-  CJSModule.builtinModules,
-  e => e[0] !== "_" && !StringPrototypeStartsWith(e, "node:"),
-);
+// Upstream filters only `_*` and `node:*`. In Bun, Module.builtinModules also
+// contains `bun`, `bun:*`, `undici`, and `ws`; node-shims' getBuiltinLibs()
+// applies the upstream filter plus those Bun-specific exclusions so the
+// `node:`-prefixed completion list (completion.js) doesn't offer specifiers
+// the resolver rejects (e.g. `node:undici`).
+let _builtinLibs = getBuiltinLibs().slice();
 
 // Note: the `getReplBuiltinLibs` and `setReplBuiltinLibs` are functions used to provide getters and
 //       setters for the `builtinModules` and `_builtinLibs` properties of the repl module and for making

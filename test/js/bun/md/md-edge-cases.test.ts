@@ -1245,7 +1245,7 @@ describe("oversized input", () => {
     }
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "DONE 4", stderr: "", exitCode: 0 });
 
-    // Inputs right at the limit still work (a small input obviously fits).
+    // Normal-size inputs still render after the oversized-input path existed.
     expect(Markdown.html("# ok\n")).toContain("<h1>");
   });
 });

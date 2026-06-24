@@ -344,7 +344,8 @@ pub fn render_to_html(
 
     let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
 
-    // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
+    // HtmlRenderer has no JS callbacks, so JSError/JSTerminated are unreachable;
+    // all other parser-side errors propagate.
     match parser.process_doc() {
         Ok(()) => {}
         Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),

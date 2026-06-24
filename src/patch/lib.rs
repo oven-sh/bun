@@ -89,6 +89,11 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink));
                     }
                     let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
+                    if let Err(e) =
+                        verify_parent_beneath_patch_dir(patch_dir, pathz.as_bytes(), &mut state)
+                    {
+                        return Some(e.without_path());
+                    }
 
                     if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
                         return Some(e.without_path());
@@ -102,6 +107,17 @@ impl<'a> PatchFile<'a> {
                     }
                     let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
                     let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
+
+                    if let Err(e) =
+                        verify_parent_beneath_patch_dir(patch_dir, from_path.as_bytes(), &mut state)
+                    {
+                        return Some(e.without_path());
+                    }
+                    if let Err(e) =
+                        verify_parent_beneath_patch_dir(patch_dir, to_path.as_bytes(), &mut state)
+                    {
+                        return Some(e.without_path());
+                    }
 
                     let todir = paths::dirname_simple(to_path.as_bytes());
                     if !todir.is_empty() {
@@ -126,6 +142,14 @@ impl<'a> PatchFile<'a> {
                     let filedir = paths::dirname_simple(filepath_z.as_bytes());
                     let mode = file_creation.mode;
 
+                    if let Err(e) = verify_parent_beneath_patch_dir(
+                        patch_dir,
+                        filepath_z.as_bytes(),
+                        &mut state,
+                    ) {
+                        return Some(e.without_path());
+                    }
+
                     if !filedir.is_empty() {
                         // Create the directory under `patch_dir` so the
                         // subsequent `openat` against `patch_dir` succeeds
@@ -141,7 +165,7 @@ impl<'a> PatchFile<'a> {
                     let newfile_fd = match open_beneath(
                         patch_dir,
                         &filepath_z,
-                        sys::O::CREAT | sys::O::WRONLY,
+                        sys::O::CREAT | sys::O::RDWR,
                         mode.to_bun_mode(),
                         true,
                         &mut state,
@@ -385,7 +409,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let file_fd = match open_beneath(
         patch_dir,
         &file_path,
-        sys::O::CREAT | sys::O::WRONLY,
+        sys::O::CREAT | sys::O::RDWR,
         stat.st_mode as sys::Mode,
         true,
         state,
@@ -437,18 +461,15 @@ fn open_beneath(
 ) -> sys::Result<Fd> {
     // Verify the parent directory first so `O_CREAT` below cannot create an
     // empty file outside `patch_dir` via an intermediate directory symlink.
-    let dirname = paths::dirname_simple(path.as_bytes());
-    if !dirname.is_empty() {
-        let parent_z = ZBox::from_vec_with_nul(dirname.to_vec());
-        let pfd = sys::openat(patch_dir, &parent_z, sys::O::RDONLY | sys::O::DIRECTORY, 0)?;
-        let ok = verify_fd_beneath_patch_dir(patch_dir, pfd, state);
-        pfd.close();
-        if let Err(e) = ok {
-            return sys::Result::Err(e.with_path(path.as_bytes()));
-        }
+    if let Err(e) = verify_parent_beneath_patch_dir(patch_dir, path.as_bytes(), state) {
+        return sys::Result::Err(e.with_path(path.as_bytes()));
     }
 
-    let fd = sys::openat(patch_dir, path, flags | sys::O::NOFOLLOW, mode)?;
+    // The Windows NtCreateFile path drops FILE_SYNCHRONOUS_IO_NONALERT when
+    // O::NOFOLLOW is set, which makes subsequent synchronous WriteFile fail;
+    // rely on `verify_fd_beneath_patch_dir` for containment there instead.
+    let nofollow = if cfg!(windows) { 0 } else { sys::O::NOFOLLOW };
+    let fd = sys::openat(patch_dir, path, flags | nofollow, mode)?;
     if let Err(e) = verify_fd_beneath_patch_dir(patch_dir, fd, state) {
         fd.close();
         return sys::Result::Err(e.with_path(path.as_bytes()));
@@ -458,6 +479,36 @@ fn open_beneath(
         return sys::Result::Err(e.with_path(path.as_bytes()));
     }
     sys::Result::Ok(fd)
+}
+
+/// Verify the deepest existing ancestor directory of `path` resolves to a
+/// canonical path inside `patch_dir`. Called before any filesystem
+/// modification so intermediate directory symlinks are rejected up front.
+fn verify_parent_beneath_patch_dir(
+    patch_dir: Fd,
+    path: &[u8],
+    state: &mut ApplyState,
+) -> sys::Result<()> {
+    let mut dirname = paths::dirname_simple(path);
+    loop {
+        if dirname.is_empty() {
+            return sys::Result::Ok(());
+        }
+        let parent_z = ZBox::from_vec_with_nul(dirname.to_vec());
+        match sys::openat(patch_dir, &parent_z, sys::O::RDONLY | sys::O::DIRECTORY, 0) {
+            sys::Result::Ok(pfd) => {
+                let r = verify_fd_beneath_patch_dir(patch_dir, pfd, state);
+                pfd.close();
+                return r;
+            }
+            sys::Result::Err(e) => match e.get_errno() {
+                sys::E::ENOENT | sys::E::ENOTDIR => {
+                    dirname = paths::dirname_simple(dirname);
+                }
+                _ => return sys::Result::Err(e),
+            },
+        }
+    }
 }
 
 fn verify_fd_beneath_patch_dir(patch_dir: Fd, fd: Fd, state: &mut ApplyState) -> sys::Result<()> {
@@ -471,14 +522,9 @@ fn verify_fd_beneath_patch_dir(patch_dir: Fd, fd: Fd, state: &mut ApplyState) ->
     let mut buf = paths::path_buffer_pool::get();
     let fd_path = sys::get_fd_path(fd, &mut buf)?;
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    let has_prefix = strings::starts_with;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    let has_prefix = strings::starts_with_case_insensitive_ascii;
-
     if fd_path.len() > dir_path.len()
         && paths::is_sep_any(fd_path[dir_path.len()])
-        && has_prefix(fd_path, dir_path)
+        && strings::starts_with(fd_path, dir_path)
     {
         return sys::Result::Ok(());
     }

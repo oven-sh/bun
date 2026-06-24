@@ -743,6 +743,69 @@ describe("apply", () => {
       });
     });
 
+    test("file deletion through an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/target.txt b/evildir/target.txt\n" +
+        "deleted file mode 100644\n" +
+        "index e69de29..0000000\n";
+
+      const err = tryApply(patch, pkgDir);
+      const exists = await fs.access(join(outsideDir, "target.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, exists }).toEqual({ code: "EINVAL", exists: true });
+    });
+
+    test("file rename into an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/payload.txt b/payload.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/payload.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n" +
+        "diff --git a/payload.txt b/evildir/pwned.txt\n" +
+        "similarity index 100%\n" +
+        "rename from payload.txt\n" +
+        "rename to evildir/pwned.txt\n";
+
+      const err = tryApply(patch, pkgDir);
+      const created = await fs.access(join(outsideDir, "pwned.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, created }).toEqual({ code: "EINVAL", created: false });
+    });
+
+    test("file rename out of an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/target.txt b/stolen.txt\n" +
+        "similarity index 100%\n" +
+        "rename from evildir/target.txt\n" +
+        "rename to stolen.txt\n";
+
+      const err = tryApply(patch, pkgDir);
+      const exists = await fs.access(join(outsideDir, "target.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, exists }).toEqual({ code: "EINVAL", exists: true });
+    });
+
     test("mode change through a symlink is rejected", async () => {
       const { root, pkgDir } = setup();
       const outside = join(root, "outside.txt");

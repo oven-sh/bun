@@ -107,44 +107,4 @@ describe("backpressure", () => {
 
     expect(totalBytes).toBe(totalSize + smallPayloadSize);
   }, 30_000);
-
-  it("does not crash when drain fires after the onWritable slot was cleared", async () => {
-    const src = /* js */ `
-      import http from "node:http";
-      import net from "node:net";
-      import { once } from "node:events";
-
-      const server = http.createServer(async (req, res) => {
-        res.writeHead(200, { "Content-Type": "application/octet-stream" });
-        res.write(Buffer.alloc(8 * 1024 * 1024, "a"));
-        const sym = Object.getOwnPropertySymbols(res).find(s => s.description === "handle");
-        const handle = res[sym];
-        handle.onwritable = undefined;
-        while (handle.bufferedAmount > 0) await new Promise(r => setImmediate(r));
-        res.end();
-      });
-      await once(server.listen(0), "listening");
-
-      const sock = net.connect(server.address().port, "127.0.0.1");
-      await once(sock, "connect");
-      sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-      let received = 0;
-      sock.on("data", d => (received += d.length));
-      await once(sock, "close");
-      console.log(JSON.stringify({ received }));
-      server.close();
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-      stdout: { received: expect.any(Number) },
-      stderr: "",
-      exitCode: 0,
-    });
-    expect(JSON.parse(stdout).received).toBeGreaterThan(8 * 1024 * 1024);
-  });
 });

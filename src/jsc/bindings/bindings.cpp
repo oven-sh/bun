@@ -2977,14 +2977,15 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     }
 
 #if ASSERT_ENABLED
-    JSC::Integrity::auditCellFully(vm, jsObject.asCell());
+    if (jsObject.isCell())
+        JSC::Integrity::auditCellFully(vm, jsObject.asCell());
 #endif
 
     auto callData = getCallData(jsObject);
 
-    ASSERT_WITH_MESSAGE(jsObject.isCallable(), "Function passed to .call must be callable.");
-    ASSERT(callData.type != JSC::CallData::Type::None);
     if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        if (asyncContextData)
+            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
         throwException(globalObject, scope, createNotAFunctionError(globalObject, jsObject));
         return {};
     }

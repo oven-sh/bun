@@ -1013,34 +1013,40 @@ class REPLServer extends Interface {
       decorateErrorStack(e);
 
       if (isError(e)) {
-        if (e.stack) {
-          if (e.name === "SyntaxError") {
-            // Remove stack trace.
-            e.stack = SideEffectFreeRegExpPrototypeSymbolReplace(
-              /^\s+at\s.*\n?/gm,
-              SideEffectFreeRegExpPrototypeSymbolReplace(/^REPL\d+:\d+\r?\n/, e.stack, ""),
-              "",
-            );
-            const importErrorStr = "Cannot use import statement outside a " + "module";
-            if (StringPrototypeIncludes(e.message, importErrorStr)) {
-              e.message =
-                "Cannot use import statement inside the Node.js " +
-                "REPL, alternatively use dynamic import: " +
-                toDynamicImport(ArrayPrototypeAt(this.lines, -1));
+        // V8 stores `.stack` as an accessor (the setter survives Object.freeze);
+        // JSC stores it as an own data property, so under freeze the strict-mode
+        // writes below throw. Swallow that so the REPL prints the original error
+        // instead of a TypeError.
+        try {
+          if (e.stack) {
+            if (e.name === "SyntaxError") {
+              // Remove stack trace.
               e.stack = SideEffectFreeRegExpPrototypeSymbolReplace(
-                /SyntaxError:.*\n/,
+                /^\s+at\s.*\n?/gm,
+                SideEffectFreeRegExpPrototypeSymbolReplace(/^REPL\d+:\d+\r?\n/, e.stack, ""),
+                "",
+              );
+              const importErrorStr = "Cannot use import statement outside a " + "module";
+              if (StringPrototypeIncludes(e.message, importErrorStr)) {
+                e.message =
+                  "Cannot use import statement inside the Node.js " +
+                  "REPL, alternatively use dynamic import: " +
+                  toDynamicImport(ArrayPrototypeAt(this.lines, -1));
+                e.stack = SideEffectFreeRegExpPrototypeSymbolReplace(
+                  /SyntaxError:.*\n/,
+                  e.stack,
+                  `SyntaxError: ${e.message}\n`,
+                );
+              }
+            } else if (this.replMode === __node_module__.exports.REPL_MODE_STRICT) {
+              e.stack = SideEffectFreeRegExpPrototypeSymbolReplace(
+                /(\s+at\s+REPL\d+:)(\d+)/,
                 e.stack,
-                `SyntaxError: ${e.message}\n`,
+                (_, pre, line) => pre + (line - 1),
               );
             }
-          } else if (this.replMode === __node_module__.exports.REPL_MODE_STRICT) {
-            e.stack = SideEffectFreeRegExpPrototypeSymbolReplace(
-              /(\s+at\s+REPL\d+:)(\d+)/,
-              e.stack,
-              (_, pre, line) => pre + (line - 1),
-            );
           }
-        }
+        } catch {}
         errStack = this.writer(e);
 
         // Remove one line error braces to keep the old style in place.

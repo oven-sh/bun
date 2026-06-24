@@ -1249,3 +1249,47 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// V8 keeps Error#stack as an accessor (the setter survives Object.freeze); JSC
+// stores it as an own data property, so the strict-mode `e.stack = …` rewrites
+// in node:repl's _handleError throw on a frozen error. The Bun port guards
+// those writes so the REPL prints the original error and continues like Node.
+describe.concurrent("node:repl prints a frozen thrown error and continues", () => {
+  test.each([
+    ["Error in sloppy mode", "SLOPPY", "throw Object.freeze(new Error('boom'))", "Uncaught Error: boom"],
+    ["SyntaxError", "SLOPPY", "throw Object.freeze(new SyntaxError('boom'))", "Uncaught SyntaxError: boom"],
+    ["Error in strict mode", "STRICT", "throw Object.freeze(new Error('boom'))", "Uncaught Error: boom"],
+  ])("%s", async (_name, mode, line, expectedFirstLine) => {
+    const script = `
+      const repl = require("repl");
+      const { PassThrough } = require("stream");
+      const inp = new PassThrough(), out = new PassThrough();
+      let buf = "";
+      out.on("data", d => buf += d);
+      const r = repl.start({
+        input: inp,
+        output: out,
+        terminal: false,
+        prompt: "",
+        useGlobal: true,
+        replMode: repl.REPL_MODE_${mode},
+      });
+      r.on("exit", () => process.stdout.write(buf));
+      inp.write(${JSON.stringify(line + "\n")});
+      inp.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The frozen .stack can't be trimmed under JSC (eager materialization), so
+    // assert only on the first line and that the REPL printed the next prompt.
+    expect(stdout.split("\n")[0]).toBe(expectedFirstLine);
+    expect(stdout).not.toContain("Attempted to assign to readonly property");
+    expect(stderr).not.toContain("Attempted to assign to readonly property");
+    expect(exitCode).toBe(0);
+  });
+});

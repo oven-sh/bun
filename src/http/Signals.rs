@@ -113,7 +113,14 @@ impl Store {
             aborted: Some(NonNull::from(&self.aborted)),
             cert_errors: Some(NonNull::from(&self.cert_errors)),
             upgraded: Some(NonNull::from(&self.upgraded)),
+            body_receive_mode: None,
+        }
+    }
+
+    pub fn to_with_backpressure(&mut self) -> Signals {
+        Signals {
             body_receive_mode: Some(NonNull::from(&self.body_receive_mode)),
+            ..self.to()
         }
     }
 

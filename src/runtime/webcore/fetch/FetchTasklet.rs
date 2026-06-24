@@ -1789,7 +1789,7 @@ impl FetchTasklet {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
-        fetch_tasklet.signals = fetch_tasklet.signal_store.to();
+        fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
         fetch_tasklet.tracker.did_schedule(global_this);
 

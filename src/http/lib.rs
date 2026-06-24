@@ -4400,21 +4400,32 @@ impl<'a> HTTPClient<'a> {
         let total_received = self.state.total_body_received;
         self.report_progress(total_received);
 
+        // done or streaming
         let is_done =
             content_length.is_some() && self.state.total_body_received >= content_length.unwrap();
-        // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
-        // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
-        // so any `&` into `self.state` held across the call would be aliased UB.
-        let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-        let processed = self.state.process_body_buffer(buffer_snap, is_done)?;
+        if is_done
+            || self.signals.get(signals::Field::ResponseBodyStreaming)
+            || content_length.is_none()
+            || self.signals.body_receive_mode.is_some()
+        {
+            let is_final_chunk = is_done;
+            // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
+            // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
+            // so any `&` into `self.state` held across the call would be aliased UB.
+            let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+            let processed = self
+                .state
+                .process_body_buffer(buffer_snap, is_final_chunk)?;
 
-        // We can only use the libdeflate fast path when we are not streaming
-        // If we ever call processBodyBuffer again, it cannot go through the fast path.
-        self.state.flags.is_libdeflate_fast_path_disabled = true;
+            // We can only use the libdeflate fast path when we are not streaming
+            // If we ever call processBodyBuffer again, it cannot go through the fast path.
+            self.state.flags.is_libdeflate_fast_path_disabled = true;
 
-        let total_received = self.state.total_body_received;
-        self.report_progress(total_received);
-        Ok(is_done || processed)
+            let total_received = self.state.total_body_received;
+            self.report_progress(total_received);
+            return Ok(is_done || processed);
+        }
+        Ok(false)
     }
 
     pub fn handle_response_body_chunked_encoding(
@@ -4479,11 +4490,19 @@ impl<'a> HTTPClient<'a> {
             // Needs more data
             -2 => {
                 self.report_progress(buffer_len);
-                self.state.flags.is_libdeflate_fast_path_disabled = true;
-                // Move the
-                // bytes out so no `&` into self.state aliases the `&mut self.state` call.
-                let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                return self.state.process_body_buffer(buffer_snap, false);
+                // streaming chunks
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.signals.body_receive_mode.is_some()
+                {
+                    // If we're streaming, we cannot use the libdeflate fast path
+                    self.state.flags.is_libdeflate_fast_path_disabled = true;
+                    // Move the
+                    // bytes out so no `&` into self.state aliases the `&mut self.state` call.
+                    let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
+                    return self.state.process_body_buffer(buffer_snap, false);
+                }
+
+                return Ok(false);
             }
             // Done
             _ => {

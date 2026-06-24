@@ -8,7 +8,7 @@ off the JS thread.
 | file                                  | owns                                                                                                            | touch when                               |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `Image.classes.ts`                    | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
-| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                    | new options, new chainable, new terminal |
+| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                 | new options, new chainable, new terminal |
 | `codecs.rs`                           | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
@@ -40,7 +40,7 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 
 1. New `scripts/build/deps/<lib>.ts` (copy `libspng.ts` for the simple case).
 2. Extend `Format` + `sniff()` + `mime()` in `codecs.rs`, add a `<fmt>` module with
-`decode`/`encode` functions alongside the others.
+   `decode`/`encode` functions alongside the others.
 3. If the format carries EXIF, extend `exif.rs`.
 4. `LICENSE.md` row.
 

@@ -2304,8 +2304,7 @@ impl FetchTasklet {
                         .write(task_ref.response_buffer.list.as_slice()),
                 );
                 if task_ref.result.has_more
-                    && task_ref.scheduled_response_buffer.list.len()
-                        >= http::RECEIVE_BODY_HIGH_WATER
+                    && !task_ref.scheduled_response_buffer.list.is_empty()
                     && !task_ref.is_buffering_body.load(Ordering::Relaxed)
                 {
                     task_ref

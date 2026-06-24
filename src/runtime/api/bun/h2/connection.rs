@@ -2016,12 +2016,7 @@ mod tests {
             let h = FrameHeader::parse(&out[i..]);
             let total = wire::FRAME_HEADER_SIZE + h.length as usize;
             if h.frame_type == FrameType::RstStream as u8 && h.stream_id == 5 {
-                let code = u32::from_be_bytes([
-                    out[i + 9],
-                    out[i + 10],
-                    out[i + 11],
-                    out[i + 12],
-                ]);
+                let code = u32::from_be_bytes([out[i + 9], out[i + 10], out[i + 11], out[i + 12]]);
                 if code == ErrorCode::RefusedStream.as_u32() {
                     saw_refused_rst = true;
                 }

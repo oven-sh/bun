@@ -29,8 +29,8 @@ use bun_collections::StringHashMap;
 // `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`,
 // an UNCHECKED literal wrapper: a typo'd literal still compiles and simply
 // never matches anything at runtime (comparison is string equality, not an
-// enum compare). The checked, packed-enum form is pending the codegen `.rs`
-// backend — see the header of `mime_type_list_enum.rs`.
+// enum compare). A checked, packed-enum form is not implemented; see the
+// PERF note at the top of `mime_type_list_enum.rs`.
 macro_rules! t {
     ($s:literal) => {
         Table::from_mime_literal($s)

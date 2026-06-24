@@ -195,12 +195,7 @@ function getBuiltinLibs() {
     // tab completion doesn't offer e.g. `node:undici` and the REPL global
     // scope matches Node's.
     builtinLibs = Module.builtinModules.filter(
-      id =>
-        !id.startsWith("_") &&
-        !id.startsWith("node:") &&
-        !id.startsWith("bun") &&
-        id !== "undici" &&
-        id !== "ws",
+      id => !id.startsWith("_") && !id.startsWith("node:") && !id.startsWith("bun") && id !== "undici" && id !== "ws",
     );
   }
   return builtinLibs;

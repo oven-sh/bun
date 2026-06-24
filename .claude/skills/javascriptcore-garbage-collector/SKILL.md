@@ -97,7 +97,7 @@ if (obj->cellState <= blackThreshold)   // 0 normally, bumped while GC is markin
 
 `vendor/WebKit/Source/JavaScriptCore/heap/ConservativeRoots.cpp` walks the native stack/registers word-by-word (after `MachineThreads::tryCopyOtherThreadStacks` snapshots them). Any aligned word inside a live `MarkedBlock` cell or `PreciseAllocation` is a root.
 
-**This means:** a `JSCell*` / `JSValue` in a C++/Zig local variable _usually_ keeps the object alive — no `Handle`/`Local` ceremony like V8.
+**This means:** a `JSCell*` / `JSValue` in a C++/Rust local variable _usually_ keeps the object alive — no `Handle`/`Local` ceremony like V8.
 
 **This does NOT mean you're always safe.** The compiler may dead-store-eliminate the local after its last visible use, or never spill it. If you extract an interior pointer (`string->characters8()`, butterfly storage, typed-array `vector()`) and then call something that can allocate, the original cell may no longer be on the stack:
 
@@ -106,7 +106,7 @@ JSC::EnsureStillAliveScope keepAlive(cell);   // RAII: forces cell onto stack un
 // ... use interior pointer, call things that allocate ...
 ```
 
-or `ensureStillAliveHere(cell)`. In Zig: `value.ensureStillAlive()`.
+or `ensureStillAliveHere(cell)`. In Rust: `value.ensure_still_alive()`.
 
 ## `visitChildren` — the per-cell tracing hook
 
@@ -253,7 +253,7 @@ See `ServerWebSocket`, `UDPSocket`, `MySQLConnection`, `ValkeyClient` for real e
 
 - It's a raw global root with manual unprotect — easy to leak.
 - It has no owner, so heap snapshots can't attribute the retention.
-- `jsc.Strong` / `JSRef` give the same guarantee with RAII and a destructor.
+- `bun_jsc::Strong` / `JSRef` give the same guarantee with RAII and a destructor.
 
 The only legitimate uses are inside the JSC C API shims themselves, or one-off debugging.
 
@@ -276,7 +276,7 @@ visitor.reportExtraMemoryVisited(thisObject->wrapped().byteSize());
 - If the size changes over time, report the delta on growth (`reportExtraMemoryAllocated(cell, newSize - oldSize)`) and report the current size in `visitChildren`.
 - `deprecatedReportExtraMemory` exists for callers that can't satisfy the visit-side half — avoid it.
 
-In `.classes.ts`, `estimatedSize: true` generates the `reportExtraMemoryVisited` side; you implement `estimatedSize()` in Zig. You still call `reportExtraMemoryAllocated` (or the binding's helper) at allocation time.
+In `.classes.ts`, `estimatedSize: true` generates the `reportExtraMemoryVisited` side; you implement `estimated_size()` in Rust. You still call `reportExtraMemoryAllocated` (or the binding's helper) at allocation time.
 
 ## `HeapAnalyzer` — heap snapshots and labelling
 
@@ -305,25 +305,25 @@ If your class shows up as an opaque blob in heap snapshots, implement `analyzeHe
 
 ## How to keep things alive (decision table)
 
-| Scenario                                                                           | Mechanism                                                                                                                                          |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSCell field pointing to another JSCell                                            | `WriteBarrier<T>` member + `visitor.append(m_field)` in `visitChildren`                                                                            |
-| Native state inside the wrapped C++ object holds JS values                         | `visitAdditionalChildren` + register subspace as output-constraint                                                                                 |
-| C++/Zig local across allocation/call                                               | Conservative scan (free) — add `EnsureStillAliveScope` / `value.ensureStillAlive()` if extracting interior pointers or seeing release-only crashes |
-| **Zig** native object holds its own JS wrapper (class has `finalize: true`)        | **`jsc.JSRef`** — `upgrade()` when work starts, `downgrade()` when idle. **This is the default.**                                                  |
-| **Zig** native object owns an arbitrary JS value (callback, options object)        | `jsc.Strong.Optional` — `deinit()` in `finalize()`. Watch for cycles                                                                               |
-| C++ non-GC object owns a JS value as a root                                        | `JSC::Strong<T>`. **Danger:** cycle if the JS value can reach back → leak                                                                          |
-| Weak ref with resurrection predicate / finalize callback (C++)                     | `JSC::Weak<T>` + `WeakHandleOwner`                                                                                                                 |
-| Wrapper kept alive by **many concurrent operations** with no single busy/idle edge | `.classes.ts` `hasPendingActivity: true` (atomic flag polled on GC thread). **Uncommon — prefer `JSRef` if you can.**                              |
-| Group of wrappers share lifetime via a native graph                                | `visitor.addOpaqueRoot(ptr)` + `containsOpaqueRoot(ptr)`                                                                                           |
-| Temporarily forbid GC in a critical section                                        | `DeferGC deferGC(vm)` — defers until scope exit. Never hold across user JS                                                                         |
-| Tell GC about off-heap memory you own                                              | `reportExtraMemoryAllocated` on alloc **and** `reportExtraMemoryVisited` in `visitChildren`                                                        |
-| ~~Mark a value as root from C API~~                                                | ~~`gcProtect` / `JSValueProtect`~~ — **avoid**; use `jsc.Strong` / `JSRef` instead                                                                 |
+| Scenario                                                                           | Mechanism                                                                                                                                            |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSCell field pointing to another JSCell                                            | `WriteBarrier<T>` member + `visitor.append(m_field)` in `visitChildren`                                                                              |
+| Native state inside the wrapped C++ object holds JS values                         | `visitAdditionalChildren` + register subspace as output-constraint                                                                                   |
+| C++/Rust local across allocation/call                                              | Conservative scan (free) — add `EnsureStillAliveScope` / `value.ensure_still_alive()` if extracting interior pointers or seeing release-only crashes |
+| Native object holds its own JS wrapper (class has `finalize: true`)                | **`JSRef`** — `upgrade()` when work starts, `downgrade()` when idle. **This is the default.**                                                        |
+| Native object owns an arbitrary JS value (callback, options object)                | `bun_jsc::Strong` — drop in `finalize()`. Watch for cycles                                                                                           |
+| C++ non-GC object owns a JS value as a root                                        | `JSC::Strong<T>`. **Danger:** cycle if the JS value can reach back → leak                                                                            |
+| Weak ref with resurrection predicate / finalize callback (C++)                     | `JSC::Weak<T>` + `WeakHandleOwner`                                                                                                                   |
+| Wrapper kept alive by **many concurrent operations** with no single busy/idle edge | `.classes.ts` `hasPendingActivity: true` (atomic flag polled on GC thread). **Uncommon — prefer `JSRef` if you can.**                                |
+| Group of wrappers share lifetime via a native graph                                | `visitor.addOpaqueRoot(ptr)` + `containsOpaqueRoot(ptr)`                                                                                             |
+| Temporarily forbid GC in a critical section                                        | `DeferGC deferGC(vm)` — defers until scope exit. Never hold across user JS                                                                           |
+| Tell GC about off-heap memory you own                                              | `reportExtraMemoryAllocated` on alloc **and** `reportExtraMemoryVisited` in `visitChildren`                                                          |
+| ~~Mark a value as root from C API~~                                                | ~~`gcProtect` / `JSValueProtect`~~ — **avoid**; use `bun_jsc::Strong` / `JSRef` instead                                                              |
 
 ## Destruction & finalizers
 
 - `static constexpr bool needsDestruction = true` → C++ destructor runs when the cell is swept. Sweep is **lazy** (next allocation from that block, or `IncrementalSweeper`), so destruction is delayed arbitrarily. Do not rely on it for prompt resource release — expose explicit `close()`/`dispose()`.
-- In `.classes.ts`, `finalize: true` → Zig `finalize()` called from the destructor. Same laziness applies.
+- In `.classes.ts`, `finalize: true` → native `finalize()` called from the destructor. Same laziness applies.
 - `WeakHandleOwner::finalize` runs earlier (at weak-reap time) but the cell is already dead; only use it to clear caches.
 - Destructors run on the mutator thread but **other JS objects may already be swept** — do not dereference `WriteBarrier` fields in a destructor.
 

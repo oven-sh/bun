@@ -271,6 +271,10 @@ impl<'a> PatchFile<'a> {
 fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
+    if let Err(e) = verify_parent_beneath_patch_dir(patch_dir, file_path.as_bytes(), state) {
+        return sys::Result::Err(e.with_path(file_path.as_bytes()));
+    }
+
     // Need to get the mode of the original file
     // And also get the size to read file into memory
     let stat = match sys::lstatat(patch_dir, &file_path) {
@@ -467,12 +471,11 @@ fn open_beneath(
 
     // The Windows NtCreateFile path drops FILE_SYNCHRONOUS_IO_NONALERT when
     // O::NOFOLLOW is set, which makes subsequent synchronous WriteFile fail.
-    // Reject a final-component symlink via lstatat so `O_CREAT` below cannot
-    // create the link target, then rely on `verify_fd_beneath_patch_dir` for
+    // Reject a final-component symlink via lstatat so the open below cannot
+    // touch the link target, then rely on `verify_fd_beneath_patch_dir` for
     // the remaining containment on Windows.
     let nofollow = if cfg!(windows) { 0 } else { sys::O::NOFOLLOW };
     if cfg!(windows)
-        && flags & sys::O::CREAT != 0
         && let sys::Result::Ok(st) = sys::lstatat(patch_dir, path)
         && sys::S::ISLNK(st.st_mode as u32)
     {

@@ -1469,7 +1469,7 @@ impl CreateCommand {
             bun_core::pretty!("<r>\n");
             Output::flush();
             scopeguard::defer! {
-                Output::print_errorln("\n");
+                Output::print_errorln("");
                 Output::print_start_end(start_time, bun_core::time::nano_timestamp());
                 bun_core::pretty_error!(
                     " <r><d>{} install<r>\n",

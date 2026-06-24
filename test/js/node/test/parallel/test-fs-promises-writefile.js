@@ -162,32 +162,18 @@ async function doReadWithEncoding() {
 }
 
 (async () => {
-  console.log("doWrite");
   await doWrite();
-  console.log("doWriteWithCancel");
   await doWriteWithCancel();
-  console.log("doAppend");
   await doAppend();
-  console.log("doRead");
   await doRead();
-  console.log("doReadWithEncoding");
   await doReadWithEncoding();
-  console.log("doWriteStream");
   await doWriteStream();
-  console.log("doWriteStreamWithCancel");
   await doWriteStreamWithCancel();
-  console.log("doWriteIterable");
   await doWriteIterable();
-  console.log("doWriteInvalidIterable");
   await doWriteInvalidIterable();
-  console.log("doWriteIterableWithEncoding");
   await doWriteIterableWithEncoding();
-  console.log("doWriteBufferIterable");
   await doWriteBufferIterable();
-  console.log("doWriteAsyncIterable");
   await doWriteAsyncIterable();
-  console.log("doWriteAsyncLargeIterable");
   await doWriteAsyncLargeIterable();
-  console.log("doWriteInvalidValues");
   await doWriteInvalidValues();
 })().then(common.mustCall());

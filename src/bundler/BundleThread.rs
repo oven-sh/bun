@@ -19,9 +19,7 @@ pub(crate) extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) 
 pub use bun_threading::ResetEvent;
 
 /// Result of a `Bun.build` invocation handed back to the JS thread.
-// Defined here (not re-exported from `bundle_v2`) because the un-gated
-// `bundle_v2` module keeps the draft body private; T6 (`bundler_jsc`) consumes
-// this via the `CompletionStruct` trait.
+/// Consumed by `bundler_jsc` via the `CompletionStruct` trait.
 pub struct BuildResult {
     pub output_files: Vec<crate::options::OutputFile>,
     pub metafile: Option<Box<[u8]>>,

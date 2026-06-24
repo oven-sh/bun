@@ -67,6 +67,11 @@ pub struct Handlers {
     pub on_writable: fn(*mut ()),
     pub on_error: fn(*mut (), JSValue),
     pub on_timeout: fn(*mut ()),
+    /// A new resumable TLS session (serialized SSL_SESSION) - node's
+    /// `'session'` event on the wrapping TLSSocket.
+    pub on_session: fn(*mut (), &[u8]),
+    /// An NSS key-log line - node's `'keylog'` event.
+    pub on_keylog: fn(*mut (), &[u8]),
 }
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
@@ -108,6 +113,20 @@ impl UpgradedDuplex {
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
         (this.handlers.on_data)(this.handlers.ctx, decoded_data);
+    }
+
+    fn on_session(this: *mut Self, session: &[u8]) {
+        bun_output::scoped_log!(UpgradedDuplex, "onSession ({})", session.len());
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        (this.handlers.on_session)(this.handlers.ctx, session);
+    }
+
+    fn on_keylog(this: *mut Self, line: &[u8]) {
+        bun_output::scoped_log!(UpgradedDuplex, "onKeylog ({})", line.len());
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        (this.handlers.on_keylog)(this.handlers.ctx, line);
     }
 
     fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
@@ -314,6 +333,8 @@ impl UpgradedDuplex {
                 on_data: Self::on_data,
                 on_close: Self::on_close,
                 write: Self::internal_write,
+                on_session: Some(Self::on_session),
+                on_keylog: Some(Self::on_keylog),
             },
         )?);
 
@@ -347,6 +368,8 @@ impl UpgradedDuplex {
                 on_data: Self::on_data,
                 on_close: Self::on_close,
                 write: Self::internal_write,
+                on_session: Some(Self::on_session),
+                on_keylog: Some(Self::on_keylog),
             },
         )?);
         // Success: disarm the errdefer.
@@ -479,7 +502,21 @@ impl UpgradedDuplex {
         // clear the timer
         self.set_timeout(0);
 
-        self.wrapper = None; // Drop runs SSLWrapper teardown
+        // Neuter in place rather than `self.wrapper = None`: `teardown()` can
+        // run re-entrantly from `on_close` while a `SSLWrapper::handle_traffic`
+        // frame is still on the stack with a `*mut Self` into the `Some`
+        // payload. Assigning `None` to the `Option` runs `Drop` (fine -
+        // `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
+        // `Option::None` value over the slot, whose payload bytes are stack
+        // garbage - the in-flight frame's `Self::r(this).ssl` then reads junk
+        // and `flush_pending_events` UAFs into BoringSSL. `deinit()` alone
+        // leaves `ssl = None` / `closed_notified = true` readable so those
+        // guards work; the `Option` is dropped for real when the parent
+        // `DuplexUpgradeContext` frees on the next tick. See WindowsNamedPipe's
+        // WRAPPER_BUSY for the sibling pattern.
+        if let Some(wrapper) = self.wrapper.as_mut() {
+            wrapper.deinit();
+        }
 
         self.origin.deinit();
         if let Some(callback) = self.on_data_callback.get() {

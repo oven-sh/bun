@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 const { HTTPParser, ConnectionsList } = process.binding("http_parser");
+const { parsers } = require("node:_http_common");
 
 const kOnHeaders = HTTPParser.kOnHeaders;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete;
@@ -246,5 +247,35 @@ describe("ConnectionsList", () => {
     // frees the implementation causing remove to not be able
     // to remove it.
     expect(list.all()).toEqual([p1, p4, p3]);
+  });
+});
+
+describe("parserOnHeaders maxHeaderPairs clamp (nodejs/node#61285)", () => {
+  test("only fills remaining capacity instead of pushing the whole batch", () => {
+    const parser = parsers.alloc();
+    try {
+      const onHeaders = parser[kOnHeaders];
+      parser._headers = ["x", "1"];
+      parser._url = "";
+      parser.maxHeaderPairs = 4;
+
+      onHeaders.call(parser, ["a", "2", "b", "3"], "");
+      expect(parser._headers).toEqual(["x", "1", "a", "2"]);
+
+      // At capacity: nothing more is collected.
+      onHeaders.call(parser, ["c", "4"], "");
+      expect(parser._headers).toEqual(["x", "1", "a", "2"]);
+
+      // maxHeaderPairs <= 0 means no limit.
+      parser.maxHeaderPairs = 0;
+      onHeaders.call(parser, ["c", "4"], "");
+      expect(parser._headers).toEqual(["x", "1", "a", "2", "c", "4"]);
+
+      parser.maxHeaderPairs = -1;
+      onHeaders.call(parser, ["d", "5"], "");
+      expect(parser._headers).toEqual(["x", "1", "a", "2", "c", "4", "d", "5"]);
+    } finally {
+      parser.close();
+    }
   });
 });

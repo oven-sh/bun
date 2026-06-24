@@ -667,7 +667,9 @@ impl FetchTasklet {
                 if let Some(bytes) = readable.ptr.bytes() {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
-                    bytes.on_data(StreamResult::Err(StreamError::JSValue(js_err)))?;
+                    bytes.on_data(StreamResult::Err(StreamError::JSValue(
+                        bun_jsc::strong::Optional::create(js_err, &global_this),
+                    )))?;
                 }
             }
             // A failure result is terminal (`to_result` forces `has_more =
@@ -1895,6 +1897,7 @@ impl FetchTasklet {
                 reject_unauthorized: Some(fetch_options.reject_unauthorized),
                 verbose: Some(fetch_options.verbose),
                 tls_props: fetch_options.ssl_config,
+                compress: fetch_options.compress,
             },
         )));
         // enable streaming the write side
@@ -2408,6 +2411,7 @@ pub struct FetchOptions {
     pub force_http3: bool,
     pub force_http1: bool,
     pub is_node_http_client: bool,
+    pub compress: Option<http::compress_body::CompressOption>,
 }
 
 impl Default for FetchOptions {
@@ -2442,6 +2446,7 @@ impl Default for FetchOptions {
             force_http3: false,
             force_http1: false,
             is_node_http_client: false,
+            compress: None,
         }
     }
 }

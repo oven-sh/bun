@@ -156,7 +156,8 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
   <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
-  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
+  <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
+  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
@@ -531,15 +532,25 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 more_packages[0] = true;
             }
 
+            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
+
             if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
-                print_node_modules_folder_structure(
-                    &first_directory,
-                    None,
-                    0,
-                    &mut directories,
-                    lockfile,
-                    &mut more_packages,
-                )?;
+                if trusted_only {
+                    // Trust is by package name, not tree position, so a trusted
+                    // package nested under an untrusted parent must still be
+                    // shown. Walk every node_modules folder and print a flat
+                    // list instead of pruning the tree.
+                    print_trusted_dependencies_flat(&first_directory, &directories, lockfile);
+                } else {
+                    print_node_modules_folder_structure(
+                        &first_directory,
+                        None,
+                        0,
+                        &mut directories,
+                        lockfile,
+                        &mut more_packages,
+                    )?;
+                }
             } else {
                 let mut cwd_buf = PathBuffer::uninit();
                 let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
@@ -554,6 +565,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let dependencies = lockfile.buffers.dependencies.as_slice();
                 let slice = lockfile.packages.slice();
                 let resolutions = slice.items_resolution();
+                let pkg_names = slice.items_name();
                 let root_deps = slice.items_dependencies()[0];
 
                 Output::println(format_args!(
@@ -574,6 +586,22 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 // `sort_unstable_by` is pdqsort; names are
                 // unique so stability is irrelevant.
                 sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+
+                if trusted_only {
+                    sorted_dependencies.retain(|&dep_id| {
+                        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+                        if package_id as usize >= lockfile.packages.len() {
+                            return false;
+                        }
+                        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+                        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+                        lockfile.has_trusted_dependency(
+                            alias,
+                            pkg_name,
+                            &resolutions[package_id as usize],
+                        )
+                    });
+                }
 
                 for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
                     let package_id =
@@ -872,6 +900,82 @@ fn print_node_modules_folder_structure(
     }
 
     Ok(())
+}
+
+fn print_trusted_dependencies_flat(
+    first_directory: &NodeModulesFolder,
+    directories: &[NodeModulesFolder],
+    lockfile: &Lockfile,
+) {
+    let mut cwd_buf = PathBuffer::uninit();
+    let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
+        Ok(len) => &cwd_buf[..len],
+        Err(_) => {
+            bun_core::pretty_errorln!("<r><red>error<r>: Could not get current working directory",);
+            Global::exit(1);
+        }
+    };
+    Output::println(format_args!("{} node_modules", bstr::BStr::new(path)));
+
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions_buf = lockfile.buffers.resolutions.as_slice();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let slice = lockfile.packages.slice();
+    let resolutions = slice.items_resolution();
+    let pkg_names = slice.items_name();
+    let pkg_count = lockfile.packages.len();
+
+    let mut seen: Vec<bool> = vec![false; pkg_count];
+    let mut trusted: Vec<DependencyID> = Vec::new();
+
+    let mut visit = |dep_id: DependencyID| {
+        let package_id = resolutions_buf[dep_id as usize];
+        if package_id as usize >= pkg_count {
+            return;
+        }
+        if seen[package_id as usize] {
+            return;
+        }
+        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+        if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize]) {
+            seen[package_id as usize] = true;
+            trusted.push(dep_id);
+        }
+    };
+    for &dep_id in first_directory.dependencies.iter() {
+        visit(dep_id);
+    }
+    for folder in directories {
+        for &dep_id in folder.dependencies.iter() {
+            visit(dep_id);
+        }
+    }
+
+    let by_name = ByName {
+        dependencies,
+        buf: string_bytes,
+    };
+    trusted.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+
+    for (index, &dep_id) in trusted.iter().enumerate() {
+        let package_id = resolutions_buf[dep_id as usize];
+        let name = dependencies[dep_id as usize].name.slice(string_bytes);
+        let resolution = resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
+        if index + 1 < trusted.len() {
+            bun_core::prettyln!(
+                "<d>├──<r> {}<r><d>@{}<r>\n",
+                bstr::BStr::new(name),
+                resolution,
+            );
+        } else {
+            bun_core::prettyln!(
+                "<d>└──<r> {}<r><d>@{}<r>\n",
+                bstr::BStr::new(name),
+                resolution,
+            );
+        }
+    }
 }
 
 use bun_core::fmt::buf_print_infallible as buf_print;

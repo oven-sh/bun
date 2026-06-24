@@ -142,7 +142,7 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
         } while (ret == -EINTR);
 
-        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES)) {
+        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES && ret != -EFAULT)) {
             return ret;
         }
 
@@ -503,8 +503,15 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;
     if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
-        // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
-        events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
+        /* Polling neither direction (a half-open socket after the peer's FIN):
+         * EPOLLHUP and EPOLLERR are always reported even when not requested,
+         * which is exactly what the dispatcher's eof/error handling needs to
+         * close the socket once both directions are down. Never add
+         * EPOLLRDHUP here - the peer's FIN has typically ALREADY arrived, so
+         * a level-triggered EPOLLRDHUP would fire on every epoll_wait while
+         * the dispatcher (which derives eof from EPOLLHUP only) ignores it,
+         * spinning the loop at 100% CPU until the JS side closes the fd. */
+        events |= EPOLLHUP | EPOLLERR;
     }
     event.events = events;
     event.data.ptr = p;
@@ -531,8 +538,9 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
         if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
-             // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
-            events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
+            /* See us_poll_start_rc: EPOLLHUP/EPOLLERR are implicit; never add
+             * EPOLLRDHUP for an already-half-closed socket or the loop spins. */
+            events |= EPOLLHUP | EPOLLERR;
         }
         event.events = events;
         event.data.ptr = p;

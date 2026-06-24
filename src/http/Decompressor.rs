@@ -5,10 +5,9 @@ use bun_http_types::Encoding::Encoding;
 /// the body buffer. 0 (via `BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE`) disables
 /// the cap; default 2 GB matches the package-install tarball limit.
 pub(crate) fn max_decompressed_body_size() -> usize {
-    const DEFAULT: u64 = 2 * 1024 * 1024 * 1024;
     match bun_core::env_var::BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE
         .get()
-        .unwrap_or(DEFAULT)
+        .expect("declared with a default")
     {
         0 => usize::MAX,
         n => usize::try_from(n).unwrap_or(usize::MAX),

@@ -9,8 +9,8 @@ import { bunEnv, bunExe, isWindows } from "harness";
 //
 // Bun.RedisClient's `onclose` setter does NOT validate callability, so we
 // can stash any value there and have the internal close path call it. The
-// .call() site that used to assert is
-// src/runtime/valkey_jsc/js_valkey.zig:1026 -> Bun__JSValue__call.
+// .call() site that used to assert is the on_close.call(...) in
+// src/runtime/valkey_jsc/js_valkey.rs -> Bun__JSValue__call.
 //
 // We run this in a subprocess because:
 //   - Without the fix, ASSERT aborts (SIGABRT on POSIX, non-zero exit

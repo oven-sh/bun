@@ -260,9 +260,8 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::ArrayBufferSink);
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
+    crate::impl_js_sink_forwarders!();
+
     fn finalize(&mut self) {
         // The `JSSink::finalize` C export owns destroying the heap
         // allocation; the trait impl here is the *inner* finalize.
@@ -270,18 +269,6 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         Self::construct(this);
-    }
-    fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
-        Self::end(self, err)
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, global) {
@@ -291,15 +278,6 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
             }),
             bun_sys::Result::Err(e) => bun_sys::Result::Err(e),
         }
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: streams::Start) -> bun_sys::Result<()> {
-        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut Signal> {
         Some(&mut self.signal)

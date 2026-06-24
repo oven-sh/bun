@@ -256,7 +256,6 @@ export function dictionary(
         })()}
       `);
     }
-
   })();
 }
 

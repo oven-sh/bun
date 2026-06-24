@@ -451,7 +451,6 @@ addValue(
   "LangSelectorList",
 );
 
-
 const allBrowsers = ["android", "chrome", "edge", "firefox", "ie", "ios_saf", "opera", "safari", "samsung"];
 
 let flags = [

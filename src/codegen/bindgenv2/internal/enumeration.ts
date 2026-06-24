@@ -173,6 +173,5 @@ export function enumeration(
         }
       `);
     }
-
   })();
 }

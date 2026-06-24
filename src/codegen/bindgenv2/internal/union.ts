@@ -132,6 +132,5 @@ export function union(
         }
       `);
     }
-
   })();
 }

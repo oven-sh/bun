@@ -4582,7 +4582,9 @@ impl<'a> HTTPClient<'a> {
                 self.state.get_body_buffer().append_slice_exact(buffer)?;
 
                 // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming) {
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.signals.body_receive_mode.is_some()
+                {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 

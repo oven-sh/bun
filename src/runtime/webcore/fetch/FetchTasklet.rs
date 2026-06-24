@@ -1533,6 +1533,15 @@ impl FetchTasklet {
         // body finishes (undone in `on_progress_update` when `is_done`).
         this.poll_ref.ref_(bun_io::js_vm_ctx());
 
+        // The bytes already in `scheduled_response_buffer` are handed to the
+        // new stream below. That is the drain `Paused` was waiting for, so
+        // flip back to `AutoPause` so the resume scheduled here actually
+        // un-pauses the socket; otherwise a reader that finds the drained
+        // buffer smaller than the pending view returns `Pending` without
+        // signalling and the transport stays paused past a server FIN.
+        this.signal_store
+            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause);
+
         if let Some(http_) = this.http.as_mut() {
             http_.enable_response_body_streaming();
 

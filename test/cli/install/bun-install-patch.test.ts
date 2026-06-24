@@ -8,6 +8,7 @@ const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
   str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
   str = str.replaceAll("fstatat()", "stat()");
+  str = str.replaceAll("open()", "stat()");
   return str;
 };
 

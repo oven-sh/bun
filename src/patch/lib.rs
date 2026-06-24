@@ -239,17 +239,27 @@ impl<'a> PatchFile<'a> {
                     }
                     let newmode = file_mode_change.new_mode;
                     let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
-                    let flags = if cfg!(windows) {
-                        sys::O::RDWR
-                    } else {
-                        sys::O::RDONLY
-                    };
-                    let fd = match open_beneath(patch_dir, &filepath, flags, 0, false, &mut state) {
+                    let fd = match open_beneath(
+                        patch_dir,
+                        &filepath,
+                        sys::O::RDONLY,
+                        0,
+                        false,
+                        &mut state,
+                    ) {
                         sys::Result::Err(e) => return Some(e.without_path()),
                         sys::Result::Ok(f) => f,
                     };
-                    let _close = scopeguard::guard(fd, |fd| fd.close());
-                    if let sys::Result::Err(e) = sys::fchmod(fd, newmode.to_bun_mode()) {
+                    // On Windows `sys::fchmod` routes through libuv and panics
+                    // on the HANDLE-backed fd returned by `openat`; use the
+                    // path-based `fchmodat` there once containment is verified.
+                    let r = if cfg!(windows) {
+                        sys::fchmodat(patch_dir, &filepath, newmode.to_bun_mode(), 0)
+                    } else {
+                        sys::fchmod(fd, newmode.to_bun_mode())
+                    };
+                    fd.close();
+                    if let sys::Result::Err(e) = r {
                         return Some(e.without_path());
                     }
                 }

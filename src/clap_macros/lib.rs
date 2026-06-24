@@ -267,11 +267,9 @@ fn byte_str_b(s: &[u8]) -> LitByteStr {
 
 fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
     let msg = byte_str(&p.id.msg);
-    // Precompute only the tag-stripped form (the non-TTY help path needs it ready
-    // without a TTY check) so it is a `const` byte literal in rodata; the ANSI
-    // form is derived lazily from `msg` by `bun_clap::pretty_help_desc` — it is
-    // rare (only `bun --help` on a colour TTY) and baking it in would roughly
-    // triple the help-string rodata.
+    // Precompute only the tag-stripped form as a rodata `const` (non-TTY help
+    // needs it without a TTY check); the ANSI form is derived lazily by
+    // `bun_clap::pretty_help_desc` since baking it would ~triple help rodata.
     let msg_plain = byte_str_b(&bun_output_tags::pretty_fmt_runtime(
         p.id.msg.as_bytes(),
         false,

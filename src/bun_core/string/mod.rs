@@ -2438,10 +2438,9 @@ pub mod printer {
     /// `MutableString`, and any other `crate::io::Write` sink.
     pub use crate::io::Write as PrinterWriter;
 
-    // PERF: `ascii_only` is a *runtime* arg so the large callers
-    // (`write_pre_quoted_string_inner`, `bun_js_printer::estimate_length_for_utf8`)
-    // collapse to a single monomorphization instead of one per
-    // (ascii_only × quote_char × …) combo — see `write_pre_quoted_string_inner`.
+    // PERF: `ascii_only` is a runtime arg so the large callers collapse to a
+    // single monomorphization instead of one per (ascii_only × quote_char × …)
+    // combo; see `write_pre_quoted_string_inner` for the same trade-off.
     #[inline]
     pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
         if c <= LAST_ASCII as i32 {
@@ -2681,17 +2680,9 @@ pub mod printer {
         bytes: &mut MutableString,
         ascii_only: bool,
     ) -> Result<(), crate::Error> {
-        // `ascii_only` is threaded at runtime so
-        // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
-        //
-        // Heuristic reservation (~12.5% slack) instead of a full
-        // escaped-length pre-scan, which would do a SIMD scan + per-escape rune
-        // decode over `text` just to size the buffer — the same work
-        // `write_pre_quoted_string_inner` repeats immediately below.
-        // Tab-indented JS (e.g. three.js) has ~9.4% of bytes needing 2-byte
-        // escapes (tabs + newlines + quotes/backslashes), so 6.25% slack would
-        // under-shoot and force a 2x doubling memcpy of the whole source. The
-        // writer still grows on demand if this under-shoots.
+        // ~12.5% slack heuristic: tab-indented JS (three.js) escapes ~9.4% of
+        // bytes, so `>> 4` (6.25%) would under-shoot and force a 2x doubling
+        // memcpy. Writer still grows on demand if this under-shoots.
         bytes.grow_if_needed(text.len() + (text.len() >> 3) + 8)?;
         bytes.append_char(b'"')?;
         write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(

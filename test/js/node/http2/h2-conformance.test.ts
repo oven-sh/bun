@@ -417,6 +417,19 @@ describe("frame size limit (checklist §4.2)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);
     c.destroy();
   });
+
+  test("a SETTINGS frame exceeding SETTINGS_MAX_FRAME_SIZE is a FRAME_SIZE_ERROR", async () => {
+    const c = await RawH2.connect(port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    // 16386 is a multiple of 6 so the §6.5 length check passes; the §4.2 cap must still
+    // reject it before any payload is buffered.
+    const oversized = Buffer.alloc(16386, 0);
+    c.sendFrame(FrameType.SETTINGS, 0, 0, oversized);
+    const goaway = await c.waitForGoaway();
+    expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);
+    c.destroy();
+  });
 });
 
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`

@@ -4708,7 +4708,10 @@ impl H2FrameParser {
 
         let setting_byte_size = SettingsPayloadUnit::BYTE_SIZE;
         if frame.length > 0 {
-            if is_ack || !(frame.length as usize).is_multiple_of(setting_byte_size) {
+            if is_ack
+                || frame.length > self.local_settings.get().max_frame_size
+                || !(frame.length as usize).is_multiple_of(setting_byte_size)
+            {
                 bun_output::scoped_log!(H2FrameParser, "invalid settings frame size");
                 self.send_go_away(
                     frame.stream_identifier,

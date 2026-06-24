@@ -58,10 +58,12 @@ pub(crate) type ResumableSink = ResumableFetchSink;
 pub enum BodyReceiveMode {
     /// Pause the transport after each delivered body chunk until JS pulls.
     AutoPause = 0,
+    /// HTTP-thread `callback` won the CAS; transport should be paused.
+    Paused = 1,
     /// `.arrayBuffer()`/`.text()`/etc attached — never pause.
-    BufferAll = 1,
+    BufferAll = 2,
     /// Cancelled or abandoned — never pause, callback discards bytes.
-    Ignore = 2,
+    Ignore = 3,
 }
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
@@ -1598,37 +1600,54 @@ impl FetchTasklet {
     }
 
     fn on_stream_drained_callback(ctx: Option<*mut c_void>) {
-        Self::from_ctx(ctx.expect("ctx")).resume_receive_if_paused();
+        let this = Self::from_ctx(ctx.expect("ctx"));
+        if this
+            .body_receive_mode
+            .compare_exchange(
+                BodyReceiveMode::Paused as u8,
+                BodyReceiveMode::AutoPause as u8,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            this.signal_store
+                .receive_paused
+                .store(false, Ordering::Release);
+            this.schedule_receive_resume();
+        }
     }
 
     fn on_start_buffering_callback(ctx: *mut c_void) {
-        let this = Self::from_ctx(ctx);
-        this.set_body_receive_mode(BodyReceiveMode::BufferAll);
-        this.resume_receive_if_paused();
+        Self::from_ctx(ctx).set_body_receive_mode(BodyReceiveMode::BufferAll);
     }
 
     #[inline]
     fn body_receive_mode(&self) -> BodyReceiveMode {
         match self.body_receive_mode.load(Ordering::Acquire) {
-            1 => BodyReceiveMode::BufferAll,
-            2 => BodyReceiveMode::Ignore,
+            1 => BodyReceiveMode::Paused,
+            2 => BodyReceiveMode::BufferAll,
+            3 => BodyReceiveMode::Ignore,
             _ => BodyReceiveMode::AutoPause,
         }
     }
 
-    #[inline]
     fn set_body_receive_mode(&self, mode: BodyReceiveMode) {
-        self.body_receive_mode.store(mode as u8, Ordering::Release);
+        debug_assert!(matches!(
+            mode,
+            BodyReceiveMode::BufferAll | BodyReceiveMode::Ignore
+        ));
+        if self.body_receive_mode.swap(mode as u8, Ordering::AcqRel)
+            == BodyReceiveMode::Paused as u8
+        {
+            self.signal_store
+                .receive_paused
+                .store(false, Ordering::Release);
+            self.schedule_receive_resume();
+        }
     }
 
-    fn resume_receive_if_paused(&self) {
-        if !self
-            .signal_store
-            .receive_paused
-            .swap(false, Ordering::AcqRel)
-        {
-            return;
-        }
+    fn schedule_receive_resume(&self) {
         if let Some(http_) = self.http.as_ref() {
             http::http_thread().schedule_receive_resume(http_.async_http_id);
         }
@@ -1720,13 +1739,6 @@ impl FetchTasklet {
         self.set_body_receive_mode(BodyReceiveMode::Ignore);
         if let Some(http_) = self.http.as_mut() {
             http_.enable_response_body_streaming();
-            // Unconditional: a concurrent callback may have loaded
-            // `AutoPause` before the store above and set `receive_paused`
-            // after our swap would have observed it.
-            self.signal_store
-                .receive_paused
-                .store(false, Ordering::Release);
-            http::http_thread().schedule_receive_resume(http_.async_http_id);
         }
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
@@ -2308,8 +2320,7 @@ impl FetchTasklet {
         // above before the lifetime-erasing assignment; the bytes are already in place, so
         // no copy is needed and the `reset()` calls below operate on the right allocation.
 
-        let receive_mode = task_ref.body_receive_mode();
-        if receive_mode == BodyReceiveMode::Ignore {
+        if task_ref.body_receive_mode() == BodyReceiveMode::Ignore {
             task_ref.response_buffer.reset();
 
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
@@ -2332,8 +2343,16 @@ impl FetchTasklet {
                         .write(task_ref.response_buffer.list.as_slice()),
                 );
                 if task_ref.result.has_more
-                    && receive_mode == BodyReceiveMode::AutoPause
                     && !task_ref.scheduled_response_buffer.list.is_empty()
+                    && task_ref
+                        .body_receive_mode
+                        .compare_exchange(
+                            BodyReceiveMode::AutoPause as u8,
+                            BodyReceiveMode::Paused as u8,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        )
+                        .is_ok()
                 {
                     task_ref
                         .signal_store

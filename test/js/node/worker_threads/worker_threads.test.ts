@@ -522,9 +522,18 @@ describe("getHeapSnapshot", () => {
     });
   });
 
-  test("returns a rejected promise if the worker is not running", () => {
-    const worker = new Worker("", { eval: true });
-    expect(worker.getHeapSnapshot()).rejects.toMatchObject({
+  test("queues while the worker is starting and rejects once it has exited", async () => {
+    const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
+    // Called immediately after construction (m_state still Pending): node — and now
+    // bun — queues into m_pendingTasks and resolves once the worker is Running,
+    // instead of racing against dispatchOnline and spuriously rejecting.
+    const pendingCall = worker.getHeapSnapshot();
+    await once(worker, "online");
+    await expect(pendingCall).resolves.toBeDefined();
+    worker.postMessage("done");
+    await once(worker, "exit");
+    // After exit (m_state Closed) it rejects.
+    await expect(worker.getHeapSnapshot()).rejects.toMatchObject({
       name: "Error",
       code: "ERR_WORKER_NOT_RUNNING",
       message: "Worker instance not running",

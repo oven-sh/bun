@@ -755,7 +755,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
             });
     });
     if (!accepted) {
-        // Worker raced to Closing/Closed between isOnline() and the post.
+        // postTaskToWorkerGlobalScope returns false only for Closing/Closed.
         // Still on the parent thread — safe to destroy the handle here.
         delete promiseHandle;
         promise->reject(vm,
@@ -773,10 +773,6 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
     auto& worker = castedThis->wrapped();
 
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    if (!worker.isOnline()) {
-        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
-        return JSValue::encode(promise);
-    }
 
     // See getHeapSnapshot for the Strong-handle-across-threads rationale.
     auto* promiseHandle = new Strong<JSPromise>(vm, promise);

@@ -106,6 +106,7 @@ pub struct FetchTasklet {
     pub signals: Signals,
     pub signal_store: http::signals::Store,
     pub has_schedule_callback: AtomicBool,
+    pub is_buffering_body: AtomicBool,
 
     // must be stored because AbortSignal stores reason weakly
     pub abort_reason: StrongOptional,
@@ -474,7 +475,7 @@ impl FetchTasklet {
             Response::unref(response);
         }
 
-        self.clear_stream_cancel_handler();
+        self.clear_stream_handlers();
         self.readable_stream_ref.deinit();
 
         self.scheduled_response_buffer = MutableString::default();
@@ -713,7 +714,7 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
                     bytes.on_data(Self::temporary_chunk(chunk, false))?;
                 } else {
-                    self.clear_stream_cancel_handler();
+                    self.clear_stream_handlers();
                     let prev = core::mem::take(&mut self.readable_stream_ref);
                     buffer_reset.set(false);
 
@@ -1533,7 +1534,7 @@ impl FetchTasklet {
             // and if the server doesn't close the connection by itself
             // and doesn't send any follow-up data
             // then we must make sure the HTTP thread flushes.
-            http::http_thread().schedule_response_body_drain(http_.async_http_id);
+            http::http_thread().schedule_receive_resume(http_.async_http_id);
         }
 
         this.mutex.lock();
@@ -1564,17 +1565,16 @@ impl FetchTasklet {
         }
     }
 
-    /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
-    /// Must be called before releasing readable_stream_ref, while the Strong ref
-    /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
-    fn clear_stream_cancel_handler(&mut self) {
+    /// Clear every ByteStream.Source callback whose ctx is this FetchTasklet
+    /// before releasing `readable_stream_ref` — the stream can outlive us in JS.
+    fn clear_stream_handlers(&mut self) {
         if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
             if let Some(bytes) = readable.ptr.bytes() {
-                // R-2: project to the parent `NewSource` via `&self`; the two
-                // fields are `Cell`-wrapped for exactly this caller.
                 let source = bytes.parent_const();
                 source.cancel_handler.set(None);
                 source.cancel_ctx.set(None);
+                source.drain_handler.set(None);
+                source.drain_ctx.set(None);
             }
         }
     }
@@ -1585,6 +1585,29 @@ impl FetchTasklet {
             return;
         }
         this.ignore_remaining_response_body();
+    }
+
+    fn on_stream_drained_callback(ctx: Option<*mut c_void>) {
+        Self::from_ctx(ctx.expect("ctx")).resume_receive_if_paused();
+    }
+
+    fn on_start_buffering_callback(ctx: *mut c_void) {
+        let this = Self::from_ctx(ctx);
+        this.is_buffering_body.store(true, Ordering::Release);
+        this.resume_receive_if_paused();
+    }
+
+    fn resume_receive_if_paused(&self) {
+        if !self
+            .signal_store
+            .receive_paused
+            .swap(false, Ordering::AcqRel)
+        {
+            return;
+        }
+        if let Some(http_) = self.http.as_ref() {
+            http::http_thread().schedule_receive_resume(http_.async_http_id);
+        }
     }
 
     fn to_body_value(&mut self) -> BodyValue {
@@ -1598,7 +1621,9 @@ impl FetchTasklet {
             pending.on_start_streaming =
                 Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
+            pending.on_start_buffering = Some(FetchTasklet::on_start_buffering_callback);
             pending.on_stream_cancelled = Some(FetchTasklet::on_stream_cancelled_callback);
+            pending.on_stream_drained = Some(FetchTasklet::on_stream_drained_callback);
             return BodyValue::Locked(pending);
         }
 
@@ -1671,11 +1696,13 @@ impl FetchTasklet {
         if let Some(http_) = self.http.as_mut() {
             http_.enable_response_body_streaming();
         }
+        self.is_buffering_body.store(true, Ordering::Release);
+        self.resume_receive_if_paused();
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // clean any remaining references
-        self.clear_stream_cancel_handler();
+        self.clear_stream_handlers();
         self.readable_stream_ref.deinit();
         self.response.clear();
 
@@ -1743,6 +1770,7 @@ impl FetchTasklet {
             signals: Signals::default(),
             signal_store: http::signals::Store::default(),
             has_schedule_callback: AtomicBool::new(false),
+            is_buffering_body: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
@@ -2275,6 +2303,16 @@ impl FetchTasklet {
                         .scheduled_response_buffer
                         .write(task_ref.response_buffer.list.as_slice()),
                 );
+                if task_ref.result.has_more
+                    && task_ref.scheduled_response_buffer.list.len()
+                        >= http::RECEIVE_BODY_HIGH_WATER
+                    && !task_ref.is_buffering_body.load(Ordering::Relaxed)
+                {
+                    task_ref
+                        .signal_store
+                        .receive_paused
+                        .store(true, Ordering::Release);
+                }
             }
             // reset for reuse
             task_ref.response_buffer.reset();

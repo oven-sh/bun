@@ -122,12 +122,12 @@ pub struct HttpThread {
 
     pub queued_shutdowns: Vec<ShutdownMessage>,
     pub queued_writes: Vec<WriteMessage>,
-    pub queued_response_body_drains: Vec<DrainMessage>,
+    pub queued_receive_resumes: Vec<u32>,
     pub queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
 
     pub queued_shutdowns_lock: Mutex,
     pub queued_writes_lock: Mutex,
-    pub queued_response_body_drains_lock: Mutex,
+    pub queued_receive_resumes_lock: Mutex,
     pub queued_cert_check_resumes_lock: Mutex,
 
     pub queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
@@ -177,11 +177,11 @@ impl HttpThread {
             has_pending_queued_abort: false,
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
-            queued_response_body_drains: Vec::new(),
+            queued_receive_resumes: Vec::new(),
             queued_cert_check_resumes: Vec::new(),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
-            queued_response_body_drains_lock: Mutex::new(),
+            queued_receive_resumes_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             has_awoken: AtomicBool::new(false),
@@ -265,10 +265,6 @@ pub struct WriteMessage {
 pub enum WriteMessageType {
     Data = 0,
     End = 1,
-}
-
-pub struct DrainMessage {
-    pub async_http_id: u32,
 }
 
 pub struct ShutdownMessage {
@@ -813,51 +809,51 @@ impl HttpThread {
         }
     }
 
-    fn drain_queued_http_response_body_drains(&mut self) {
+    fn drain_queued_receive_resumes(&mut self) {
         loop {
-            // socket.close() can potentially be slow
-            // Let's not block other threads while this runs.
-            let queued_response_body_drains = {
-                let _guard = self.queued_response_body_drains_lock.lock_guard();
-                core::mem::take(&mut self.queued_response_body_drains)
+            let queued = {
+                let _guard = self.queued_receive_resumes_lock.lock_guard();
+                core::mem::take(&mut self.queued_receive_resumes)
             };
-
-            for drain in &queued_response_body_drains {
-                if let Some(socket_ptr) = abort_tracker().get(&drain.async_http_id) {
+            if queued.is_empty() {
+                return;
+            }
+            for id in queued {
+                if let Some(socket_ptr) = abort_tracker().get(&id) {
                     match *socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
+                                client.resume_receive::<true>(socket);
                                 client.drain_response_body::<true>(socket);
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.drain_response_body_by_http_id(drain.async_http_id);
+                                session.resume_receive_by_http_id(id);
+                                session.drain_response_body_by_http_id(id);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
+                                client.resume_receive::<false>(socket);
                                 client.drain_response_body::<false>(socket);
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.drain_response_body_by_http_id(drain.async_http_id);
+                                session.resume_receive_by_http_id(id);
+                                session.drain_response_body_by_http_id(id);
                             }
                         }
                     }
+                } else {
+                    h3::ClientContext::resume_receive_by_http_id(id);
                 }
             }
-            let len = queued_response_body_drains.len();
-            drop(queued_response_body_drains);
-            if len == 0 {
-                break;
-            }
-            bun_core::scoped_log!(HTTPThread, "drained {} queued drains", len);
         }
     }
 
     pub fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
-        self.drain_queued_http_response_body_drains();
+        self.drain_queued_receive_resumes();
         self.drain_queued_writes();
         self.drain_queued_shutdowns();
         // After shutdowns: an abort or cert-rejection scheduled in the same JS
@@ -959,11 +955,13 @@ impl HttpThread {
         }
     }
 
-    pub fn schedule_response_body_drain(&mut self, async_http_id: u32) {
+    pub fn schedule_receive_resume(&mut self, async_http_id: u32) {
         {
-            let _guard = self.queued_response_body_drains_lock.lock_guard();
-            self.queued_response_body_drains
-                .push(DrainMessage { async_http_id });
+            let _guard = self.queued_receive_resumes_lock.lock_guard();
+            if self.queued_receive_resumes.last() == Some(&async_http_id) {
+                return;
+            }
+            self.queued_receive_resumes.push(async_http_id);
         }
         self.wakeup();
     }

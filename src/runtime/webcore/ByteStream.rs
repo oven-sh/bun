@@ -158,6 +158,14 @@ impl ByteStream {
         });
     }
 
+    #[inline]
+    fn signal_drained(&self) {
+        let source = self.parent_const();
+        if let Some(handler) = source.drain_handler.get() {
+            handler(source.drain_ctx.get());
+        }
+    }
+
     pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         bun_jsc::mark_binding!();
         if self.done.get() {
@@ -183,11 +191,13 @@ impl ByteStream {
             (p.ctx, p.on_pipe)
         };
         if let Some(ctx) = pipe_ctx {
+            self.signal_drained();
             (pipe_fn.unwrap())(ctx, stream);
             return Ok(());
         }
 
         if self.buffer_action.get().is_some() {
+            self.signal_drained();
             if let streams::Result::Err(err) = &stream {
                 // Explicit post-reject cleanup; runs after `action.reject`
                 // (`?` would skip it).
@@ -327,6 +337,10 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
+            if !has_remaining {
+                self.signal_drained();
+            }
+
             // R-2: `Pending::run` resolves a JS promise (re-enters JS); the
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
             // suppressed on `&self`, which is the load-bearing fix vs the old
@@ -425,6 +439,10 @@ impl ByteStream {
                 }
                 (to_write, remaining_in_buffer_len)
             });
+
+            if self.buffer.get().is_empty() {
+                self.signal_drained();
+            }
 
             if self.has_received_last_chunk.get() && remaining_in_buffer_len == 0 {
                 self.buffer.with_mut(|b| {
@@ -542,6 +560,7 @@ impl ByteStream {
 
     pub(crate) fn drain(&self) -> Vec<u8> {
         if !self.buffer.get().is_empty() {
+            self.signal_drained();
             return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         }
         Vec::<u8>::default()
@@ -596,6 +615,7 @@ impl ByteStream {
             return Ok(blob.to_promise(global_this, action)?);
         }
 
+        self.signal_drained();
         self.buffer_action
             .set(Some(BufferAction::new(action, global_this)));
 

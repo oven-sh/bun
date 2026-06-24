@@ -282,6 +282,10 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// [`SocketTimeout::set_timeout`]), so they round up to the next whole minute.
 pub static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
+/// Once `scheduled_response_buffer` reaches this with a streaming reader
+/// attached, the transport stops reading until the reader pulls.
+pub const RECEIVE_BODY_HIGH_WATER: usize = 64 * 1024;
+
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
 #[inline]
 pub fn idle_timeout_seconds() -> c_uint {
@@ -3612,7 +3616,9 @@ impl<'a> HTTPClient<'a> {
                 self.handle_on_data_headers::<IS_SSL>(incoming_data, ctx, socket);
             }
             ResponseStage::Body => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 let report_progress = match self.handle_response_body(incoming_data, false) {
                     Ok(b) => b,
@@ -3628,7 +3634,9 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             ResponseStage::BodyChunk => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 let report_progress =
                     match self.handle_response_body_chunked_encoding(incoming_data) {
@@ -3792,6 +3800,31 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(idle_timeout_seconds());
     }
 
+    fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if self.state.flags.receive_paused
+            || self.proxy_tunnel.is_some()
+            || !self.signals.get(signals::Field::ReceivePaused)
+            || socket.is_closed_or_has_error()
+        {
+            return;
+        }
+        self.state.flags.receive_paused = true;
+        socket.set_timeout(0);
+        let _ = socket.pause_stream();
+    }
+
+    pub fn resume_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if !self.state.flags.receive_paused {
+            return;
+        }
+        self.state.flags.receive_paused = false;
+        if socket.is_closed_or_has_error() {
+            return;
+        }
+        let _ = socket.resume_stream();
+        self.set_timeout(&socket);
+    }
+
     pub fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         // Find out if we should not send any update.
         match self.state.stage {
@@ -3916,6 +3949,10 @@ impl<'a> HTTPClient<'a> {
                 _ => true,
             };
 
+            // The uSockets paused bit survives `state.reset()`; never hand a
+            // paused socket back to the pool.
+            self.resume_receive(socket);
+
             if self.is_keep_alive_possible()
                 && !socket.is_closed_or_has_error()
                 && tunnel_poolable
@@ -3992,6 +4029,10 @@ impl<'a> HTTPClient<'a> {
             certificate_info,
         };
         callback.run(async_http, result);
+
+        if has_more {
+            self.maybe_pause_receive(socket);
+        }
 
         if PRINT_EVERY != 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
@@ -4365,6 +4406,7 @@ impl<'a> HTTPClient<'a> {
         if is_done
             || self.signals.get(signals::Field::ResponseBodyStreaming)
             || content_length.is_none()
+            || self.state.get_body_buffer().list.len() >= RECEIVE_BODY_HIGH_WATER
         {
             let is_final_chunk = is_done;
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
@@ -4449,7 +4491,9 @@ impl<'a> HTTPClient<'a> {
             -2 => {
                 self.report_progress(buffer_len);
                 // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming) {
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.state.get_body_buffer().list.len() >= RECEIVE_BODY_HIGH_WATER
+                {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
                     // Move the
@@ -4543,7 +4587,7 @@ impl<'a> HTTPClient<'a> {
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/body_out_str).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, true);
+                    return self.state.process_body_buffer(buffer_snap, false);
                 }
 
                 Ok(false)

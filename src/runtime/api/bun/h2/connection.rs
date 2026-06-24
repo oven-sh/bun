@@ -139,12 +139,9 @@ pub struct Connection {
     /// session option, nghttp2's max_settings; not a SETTINGS parameter). Frames carrying more
     /// entries are a connection error (ENHANCE_YOUR_CALM, like nghttp2's flood guard).
     pub max_settings: u32,
-    /// Rapid-reset guard (CVE-2023-44487): inbound RST_STREAM on a still-open peer-initiated
-    /// stream increments this; `close_stream` (the embedder's lifecycle-complete signal)
-    /// decrements it. So the value is the burst of resets seen since the last drain — a
-    /// legitimate cancel is refunded when its handler completes, while a HEADERS→RST flood in
-    /// one read accumulates without refill. Exceeding `max_peer_resets` GOAWAYs the connection
-    /// with ENHANCE_YOUR_CALM (node's `streamResetBurst`, nghttp2 stream_reset_rate_limit burst).
+    /// Rapid-reset guard (CVE-2023-44487): inbound peer RST_STREAM on an in-flight stream
+    /// increments this, `close_stream` refunds one per completed handler. Exceeding
+    /// `max_peer_resets` (node's `streamResetBurst`) GOAWAYs with ENHANCE_YOUR_CALM.
     peer_reset_count: u32,
     pub max_peer_resets: u32,
 
@@ -739,11 +736,9 @@ impl Connection {
             );
             return true;
         }
-        // §5.1.2: enforce our advertised SETTINGS_MAX_CONCURRENT_STREAMS before allocating any
-        // state. A refused stream still has its header block decoded (for HPACK-table sync) and
-        // bumps last_stream_id (so a follow-up RST_STREAM on it is closed, not idle), but never
-        // enters the streams map and never fires on_stream_open — bounding both the map and the
-        // embedder's per-stream JS allocations against a HEADERS flood.
+        // §5.1.2: enforce our SETTINGS_MAX_CONCURRENT_STREAMS before allocating any state.
+        // A refused stream's block is still HPACK-decoded and bumps last_stream_id, but never
+        // enters the map and never fires on_stream_open.
         let mut refused = false;
         if is_new && self.is_server {
             let cap = self.local_settings.max_concurrent_streams;
@@ -973,9 +968,9 @@ impl Connection {
             return true;
         }
         if refused {
-            // §5.1.2: over our advertised concurrent-stream limit — stream error REFUSED_STREAM.
-            // No map entry exists for `target`; on_stream_rejected lets the embedder budget this
-            // against maxSessionRejectedStreams so a refusal flood tears the connection down.
+            // §5.1.2: over our concurrent-stream limit — stream error REFUSED_STREAM. No map
+            // entry exists for `target`; on_stream_rejected budgets it against
+            // maxSessionRejectedStreams.
             self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
             sink.on_stream_reset(target, ErrorCode::RefusedStream.as_u32());
             sink.on_stream_rejected(target);
@@ -1286,12 +1281,9 @@ impl Connection {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
             return true;
         }
-        // Rapid-reset guard (CVE-2023-44487): a HEADERS→RST_STREAM flood stays under the
-        // concurrency cap while churning a JS request object per cycle. Count peer resets of
-        // still-in-flight streams (late resets of already-closed/evicted streams cost nothing);
-        // `close_stream` refunds one per completed handler so legitimate cancels on a
-        // long-lived connection never accumulate. Exceeding the burst answers
-        // GOAWAY(ENHANCE_YOUR_CALM), matching nghttp2's stream_reset_rate_limit.
+        // Rapid-reset guard (CVE-2023-44487): count peer resets of still-in-flight streams
+        // (refunded by `close_stream`); exceeding the burst answers GOAWAY(ENHANCE_YOUR_CALM)
+        // like nghttp2's stream_reset_rate_limit.
         if self.is_server && in_flight && hdr.stream_id & 1 == 1 {
             self.peer_reset_count = self.peer_reset_count.saturating_add(1);
             if self.peer_reset_count > self.max_peer_resets {

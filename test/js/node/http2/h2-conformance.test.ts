@@ -407,8 +407,8 @@ describe("SETTINGS value ranges (checklist §6.5.2)", () => {
 
 describe("stream concurrency (§5.1.2)", () => {
   // Minimal valid request header block: [:method GET, :scheme http, :path /, :authority x]
-  // — static-table indexed fields plus one literal :authority, no dynamic-table state.
-  const reqBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x41]), Buffer.from([1]), Buffer.from("x", "latin1")]);
+  // — static-table indexed + one literal-without-indexing :authority (0x01), no dynamic-table state.
+  const reqBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), Buffer.from([1]), Buffer.from("x", "latin1")]);
 
   test("HEADERS past SETTINGS_MAX_CONCURRENT_STREAMS is refused without a 'stream' event", async () => {
     const seen: number[] = [];
@@ -417,6 +417,8 @@ describe("stream concurrency (§5.1.2)", () => {
       seen.push(stream.id);
       stream.on("error", () => {});
     });
+    srv.on("sessionError", () => {});
+    srv.on("error", () => {});
     srv.listen(0);
     await once(srv, "listening");
     const p = (srv.address() as net.AddressInfo).port;

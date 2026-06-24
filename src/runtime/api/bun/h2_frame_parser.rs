@@ -9254,9 +9254,11 @@ impl H2FrameParser {
                     settings_js.get(global_object, "streamResetBurst")?
                 {
                     if stream_reset_burst.is_number() {
-                        this_ref
-                            .stream_reset_burst
-                            .set(stream_reset_burst.to_uint64_no_truncate() as u32);
+                        this_ref.stream_reset_burst.set(
+                            stream_reset_burst
+                                .to_uint64_no_truncate()
+                                .min(u32::MAX as u64) as u32,
+                        );
                     }
                 }
                 if let Some(max_outstanding_settings) =

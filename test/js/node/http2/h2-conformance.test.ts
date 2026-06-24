@@ -417,6 +417,43 @@ describe("frame size limit (checklist §4.2)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);
     c.destroy();
   });
+
+  // §4.2: the max-frame-size check applies to every frame type and is enforced from the
+  // header alone, before the payload is buffered. A 9-byte header declaring a ~16 MiB
+  // payload must be rejected immediately; otherwise a peer could pin up to 16 MiB of
+  // reassembly buffer per connection while dribbling the body.
+  function oversizedHeader(type: number, streamId: number, length: number): Buffer {
+    const b = Buffer.alloc(9);
+    b.writeUIntBE(length, 0, 3);
+    b.writeUInt8(type, 3);
+    b.writeUInt8(0, 4);
+    b.writeUInt32BE(streamId & 0x7fffffff, 5);
+    return b;
+  }
+
+  test.each([
+    // Use a multiple of 6 for SETTINGS so the §6.5 length rule cannot mask the §4.2 check.
+    ["SETTINGS", FrameType.SETTINGS, 0, 0xfffffc],
+    ["GOAWAY", FrameType.GOAWAY, 0, 0xffffff],
+    ["PUSH_PROMISE", FrameType.PUSH_PROMISE, 1, 0xffffff],
+    ["ALTSVC", 0x0a, 0, 0xffffff],
+    ["ORIGIN", 0x0c, 0, 0xffffff],
+    ["unknown (0xff)", 0xff, 0, 0xffffff],
+  ])(
+    "an oversized %s frame is rejected from the header alone (no buffering)",
+    async (_name, type, streamId, length) => {
+      const c = await RawH2.connect(port);
+      c.sendPreface();
+      c.sendEmptySettings();
+      // Header declaring a multi-MiB payload, followed by only a handful of payload bytes.
+      c.send(oversizedHeader(type, streamId, length));
+      c.send(Buffer.alloc(16, 0));
+      // GOAWAY must arrive even though the declared payload was never sent.
+      const goaway = await c.waitForGoaway();
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);
+      c.destroy();
+    },
+  );
 });
 
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`

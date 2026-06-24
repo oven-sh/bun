@@ -1457,10 +1457,14 @@ pub mod command {
         }
 
         // Node semantics: `-i`/`--interactive` only forces the REPL when no
-        // script is given; `node -i script.js` runs the script.
+        // positional script is given (`node -i foo.js` runs the script).
+        // `node -i -e 'code'` runs the eval first and then enters the REPL
+        // with the eval'd globals visible; exec_node_repl prepends the user
+        // script to the embedded bootstrap to match. `-p` still wins over
+        // `--interactive` (eval+print, no REPL) for now.
         if tag == Tag::AutoCommand
             && ctx.runtime_options.interactive
-            && ctx.runtime_options.eval.script.is_empty()
+            && !ctx.runtime_options.eval.eval_and_print
             && ctx.positionals.is_empty()
         {
             return run_command::RunCommand::exec_node_repl(ctx);

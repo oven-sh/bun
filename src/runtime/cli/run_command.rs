@@ -2954,11 +2954,18 @@ impl RunCommand {
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
     pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-        ctx.runtime_options.eval.script =
-            bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts")
-                .as_bytes()
-                .to_vec()
-                .into_boxed_slice();
+        let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
+        let user = ::core::mem::take(&mut ctx.runtime_options.eval.script);
+        let mut script = Vec::with_capacity(user.len() + 2 + bootstrap.len());
+        if !user.is_empty() {
+            // `bun --interactive -e 'code'` (Node's `node -i -e`): run the
+            // user script first, then enter the REPL. The bootstrap passes
+            // `useGlobal: true`, so globals it sets are visible at the prompt.
+            script.extend_from_slice(&user);
+            script.extend_from_slice(b";\n");
+        }
+        script.extend_from_slice(bootstrap);
+        ctx.runtime_options.eval.script = script.into_boxed_slice();
         Self::exec_eval(ctx)
     }
 

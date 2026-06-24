@@ -81,9 +81,7 @@ export function readableStreamPipeTo(stream, sink) {
 
   const reader = new ReadableStreamDefaultReader(stream);
 
-  $getByIdDirectPrivate(reader, "closedPromiseCapability").promise.$then($readableStreamNoop, e => {
-    sink.error(e);
-  });
+  $getByIdDirectPrivate(reader, "closedPromiseCapability").promise.$then($readableStreamNoop, sink.error.bind(sink));
 
   function doPipe() {
     $readableStreamDefaultReaderRead(reader).$then(
@@ -724,6 +722,7 @@ export function readDirectStreamOnClose(
   reason,
 ) {
   var underlyingSource = this.underlyingSource;
+  this.underlyingSource = undefined;
   const cancelFn = underlyingSource?.cancel;
   if (cancelFn) {
     try {
@@ -732,9 +731,8 @@ export function readDirectStreamOnClose(
         $markPromiseAsHandled(prom);
       }
     } catch {}
-
-    this.underlyingSource = underlyingSource = undefined;
   }
+  underlyingSource = undefined;
 
   if (stream) {
     $putByIdDirectPrivate(stream, "readableStreamController", undefined);

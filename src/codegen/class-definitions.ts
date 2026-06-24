@@ -157,43 +157,32 @@ export class ClassDefinition {
    * You _must_ free the pointer to your native class!
    *
    * Example for pointers only owned by JavaScript classes:
-   * ```zig
-   * pub const NativeClass = struct {
+   * ```rust
+   * impl NativeClass {
+   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+   *         // do stuff
+   *         Ok(Box::new(NativeClass {
+   *             // ...
+   *         }))
+   *     }
    *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   *
-   *   fn finalize(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   * };
+   *     pub fn finalize(self: Box<Self>) {
+   *         // free allocations owned by this class; Box drop frees the struct itself.
+   *     }
+   * }
    * ```
    * Example with ref counting:
-   * ```
-   * pub const RefCountedNativeClass = struct {
-   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-   *   pub const ref = RefCount.ref;
-   *   pub const deref = RefCount.deref;
+   * ```rust
+   * impl RefCountedNativeClass {
+   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<*mut Self> {
+   *         // do stuff; refcount starts at 1
+   *         Ok(Self::new(...).into_raw())
+   *     }
    *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   *
-   *   fn deinit(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   *
-   *   pub const finalize = deref; // GC will deref, which can free if no references are left.
-   * };
+   *     pub fn finalize(&mut self) {
+   *         self.deref(); // GC drops its ref; frees when the count hits zero.
+   *     }
+   * }
    * ```
    * @todo remove this and require all classes to implement `finalize`.
    */
@@ -226,15 +215,15 @@ export class ClassDefinition {
   final?: boolean;
 
   /**
-   * Class has an `estimatedSize` function that reports external allocations to GC.
+   * Class has an `estimated_size` function that reports external allocations to GC.
    * Called from any thread.
    *
    * When `true`, classes should have a method with this signature:
-   * ```zig
-   * pub fn estimatedSize(this: *@This()) usize;
+   * ```rust
+   * pub fn estimated_size(&self) -> usize;
    * ```
    *
-   * Report `@sizeOf(@this())` as well as any external allocations.
+   * Report `size_of::<Self>()` as well as any external allocations.
    */
   estimatedSize?: boolean;
   /**

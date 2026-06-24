@@ -215,35 +215,35 @@ JSC::Weak<JSFoo> m_wrapper { jsFoo, &myOwnerSingleton, nativeThing };
 
 ## `JSRef` — the native↔wrapper reference pattern
 
-When a native object needs to hold a reference back to its own JS wrapper, **use `JSRef`** (`src/jsc/JSRef.rs`), not `gcProtect`, not a raw `JSValue` field, and usually not `jsc.Strong` directly.
+When a native object needs to hold a reference back to its own JS wrapper, **use `JSRef`** (`src/jsc/JSRef.rs`), not `gcProtect`, not a raw `JSValue` field, and usually not `Strong` directly.
 
 `JSRef` is a tagged union with three states:
 
-- `.weak` — a bare `JSValue`. Does **not** keep the wrapper alive. Valid only because the wrapper's `finalize()` will flip this to `.finalized` before the cell is freed, so `tryGet()` returns `null` instead of a dangling pointer. (This is _not_ a `JSC::Weak`; it's cheaper — no `WeakImpl` allocation.)
-- `.strong` — wraps `jsc.Strong` (a `JSC::Strong<Unknown>` root). Keeps the wrapper alive.
-- `.finalized` — terminal; `tryGet()` returns `null`.
+- `Weak` — a bare `JSValue`. Does **not** keep the wrapper alive. Valid only because the wrapper's `finalize()` will flip this to `Finalized` before the cell is freed, so `try_get()` returns `None` instead of a dangling pointer. (This is _not_ a `JSC::Weak`; it's cheaper — no `WeakImpl` allocation.)
+- `Strong` — wraps `bun_jsc::Strong` (a `JSC::Strong<Unknown>` root). Keeps the wrapper alive.
+- `Finalized` — terminal; `try_get()` returns `None`.
 
 Pattern: **strong while busy, weak while idle.**
 
-```zig
-this_value: jsc.JSRef = .empty(),
+```rust
+this_value: JSRef, // initialized with JSRef::empty()
 
 // On construction / when work starts:
-this.this_value.setStrong(js_wrapper, globalThis);   // or .upgrade(globalThis)
+self.this_value.set_strong(js_wrapper, global);   // or .upgrade(global)
 
 // When the last in-flight operation completes:
-this.this_value.downgrade();                         // strong → weak, GC may now collect
+self.this_value.downgrade();                      // Strong -> Weak, GC may now collect
 
 // In any callback that needs the wrapper:
-const js_this = this.this_value.tryGet() orelse return;
+let Some(js_this) = self.this_value.try_get() else { return };
 
 // In the codegen'd finalize():
-this.this_value.finalize();
+self.this_value.finalize();
 ```
 
 See `ServerWebSocket`, `UDPSocket`, `MySQLConnection`, `ValkeyClient` for real examples.
 
-**`JSRef` requires a finalizer.** The `.weak` state is only sound because the codegen'd `finalize()` flips it to `.finalized` before the cell is reused. If your `.classes.ts` entry has `finalize: true` (almost all native-backed classes do), `JSRef` is the default choice for self-references.
+**`JSRef` requires a finalizer.** The `Weak` state is only sound because the codegen'd `finalize()` flips it to `Finalized` before the cell is reused. If your `.classes.ts` entry has `finalize: true` (almost all native-backed classes do), `JSRef` is the default choice for self-references.
 
 **`JSRef` vs `hasPendingActivity`:** prefer `JSRef`. `hasPendingActivity: true` is a GC-thread-polled atomic predicate; its only real justification is when **many concurrent operations** independently keep the wrapper alive and there's no single place to call `upgrade()`/`downgrade()` — i.e., refcount-style liveness where the count is touched from multiple threads. That's uncommon. If you can identify "work started" / "work finished" edges, use `JSRef`. Don't add `hasPendingActivity` reflexively; it costs a constraint-fixpoint poll on every GC.
 

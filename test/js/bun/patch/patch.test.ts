@@ -616,6 +616,182 @@ describe("apply", () => {
       });
     });
   });
+
+  describe.if(process.platform !== "win32")("refuses to follow symlinks", () => {
+    function setup() {
+      const root = tempDirWithFiles("patch-symlink", {
+        "pkg/real.txt": "SAFE\n",
+        "outside/target.txt": "SAFE\n",
+        "outside.txt": "SAFE\n",
+      });
+      const pkgDir = join(root, "pkg");
+      return { root, pkgDir };
+    }
+
+    function tryApply(patch: string, dir: string) {
+      try {
+        apply(patch, dir);
+        return undefined;
+      } catch (e) {
+        return e as NodeJS.ErrnoException;
+      }
+    }
+
+    test("file creation through a symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outside = join(root, "outside.txt");
+      await fs.symlink(outside, join(pkgDir, "link"));
+
+      const patch =
+        "diff --git a/link b/link\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/link\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(outside, "utf8") }).toEqual({
+        code: "ELOOP",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file patch through a symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outside = join(root, "outside.txt");
+      await fs.symlink(outside, join(pkgDir, "link"));
+
+      const patch =
+        "diff --git a/link b/link\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/link\n" +
+        "+++ b/link\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(outside, "utf8") }).toEqual({
+        code: "EINVAL",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file creation through an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/target.txt b/evildir/target.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/evildir/target.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(join(outsideDir, "target.txt"), "utf8") }).toEqual({
+        code: "EINVAL",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file creation through an intermediate directory symlink does not create the file", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/newfile.txt b/evildir/newfile.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/evildir/newfile.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      const created = await fs.access(join(outsideDir, "newfile.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, created }).toEqual({ code: "EINVAL", created: false });
+    });
+
+    test("file patch through an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/target.txt b/evildir/target.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/evildir/target.txt\n" +
+        "+++ b/evildir/target.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(join(outsideDir, "target.txt"), "utf8") }).toEqual({
+        code: "EINVAL",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("mode change through a symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outside = join(root, "outside.txt");
+      await fs.chmod(outside, 0o644);
+      await fs.symlink(outside, join(pkgDir, "link"));
+
+      const patch = "diff --git a/link b/link\n" + "old mode 100644\n" + "new mode 100755\n";
+
+      const err = tryApply(patch, pkgDir);
+      const st = await fs.stat(outside);
+      expect({ code: err?.code, mode: st.mode & 0o777 }).toEqual({
+        code: "ELOOP",
+        mode: 0o644,
+      });
+    });
+
+    test("still applies to regular files inside the patch dir", async () => {
+      const { pkgDir } = setup();
+
+      const patch =
+        "diff --git a/real.txt b/real.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/real.txt\n" +
+        "+++ b/real.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+OK\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "real.txt"), "utf8")).toBe("OK\n");
+    });
+
+    test("still creates new files in subdirectories inside the patch dir", async () => {
+      const { pkgDir } = setup();
+      await fs.mkdir(join(pkgDir, "sub"));
+
+      const patch =
+        "diff --git a/sub/new.txt b/sub/new.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/sub/new.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+hello\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "sub", "new.txt"), "utf8")).toBe("hello\n");
+    });
+  });
 });
 
 describe("parse", () => {

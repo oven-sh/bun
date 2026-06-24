@@ -43,7 +43,6 @@ pub struct PatchFile<'a> {
     pub parts: Vec<PatchFilePart<'a>>,
 }
 
-#[cfg_attr(unix, allow(dead_code))]
 struct ApplyState {
     pathbuf: PathBuffer,
     patch_dir_abs_path: Option<usize>,
@@ -57,7 +56,6 @@ impl ApplyState {
         }
     }
 
-    #[cfg_attr(unix, allow(dead_code))]
     fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
         if let Some(len) = self.patch_dir_abs_path {
             // pathbuf[len] == 0 was written below on a previous call.
@@ -140,11 +138,13 @@ impl<'a> PatchFile<'a> {
                         }
                     }
 
-                    let newfile_fd = match sys::openat(
+                    let newfile_fd = match open_beneath(
                         patch_dir,
                         &filepath_z,
-                        sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
+                        sys::O::CREAT | sys::O::WRONLY,
                         mode.to_bun_mode(),
+                        true,
+                        &mut state,
                     ) {
                         sys::Result::Ok(fd) => fd,
                         sys::Result::Err(e) => return Some(e.without_path()),
@@ -215,35 +215,18 @@ impl<'a> PatchFile<'a> {
                     }
                     let newmode = file_mode_change.new_mode;
                     let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
-                    #[cfg(unix)]
-                    {
-                        if let sys::Result::Err(e) =
-                            sys::fchmodat(patch_dir, &filepath, newmode.to_bun_mode(), 0)
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    #[cfg(windows)]
-                    {
-                        let absfilepath = match state.patch_dir_abs_path(patch_dir) {
-                            sys::Result::Ok(p) => p,
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                        };
-                        let mut buf = PathBuffer::uninit();
-                        let joined_absfilepath =
-                            paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                                &mut buf[..],
-                                &[absfilepath.as_bytes(), filepath.as_bytes()],
-                            );
-                        let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                            sys::Result::Ok(f) => f,
-                        };
-                        let _close = scopeguard::guard(fd, |fd| fd.close());
-                        if let sys::Result::Err(e) = sys::fchmod(fd, newmode.to_bun_mode()) {
-                            return Some(e.without_path());
-                        }
+                    let flags = if cfg!(windows) {
+                        sys::O::RDWR
+                    } else {
+                        sys::O::RDONLY
+                    };
+                    let fd = match open_beneath(patch_dir, &filepath, flags, 0, false, &mut state) {
+                        sys::Result::Err(e) => return Some(e.without_path()),
+                        sys::Result::Ok(f) => f,
+                    };
+                    let _close = scopeguard::guard(fd, |fd| fd.close());
+                    if let sys::Result::Err(e) = sys::fchmod(fd, newmode.to_bun_mode()) {
+                        return Some(e.without_path());
                     }
                 }
             }
@@ -266,27 +249,15 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
     // Need to get the mode of the original file
     // And also get the size to read file into memory
-    let stat = {
-        #[cfg(unix)]
-        let r = sys::fstatat(patch_dir, &file_path);
-        #[cfg(not(unix))]
-        let r = {
-            let p = match state.patch_dir_abs_path(patch_dir) {
-                sys::Result::Ok(p) => paths::resolve_path::join_z::<paths::platform::Auto>(&[
-                    p.as_bytes(),
-                    file_path.as_bytes(),
-                ]),
-                sys::Result::Err(e) => return sys::Result::Err(e),
-            };
-            sys::stat(p)
-        };
-        match r {
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-            sys::Result::Ok(stat) => stat,
-        }
+    let stat = match sys::lstatat(patch_dir, &file_path) {
+        sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
+        sys::Result::Ok(stat) => stat,
     };
-    #[cfg(unix)]
-    let _ = state; // suppress unused on posix
+    if sys::S::ISLNK(stat.st_mode as u32) {
+        return sys::Result::Err(
+            sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).with_path(file_path.as_bytes()),
+        );
+    }
 
     // Purposefully use `bun.default_allocator` here because if the file size is big like
     // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
@@ -411,11 +382,13 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         }
     }
 
-    let file_fd = match sys::openat(
+    let file_fd = match open_beneath(
         patch_dir,
         &file_path,
-        sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
+        sys::O::CREAT | sys::O::WRONLY,
         stat.st_mode as sys::Mode,
+        true,
+        state,
     ) {
         sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
         sys::Result::Ok(fd) => fd,
@@ -447,6 +420,69 @@ fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
         );
     }
     sys::File::read_from(dir, path)
+}
+
+/// Open `path` under `patch_dir` without following symlinks, verifying both
+/// the parent directory and the opened file resolve to canonical paths
+/// inside `patch_dir`. Truncation is deferred until after the containment
+/// check so a path that escapes via a symlink is rejected before any file is
+/// created or truncated.
+fn open_beneath(
+    patch_dir: Fd,
+    path: &ZStr,
+    flags: i32,
+    mode: sys::Mode,
+    truncate: bool,
+    state: &mut ApplyState,
+) -> sys::Result<Fd> {
+    // Verify the parent directory first so `O_CREAT` below cannot create an
+    // empty file outside `patch_dir` via an intermediate directory symlink.
+    let dirname = paths::dirname_simple(path.as_bytes());
+    if !dirname.is_empty() {
+        let parent_z = ZBox::from_vec_with_nul(dirname.to_vec());
+        let pfd = sys::openat(patch_dir, &parent_z, sys::O::RDONLY | sys::O::DIRECTORY, 0)?;
+        let ok = verify_fd_beneath_patch_dir(patch_dir, pfd, state);
+        pfd.close();
+        if let Err(e) = ok {
+            return sys::Result::Err(e.with_path(path.as_bytes()));
+        }
+    }
+
+    let fd = sys::openat(patch_dir, path, flags | sys::O::NOFOLLOW, mode)?;
+    if let Err(e) = verify_fd_beneath_patch_dir(patch_dir, fd, state) {
+        fd.close();
+        return sys::Result::Err(e.with_path(path.as_bytes()));
+    }
+    if truncate && let Err(e) = sys::ftruncate(fd, 0) {
+        fd.close();
+        return sys::Result::Err(e.with_path(path.as_bytes()));
+    }
+    sys::Result::Ok(fd)
+}
+
+fn verify_fd_beneath_patch_dir(patch_dir: Fd, fd: Fd, state: &mut ApplyState) -> sys::Result<()> {
+    let dir_path = state.patch_dir_abs_path(patch_dir)?.as_bytes();
+    let mut dir_len = dir_path.len();
+    while dir_len > 0 && paths::is_sep_any(dir_path[dir_len - 1]) {
+        dir_len -= 1;
+    }
+    let dir_path = &dir_path[..dir_len];
+
+    let mut buf = paths::path_buffer_pool::get();
+    let fd_path = sys::get_fd_path(fd, &mut buf)?;
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let has_prefix = strings::starts_with;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let has_prefix = strings::starts_with_case_insensitive_ascii;
+
+    if fd_path.len() > dir_path.len()
+        && paths::is_sep_any(fd_path[dir_path.len()])
+        && has_prefix(fd_path, dir_path)
+    {
+        return sys::Result::Ok(());
+    }
+    sys::Result::Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open))
 }
 
 /// Joins byte slices with a separator.

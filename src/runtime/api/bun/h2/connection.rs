@@ -168,6 +168,10 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
+    /// HEADERS would exceed our SETTINGS_MAX_CONCURRENT_STREAMS (§5.1.2): the block is still
+    /// decoded for HPACK-table sync (§4.3), then refused with RST_STREAM(REFUSED_STREAM); no
+    /// stream state is allocated and on_stream_open never fires.
+    header_refused: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -206,6 +210,7 @@ impl Connection {
             header_target: 0,
             header_push_parent: 0,
             header_stream_closed: false,
+            header_refused: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -724,6 +729,48 @@ impl Connection {
             );
             return true;
         }
+        // §5.1.2: enforce our advertised SETTINGS_MAX_CONCURRENT_STREAMS before allocating any
+        // state. A refused stream still has its header block decoded (for HPACK-table sync) and
+        // bumps last_stream_id (so a follow-up RST_STREAM on it is closed, not idle), but never
+        // enters the streams map and never fires on_stream_open — bounding both the map and the
+        // embedder's per-stream JS allocations against a HEADERS flood.
+        let mut refused = false;
+        if is_new && self.is_server {
+            let cap = self.local_settings.max_concurrent_streams;
+            if cap < u32::MAX {
+                let peer_parity = 1u32;
+                let active = self
+                    .streams
+                    .iter()
+                    .filter(|(id, s)| {
+                        **id & 1 == peer_parity
+                            && matches!(
+                                s.state,
+                                State::Open | State::HalfClosedLocal | State::HalfClosedRemote
+                            )
+                    })
+                    .count() as u32;
+                refused = active >= cap;
+            }
+        }
+        if refused {
+            if hdr.stream_id > self.last_stream_id {
+                self.last_stream_id = hdr.stream_id;
+            }
+            self.header_block.clear();
+            self.header_block.extend_from_slice(&payload[off..end]);
+            self.header_end_stream = end_stream;
+            self.header_flags = hdr.flags;
+            self.header_target = hdr.stream_id;
+            self.header_push_parent = 0;
+            self.header_stream_closed = false;
+            self.header_refused = true;
+            if !end_headers {
+                self.continuation_stream = hdr.stream_id;
+                return false;
+            }
+            return self.finish_header_block(sink);
+        }
         let cur_state = self
             .streams
             .entry(hdr.stream_id)
@@ -771,6 +818,7 @@ impl Connection {
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
         self.header_stream_closed = stream_closed;
+        self.header_refused = false;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -814,6 +862,7 @@ impl Connection {
         }
         let block = std::mem::take(&mut self.header_block);
         let stream_closed = std::mem::take(&mut self.header_stream_closed);
+        let refused = std::mem::take(&mut self.header_refused);
         let mut off = 0usize;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
@@ -839,7 +888,7 @@ impl Connection {
                     }
                     // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
-                    if stream_closed {
+                    if stream_closed || refused {
                         continue;
                     }
                     // RFC 9113 §8.2.1/§8.2.2: connection-specific fields, a pseudo-header following a
@@ -912,6 +961,15 @@ impl Connection {
         self.header_block.clear();
         if fatal {
             return true;
+        }
+        if refused {
+            // §5.1.2: over our advertised concurrent-stream limit — stream error REFUSED_STREAM.
+            // No map entry exists for `target`; on_stream_rejected lets the embedder budget this
+            // against maxSessionRejectedStreams so a refusal flood tears the connection down.
+            self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+            sink.on_stream_reset(target, ErrorCode::RefusedStream.as_u32());
+            sink.on_stream_rejected(target);
+            return false;
         }
         if stream_closed {
             // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
@@ -1216,6 +1274,18 @@ impl Connection {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
             return true;
         }
+        // Rapid-reset guard (CVE-2023-44487): a HEADERS→RST_STREAM flood stays under the
+        // concurrency cap while churning a JS request object per cycle. Count server-side
+        // peer resets against the invalid-frame budget (node's maxSessionInvalidFrames,
+        // default 1000) so the embedder can tear the session down.
+        if self.is_server {
+            let count = self.invalid_frame_count;
+            self.invalid_frame_count = count.saturating_add(1);
+            if count > self.max_invalid_frames {
+                sink.on_too_many_invalid_frames();
+                return true;
+            }
+        }
         sink.on_stream_reset(hdr.stream_id, code_raw);
         false
     }
@@ -1311,6 +1381,7 @@ impl Connection {
         self.header_target = promised;
         self.header_push_parent = hdr.stream_id;
         self.header_stream_closed = false;
+        self.header_refused = false;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -1572,6 +1643,8 @@ mod tests {
         remote_settings: Cell<u32>,
         goaway: Cell<Option<(u32, u32)>>,
         opens: RefCell<Vec<u32>>,
+        rejected: RefCell<Vec<u32>>,
+        too_many_invalid: Cell<bool>,
         headers: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         headers_done: RefCell<Vec<(u32, bool)>>,
         data: RefCell<Vec<(u32, Vec<u8>)>>,
@@ -1620,6 +1693,12 @@ mod tests {
         }
         fn on_stream_reset(&self, id: u32, code: u32) {
             self.resets.borrow_mut().push((id, code));
+        }
+        fn on_stream_rejected(&self, id: u32) {
+            self.rejected.borrow_mut().push(id);
+        }
+        fn on_too_many_invalid_frames(&self) {
+            self.too_many_invalid.set(true);
         }
         fn on_push_promise(&self, parent: u32, promised: u32) {
             self.pushes.borrow_mut().push((parent, promised));
@@ -1895,5 +1974,151 @@ mod tests {
         // Only 4 of 10 bytes fit in the window.
         let sent = c.send_data(&sink, 1, b"0123456789", true);
         assert_eq!(sent, 4);
+    }
+
+    #[test]
+    fn max_concurrent_streams_refuses_without_allocating() {
+        let sink = CaptureSink::default();
+        let mut local = Settings::default();
+        local.max_concurrent_streams = 2;
+        let mut c = Connection::new(true, local);
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let flags = wire::flags::END_HEADERS; // leave open so streams count
+        let mut bytes = Vec::new();
+        for id in [1u32, 3, 5] {
+            bytes.extend_from_slice(&frame(FrameType::Headers, flags, id, &block));
+        }
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        // Streams 1 and 3 opened; 5 was refused — never opened, never entered the map.
+        assert_eq!(*sink.opens.borrow(), vec![1, 3]);
+        assert_eq!(*sink.rejected.borrow(), vec![5]);
+        assert!(
+            sink.resets
+                .borrow()
+                .iter()
+                .any(|(id, code)| *id == 5 && *code == ErrorCode::RefusedStream.as_u32())
+        );
+        assert!(c.streams.contains_key(&1));
+        assert!(c.streams.contains_key(&3));
+        assert!(!c.streams.contains_key(&5));
+        // Refused stream's fields were not surfaced.
+        assert!(!sink.headers.borrow().iter().any(|(id, _, _)| *id == 5));
+        assert!(!sink.headers_done.borrow().iter().any(|(id, _)| *id == 5));
+        // last_stream_id advanced past the refused id so a follow-up RST on 5 is closed, not idle.
+        assert_eq!(c.last_stream_id, 5);
+        // An RST_STREAM echoed out for stream 5 with REFUSED_STREAM.
+        let out = sink.out.borrow();
+        let mut saw_refused_rst = false;
+        let mut i = 0usize;
+        while i + wire::FRAME_HEADER_SIZE <= out.len() {
+            let h = FrameHeader::parse(&out[i..]);
+            let total = wire::FRAME_HEADER_SIZE + h.length as usize;
+            if h.frame_type == FrameType::RstStream as u8 && h.stream_id == 5 {
+                let code = u32::from_be_bytes([
+                    out[i + 9],
+                    out[i + 10],
+                    out[i + 11],
+                    out[i + 12],
+                ]);
+                if code == ErrorCode::RefusedStream.as_u32() {
+                    saw_refused_rst = true;
+                }
+            }
+            i += total;
+        }
+        assert!(saw_refused_rst);
+    }
+
+    #[test]
+    fn refused_stream_keeps_hpack_in_sync() {
+        // The refused block must still advance the decoder's dynamic table: a subsequent
+        // accepted stream that depends on that state would otherwise fail to decode.
+        let sink = CaptureSink::default();
+        let mut local = Settings::default();
+        local.max_concurrent_streams = 1;
+        let mut c = Connection::new(true, local);
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+
+        // One encoder for the whole connection (dynamic table is connection-scoped).
+        let mut enc = hpack::Coder::new(4096);
+        let mut buf = vec![0u8; 4096];
+        let mut encode = |enc: &mut hpack::Coder, pairs: &[(&[u8], &[u8])]| -> Vec<u8> {
+            let mut off = 0usize;
+            for (n, v) in pairs {
+                off += enc.encode(n, v, false, &mut buf, off).unwrap();
+            }
+            buf[..off].to_vec()
+        };
+
+        let b1 = encode(&mut enc, &[(b":method", b"GET"), (b":path", b"/")]);
+        // Stream 3 introduces a dynamic-table entry (x-k: v) the decoder must record even
+        // though the stream is refused; stream 5 references it.
+        let b3 = encode(
+            &mut enc,
+            &[(b":method", b"GET"), (b":path", b"/"), (b"x-k", b"v")],
+        );
+        let b5 = encode(
+            &mut enc,
+            &[(b":method", b"GET"), (b":path", b"/"), (b"x-k", b"v")],
+        );
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &b1));
+        bytes.extend_from_slice(&frame(FrameType::Headers, wire::flags::END_HEADERS, 3, &b3));
+        // Close stream 1 so 5 fits under the cap again.
+        bytes.extend_from_slice(&frame(
+            FrameType::RstStream,
+            0,
+            1,
+            &ErrorCode::Cancel.as_u32().to_be_bytes(),
+        ));
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        assert_eq!(*sink.rejected.borrow(), vec![3]);
+
+        let fed = c.receive(
+            &sink,
+            &frame(FrameType::Headers, wire::flags::END_HEADERS, 5, &b5),
+        );
+        assert!(!fed.fatal);
+        // Stream 5 decoded correctly (x-k: v surfaced), proving the refused block advanced HPACK.
+        assert!(
+            sink.headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 5 && n == b"x-k" && v == b"v")
+        );
+        assert!(sink.goaway.get().is_none());
+    }
+
+    #[test]
+    fn rapid_reset_flood_trips_invalid_frame_budget() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        c.max_invalid_frames = 4;
+        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let cancel = ErrorCode::Cancel.as_u32().to_be_bytes();
+        let mut bytes = Vec::new();
+        // 8 HEADERS→RST cycles stay under the (default, huge) concurrency cap but exceed
+        // the invalid-frame budget of 4.
+        for i in 0..8u32 {
+            let id = 1 + 2 * i;
+            bytes.extend_from_slice(&frame(
+                FrameType::Headers,
+                wire::flags::END_HEADERS,
+                id,
+                &block,
+            ));
+            bytes.extend_from_slice(&frame(FrameType::RstStream, 0, id, &cancel));
+        }
+        let fed = c.receive(&sink, &bytes);
+        assert!(fed.fatal);
+        assert!(sink.too_many_invalid.get());
+        // Closed streams were evicted up to the point of fatal return; the map never
+        // accumulated all 8 entries.
+        assert!(c.streams.len() < 8);
     }
 }

@@ -405,6 +405,89 @@ describe("SETTINGS value ranges (checklist §6.5.2)", () => {
   });
 });
 
+describe("stream concurrency (§5.1.2)", () => {
+  // Minimal valid request header block: [:method GET, :scheme http, :path /, :authority x]
+  // — static-table indexed fields plus one literal :authority, no dynamic-table state.
+  const reqBlock = Buffer.concat([
+    Buffer.from([0x82, 0x86, 0x84, 0x41]),
+    Buffer.from([1]),
+    Buffer.from("x", "latin1"),
+  ]);
+
+  test("HEADERS past SETTINGS_MAX_CONCURRENT_STREAMS is refused without a 'stream' event", async () => {
+    const seen: number[] = [];
+    const srv = http2.createServer({ settings: { maxConcurrentStreams: 2 } });
+    srv.on("stream", (stream: any) => {
+      seen.push(stream.id);
+      stream.on("error", () => {});
+    });
+    srv.listen(0);
+    await once(srv, "listening");
+    const p = (srv.address() as net.AddressInfo).port;
+    const c = await RawH2.connect(p);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      // Open three streams without END_STREAM so they stay in the open state.
+      for (const id of [1, 3, 5]) {
+        c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, id, reqBlock);
+      }
+      // Stream 5 exceeds the server's advertised cap of 2: RFC 9113 §5.1.2 requires a
+      // stream error of PROTOCOL_ERROR or REFUSED_STREAM.
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 5);
+      const code = rst.payload.readUInt32BE(0);
+      expect([ErrorCode.REFUSED_STREAM, ErrorCode.PROTOCOL_ERROR]).toContain(code);
+      // The refused stream was dropped before allocating any JS request state: only
+      // streams 1 and 3 reached the 'stream' handler, 5 never did.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(seen.sort()).toEqual([1, 3]);
+      // A follow-up RST_STREAM on the refused id is tolerated (closed, not idle): the
+      // connection survives a subsequent PING round-trip.
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.sendFrame(FrameType.RST_STREAM, 0, 5, cancel);
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.from([9, 9, 9, 9, 9, 9, 9, 9]));
+      const ack = await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload[0] === 9);
+      expect(ack.payload[0]).toBe(9);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("rapid-reset (HEADERS→RST flood) trips maxSessionInvalidFrames and tears the session down", async () => {
+    const srv = http2.createServer({ maxSessionInvalidFrames: 8 });
+    srv.on("stream", (stream: any) => stream.on("error", () => {}));
+    srv.on("sessionError", () => {});
+    srv.listen(0);
+    await once(srv, "listening");
+    const p = (srv.address() as net.AddressInfo).port;
+    const c = await RawH2.connect(p);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      // 32 HEADERS→RST cycles stay under the default concurrency cap but well past the
+      // maxSessionInvalidFrames budget of 8.
+      for (let i = 0; i < 32; i++) {
+        const id = 1 + 2 * i;
+        c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, id, reqBlock);
+        c.sendFrame(FrameType.RST_STREAM, 0, id, cancel);
+      }
+      // The server terminates the connection once the budget is exceeded.
+      await c.waitClosed(3500);
+      expect(c.closed).toBe(true);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+});
+
 describe("frame size limit (checklist §4.2)", () => {
   test("a frame exceeding SETTINGS_MAX_FRAME_SIZE is a FRAME_SIZE_ERROR", async () => {
     const c = await RawH2.connect(port);

@@ -21,7 +21,6 @@
  *   - bindgenv2 emits Generated<Type>.h per type (list-outputs skips .h)
  *   - generate-node-errors.ts emits ErrorCode.d.ts (not declared)
  *   - bundle-modules.ts emits eval/ subdir, BunBuiltinNames+extras.h, etc.
- *   - cppbind.ts emits cpp.source-links
  *
  * It WORKS because:
  *   1. The declared .cpp outputs guarantee the step runs before compile

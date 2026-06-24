@@ -42,15 +42,6 @@ function cppSourcePath(type: NamedType): string {
   return `${codegenPath}/Generated${type.name}.cpp`;
 }
 
-function zigSourcePath(typeOrNamespace: NamedType | string): string {
-  let ns: string;
-  if (typeof typeOrNamespace === "string") {
-    ns = typeOrNamespace;
-  } else {
-    ns = toZigNamespace(typeOrNamespace.name);
-  }
-  return `${codegenPath}/bindgen_generated/${ns}.zig`;
-}
 
 function toZigNamespace(name: string): string {
   const result = name
@@ -108,7 +99,6 @@ function generate(): void {
 
     const cppHeader = type.cppHeader;
     const cppSource = type.cppSource;
-    const zigSource = type.zigSource;
     if (cppHeader) {
       helpers.writeIfNotChanged(cppHeaderPath(type), cppHeader);
     }

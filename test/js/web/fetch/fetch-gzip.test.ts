@@ -364,10 +364,10 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
 });
 
 // A buffered (non-streaming) fetch() must be able to decompress a response
-// body larger than 1 GiB. The HTTP client's Decompressor runs unbounded, the
-// same as the original Zig implementation; only available memory limits it.
-// Run in a subprocess so the ~1 GiB output buffer does not linger in the test
-// process.
+// body larger than 1 GiB. The HTTP client's Decompressor is capped at 2 GiB
+// by default (BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE); 1 GiB + 1 MiB is well
+// under that. Run in a subprocess so the ~1 GiB output buffer does not
+// linger in the test process.
 it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB works", async () => {
   const fixture = /* js */ `
       import { createGzip } from "node:zlib";
@@ -448,4 +448,94 @@ describe("empty compressed responses", () => {
       }
     });
   }
+});
+
+// The response decompressor must stop with a decode error once the output
+// buffer reaches BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE, instead of growing
+// without bound until OOM (compression-bomb guard).
+describe("BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE", () => {
+  // 40 MB so gzip's ISIZE trailer exceeds the 32 MB libdeflate fast-path
+  // threshold and the request falls through to the streaming decoder,
+  // which is the unbounded-growth path the cap protects.
+  const UNCOMPRESSED_SIZE = 40 * 1024 * 1024;
+  const CAP = 1 * 1024 * 1024;
+
+  const fixture = (encoding: string) => /* js */ `
+    const { gzipSync, deflateSync, brotliCompressSync, zstdCompressSync } = require("node:zlib");
+    const encode = {
+      gzip: b => gzipSync(b),
+      deflate: b => deflateSync(b),
+      br: b => brotliCompressSync(b, { params: { [require("node:zlib").constants.BROTLI_PARAM_QUALITY]: 0 } }),
+      zstd: b => zstdCompressSync(b),
+    };
+    const compressed = encode[${JSON.stringify(encoding)}](Buffer.alloc(${UNCOMPRESSED_SIZE}));
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(compressed, {
+          headers: {
+            "Content-Encoding": ${JSON.stringify(encoding)},
+            "Content-Length": String(compressed.length),
+          },
+        });
+      },
+    });
+    try {
+      const res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+      const buf = await res.arrayBuffer();
+      console.log("RESOLVED " + buf.byteLength);
+    } catch (e) {
+      console.log("REJECTED " + String(e));
+    } finally {
+      server.stop(true);
+    }
+  `;
+
+  for (const encoding of ["gzip", "deflate", "br", "zstd"] as const) {
+    it(`caps ${encoding} response body decompression`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture(encoding)],
+        env: {
+          ...bunEnv,
+          BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE: String(CAP),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      const firstWord = stdout.trim().split(" ", 1)[0];
+      expect({ stdout: firstWord, raw: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "REJECTED",
+        raw: expect.stringContaining("REJECTED"),
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+  }
+
+  it("setting the cap to 0 disables it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture("gzip")],
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `RESOLVED ${UNCOMPRESSED_SIZE}`,
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
 });

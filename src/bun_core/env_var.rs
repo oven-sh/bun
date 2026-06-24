@@ -54,6 +54,10 @@ new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_
 // if it fires the request fails with `error.Timeout`. Covers the TLS
 // handshake through the response body. 0 disables. See `src/http/lib.rs`.
 new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
+// Upper bound on bytes the HTTP-client response decompressor may produce
+// (gzip/deflate/br/zstd); decoding aborts once the output buffer reaches
+// this many bytes. 0 disables the cap. See `src/http/Decompressor.rs`.
+new!(pub BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE: unsigned, "BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE", { default: 2 * 1024 * 1024 * 1024 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});

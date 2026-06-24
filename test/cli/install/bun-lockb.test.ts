@@ -185,21 +185,28 @@ describe("rejects crafted ExternalSlice offsets and tree indices in bun.lockb in
   // installer warns + re-resolves rather than aborting.
   async function lockbWithPkgs() {
     const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
-    // Local file: tarballs keep this hermetic; the crafted lockfile is the
-    // only thing being exercised.
-    await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(packageDir, "bar-0.0.2.tgz"));
-    await copyFile(join(__dirname, "baz-0.0.3.tgz"), join(packageDir, "baz-0.0.3.tgz"));
-    await write(
-      packageJson,
-      JSON.stringify({
-        name: "external-slice-lockb",
-        version: "1.0.0",
-        dependencies: {
-          "bar": "file:./bar-0.0.2.tgz",
-          "baz": "file:./baz-0.0.3.tgz",
-        },
-      }),
-    );
+    // Local folder deps keep this hermetic and produce a second Tree node
+    // (folder deps are never hoisted), so both package columns and
+    // tree[1]'s fields are available to corrupt.
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "external-slice-lockb",
+          version: "1.0.0",
+          dependencies: { "pkg-a": "file:./pkg-a" },
+        }),
+      ),
+      write(
+        join(packageDir, "pkg-a", "package.json"),
+        JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+          dependencies: { "pkg-b": "file:../pkg-b" },
+        }),
+      ),
+      write(join(packageDir, "pkg-b", "package.json"), JSON.stringify({ name: "pkg-b", version: "1.0.0" })),
+    ]);
     await runBunInstall(env, packageDir);
     const lockbPath = join(packageDir, "bun.lockb");
     expect(await exists(lockbPath)).toBe(true);
@@ -209,7 +216,16 @@ describe("rejects crafted ExternalSlice offsets and tree indices in bun.lockb in
     const begin = Number(lockb.readBigUInt64LE(110));
     const resolutionSize = fmt === 2 ? 64 : 72;
     expect(N).toBeGreaterThanOrEqual(3);
-    return { packageDir, lockbPath, lockb, N, begin, resolutionSize };
+    // Trees are the first `Buffers` array, written as
+    // [start: u64][end: u64][ascii prefix][padding][20-byte records]. Each
+    // record is id(4) dependency_id(4) parent(4) off(4) len(4).
+    const prefixOff = lockb.indexOf("\n<install.lockfile.Tree>");
+    expect(prefixOff).toBeGreaterThan(16);
+    const treesStart = Number(lockb.readBigUInt64LE(prefixOff - 16));
+    const treesEnd = Number(lockb.readBigUInt64LE(prefixOff - 8));
+    expect((treesEnd - treesStart) % 20).toBe(0);
+    expect(treesEnd - treesStart).toBeGreaterThanOrEqual(40);
+    return { packageDir, lockbPath, lockb, N, begin, resolutionSize, treesStart };
   }
 
   async function expectRecovers(packageDir: string, lockbPath: string, lockb: Buffer) {
@@ -228,11 +244,9 @@ describe("rejects crafted ExternalSlice offsets and tree indices in bun.lockb in
 
     expect(err).toContain("Ignoring lockfile");
     expect(err).not.toContain("error:");
-    expect(out).toContain("bar@");
-    expect(out).toContain("baz@");
+    expect(out).toContain("pkg-a@");
     expect(code).toBe(0);
-    expect(await exists(join(packageDir, "node_modules", "bar"))).toBe(true);
-    expect(await exists(join(packageDir, "node_modules", "baz"))).toBe(true);
+    expect(await exists(join(packageDir, "node_modules", "pkg-a", "package.json"))).toBe(true);
   }
 
   it.concurrent("package dependencies slice with off > buffer length", async () => {
@@ -267,18 +281,28 @@ describe("rejects crafted ExternalSlice offsets and tree indices in bun.lockb in
   });
 
   it.concurrent("tree dependencies slice with off > hoisted buffer length", async () => {
-    const { packageDir, lockbPath, lockb } = await lockbWithPkgs();
-    // Trees are the first `Buffers` array, written as
-    // [start: u64][end: u64][ascii prefix][padding][20-byte records]. Each
-    // record is id(4) dependency_id(4) parent(4) off(4) len(4).
-    const prefixOff = lockb.indexOf("\n<install.lockfile.Tree>");
-    expect(prefixOff).toBeGreaterThan(16);
-    const treesStart = Number(lockb.readBigUInt64LE(prefixOff - 16));
-    const treesEnd = Number(lockb.readBigUInt64LE(prefixOff - 8));
-    expect((treesEnd - treesStart) % 20).toBe(0);
-    expect(treesEnd - treesStart).toBeGreaterThanOrEqual(20);
+    const { packageDir, lockbPath, lockb, treesStart } = await lockbWithPkgs();
     // tree[0].dependencies.off
     lockb.writeUInt32LE(0x7fffffff, treesStart + 0 * 20 + 12);
+    await expectRecovers(packageDir, lockbPath, lockb);
+  });
+
+  it.concurrent("tree dependency_id past dependencies buffer", async () => {
+    const { packageDir, lockbPath, lockb, treesStart } = await lockbWithPkgs();
+    // Sanity: tree[1] is a non-root tree with a real dependency_id and
+    // parent; its sentinels are not in play.
+    expect(lockb.readUInt32LE(treesStart + 1 * 20 + 0)).toBe(1);
+    expect(lockb.readUInt32LE(treesStart + 1 * 20 + 8)).toBe(0);
+    // tree[1].dependency_id
+    lockb.writeUInt32LE(0x7fffffff, treesStart + 1 * 20 + 4);
+    await expectRecovers(packageDir, lockbPath, lockb);
+  });
+
+  it.concurrent("tree parent past trees buffer", async () => {
+    const { packageDir, lockbPath, lockb, treesStart } = await lockbWithPkgs();
+    expect(lockb.readUInt32LE(treesStart + 1 * 20 + 8)).toBe(0);
+    // tree[1].parent
+    lockb.writeUInt32LE(0x7fffffff, treesStart + 1 * 20 + 8);
     await expectRecovers(packageDir, lockbPath, lockb);
   });
 });

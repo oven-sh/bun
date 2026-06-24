@@ -324,12 +324,10 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
                 match part.ty {
                     PartType::Deletion => {
                         // deleting the no newline pragma so we are actually adding a line
-                        count = count
-                            .saturating_add(part.no_newline_at_end_of_file as usize);
+                        count = count.saturating_add(part.no_newline_at_end_of_file as usize);
                     }
                     PartType::Insertion => {
-                        count = count
-                            .saturating_sub(part.no_newline_at_end_of_file as usize);
+                        count = count.saturating_sub(part.no_newline_at_end_of_file as usize);
                     }
                     PartType::Context => {}
                 }

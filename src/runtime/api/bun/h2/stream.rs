@@ -115,6 +115,16 @@ pub fn can_send_data(state: State) -> bool {
     matches!(state, State::Open | State::HalfClosedRemote)
 }
 
+/// §5.1.2: streams in `open` or either `half-closed` state count toward the advertised
+/// SETTINGS_MAX_CONCURRENT_STREAMS; idle, reserved and closed streams do not.
+#[inline]
+pub fn counts_toward_concurrency(state: State) -> bool {
+    matches!(
+        state,
+        State::Open | State::HalfClosedLocal | State::HalfClosedRemote
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -419,6 +419,107 @@ describe("frame size limit (checklist §4.2)", () => {
   });
 });
 
+describe("concurrent stream limit (RFC 9113 §5.1.2)", () => {
+  // A minimal valid request block: :method GET, :scheme http, :path /, :authority x
+  // (static-table indexed plus one literal; no dynamic-table state).
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x01]), Buffer.from("x", "latin1")]);
+
+  test("inbound HEADERS past SETTINGS_MAX_CONCURRENT_STREAMS is refused and never tracked", async () => {
+    const limitedServer = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+    const seen: number[] = [];
+    limitedServer.on("stream", (stream: http2.ServerHttp2Stream) => {
+      seen.push(stream.id);
+      // hold the stream open so it keeps counting toward the limit
+      stream.on("error", () => {});
+    });
+    limitedServer.listen(0);
+    await once(limitedServer, "listening");
+    const limitedPort = (limitedServer.address() as net.AddressInfo).port;
+    const c = await RawH2.connect(limitedPort);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+
+      // Stream 1 fills the single slot.
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestBlock);
+
+      // Stream 3 (over limit) + DATA on it, sent in one write so the server processes both in
+      // the same engine receive() batch. The engine must refuse the HEADERS before inserting
+      // the stream; DATA on a stream the engine never tracked is RST_STREAM(STREAM_CLOSED).
+      const headers3 = encodeFrame(FrameType.HEADERS, 0x4, 3, requestBlock);
+      const data3 = encodeFrame(FrameType.DATA, 0, 3, Buffer.from("x"));
+      c.send(Buffer.concat([headers3, data3]));
+
+      const refused = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 3);
+      expect(refused.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+
+      // The engine never tracked stream 3, so the DATA frame hits an unknown stream and is
+      // answered with STREAM_CLOSED. Without the engine-level §5.1.2 check the stream sits in
+      // Open state inside the engine until the next read batch and silently accepts the DATA.
+      const closed = await c.waitFor(
+        f =>
+          f.type === FrameType.RST_STREAM &&
+          f.streamId === 3 &&
+          f.payload.readUInt32BE(0) === ErrorCode.STREAM_CLOSED,
+      );
+      expect(closed.payload.readUInt32BE(0)).toBe(ErrorCode.STREAM_CLOSED);
+
+      // The refused stream never reached the application.
+      expect(seen).toEqual([1]);
+
+      // Connection survives; the session is not torn down.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+    } finally {
+      c.destroy();
+      limitedServer.close();
+    }
+  });
+
+  test("closing a stream releases its concurrency slot", async () => {
+    const limitedServer = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+    const seen: number[] = [];
+    limitedServer.on("stream", (stream: http2.ServerHttp2Stream) => {
+      seen.push(stream.id);
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    limitedServer.listen(0);
+    await once(limitedServer, "listening");
+    const limitedPort = (limitedServer.address() as net.AddressInfo).port;
+    const c = await RawH2.connect(limitedPort);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+
+      // Stream 1 opens, server responds and closes it.
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS|END_STREAM */, 1, requestBlock);
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) === 1);
+
+      // Stream 3 now fits and is served (not refused).
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestBlock);
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 3 && (f.flags & 0x1) === 1);
+      expect(seen).toEqual([1, 3]);
+      const refusal = c.frames.find(
+        f =>
+          f.type === FrameType.RST_STREAM &&
+          f.streamId === 3 &&
+          f.payload.readUInt32BE(0) === ErrorCode.REFUSED_STREAM,
+      );
+      expect(refusal).toBeUndefined();
+    } finally {
+      c.destroy();
+      limitedServer.close();
+    }
+  });
+});
+
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`
 // client and asserts the client's wire behavior (push stream states, SETTINGS ack ordering).
 

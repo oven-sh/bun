@@ -1252,9 +1252,11 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
 
 // `node -i -e 'code'` runs the eval and then enters the REPL with the eval'd
 // globals visible (the documented "load a script then go interactive" pattern).
+// `__commonJS` is a top-level var the bundled REPL bootstrap declares; the user
+// script is wrapped in a block so a user const of the same name doesn't collide.
 test("--interactive -e runs the eval first and enters the REPL with its globals visible", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--interactive", "-e", "globalThis.fromEval = 42"],
+    cmd: [bunExe(), "--interactive", "-e", "const __commonJS = 0; globalThis.fromEval = 42"],
     env: { ...bunEnv, NO_COLOR: "1" },
     stdin: Buffer.from("fromEval\n.exit\n"),
     stdout: "pipe",
@@ -1262,6 +1264,7 @@ test("--interactive -e runs the eval first and enters the REPL with its globals 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("> 42");
+  expect(stderr).not.toContain("has already been declared");
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });

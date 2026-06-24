@@ -2956,13 +2956,19 @@ impl RunCommand {
     pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
         let user = ::core::mem::take(&mut ctx.runtime_options.eval.script);
-        let mut script = Vec::with_capacity(user.len() + 2 + bootstrap.len());
+        let mut script = Vec::with_capacity(user.len() + 6 + bootstrap.len());
         if !user.is_empty() {
             // `bun --interactive -e 'code'` (Node's `node -i -e`): run the
             // user script first, then enter the REPL. The bootstrap passes
             // `useGlobal: true`, so globals it sets are visible at the prompt.
+            // Wrap the user script in a block so user `const`/`let` don't
+            // collide with the bundled bootstrap's top-level wrapper vars
+            // (`__commonJS`/`__require` in debug, minifier-chosen short names
+            // in release); the bootstrap itself ends in `export default …` so
+            // it must remain at the module's top level.
+            script.extend_from_slice(b"{\n");
             script.extend_from_slice(&user);
-            script.extend_from_slice(b";\n");
+            script.extend_from_slice(b"\n};\n");
         }
         script.extend_from_slice(bootstrap);
         ctx.runtime_options.eval.script = script.into_boxed_slice();

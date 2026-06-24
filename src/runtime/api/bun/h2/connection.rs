@@ -139,6 +139,14 @@ pub struct Connection {
     /// session option, nghttp2's max_settings; not a SETTINGS parameter). Frames carrying more
     /// entries are a connection error (ENHANCE_YOUR_CALM, like nghttp2's flood guard).
     pub max_settings: u32,
+    /// Rapid-reset guard (CVE-2023-44487): inbound RST_STREAM on a still-open peer-initiated
+    /// stream increments this; `close_stream` (the embedder's lifecycle-complete signal)
+    /// decrements it. So the value is the burst of resets seen since the last drain — a
+    /// legitimate cancel is refunded when its handler completes, while a HEADERS→RST flood in
+    /// one read accumulates without refill. Exceeding `max_peer_resets` GOAWAYs the connection
+    /// with ENHANCE_YOUR_CALM (node's `streamResetBurst`, nghttp2 stream_reset_rate_limit burst).
+    peer_reset_count: u32,
+    pub max_peer_resets: u32,
 
     /// Connection-level flow control (§6.9.1). The connection window is fixed at 65535 initially
     /// and is NOT affected by SETTINGS_INITIAL_WINDOW_SIZE (that governs streams only).
@@ -198,6 +206,8 @@ impl Connection {
             pending_local_window_acks: std::collections::VecDeque::new(),
             invalid_frame_count: 0,
             max_settings: 32,
+            peer_reset_count: 0,
+            max_peer_resets: 1000,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
             hpack: hpack::Coder::new(local.header_table_size),
@@ -1245,8 +1255,10 @@ impl Connection {
     fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
         // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
+        let mut in_flight = false;
         let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
             Some(s) if s.state != State::Idle => {
+                in_flight = s.state != State::Closed;
                 s.state = State::Closed;
                 false
             }
@@ -1275,14 +1287,15 @@ impl Connection {
             return true;
         }
         // Rapid-reset guard (CVE-2023-44487): a HEADERS→RST_STREAM flood stays under the
-        // concurrency cap while churning a JS request object per cycle. Count server-side
-        // peer resets against the invalid-frame budget (node's maxSessionInvalidFrames,
-        // default 1000) so the embedder can tear the session down.
-        if self.is_server {
-            let count = self.invalid_frame_count;
-            self.invalid_frame_count = count.saturating_add(1);
-            if count > self.max_invalid_frames {
-                sink.on_too_many_invalid_frames();
+        // concurrency cap while churning a JS request object per cycle. Count peer resets of
+        // still-in-flight streams (late resets of already-closed/evicted streams cost nothing);
+        // `close_stream` refunds one per completed handler so legitimate cancels on a
+        // long-lived connection never accumulate. Exceeding the burst answers
+        // GOAWAY(ENHANCE_YOUR_CALM), matching nghttp2's stream_reset_rate_limit.
+        if self.is_server && in_flight && hdr.stream_id & 1 == 1 {
+            self.peer_reset_count = self.peer_reset_count.saturating_add(1);
+            if self.peer_reset_count > self.max_peer_resets {
+                self.send_go_away(sink, ErrorCode::EnhanceYourCalm, b"stream reset flood");
                 return true;
             }
         }
@@ -1566,6 +1579,12 @@ impl Connection {
     /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
     /// answer) and a late HEADERS re-opens a fresh entry.
     pub fn close_stream(&mut self, stream_id: u32) {
+        // Rapid-reset refill: each completed peer-initiated handler refunds one token to
+        // the reset-burst budget, so legitimate cancels on a long-lived connection never
+        // accumulate past the burst.
+        if self.is_server && stream_id & 1 == 1 {
+            self.peer_reset_count = self.peer_reset_count.saturating_sub(1);
+        }
         self.streams.remove(&stream_id);
     }
 
@@ -1644,7 +1663,6 @@ mod tests {
         goaway: Cell<Option<(u32, u32)>>,
         opens: RefCell<Vec<u32>>,
         rejected: RefCell<Vec<u32>>,
-        too_many_invalid: Cell<bool>,
         headers: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         headers_done: RefCell<Vec<(u32, bool)>>,
         data: RefCell<Vec<(u32, Vec<u8>)>>,
@@ -1696,9 +1714,6 @@ mod tests {
         }
         fn on_stream_rejected(&self, id: u32) {
             self.rejected.borrow_mut().push(id);
-        }
-        fn on_too_many_invalid_frames(&self) {
-            self.too_many_invalid.set(true);
         }
         fn on_push_promise(&self, parent: u32, promised: u32) {
             self.pushes.borrow_mut().push((parent, promised));
@@ -2089,16 +2104,16 @@ mod tests {
     }
 
     #[test]
-    fn rapid_reset_flood_trips_invalid_frame_budget() {
+    fn rapid_reset_flood_trips_reset_burst() {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        c.max_invalid_frames = 4;
+        c.max_peer_resets = 4;
         let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
         let cancel = ErrorCode::Cancel.as_u32().to_be_bytes();
         let mut bytes = Vec::new();
         // 8 HEADERS→RST cycles stay under the (default, huge) concurrency cap but exceed
-        // the invalid-frame budget of 4.
+        // the reset-burst budget of 4 in a single read.
         for i in 0..8u32 {
             let id = 1 + 2 * i;
             bytes.extend_from_slice(&frame(
@@ -2111,9 +2126,41 @@ mod tests {
         }
         let fed = c.receive(&sink, &bytes);
         assert!(fed.fatal);
-        assert!(sink.too_many_invalid.get());
-        // Closed streams were evicted up to the point of fatal return; the map never
-        // accumulated all 8 entries.
-        assert!(c.streams.len() < 8);
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::EnhanceYourCalm.as_u32())
+        );
+        // invalid_frame_count is not touched by valid RST_STREAM frames.
+        assert_eq!(c.invalid_frame_count, 0);
+    }
+
+    #[test]
+    fn peer_resets_are_refunded_by_close_stream() {
+        // Legitimate cancels on a long-lived connection: each completed handler
+        // (close_stream) refunds a token, so resets interleaved with completions
+        // never accumulate past the burst.
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        c.max_peer_resets = 4;
+        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let cancel = ErrorCode::Cancel.as_u32().to_be_bytes();
+        for i in 0..32u32 {
+            let id = 1 + 2 * i;
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&frame(
+                FrameType::Headers,
+                wire::flags::END_HEADERS,
+                id,
+                &block,
+            ));
+            bytes.extend_from_slice(&frame(FrameType::RstStream, 0, id, &cancel));
+            let fed = c.receive(&sink, &bytes);
+            assert!(!fed.fatal);
+            // The embedder's handler-complete signal refunds the token before the next read.
+            c.close_stream(id);
+        }
+        assert!(sink.goaway.get().is_none());
+        assert_eq!(c.peer_reset_count, 0);
     }
 }

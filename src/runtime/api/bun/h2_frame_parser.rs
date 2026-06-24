@@ -1299,6 +1299,7 @@ pub struct H2FrameParser {
     pending_engine_stream_closes: JsCell<Vec<u32>>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
+    stream_reset_burst: Cell<u32>,
     max_outstanding_settings: Cell<u32>,
     outstanding_settings: Cell<u32>,
     rejected_streams: Cell<u32>,
@@ -5337,6 +5338,7 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            engine.max_peer_resets = self.stream_reset_burst.get();
             // Apply any receive-window growth setLocalWindowSize() accumulated while a dispatch
             // held this borrow.
             let pending = self.pending_recv_window_growth.replace(0);
@@ -9125,6 +9127,7 @@ impl H2FrameParser {
             pending_settings_window_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
+            stream_reset_burst: Cell::new(1000),
             max_outstanding_settings: Cell::new(10),
             outstanding_settings: Cell::new(0),
             rejected_streams: Cell::new(0),
@@ -9245,6 +9248,15 @@ impl H2FrameParser {
                         this_ref
                             .max_session_invalid_frames
                             .set(max_session_invalid_frames.to_uint64_no_truncate() as u32);
+                    }
+                }
+                if let Some(stream_reset_burst) =
+                    settings_js.get(global_object, "streamResetBurst")?
+                {
+                    if stream_reset_burst.is_number() {
+                        this_ref
+                            .stream_reset_burst
+                            .set(stream_reset_burst.to_uint64_no_truncate() as u32);
                     }
                 }
                 if let Some(max_outstanding_settings) =

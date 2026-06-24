@@ -453,10 +453,11 @@ describe("stream concurrency (§5.1.2)", () => {
     }
   });
 
-  test("rapid-reset (HEADERS→RST flood) trips maxSessionInvalidFrames and tears the session down", async () => {
-    const srv = http2.createServer({ maxSessionInvalidFrames: 8 });
+  test("rapid-reset (HEADERS→RST flood) past streamResetBurst answers GOAWAY(ENHANCE_YOUR_CALM)", async () => {
+    const srv = http2.createServer({ streamResetBurst: 8 } as any);
     srv.on("stream", (stream: any) => stream.on("error", () => {}));
     srv.on("sessionError", () => {});
+    srv.on("error", () => {});
     srv.listen(0);
     await once(srv, "listening");
     const p = (srv.address() as net.AddressInfo).port;
@@ -467,14 +468,21 @@ describe("stream concurrency (§5.1.2)", () => {
       c.sendSettingsAck();
       const cancel = Buffer.alloc(4);
       cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
-      // 32 HEADERS→RST cycles stay under the default concurrency cap but well past the
-      // maxSessionInvalidFrames budget of 8.
+      // 32 HEADERS→RST cycles in one burst stay under the default concurrency cap but
+      // well past the streamResetBurst budget of 8.
+      let buf = Buffer.alloc(0);
       for (let i = 0; i < 32; i++) {
         const id = 1 + 2 * i;
-        c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, id, reqBlock);
-        c.sendFrame(FrameType.RST_STREAM, 0, id, cancel);
+        buf = Buffer.concat([
+          buf,
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, id, reqBlock),
+          encodeFrame(FrameType.RST_STREAM, 0, id, cancel),
+        ]);
       }
-      // The server terminates the connection once the budget is exceeded.
+      c.send(buf);
+      // The server answers the flood with GOAWAY(ENHANCE_YOUR_CALM) and closes.
+      const goaway = await c.waitForGoaway(3500);
+      expect(goawayErrorCode(goaway)).toBe(0xb /* ENHANCE_YOUR_CALM */);
       await c.waitClosed(3500);
       expect(c.closed).toBe(true);
     } finally {

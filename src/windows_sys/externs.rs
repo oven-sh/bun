@@ -415,6 +415,16 @@ pub struct FILE_DISPOSITION_INFORMATION_EX {
     pub Flags: ULONG,
 }
 
+/// `FILE_RENAME_INFORMATION` (`ntifs.h`). `FileName` is a variable-length
+/// tail; declared `[u16; 1]` to match the C flex-array idiom.
+#[repr(C)]
+pub struct FILE_RENAME_INFORMATION {
+    pub ReplaceIfExists: BOOLEAN,
+    pub RootDirectory: HANDLE,
+    pub FileNameLength: ULONG,
+    pub FileName: [u16; 1],
+}
+
 /// `FILE_RENAME_INFORMATION` ex variant (`ntifs.h`). `FileName` is a
 /// variable-length tail; declared `[u16; 1]` to match the C flex-array idiom.
 #[repr(C)]
@@ -1761,4 +1771,30 @@ unsafe extern "system" {
 
 unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use core::mem::{offset_of, size_of};
+
+    #[test]
+    fn file_rename_information_layout_matches_ex_variant() {
+        assert_eq!(
+            offset_of!(FILE_RENAME_INFORMATION, RootDirectory),
+            offset_of!(FILE_RENAME_INFORMATION_EX, RootDirectory)
+        );
+        assert_eq!(
+            offset_of!(FILE_RENAME_INFORMATION, FileNameLength),
+            offset_of!(FILE_RENAME_INFORMATION_EX, FileNameLength)
+        );
+        assert_eq!(
+            offset_of!(FILE_RENAME_INFORMATION, FileName),
+            offset_of!(FILE_RENAME_INFORMATION_EX, FileName)
+        );
+        assert_eq!(
+            size_of::<FILE_RENAME_INFORMATION>(),
+            size_of::<FILE_RENAME_INFORMATION_EX>()
+        );
+    }
 }

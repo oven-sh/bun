@@ -9,7 +9,7 @@ use bstr::BStr;
 use bun_core::ZStr;
 
 use crate::Tag;
-use crate::windows::libuv as uv;
+use crate::windows::{self, Win32Error, libuv as uv};
 use crate::{E, Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS};
 // `ReturnCodeExt::err_enum_e` overlays the libuv→POSIX errno translation;
 // without it the raw `UV_E*` magnitude (e.g. 4058 for UV_ENOENT) would land
@@ -408,6 +408,14 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
         rc.int()
     );
     if let Some(errno) = rc.err_enum_e() {
+        if req.sys_errno_ == Win32Error::INVALID_PARAMETER.int() as u32 {
+            let mut from_buf = bun_paths::w_path_buffer_pool::get();
+            let mut to_buf = bun_paths::w_path_buffer_pool::get();
+            let from_w = bun_paths::string_paths::to_nt_path(&mut from_buf[..], from.as_bytes());
+            let to_w = bun_paths::string_paths::to_nt_path(&mut to_buf[..], to.as_bytes());
+            return windows::rename_at_w(Fd::cwd(), from_w, Fd::cwd(), to_w, true);
+        }
+
         // which one goes in the .path field?
         Result::Err(Error::new(errno, Tag::rename))
     } else {

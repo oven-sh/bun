@@ -3699,6 +3699,47 @@ it("test syscall errno, issue#4198", () => {
   rmdirSync(path);
 });
 
+it.if(isWindows)("rename and renameSync replace existing files on Windows", async () => {
+  using dir = tempDir("windows-rename-replace", {
+    "from-sync.txt": "from sync",
+    "to-sync.txt": "to sync",
+    "from-async.txt": "from async",
+    "to-async.txt": "to async",
+  });
+
+  const fromSync = join(dir, "from-sync.txt");
+  const toSync = join(dir, "to-sync.txt");
+  renameSync(fromSync, toSync);
+  expect(readFileSync(toSync, "utf8")).toBe("from sync");
+  expect(existsSync(fromSync)).toBe(false);
+
+  const fromAsync = join(dir, "from-async.txt");
+  const toAsync = join(dir, "to-async.txt");
+  await new Promise<void>((resolve, reject) => {
+    fs.rename(fromAsync, toAsync, err => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+  expect(readFileSync(toAsync, "utf8")).toBe("from async");
+  expect(existsSync(fromAsync)).toBe(false);
+
+  using relativeDir = tempDir("windows-rename-relative", {
+    "nested/from.txt": "relative",
+    "to.txt": "old",
+  });
+  const relativePath = String(relativeDir);
+  const cwd = process.cwd();
+  try {
+    process.chdir(relativePath);
+    renameSync(join("nested", "from.txt"), "to.txt");
+  } finally {
+    process.chdir(cwd);
+  }
+  expect(readFileSync(join(relativePath, "to.txt"), "utf8")).toBe("relative");
+  expect(existsSync(join(relativePath, "nested", "from.txt"))).toBe(false);
+});
+
 it.if(isWindows)("writing to windows hidden file is possible", () => {
   const temp = tmpdir();
   writeFileSync(join(temp, "file.txt"), "FAIL");

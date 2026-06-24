@@ -1836,40 +1836,28 @@ pub fn to_executable(
         // Close the file handle before moving (Windows requires this)
         fd.close();
 
-        use bun_sys::windows::{self, Win32ErrorExt as _};
-        // Move the file using MoveFileExW
+        use bun_sys::windows as w;
         // SAFETY: NUL-terminated wide strings constructed above. Pass the
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
         // provenance covers the trailing NUL at index `len` that the W-suffix
         // API will read.
-        if unsafe {
-            windows::kernel32::MoveFileExW(
+        if let Err(err) = unsafe {
+            w::move_file_ex_w(
                 temp_buf_u16.as_ptr(),
                 dest_buf_u16.as_ptr(),
-                windows::MOVEFILE_COPY_ALLOWED
-                    | windows::MOVEFILE_REPLACE_EXISTING
-                    | windows::MOVEFILE_WRITE_THROUGH,
+                w::MOVEFILE_COPY_ALLOWED | w::MOVEFILE_REPLACE_EXISTING | w::MOVEFILE_WRITE_THROUGH,
             )
-        } == windows::FALSE
-        {
-            let werr = windows::Win32Error::get();
-            if let Some(sys_err) = werr.to_system_errno() {
-                if sys_err == bun_sys::SystemErrno::EISDIR {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "{} is a directory. Please choose a different --outfile or delete the directory",
-                        bstr::BStr::new(outfile)
-                    )));
-                } else {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "failed to move executable to {}: {}",
-                        bstr::BStr::new(dest_path),
-                        <&'static str>::from(sys_err)
-                    )));
-                }
+        } {
+            if err.get_errno() == bun_sys::E::EISDIR {
+                return Ok(CompileResult::fail_fmt(format_args!(
+                    "{} is a directory. Please choose a different --outfile or delete the directory",
+                    bstr::BStr::new(outfile)
+                )));
             } else {
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to move executable to {}",
-                    bstr::BStr::new(dest_path)
+                    "failed to move executable to {}: {}",
+                    bstr::BStr::new(dest_path),
+                    bstr::BStr::new(err.name())
                 )));
             }
         }
@@ -1885,7 +1873,7 @@ pub fn to_executable(
             // The file has been moved to dest_path
             // SAFETY: full-buffer pointer so provenance includes the NUL at
             // `dest_buf_u16[dest_w_len]` (FFI reads it as a C wide string).
-            if let Err(e) = windows::rescle::set_windows_metadata(
+            if let Err(e) = w::rescle::set_windows_metadata(
                 dest_buf_u16.as_ptr(),
                 windows_options.icon.as_deref(),
                 windows_options.title.as_deref(),

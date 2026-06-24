@@ -898,7 +898,6 @@ pub mod fs {
             #[cfg(windows)]
             {
                 use bun_sys::windows as w;
-                use w::Win32ErrorUnwrap as _;
                 let _ = from_name;
                 let mut existing_buf = bun_paths::WPathBuffer::uninit();
                 let mut new_buf = bun_paths::WPathBuffer::uninit();
@@ -918,20 +917,17 @@ pub mod fs {
                         name.as_bytes(),
                     )
                 };
-                // SAFETY: `existing`/`new` are NUL-terminated WTF-16 backed by
-                // stack `WPathBuffer`s alive for this frame.
-                if unsafe {
-                    w::kernel32::MoveFileExW(
+                // SAFETY: `existing`/`new` are NUL-terminated WTF-16 paths
+                // backed by stack `WPathBuffer`s alive for this call.
+                unsafe {
+                    w::move_file_ex_w(
                         existing.as_ptr(),
                         new.as_ptr(),
                         w::MOVEFILE_COPY_ALLOWED
                             | w::MOVEFILE_REPLACE_EXISTING
                             | w::MOVEFILE_WRITE_THROUGH,
                     )
-                } == w::FALSE
-                {
-                    w::Win32Error::get().unwrap()?;
-                }
+                }?;
                 Ok(())
             }
         }

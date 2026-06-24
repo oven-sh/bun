@@ -491,8 +491,15 @@ describe("BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE", () => {
     }
   `;
 
+  const decodeError = {
+    gzip: "ZlibError",
+    deflate: "ZlibError",
+    br: "BrotliDecompressionError",
+    zstd: "ZstdDecompressionError",
+  } as const;
+
   for (const encoding of ["gzip", "deflate", "br", "zstd"] as const) {
-    it(`caps ${encoding} response body decompression`, async () => {
+    it.concurrent(`caps ${encoding} response body decompression`, async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture(encoding)],
         env: {
@@ -503,31 +510,33 @@ describe("BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const firstWord = stdout.trim().split(" ", 1)[0];
-      expect({ stdout: firstWord, raw: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: "REJECTED",
-        raw: expect.stringContaining("REJECTED"),
+      // The decode error may surface at fetch() or at arrayBuffer()
+      // depending on whether the body arrives with the headers; assert on
+      // the decoder-specific error name so a setup/connection failure
+      // does not satisfy the expectation.
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: expect.stringMatching(new RegExp(`^REJECTED .*${decodeError[encoding]}`)),
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent(`setting the cap to 0 disables it for ${encoding}`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture(encoding)],
+        env: {
+          ...bunEnv,
+          BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE: "0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: `RESOLVED ${UNCOMPRESSED_SIZE}`,
         stderr: expect.any(String),
         exitCode: 0,
       });
     });
   }
-
-  it("setting the cap to 0 disables it", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture("gzip")],
-      env: {
-        ...bunEnv,
-        BUN_CONFIG_MAX_HTTP_DECOMPRESSED_SIZE: "0",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: `RESOLVED ${UNCOMPRESSED_SIZE}`,
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  });
 });

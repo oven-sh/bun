@@ -267,6 +267,7 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
+13. **Keep code comments to 3 lines max** - Comments must be concise. If the code needs more explanation than that, it belongs in docs — and only when explicitly asked for.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
 

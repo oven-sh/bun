@@ -202,28 +202,6 @@ impl<'a> Default for SpanDetail<'a> {
     }
 }
 
-impl<'a> SpanDetail<'a> {
-    /// Widen `href`/`title` to `'static` for storage on the renderer stack.
-    /// Field-by-field reconstruction (no bitwise reinterpret).
-    ///
-    /// # Safety
-    /// Caller guarantees the source text the slices borrow outlives every
-    /// read through the returned value.
-    #[inline]
-    pub unsafe fn detach_lifetime(self) -> SpanDetail<'static> {
-        SpanDetail {
-            // SAFETY: caller contract.
-            href: unsafe { &*core::ptr::from_ref::<[u8]>(self.href) },
-            // SAFETY: caller contract.
-            title: unsafe { &*core::ptr::from_ref::<[u8]>(self.title) },
-            autolink: self.autolink,
-            autolink_email: self.autolink_email,
-            permissive_autolink: self.permissive_autolink,
-            autolink_www: self.autolink_www,
-        }
-    }
-}
-
 /// An attribute is a string that may contain embedded entities.
 /// The text is split into substrings, each with a type (normal or entity).
 /// The substr slices borrow from parser-owned buffers.

@@ -3810,7 +3810,7 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub fn resume_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
-        if !self.state.flags.receive_paused {
+        if !self.state.flags.receive_paused || self.signals.is_receive_paused() {
             return;
         }
         self.state.flags.receive_paused = false;
@@ -3947,7 +3947,11 @@ impl<'a> HTTPClient<'a> {
 
             // The uSockets paused bit survives `state.reset()`; never hand a
             // paused socket back to the pool.
-            self.resume_receive(socket);
+            if core::mem::take(&mut self.state.flags.receive_paused)
+                && !socket.is_closed_or_has_error()
+            {
+                let _ = socket.resume_stream();
+            }
 
             if self.is_keep_alive_possible()
                 && !socket.is_closed_or_has_error()

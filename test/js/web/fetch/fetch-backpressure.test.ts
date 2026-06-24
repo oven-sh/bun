@@ -1,7 +1,7 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
@@ -202,8 +202,12 @@ const STALL_NO_CONSUMER =
 
 // Without backpressure the full 16 MiB lands in `scheduled_response_buffer` /
 // `ByteStream.buffer` while the reader is stalled. With it, only ~one chunk
-// is buffered.
+// is buffered. Subprocess RSS also captures JIT warmup and lazy dylib
+// faulting, which on macOS and ASAN can exceed the 16 MiB body; the
+// in-process "server stops writing" tests below prove the pause without
+// that noise, so skip the RSS bound there.
 const BOUND = 8 * 1024 * 1024;
+const checkRssBound = !isMacOS && !isASAN;
 
 for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind[]) {
   describe(`fetch() ${kind} receive backpressure`, () => {
@@ -226,7 +230,7 @@ for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind
         // h2/h3 advertise multi-MiB initial flow-control windows; the transport
         // backpressure only takes effect past that. The h1 cases prove the
         // 64 KiB bound; h2/h3 here prove the resume path doesn't deadlock.
-        if (kind.startsWith("h1") && kind !== "h1-gzip") expect(peak).toBeLessThan(BOUND);
+        if (checkRssBound && kind.startsWith("h1") && kind !== "h1-gzip") expect(peak).toBeLessThan(BOUND);
         expect(exitCode).toBe(0);
       });
     }

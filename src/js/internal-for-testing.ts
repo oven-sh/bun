@@ -265,6 +265,62 @@ export const setSocketOptions: setSocketOptionsFn = $newZigFunction(
   "jsSetSocketOptions",
   3,
 );
+
+export type SocketFaultSyscall =
+  | "recv"
+  | "send"
+  | "writev"
+  | "sendmsg"
+  | "recvmsg"
+  | "connect"
+  | "accept"
+  | "socket"
+  | "close"
+  | "shutdown";
+
+export type SocketFaultRule = {
+  syscall: SocketFaultSyscall;
+  action: "errno" | "short" | "zero" | "none";
+  /** errno name or numeric value (only used when action === "errno") */
+  errno?:
+    | "ECONNRESET"
+    | "EPIPE"
+    | "ETIMEDOUT"
+    | "ECONNREFUSED"
+    | "EAGAIN"
+    | "EWOULDBLOCK"
+    | "EINTR"
+    | "ENOBUFS"
+    | "ENOMEM"
+    | "EBADF"
+    | "EINVAL"
+    | "ENETUNREACH"
+    | "EHOSTUNREACH"
+    | number;
+  /** clamp recv/send length to this many bytes (only used when action === "short") */
+  bytes?: number;
+  /** skip the first N matching calls before triggering. Default 0. */
+  after?: number;
+  /** fire this many times then disarm; -1 = forever. Default 1. */
+  repeat?: number;
+  /** match only this fd; -1 (default) = any */
+  fd?: number;
+};
+
+export const socketFaultInjection = {
+  /** True when the current binary was built with `--socket-fault-injection=on` (default for debug builds). */
+  available: $newZigFunction(
+    "runtime/socket/socket.zig",
+    "TestingAPIs.jsSocketFaultInjectionAvailable",
+    0,
+  ) as () => boolean,
+  /** Arm a process-wide fault rule for one usockets bsd_* syscall. */
+  set: $newZigFunction("runtime/socket/socket.zig", "TestingAPIs.jsSetSocketFault", 1) as (
+    rule: SocketFaultRule,
+  ) => boolean,
+  /** Disarm all fault rules. */
+  clear: $newZigFunction("runtime/socket/socket.zig", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
+};
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,

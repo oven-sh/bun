@@ -464,7 +464,11 @@ impl NodeHTTPResponse {
         drop(sec_websocket_protocol_str);
         drop(sec_websocket_extensions_str);
 
-        self.set_on_aborted_handler();
+        // The sec-websocket-* headers were already copied into
+        // raw_response.upgrade(); the underlying HttpParser::fallback buffer is
+        // freed when uWS adopts the socket above, so set_on_aborted_handler
+        // (which would call preserve_web_socket_headers_if_needed) must not run
+        // post-upgrade — it would read freed header views.
         self.upgrade_context.with_mut(|c| c.reset());
 
         true

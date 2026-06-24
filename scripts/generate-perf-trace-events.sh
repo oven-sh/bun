@@ -48,7 +48,8 @@ done
 
 # Sort by dotted name (stable ids across runs); dedup by dotted name first,
 # then by derived variant (two literals like "X.foo" and "X::foo" collapse).
-PAIRS=$(echo "$PAIRS" | grep -v '^$' | sort -t$'\t' -k1,1 -u | awk -F'\t' '!seen[$2]++')
+# `awk NF` drops blank lines without the exit-1-on-no-match behaviour of grep.
+PAIRS=$(echo "$PAIRS" | awk 'NF' | sort -t$'\t' -k1,1 -u | awk -F'\t' '!seen[$2]++')
 
 if [ -z "$PAIRS" ]; then
     echo "error: no perf::trace() call sites found under src/" >&2

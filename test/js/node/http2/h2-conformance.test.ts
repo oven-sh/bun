@@ -421,16 +421,20 @@ describe("frame size limit (checklist §4.2)", () => {
 });
 
 describe("inbound stream flood (maxSessionMemory)", () => {
-  // A peer that floods HEADERS with fresh odd stream ids must not be able to make the server
-  // allocate unbounded per-stream state: once maxSessionMemory is exceeded the server refuses
-  // new streams with RST_STREAM(REFUSED_STREAM), and once maxSessionRejectedStreams refused
-  // streams have accumulated it tears the session down with GOAWAY(ENHANCE_YOUR_CALM).
-  test("server refuses a HEADERS flood past maxSessionMemory and eventually GOAWAYs", async () => {
-    const srv = http2.createServer({ maxSessionMemory: 1, maxSessionRejectedStreams: 5 });
-    // Never respond: accepted streams stay open and count against the memory budget. With
-    // maxConcurrentStreams left at its default the JS-level concurrency refusal never fires,
-    // so only the native maxSessionMemory guard can stop the flood.
-    srv.on("stream", stream => stream.on("error", () => {}));
+  // A peer that opens peer-initiated streams past the session's maxSessionMemory budget must
+  // see them refused with RST_STREAM(REFUSED_STREAM); past maxSessionRejectedStreams the
+  // session tears down with GOAWAY(ENHANCE_YOUR_CALM).
+  test("server refuses new inbound streams past maxSessionMemory and eventually GOAWAYs", async () => {
+    const srv = http2.createServer({ maxSessionMemory: 1, maxSessionRejectedStreams: 3 });
+    // Respond with a large body the raw client never acknowledges: with no WINDOW_UPDATE the
+    // DATA backs up in queued_data_size and the 1 MiB budget trips after a handful of streams.
+    // maxConcurrentStreams is left at its default so the JS-level concurrency refusal never
+    // fires; only the native maxSessionMemory guard can refuse here.
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.write(Buffer.alloc(256 * 1024, 0x61));
+    });
     srv.on("sessionError", () => {});
     srv.on("session", session => session.on("error", () => {}));
     srv.listen(0, "127.0.0.1");
@@ -438,36 +442,39 @@ describe("inbound stream flood (maxSessionMemory)", () => {
     const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
     try {
       c.sendPreface();
-      c.sendEmptySettings();
+      // Advertise a zero initial window so every DATA byte the server tries to send queues.
+      const iws0 = Buffer.alloc(6);
+      iws0.writeUInt16BE(0x4, 0); // SETTINGS_INITIAL_WINDOW_SIZE
+      iws0.writeUInt32BE(0, 2);
+      c.sendFrame(FrameType.SETTINGS, 0, 0, iws0);
       c.sendSettingsAck();
       await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 1);
 
       // Static-table-only request block: :method GET, :scheme http, :path /, :authority "a".
       // No dynamic-table inserts, so every stream decodes identically.
-      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x01, 0x61])]);
+      const block = Buffer.from([0x82, 0x86, 0x84, 0x01, 0x01, 0x61]);
       const frames: Buffer[] = [];
-      // Enough streams that stream_count * sizeof(native Stream) comfortably exceeds the
-      // 1 MiB budget on every supported target; END_STREAM | END_HEADERS so each HEADERS
+      // With 256 KiB queued per accepted stream and a 1 MiB budget, a few dozen streams are
+      // ample regardless of sizeof(native Stream); END_STREAM | END_HEADERS so each HEADERS
       // completes its block in one frame.
-      for (let i = 0; i < 20000; i++) {
+      for (let i = 0; i < 40; i++) {
         frames.push(encodeFrame(FrameType.HEADERS, 0x5, i * 2 + 1, block));
       }
       c.send(Buffer.concat(frames));
 
-      // The first refused stream gets RST_STREAM(REFUSED_STREAM); after five refusals the
-      // session sends GOAWAY(ENHANCE_YOUR_CALM). Both must arrive.
+      // The first refused stream gets RST_STREAM(REFUSED_STREAM); past the rejection budget
+      // the session sends GOAWAY(ENHANCE_YOUR_CALM). Both must arrive.
       const rst = await c.waitFor(
         f => f.type === FrameType.RST_STREAM && f.payload.readUInt32BE(0) === ErrorCode.REFUSED_STREAM,
-        30_000,
       );
       expect(rst.streamId % 2).toBe(1);
-      const goaway = await c.waitForGoaway(30_000);
+      const goaway = await c.waitForGoaway();
       expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
     } finally {
       c.destroy();
       srv.close();
     }
-  }, 60_000);
+  });
 });
 
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`

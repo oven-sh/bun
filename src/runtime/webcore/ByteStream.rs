@@ -337,9 +337,7 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
-            if !has_remaining {
-                self.signal_drained();
-            }
+            self.signal_drained();
 
             // R-2: `Pending::run` resolves a JS promise (re-enters JS); the
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is

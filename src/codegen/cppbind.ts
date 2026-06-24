@@ -555,6 +555,9 @@ function generateRustType(type: CppType, parent: CppType | null): string {
     throwError(type.position, "void must have a pointer parent or no parent");
   }
   if (type.type === "named") {
+    if (bannedTypes[type.name]) {
+      appendError(type.position, bannedTypes[type.name]);
+    }
     const t = rustSharedTypes[type.name];
     if (t) return t;
     // Unknown opaque — only valid behind a pointer (the per-type shim casts the
@@ -661,12 +664,24 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
 
   const globalArg = fn.parameters.find(p => isGlobalObjectPtr(p.type));
   if (!globalArg) {
-    // Emit a stub so the module still
-    // compiles and the symbol name is greppable.
+    appendError(fn.position, `no JSGlobalObject* parameter found (required for ZIG_EXPORT(${fn.tag}))`);
     rustWrap.push(`// skipped ${fn.name}: ${fn.tag} requires a JSGlobalObject* parameter`);
     return;
   }
   const gname = rustIdent(globalArg.name);
+
+  if (fn.tag === "zero_is_throw" && ret !== "crate::JSValue") {
+    appendError(fn.position, "ZIG_EXPORT(zero_is_throw) is only allowed for functions that return JSValue");
+  } else if (fn.tag === "false_is_throw" && ret !== "bool") {
+    appendError(fn.position, "ZIG_EXPORT(false_is_throw) is only allowed for functions that return bool");
+  } else if (fn.tag === "null_is_throw" && fn.returnType.type !== "pointer") {
+    appendError(fn.position, "ZIG_EXPORT(null_is_throw) is only allowed for functions that return a pointer");
+  } else if (fn.tag === "check_slow" && ret === "crate::JSValue") {
+    appendError(
+      fn.position,
+      "Use ZIG_EXPORT(zero_is_throw) instead of ZIG_EXPORT(check_slow) for functions that return JSValue",
+    );
+  }
 
   if (fn.tag === "check_slow") {
     // Inline the `top_scope!` body (rather than the `call_check_slow` *function* form,
@@ -724,7 +739,6 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   );
 }
 
-const errorsForTypes: Map<string, PositionedError> = new Map();
 function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
   while (node) {
     if (node.name === type) return node;

@@ -451,12 +451,6 @@ addValue(
   "LangSelectorList",
 );
 
-let prefixMapping = {
-  webkit: "webkit",
-  moz: "moz",
-  ms: "ms",
-  o: "o",
-};
 
 const allBrowsers = ["android", "chrome", "edge", "firefox", "ie", "ios_saf", "opera", "safari", "samsung"];
 

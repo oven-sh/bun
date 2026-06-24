@@ -31,40 +31,13 @@ export function markPromiseAsHandled(promise: Promise<unknown>) {
   $pokePromiseAsHandled(promise);
 }
 
-// Web IDL "a promise resolved with x" — always a fresh promise (the
-// assimilation hop when x is a thenable is observable in the spec's microtask
-// ordering). Promise.$resolve would return x unchanged when x is already a
-// native Promise and skip that hop; the streams ref-impl explicitly avoids
-// Promise.resolve here for the same reason.
-//
-// For native-promise results replicate PromiseResolveThenableJob's timing by
-// queuing a job that chains through the intrinsic Promise.prototype.@then:
-// same two-hop microtask ordering, and the job's try/catch + reject is the
-// spec job's step 3 (abrupt completion of the then call rejects the wrapper,
-// e.g. a throwing @@species on the result). $resolvePromise alone would do
-// Get(result, "then") once Promise.prototype.then has been replaced, reaching
-// the user override for every async callback result.
+// Web IDL "a promise resolved with x": NewPromiseCapability + Resolve(x).
+// Always a fresh promise — Promise.$resolve(x) would return x unchanged when
+// x is already a native Promise and skip the assimilation hop, which is
+// observable in WPT's microtask ordering.
 export function shieldingPromiseResolve(result) {
   const promise = $newPromise();
-  if ($isPromise(result)) {
-    $enqueueJob(
-      (p, r) => {
-        try {
-          $Promise.prototype.$then.$call(
-            r,
-            v => $resolvePromise(p, v),
-            e => $rejectPromise(p, e),
-          );
-        } catch (e) {
-          $rejectPromise(p, e);
-        }
-      },
-      promise,
-      result,
-    );
-  } else {
-    $resolvePromise(promise, result);
-  }
+  $resolvePromise(promise, result);
   return promise;
 }
 

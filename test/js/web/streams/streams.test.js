@@ -318,40 +318,39 @@ describe("WritableStream", () => {
       expect(order).toEqual(["mt1", "mt2", "transform"]);
     });
 
-    // PromiseResolveThenableJob step 3: an abrupt completion of the then call
-    // rejects the wrapper. Intrinsic Promise.prototype.then runs
-    // SpeciesConstructor(this), so a throwing @@species on the start()-
-    // returned promise must reject startPromise and error the stream, not
-    // leave startPromise pending forever.
-    it("start() returns a Promise whose @@species throws: the stream errors with the thrown value", async () => {
-      const speciesError = new Error("species-boom");
-      const p = Promise.resolve();
-      p.constructor = {
-        get [Symbol.species]() {
-          throw speciesError;
-        },
-      };
-
-      let closedResult = "pending";
-      const writer = new WritableStream({ start: () => p }).getWriter();
-      writer.closed.then(
-        () => {
-          closedResult = "fulfilled";
-        },
-        e => {
-          closedResult = e;
-        },
-      );
-      // [[started]] settles within a bounded number of microtask rounds; poll
-      // rather than awaiting writer.closed so a never-settling wrapper fails
-      // fast instead of hanging the test.
-      for (let i = 0; i < 20; i++) await Promise.resolve();
-      expect(closedResult).toBe(speciesError);
+    // PromiseResolveThenableJob: an abrupt completion of the then call
+    // rejects the wrapper. Promise.prototype.then runs SpeciesConstructor,
+    // so a throwing @@species on the start()-returned promise must reject
+    // startPromise and error the stream. Subprocess-isolated so a pristine
+    // promiseThenWatchpointSet routes to promiseResolveThenableJobFastSlow
+    // (the JSC code under test). Upstream JSC bug:
+    // https://github.com/oven-sh/WebKit/pull/256
+    it.todo("start() returns a Promise whose @@species throws: the stream errors with the thrown value", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const speciesError = new Error("species-boom");
+             const p = Promise.resolve();
+             p.constructor = { get [Symbol.species]() { throw speciesError; } };
+             let result = "pending";
+             new WritableStream({ start: () => p }).getWriter().closed.then(
+               () => result = "fulfilled",
+               e => result = e === speciesError ? "speciesError" : String(e),
+             );
+             for (let i = 0; i < 20; i++) await Promise.resolve();
+             console.log(result);`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "speciesError", exitCode: 0 });
     });
 
-    // The assimilation job looks up the intrinsic @then on Promise.prototype
-    // directly, not via the result's prototype chain, so a native promise with
-    // a detached prototype still lets [[started]] flip and writes proceed.
+    // Resolve(x) does Get(x, "then"); a null-proto Promise has no .then, so
+    // it is treated as a non-thenable and the wrap fulfills with the promise
+    // object itself — [[started]] flips immediately and writes proceed.
     it("start() returns a Promise with a null prototype: [[started]] flips and write proceeds", async () => {
       const p = Promise.resolve();
       Object.setPrototypeOf(p, null);
@@ -1424,4 +1423,35 @@ it("ReadableStream BYOB read pending at cancel() resolves with undefined", async
   expect(done).toBe(true);
   expect(value).toBeUndefined();
   await reader.closed;
+});
+
+// Web IDL "a promise resolved with x" is NewPromiseCapability + Resolve(x);
+// Resolve(x) on a thenable does Get(x, "then") and queues a job to call it.
+// So when an underlying-source/sink callback returns a Promise, the wrap
+// calls Promise.prototype.then once — observable, per spec, like Node.
+// Subprocess-isolated: patching Promise.prototype.then permanently
+// invalidates JSC's promiseThenWatchpointSet for the process, which would
+// route every later test through the generic thenable path.
+it("wrapping an async stream callback result observes Promise.prototype.then (Web IDL 'a promise resolved with')", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const _then = Promise.prototype.then;
+       let counter = 0;
+       Promise.prototype.then = function (...args) { counter++; return _then.apply(this, args); };
+       new ReadableStream({ async start() {} });
+       new WritableStream({ async start() {} });
+       await Bun.sleep(0);
+       Promise.prototype.then = _then;
+       console.log(counter);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Exactly one assimilation per async start() result. A larger count would
+  // indicate a double-wrap regression (the FromUnderlyingSink change exists
+  // to prevent that).
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "2", exitCode: 0 });
 });

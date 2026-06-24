@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
 
 test("readableStreamToArrayBuffer works", async () => {
-  // the test calls InternalPromise.then. this test ensures that such function is not user-overridable.
+  // Bun.readableStreamToArray returns an InternalPromise, whose own .then is
+  // not Promise.prototype.then; this test pins that the helper's chaining is
+  // unaffected by a user-patched .then. Sync start() so the spec's start-
+  // result wrap (which per Web IDL does call public .then for thenables) is
+  // not in play.
   let _then = Promise.prototype.then;
   let counter = 0;
   // @ts-ignore
@@ -12,7 +16,7 @@ test("readableStreamToArrayBuffer works", async () => {
   try {
     const result = await Bun.readableStreamToArrayBuffer(
       new ReadableStream({
-        async start(controller) {
+        start(controller) {
           controller.enqueue(new TextEncoder().encode("bun is"));
           controller.enqueue(new TextEncoder().encode(" awesome!"));
           controller.close();

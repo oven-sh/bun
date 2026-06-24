@@ -3847,24 +3847,6 @@ impl H2FrameParser {
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
-        let max_frame_size = self.local_settings.get().max_frame_size;
-        if frame.length > max_frame_size {
-            bun_output::scoped_log!(
-                H2FrameParser,
-                "received data frame with length: {} and max frame size: {}",
-                frame.length,
-                max_frame_size
-            );
-            self.send_go_away(
-                frame.stream_identifier,
-                ErrorCode::FRAME_SIZE_ERROR,
-                b"Invalid dataframe frame size",
-                self.last_stream_id.get(),
-                true,
-            );
-            return data.len();
-        }
-
         let end: usize = (self.remaining_length.get() as usize).min(data.len());
         let mut payload = &data[0..end];
         // window size considering the full frame.length received so far
@@ -4019,7 +4001,7 @@ impl H2FrameParser {
             );
             return data.len();
         }
-        if frame.length < 8 || frame.length > self.local_settings.get().max_frame_size {
+        if frame.length < 8 {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::FRAME_SIZE_ERROR,
@@ -4453,16 +4435,6 @@ impl H2FrameParser {
             );
             return Ok(data.len());
         }
-        if frame.length > self.local_settings.get().max_frame_size {
-            self.send_go_away(
-                frame.stream_identifier,
-                ErrorCode::FRAME_SIZE_ERROR,
-                b"invalid Continuation frame size",
-                self.last_stream_id.get(),
-                true,
-            );
-            return Ok(data.len());
-        }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
             let payload = content.data();
             let end = content.end;
@@ -4566,17 +4538,6 @@ impl H2FrameParser {
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
-
-        if frame.length > self.local_settings.get().max_frame_size {
-            self.send_go_away(
-                frame.stream_identifier,
-                ErrorCode::FRAME_SIZE_ERROR,
-                b"invalid Headers frame size",
-                self.last_stream_id.get(),
-                true,
-            );
-            return Ok(data.len());
-        }
 
         if stream.is_waiting_more_headers {
             self.send_go_away(

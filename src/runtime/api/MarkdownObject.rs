@@ -21,6 +21,15 @@ fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResu
     arr.push(global, item)
 }
 
+#[cold]
+fn throw_input_too_large(global: &JSGlobalObject, len: usize) -> bun_jsc::JsError {
+    global.throw_invalid_arguments(format_args!(
+        "markdown input is too large: {} bytes exceeds the maximum of {} bytes",
+        len,
+        bun_md::parser::MAX_INPUT_SIZE,
+    ))
+}
+
 /// Map a host-fn `JsError` back into the parser's error enum so it can
 /// bubble through `md::render_with_renderer` and be re-thrown at the top.
 #[inline]
@@ -137,6 +146,9 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
         }
         Err(ParserError::OutOfMemory) => return Err(global_this.throw_out_of_memory()),
         Err(ParserError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
+        Err(ParserError::InputTooLarge) => {
+            return Err(throw_input_too_large(global_this, input.len()));
+        }
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
@@ -170,6 +182,10 @@ pub(crate) fn render_to_html(
 
     let result = match md::render_to_html_with_options(input, options) {
         Ok(r) => r,
+        Err(ParserError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
+        Err(ParserError::InputTooLarge) => {
+            return Err(throw_input_too_large(global_this, input.len()));
+        }
         Err(_) => return Err(global_this.throw_out_of_memory()),
     };
 
@@ -292,6 +308,7 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
             ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
             ParserError::OutOfMemory => Err(global_this.throw_out_of_memory()),
             ParserError::StackOverflow => Err(global_this.throw_stack_overflow()),
+            ParserError::InputTooLarge => Err(throw_input_too_large(global_this, input.len())),
         };
     }
 
@@ -397,6 +414,7 @@ fn render_ast(
             ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
             ParserError::OutOfMemory => Err(global_this.throw_out_of_memory()),
             ParserError::StackOverflow => Err(global_this.throw_stack_overflow()),
+            ParserError::InputTooLarge => Err(throw_input_too_large(global_this, input.len())),
         };
     }
 

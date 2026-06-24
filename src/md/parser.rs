@@ -135,12 +135,17 @@ impl Default for BlockHeader {
 // `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;
 
+/// Maximum accepted input length in bytes. Offsets throughout the parser are
+/// `OFF` (= `u32`), so anything larger cannot be addressed.
+pub const MAX_INPUT_SIZE: usize = OFF::MAX as usize;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParserError {
     OutOfMemory,
     JSError,
     JSTerminated,
     StackOverflow,
+    InputTooLarge,
 }
 
 bun_core::oom_from_alloc!(ParserError);
@@ -174,8 +179,10 @@ impl<'a> Parser<'a> {
         self.get_block_header_at(off)
     }
 
-    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Parser<'a> {
-        let size: OFF = OFF::try_from(text.len()).expect("int cast");
+    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
+        let Ok(size) = OFF::try_from(text.len()) else {
+            return Err(ParserError::InputTooLarge);
+        };
         let mut p = Parser {
             text,
             size,
@@ -218,7 +225,7 @@ impl<'a> Parser<'a> {
             stack_check: StackCheck::init(),
         };
         p.build_mark_char_map();
-        p
+        Ok(p)
     }
 
     // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
@@ -335,14 +342,13 @@ pub fn render_to_html(
 
     let mut html_renderer = HtmlRenderer::init(input, render_opts);
 
-    let mut parser = Parser::init(input, flags, html_renderer.renderer());
+    let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
 
     // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
     match parser.process_doc() {
         Ok(()) => {}
-        Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
         Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),
-        Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
+        Err(e) => return Err(e),
     }
     drop(parser);
 
@@ -362,7 +368,7 @@ pub fn render_with_renderer<'a>(
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
     let input = helpers::skip_utf8_bom(text);
 
-    let mut p = Parser::init(input, flags, rend);
+    let mut p = Parser::init(input, flags, rend)?;
 
     p.process_doc()
 }

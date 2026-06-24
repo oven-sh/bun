@@ -3562,6 +3562,15 @@ impl RunCommand {
                 Output::flush();
                 Global::exit(1);
             }
+            Err(bun_md::parser::ParserError::InputTooLarge) => {
+                pretty_errorln!(
+                    "<r><red>error<r>: markdown input is too large ({} bytes); maximum is {} bytes",
+                    contents.len(),
+                    bun_md::parser::MAX_INPUT_SIZE,
+                );
+                Output::flush();
+                Global::exit(1);
+            }
             Err(_) | Ok(None) => {
                 pretty_errorln!("<r><red>error<r>: failed to render markdown");
                 Output::flush();

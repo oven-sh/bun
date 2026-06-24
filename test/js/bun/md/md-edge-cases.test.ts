@@ -1189,3 +1189,63 @@ describe("pathological autolink opener inputs", () => {
     );
   }, 90_000);
 });
+
+// ============================================================================
+// Oversized input: the parser uses u32 offsets, so input larger than u32::MAX
+// bytes cannot be addressed and must be rejected with a catchable error
+// rather than panicking inside the length cast.
+// ============================================================================
+
+describe("oversized input", () => {
+  test("input larger than u32::MAX bytes throws instead of panicking", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // u32::MAX + 1 bytes. allocUnsafe so pages stay lazy on overcommit
+        // systems and the size check fires before any data is touched.
+        let buf;
+        try {
+          buf = Buffer.allocUnsafe(0x1_0000_0000);
+        } catch {
+          console.log("SKIP: cannot allocate 4 GiB buffer on this platform");
+          process.exit(0);
+        }
+        const apis = [
+          ["html", () => Bun.markdown.html(buf)],
+          ["ansi", () => Bun.markdown.ansi(buf)],
+          ["render", () => Bun.markdown.render(buf, {})],
+          ["react", () => Bun.markdown.react(buf)],
+        ];
+        let caught = 0;
+        for (const [name, fn] of apis) {
+          let err;
+          try { fn(); } catch (e) { err = e; }
+          if (!err) throw new Error(name + ": did not throw on oversized input");
+          const msg = String(err.message ?? err);
+          if (!msg.includes("too large")) {
+            throw new Error(name + ": wrong error: " + msg);
+          }
+          caught++;
+        }
+        console.log("DONE " + caught);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (stdout.includes("SKIP")) {
+      console.warn(stdout.trim());
+      return;
+    }
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "DONE 4", stderr: "", exitCode: 0 });
+
+    // Inputs right at the limit still work (a small input obviously fits).
+    expect(Markdown.html("# ok\n")).toContain("<h1>");
+  });
+});

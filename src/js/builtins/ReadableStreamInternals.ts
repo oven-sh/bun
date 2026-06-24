@@ -81,12 +81,9 @@ export function readableStreamPipeTo(stream, sink) {
 
   const reader = new ReadableStreamDefaultReader(stream);
 
-  $getByIdDirectPrivate(reader, "closedPromiseCapability").promise.$then(
-    $readableStreamNoop,
-    e => {
-      sink.error(e);
-    },
-  );
+  $getByIdDirectPrivate(reader, "closedPromiseCapability").promise.$then($readableStreamNoop, e => {
+    sink.error(e);
+  });
 
   function doPipe() {
     $readableStreamDefaultReaderRead(reader).$then(

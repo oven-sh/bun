@@ -1,13 +1,13 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls, isWindows } from "harness";
-import { createServer } from "node:http";
-import { createServer as createHttpsServer } from "node:https";
-import { createSecureServer } from "node:http2";
-import { gzipSync } from "node:zlib";
+import { bunEnv, bunExe, isWindows, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { createServer } from "node:http";
+import { createSecureServer } from "node:http2";
+import { createServer as createHttpsServer } from "node:https";
+import { gzipSync } from "node:zlib";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB

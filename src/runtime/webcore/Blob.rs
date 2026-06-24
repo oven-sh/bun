@@ -1649,8 +1649,11 @@ impl BlobExt for Blob {
 
         assignment_result.ensure_still_alive();
 
-        // assert that it was updated
-        debug_assert!(!signal.get().is_dead());
+        // assignToStream stored the controller's encoded JSValue in
+        // signal.ptr. If the stream finished synchronously inside the call,
+        // controller.end()/.close() detached the controller and cleared the
+        // signal again (`__controllerDetached`), so the signal may be
+        // legitimately dead here; the branches below handle that state.
 
         if let Some(err) = assignment_result.to_error() {
             // SAFETY: release our +1 ref on the sink.

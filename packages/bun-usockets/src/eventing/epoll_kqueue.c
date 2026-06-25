@@ -465,6 +465,13 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
     // ret should be 0 in most cases (not guaranteed when removing async)
 
+    /* KEVENT_FLAG_ERROR_EVENTS reports per-filter failures as EV_ERROR entries
+     * with the errno in .data; kevent64 itself returns the count and does not
+     * set errno. Mirror epoll's contract so us_poll_start_rc callers can read it. */
+    if (ret > 0) {
+        errno = (int) change_list[0].data;
+    }
+
     return ret;
 }
 #endif

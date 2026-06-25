@@ -59,13 +59,14 @@ test("fetch(url, RequestSubclass)", async () => {
 });
 
 // Regression: Request exposes a `keepalive` getter (default false) per the
-// Fetch spec. Bun's fetch() has a separately-named `keepalive` option that
-// controls HTTP connection pooling. When a Request (direct instance,
-// subclass, or structure-mutated instance) is passed as the second fetch
-// argument, the extractor must NOT treat the spec accessor as "turn off
-// pooling" — same-origin requests should still reuse the TCP connection.
-// The guard uses `.as(Request)` (not `.asDirect(Request)`) so all three
-// shapes are skipped.
+// Fetch spec. Bun's fetch() has a same-named `keepalive` option that controls
+// HTTP connection pooling — that name collision is exactly why the guard
+// below exists. When a Request (direct instance, subclass, or
+// structure-mutated instance) is passed as the second fetch argument, the
+// extractor must NOT treat the spec accessor as "turn off pooling" —
+// same-origin requests should still reuse the TCP connection. The guard uses
+// `.as_::<Request>()` (not `.as_direct::<Request>()`) so all three shapes are
+// skipped.
 test.each([
   ["direct", (url: string) => new Request(url)],
   ["subclass", (url: string) => new (class extends Request {})(url)],

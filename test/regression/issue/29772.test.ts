@@ -147,10 +147,9 @@ function startMockPostgres(rows: Buffer[]): Promise<{ port: number; close: () =>
             for (const row of rows) packets.push(dataRowOneColumn(row));
             packets.push(commandComplete(rows.length));
             socket.write(Buffer.concat(packets));
-          } else if (type === "S" || type === "H") {
-            // Sync / Flush → ReadyForQuery (Sync only, but emitting on
-            // Flush too is harmless and simplifies the mock).
-            if (type === "S") socket.write(READY_FOR_QUERY_IDLE);
+          } else if (type === "S") {
+            // Sync → ReadyForQuery. Flush ('H') is a no-op for this mock.
+            socket.write(READY_FOR_QUERY_IDLE);
           } else if (type === "X") {
             // Terminate
             socket.end();

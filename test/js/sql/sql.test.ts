@@ -11531,7 +11531,7 @@ CREATE TABLE ${table_name} (
           { area: "D", price: "NaN" },
         ];
         const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
-        expect(results[0].price).toEqual("0");
+        expect(results[0].price).toEqual("0.0000"); // 0.00001 collapses to 0 but keeps scale 4
         expect(results[1].price).toEqual("0.0001");
         expect(results[2].price).toEqual("0.0010");
         expect(results[3].price).toEqual("0.0100");
@@ -11560,7 +11560,7 @@ CREATE TABLE ${table_name} (
         expect(results[23].price).toEqual("999999.9999");
 
         // negative numbers
-        expect(results[24].price).toEqual("0");
+        expect(results[24].price).toEqual("0.0000"); // -0.00001 collapses to 0 but keeps scale 4
         expect(results[25].price).toEqual("-0.0001");
         expect(results[26].price).toEqual("-0.0010");
         expect(results[27].price).toEqual("-0.0100");

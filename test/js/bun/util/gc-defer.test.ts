@@ -110,18 +110,20 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
 
   test("Bun.gc(true) outside a bracket still collects (no leaked deferral)", () => {
     // If an earlier test had leaked a deferral level, Bun.gc(true) would
-    // be a no-op and post-GC heapSize would not return to baseline.
+    // be a no-op. heapSize() is frozen-at-last-collection so it can't
+    // detect that — use heapCapacity (live block reservation) which
+    // grows under allocation and drops on a real collection.
     Bun.gc(true);
-    const baseline = heapSize();
+    const baselineCap = heapStats().heapCapacity;
     let sink = 0;
     for (let i = 0; i < 100_000; i++) sink += { i, p: [i, i, i, i] }.p.length;
     expect(sink).toBeGreaterThan(0);
+    const grownCap = heapStats().heapCapacity;
+    expect(grownCap).toBeGreaterThan(baselineCap);
     Bun.gc(true);
-    const post = heapSize();
-    // heapSize after a full GC isn't guaranteed monotone, but it must be
-    // back near the pre-allocation baseline — bound at baseline + slack
-    // so a leaked deferral (gc skipped → post tracks the grown heap)
-    // actually fails.
-    expect(post).toBeLessThan(baseline + 16 * 1024 * 1024);
+    const postCap = heapStats().heapCapacity;
+    // If a deferral had leaked, gc(true) is a no-op and capacity stays
+    // at grownCap. A real collection drops it well below the grown peak.
+    expect(postCap).toBeLessThan((baselineCap + grownCap) / 2);
   });
 });

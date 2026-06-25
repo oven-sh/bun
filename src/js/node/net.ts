@@ -1207,11 +1207,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
     socket.data.req = undefined;
-    // doConnect dispatches connectError synchronously when the connect
-    // syscall (or the preceding bind) fails immediately. Surface that as
-    // kConnectTcp/Pipe's return value — the callers' Node-derived
-    // `if (err)` branches expect it — instead of re-entering oncomplete
-    // from inside the dispatch.
+    // doConnect dispatches this synchronously when connect()/bind() fails at
+    // the syscall; surface it as kConnectTcp/Pipe's return value (callers'
+    // Node-derived `if (err)` expects that) instead of re-entering oncomplete.
     if (req!.dispatching) {
       req.errno = error.errno || UV_ECANCELED;
       return;
@@ -1277,12 +1275,9 @@ function kConnectPipe(self, req, address) {
 }
 
 function kConnectDispatch(self, req, opts) {
-  // Node's TCPWrap/PipeWrap return the errno when uv_*_connect fails
-  // synchronously, and otherwise guarantee oncomplete fires on a later
-  // tick. The native doConnect instead dispatches connectError from inside
-  // this call for syscall-level failures; bracket the call so connectError
-  // can hand the errno back here instead of re-entering oncomplete while
-  // the caller is still mid-dispatch.
+  // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
+  // oncomplete; doConnect instead fires connectError inside this call. Bracket
+  // it so connectError hands the errno back here instead of re-entering.
   req.dispatching = true;
   const promise = doConnect(self._handle, opts);
   req.dispatching = false;
@@ -2869,12 +2864,9 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
-  // kConnectTcp returns the errno for a synchronous failure, so the if(err)
-  // branch above handles that. This catches the remaining ways the attempt
-  // can complete before this frame resumes: a synchronous open (success)
-  // through afterConnectMultiple, or a destroy() from a 'connectionAttempt'
-  // listener. Arming the timer afterward would capture a stale handle and
-  // overwrite whatever context[kTimeout] the next attempt set.
+  // The if(err) above covers sync failure; this catches a sync open or a
+  // destroy() from a 'connectionAttempt' listener. Arming the timer now
+  // would capture a stale handle and overwrite the next attempt's kTimeout.
   if (!self.connecting || context.current !== current + 1) {
     return;
   }
@@ -2899,10 +2891,8 @@ function internalConnectMultiple(context, canceled?) {
 }
 
 function internalConnectMultipleTimeout(context, req, handle) {
-  // Socket._destroy doesn't (and can't cheaply) reach the per-context timer,
-  // so a destroy() while an attempt is in flight leaves this callback armed.
-  // The attempt is over; don't emit a spurious timeout or close a handle the
-  // destroy path already released.
+  // Socket._destroy can't reach the per-context timer, so destroy() mid-attempt
+  // leaves this armed; don't emit a spurious timeout or re-close the handle.
   if (!context.socket.connecting) return;
 
   $debug("connect/multiple: connection to %s:%s timed out", req.address, req.port);

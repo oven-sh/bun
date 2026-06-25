@@ -21,7 +21,7 @@ pub use host_fns::{generate_symbol_for_function, generate_symbols};
 #[path = "ffi_body.rs"]
 mod ffi_body;
 
-/// `js2native` codegen resolves `$zig(ffi.zig, Bun__FFI__cc)` to
+/// `js2native` codegen resolves `$rust(ffi.rs, Bun__FFI__cc)` to
 /// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.zig` basename.
 /// `FFI::bun_ffi_cc` lives in `ffi_body` — re-export it under
 /// the codegen-expected path so the dispatch table links without forcing the

@@ -1,4 +1,4 @@
-// This file implements the global state for $zig and $cpp preprocessor macros
+// This file implements the global state for $rust and $cpp preprocessor macros
 // as well as all the code it generates.
 //
 // For the actual parsing, see replacements.ts
@@ -25,7 +25,7 @@ interface WrapperCall {
   filename: string;
 }
 
-type NativeCallType = "zig" | "cpp" | "bind";
+type NativeCallType = "rust" | "cpp" | "bind";
 
 const nativeCalls: NativeCall[] = [];
 const wrapperCalls: WrapperCall[] = [];
@@ -38,63 +38,62 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
   [".cpp", ".bind.ts"],
 );
 
-// The $zig() macro's first argument is a legacy identifier naming the module
-// a native symbol belongs to. The file itself is never opened, but its path
+// The $rust() macro's first argument is an identifier naming the module a
+// native symbol belongs to. The file itself is never opened, but its path
 // under src/ drives both the exported C symbol name (normalizeSymbolPathPrefix)
-// and the Rust crate path (rustTarget). The .zig reference sources no longer
-// exist on disk, so the path each identifier resolved to is recorded here.
-// Adding a new $zig() call site requires adding its entry below.
-const zigIdentifierPaths: Record<string, string> = {
-  "bun.zig": "bun.zig",
-  "Counters.zig": "jsc/Counters.zig",
-  "FrameworkRouter.zig": "runtime/bake/FrameworkRouter.zig",
-  "Listener.zig": "runtime/socket/Listener.zig",
-  "SecureContext.zig": "runtime/api/bun/SecureContext.zig",
-  "Stat.zig": "runtime/node/Stat.zig",
-  "bindgen_test.zig": "jsc/bindgen_test.zig",
-  "collections/linear_fifo.zig": "collections/linear_fifo.zig",
-  "crash_handler.zig": "crash_handler/crash_handler.zig",
-  "css_internals.zig": "css_jsc/css_internals.zig",
-  "dependency.zig": "install/dependency.zig",
-  "escapeRegExp.zig": "string/escapeRegExp.zig",
-  "event_loop.zig": "jsc/event_loop.zig",
-  "ffi.zig": "runtime/ffi/ffi.zig",
-  "h2_frame_parser.zig": "runtime/api/bun/h2_frame_parser.zig",
-  "hosted_git_info.zig": "install/hosted_git_info.zig",
-  "http/H2Client.zig": "http/H2Client.zig",
-  "http/H3Client.zig": "http/H3Client.zig",
-  "ini.zig": "ini/ini.zig",
-  "install_binding.zig": "install_jsc/install_binding.zig",
-  "ipc.zig": "jsc/ipc.zig",
-  "mysql.zig": "sql_jsc/mysql.zig",
-  "node_assert_binding.zig": "runtime/node/node_assert_binding.zig",
-  "node_cluster_binding.zig": "runtime/node/node_cluster_binding.zig",
-  "node_crypto_binding.zig": "runtime/node/node_crypto_binding.zig",
-  "node_fs_binding.zig": "runtime/node/node_fs_binding.zig",
-  "node_http_binding.zig": "runtime/node/node_http_binding.zig",
-  "node_net_binding.zig": "runtime/node/node_net_binding.zig",
-  "node_os.zig": "runtime/node/node_os.zig",
-  "node_util_binding.zig": "runtime/node/node_util_binding.zig",
-  "node_zlib_binding.zig": "runtime/node/node_zlib_binding.zig",
-  "npm.zig": "install/npm.zig",
-  "pack_command.zig": "runtime/cli/pack_command.zig",
-  "parse_args.zig": "runtime/node/util/parse_args.zig",
-  "patch.zig": "patch/patch.zig",
-  "postgres.zig": "sql_jsc/postgres.zig",
-  "runtime/dns_jsc/dns.zig": "runtime/dns_jsc/dns.zig",
-  "runtime/node/types.zig": "runtime/node/types.zig",
-  "runtime/socket/socket.zig": "runtime/socket/socket.zig",
-  "runtime/timer/Timer.zig": "runtime/timer/Timer.zig",
-  "runtime/webcore/FileSink.zig": "runtime/webcore/FileSink.zig",
-  "shell.zig": "runtime/shell/shell.zig",
-  "sourcemap/InternalSourceMap.zig": "sourcemap/InternalSourceMap.zig",
-  "string/immutable/unicode.zig": "bun_core/string/immutable/unicode.zig",
-  "subprocess.zig": "runtime/api/bun/subprocess.zig",
-  "sys.zig": "sys/sys.zig",
-  "sys/Error.zig": "sys/Error.zig",
-  "udp_socket.zig": "runtime/socket/udp_socket.zig",
-  "upgrade_command.zig": "runtime/cli/upgrade_command.zig",
-  "virtual_machine_exports.zig": "jsc/virtual_machine_exports.zig",
+// and the Rust crate path (rustTarget). Adding a new $rust() call site
+// requires adding its entry below.
+const rustIdentifierPaths: Record<string, string> = {
+  "bun.rs": "bun.rs",
+  "Counters.rs": "jsc/Counters.rs",
+  "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
+  "Listener.rs": "runtime/socket/Listener.rs",
+  "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
+  "Stat.rs": "runtime/node/Stat.rs",
+  "bindgen_test.rs": "jsc/bindgen_test.rs",
+  "collections/linear_fifo.rs": "collections/linear_fifo.rs",
+  "crash_handler.rs": "crash_handler/crash_handler.rs",
+  "css_internals.rs": "css_jsc/css_internals.rs",
+  "dependency.rs": "install/dependency.rs",
+  "escapeRegExp.rs": "string/escapeRegExp.rs",
+  "event_loop.rs": "jsc/event_loop.rs",
+  "ffi.rs": "runtime/ffi/ffi.rs",
+  "h2_frame_parser.rs": "runtime/api/bun/h2_frame_parser.rs",
+  "hosted_git_info.rs": "install/hosted_git_info.rs",
+  "http/H2Client.rs": "http/H2Client.rs",
+  "http/H3Client.rs": "http/H3Client.rs",
+  "ini.rs": "ini/ini.rs",
+  "install_binding.rs": "install_jsc/install_binding.rs",
+  "ipc.rs": "jsc/ipc.rs",
+  "mysql.rs": "sql_jsc/mysql.rs",
+  "node_assert_binding.rs": "runtime/node/node_assert_binding.rs",
+  "node_cluster_binding.rs": "runtime/node/node_cluster_binding.rs",
+  "node_crypto_binding.rs": "runtime/node/node_crypto_binding.rs",
+  "node_fs_binding.rs": "runtime/node/node_fs_binding.rs",
+  "node_http_binding.rs": "runtime/node/node_http_binding.rs",
+  "node_net_binding.rs": "runtime/node/node_net_binding.rs",
+  "node_os.rs": "runtime/node/node_os.rs",
+  "node_util_binding.rs": "runtime/node/node_util_binding.rs",
+  "node_zlib_binding.rs": "runtime/node/node_zlib_binding.rs",
+  "npm.rs": "install/npm.rs",
+  "pack_command.rs": "runtime/cli/pack_command.rs",
+  "parse_args.rs": "runtime/node/util/parse_args.rs",
+  "patch.rs": "patch/patch.rs",
+  "postgres.rs": "sql_jsc/postgres.rs",
+  "runtime/dns_jsc/dns.rs": "runtime/dns_jsc/dns.rs",
+  "runtime/node/types.rs": "runtime/node/types.rs",
+  "runtime/socket/socket.rs": "runtime/socket/socket.rs",
+  "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
+  "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
+  "shell.rs": "runtime/shell/shell.rs",
+  "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
+  "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",
+  "subprocess.rs": "runtime/api/bun/subprocess.rs",
+  "sys.rs": "sys/sys.rs",
+  "sys/Error.rs": "sys/Error.rs",
+  "udp_socket.rs": "runtime/socket/udp_socket.rs",
+  "upgrade_command.rs": "runtime/cli/upgrade_command.rs",
+  "virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs",
 };
 
 function callBaseName(x: string) {
@@ -102,16 +101,16 @@ function callBaseName(x: string) {
 }
 
 function resolveNativeFileId(call_type: NativeCallType, filename: string) {
-  const ext = call_type === "bind" ? ".bind.ts" : `.${call_type}`;
+  const ext = call_type === "bind" ? ".bind.ts" : call_type === "rust" ? ".rs" : `.${call_type}`;
   if (!filename.endsWith(ext)) {
     throw new Error(`Expected filename for $${call_type} to have ${ext} extension, got ${JSON.stringify(filename)}`);
   }
 
-  if (call_type === "zig") {
-    const relative = zigIdentifierPaths[filename];
+  if (call_type === "rust") {
+    const relative = rustIdentifierPaths[filename];
     if (!relative) {
       throw new Error(
-        `Unknown $zig() file identifier ${JSON.stringify(filename)}. Add it to zigIdentifierPaths in src/codegen/generate-js2native.ts.`,
+        `Unknown $rust() file identifier ${JSON.stringify(filename)}. Add it to rustIdentifierPaths in src/codegen/generate-js2native.ts.`,
       );
     }
     return path.join(srcDir, relative.replaceAll("/", sep));
@@ -171,8 +170,8 @@ export function registerNativeCall(
 }
 
 function symbol(call: Pick<NativeCall, "type" | "symbol" | "filename">) {
-  return call.type === "zig"
-    ? `JS2Zig__${call.filename ? normalizeSymbolPathPrefix(call.filename) + "_" : ""}${call.symbol.replace(/[^A-Za-z]/g, "_")}`
+  return call.type === "rust"
+    ? `JS2Rust__${call.filename ? normalizeSymbolPathPrefix(call.filename) + "_" : ""}${call.symbol.replace(/[^A-Za-z]/g, "_")}`
     : call.symbol;
 }
 
@@ -184,7 +183,7 @@ function normalizeSymbolPathPrefix(input: string) {
     input = input.slice(bunDir.length);
   }
 
-  return input.replaceAll(".zig", "_zig_").replace(/[^A-Za-z]/g, "_");
+  return input.replaceAll(".rs", "_rs_").replace(/[^A-Za-z]/g, "_");
 }
 
 function cppPointer(call: NativeCall) {
@@ -199,7 +198,7 @@ export function getJS2NativeCPP() {
   const externs: string[] = [];
 
   const nativeCallStrings = nativeCalls
-    .filter(x => x.type === "zig")
+    .filter(x => x.type === "rust")
     .flatMap(
       call => (
         externs.push(`extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol(call)}_workaround(Zig::GlobalObject*);` + "\n"),
@@ -214,10 +213,10 @@ export function getJS2NativeCPP() {
   const wrapperCallStrings = wrapperCalls.map(x => {
     if (x.wrap_kind === "new-function") {
       return [
-        (x.type === "zig" &&
+        (x.type === "rust" &&
           externs.push(
             `BUN_DECLARE_HOST_FUNCTION(${symbol({
-              type: "zig",
+              type: "rust",
               symbol: x.symbol_target,
               filename: x.filename,
             })});`,
@@ -275,29 +274,27 @@ export function getJS2NativeCPP() {
   ].join("\n");
 }
 
-// ──────────────────────────────────────────────────────────────────────────
 // Rust emitter.
 //
-// Emits, for every $zig() call site, a `#[unsafe(no_mangle)] extern "C"`
+// Emits, for every $rust() call site, a `#[unsafe(no_mangle)] extern "C"`
 // thunk whose unmangled name and signature is byte-identical to the extern
 // the C++ side declares in GeneratedJS2Native.h. The C++ output is invariant;
 // only the implementer of the symbol changes.
 //
 // Two ABI shapes:
-//   • nativeCalls (type "zig")  → `${sym}_workaround(global) -> JSValue`
-//   • wrapperCalls (type "zig") → `${sym}(global, callframe) -> JSValue`
+//   • nativeCalls (type "rust")  → `${sym}_workaround(global) -> JSValue`
+//   • wrapperCalls (type "rust") → `${sym}(global, callframe) -> JSValue`
 //
-// Each thunk calls the hand-ported Rust function directly at
-// `crate::<derived-from-zig-path>::<snake_case(symbol)>` — no trait, no
-// runtime panic fallback. A missing function is a compile error.
-// ──────────────────────────────────────────────────────────────────────────
+// Each thunk calls the Rust function directly at
+// `crate::<derived-from-path>::<snake_case(symbol)>` — no trait, no runtime
+// panic fallback. A missing function is a compile error.
 export function getJS2NativeRust() {
   // Symbols already hand-exported in src/ (via `export_host_fn!` or
-  // `#[unsafe(export_name = "JS2Zig__…")]`) — skip emitting a thunk for these
+  // `#[unsafe(export_name = "JS2Rust__…")]`) — skip emitting a thunk for these
   // so the linker doesn't see two definitions.
   const handExported = new Set<string>([
-    "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_getRuntimeDefaultResultOrderOption",
-    "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_newResolver",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
   ]);
 
   const srcRoot = path.resolve(import.meta.dir, "..");
@@ -308,13 +305,13 @@ export function getJS2NativeRust() {
       .replace(/[.\-]/g, "_")
       .toLowerCase();
 
-  // `src/runtime/node/node_util_binding.zig` + `parseEnv`
+  // `src/runtime/node/node_util_binding.rs` + `parseEnv`
   //   → `crate::node::node_util_binding::parse_env`
-  // `src/ini/ini.zig` + `IniTestingAPIs.parse` (outside bun_runtime)
+  // `src/ini/ini.rs` + `IniTestingAPIs.parse` (outside bun_runtime)
   //   → `crate::dispatch::js2native::ini_ini_testing_apis_parse` (single
-  //   landing pad the port-agents fill in; still a compile error if missing).
+  //   landing pad; still a compile error if missing).
   const rustTarget = (filename: string, sym: string) => {
-    const rel = path.relative(srcRoot, filename).replace(/\.zig$/, "");
+    const rel = path.relative(srcRoot, filename).replace(/\.rs$/, "");
     const segs = rel.split(path.sep);
     const fn = sym
       .split(".")
@@ -335,13 +332,13 @@ export function getJS2NativeRust() {
   const thunks: string[] = [];
   const seen = new Set<string>();
 
-  for (const call of nativeCalls.filter(x => x.type === "zig")) {
+  for (const call of nativeCalls.filter(x => x.type === "rust")) {
     const sym = `${symbol(call)}_workaround`;
     if (seen.has(sym)) continue;
     seen.add(sym);
     const target = rustTarget(call.filename, call.symbol);
     thunks.push(
-      `// $zig(${path.basename(call.filename)}, ${call.symbol})`,
+      `// $rust(${path.basename(call.filename)}, ${call.symbol})`,
       `bun_jsc::jsc_host_abi! {`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject) -> JSValue {`,
@@ -352,8 +349,8 @@ export function getJS2NativeRust() {
     );
   }
 
-  for (const x of wrapperCalls.filter(x => x.type === "zig")) {
-    const sym = symbol({ type: "zig", symbol: x.symbol_target, filename: x.filename });
+  for (const x of wrapperCalls.filter(x => x.type === "rust")) {
+    const sym = symbol({ type: "rust", symbol: x.symbol_target, filename: x.filename });
     if (seen.has(sym)) continue;
     seen.add(sym);
     if (handExported.has(sym)) {
@@ -362,7 +359,7 @@ export function getJS2NativeRust() {
     }
     const target = rustTarget(x.filename, x.symbol_target);
     thunks.push(
-      `// $zig(${path.basename(x.filename)}, ${x.symbol_target})`,
+      `// $rust(${path.basename(x.filename)}, ${x.symbol_target})`,
       `bun_jsc::jsc_host_abi! {`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {`,
@@ -376,7 +373,7 @@ export function getJS2NativeRust() {
   return [
     `// Auto-generated by src/codegen/generate-js2native.ts — DO NOT EDIT.`,
     `//`,
-    `// \`#[unsafe(no_mangle)] extern "C"\` thunks satisfying the JS2Zig__* externs`,
+    `// \`#[unsafe(no_mangle)] extern "C"\` thunks satisfying the JS2Rust__* externs`,
     `// declared by GeneratedJS2Native.h (the JS-module → native dispatch table).`,
     `// Each thunk calls the hand-ported Rust function directly; a missing`,
     `// function is a compile error in \`cargo check -p bun_runtime\`.`,
@@ -400,8 +397,8 @@ export function getJS2NativeDTS() {
         .filter(x => x.endsWith("cpp"))
         .map(x => JSON.stringify(basename(x)))
         .join("|"),
-    "declare type NativeFilenameZig = " +
-      Object.keys(zigIdentifierPaths)
+    "declare type NativeFilenameRust = " +
+      Object.keys(rustIdentifierPaths)
         .map(x => JSON.stringify(x))
         .join("|"),
     "",

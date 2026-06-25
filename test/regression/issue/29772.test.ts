@@ -1,10 +1,6 @@
 // Regression test for https://github.com/oven-sh/bun/issues/29772
-//
-// Asserts the postgres binary-numeric decoder (parse_binary_numeric) preserves
-// scale: zero-scale formatting for numeric(p, s) zeros and correct leading-zero
-// padding for tiny fractional magnitudes. Uses a minimal postgres wire-protocol
-// mock so the hand-encoded binary payloads exercise the decoder directly — no
-// docker / no live postgres required. Per-case comments document each encoding.
+// Drives parse_binary_numeric with hand-encoded payloads via a wire-protocol
+// mock, so no docker / live postgres is required.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import net from "net";
@@ -103,10 +99,9 @@ function dataRowOneColumn(value: Buffer): Buffer {
 }
 
 /**
- * Start a mock postgres server that returns `rows` (each a binary numeric
- * byte string) for every extended-protocol query. Speaks just enough of
- * the wire protocol to drive `sql.unsafe(query, [...])` to Bind/Execute
- * and decode the DataRow response via parse_binary_numeric.
+ * Mock postgres server that answers the extended-protocol flow and returns
+ * `rows` (binary numeric byte strings) from Execute, so parse_binary_numeric
+ * decodes them via the real `sql.unsafe(query, [...])` path.
  */
 function startMockPostgres(rows: Buffer[]): Promise<{ port: number; close: () => void }> {
   return new Promise(resolve => {
@@ -207,18 +202,12 @@ test("numeric zero with dscale = 0 renders as bare '0' on binary path", async ()
 });
 
 test("numeric zero with dscale > 0 preserves scale alongside non-zero rows", async () => {
-  // Mirrors the repro: numeric(10, 4) with values 0, 1, 1.5, 10.
-  // Binary encodings worked out by hand (and cross-checked against the
-  // bytes postgres actually emits):
-  //   0       : ndigits=0, weight=0,  dscale=4, []
-  //   1.0000  : ndigits=1, weight=0,  dscale=4, [1]
-  //   1.5000  : ndigits=2, weight=0,  dscale=4, [1, 5000]
-  //   10.0000 : ndigits=1, weight=0,  dscale=4, [10]
+  // numeric(10, 4) with values 0, 1, 1.5, 10 (ndigits, weight, sign, dscale, digits).
   const rows = [
-    numericBinary(0, 0, 0x0000, 4, []),
-    numericBinary(1, 0, 0x0000, 4, [1]),
-    numericBinary(2, 0, 0x0000, 4, [1, 5000]),
-    numericBinary(1, 0, 0x0000, 4, [10]),
+    numericBinary(0, 0, 0x0000, 4, []), // 0
+    numericBinary(1, 0, 0x0000, 4, [1]), // 1.0000
+    numericBinary(2, 0, 0x0000, 4, [1, 5000]), // 1.5000
+    numericBinary(1, 0, 0x0000, 4, [10]), // 10.0000
   ];
   expect(await runQuery(rows)).toEqual(["0.0000", "1.0000", "1.5000", "10.0000"]);
 });
@@ -231,8 +220,6 @@ test("numeric with dscale but ndigits = 0 handles dscale > 4", async () => {
 
 test("numeric small fractional values render correctly (weight <= -3)", async () => {
   // 0.000000001234 : ndigits=1, weight=-3, dscale=12, digits=[1234]
-  // The pre-existing bug conflated digit-index and dscale-position counters,
-  // so this rendered as "0.000012340000" instead of "0.000000001234".
   const tiny = numericBinary(1, -3, 0x0000, 12, [1234]);
   expect(await runQuery([tiny])).toEqual(["0.000000001234"]);
 });
@@ -257,10 +244,7 @@ test("numeric weight = -1 with two digit groups renders correctly (e.g. 0.05678)
 
 test("numeric negative value with small fractional magnitude renders correctly", async () => {
   // -0.00001234 : ndigits=1, weight=-2, dscale=11, digits=[1234], sign=0x4000
-  // Value is 1234 × 10000^(-2) = 1.234 × 10^-5; dscale=11 pads trailing
-  // zeros to yield "-0.00001234000". weight=-2 is the "accidentally
-  // correct" range, so this guards against sign-handling regressions from
-  // the split-counter fix.
+  // (1234 × 10000^-2 = 1.234e-5; dscale=11 pads to "-0.00001234000").
   const v = numericBinary(1, -2, 0x4000, 11, [1234]);
   expect(await runQuery([v])).toEqual(["-0.00001234000"]);
 });

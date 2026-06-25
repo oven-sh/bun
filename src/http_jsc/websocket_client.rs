@@ -1476,6 +1476,18 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// Shared tail of the writable handlers (direct socket and proxy tunnel):
+    /// flush whatever is queued and, once the buffer is empty, dispatch a
+    /// close that was deferred behind it.
+    fn drain_send_buffer_and_finish_close(&mut self) {
+        if self.send_buffer.readable_length() != 0 {
+            let _ = self.send_buffer_out();
+        }
+        if self.send_buffer.readable_length() == 0 {
+            self.finish_pending_close();
+        }
+    }
+
     pub fn is_same_socket(&self, socket: &Socket<SSL>) -> bool {
         socket.socket == self.tcp.socket
     }
@@ -1496,14 +1508,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         debug_assert!(self.is_same_socket(&socket));
-        if self.send_buffer.readable_length() == 0 {
-            self.finish_pending_close();
-            return;
-        }
-        let _ = self.send_buffer_out();
-        if self.send_buffer.readable_length() == 0 {
-            self.finish_pending_close();
-        }
+        self.drain_send_buffer_and_finish_close();
     }
 
     pub fn handle_timeout(&mut self, _socket: Socket<SSL>) {
@@ -2083,21 +2088,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // on_writable() but not this struct.
         let _guard = this.ref_guard();
 
-        // Mirrors handle_writable(): once the buffer drains, a close frame
-        // that was only partially flushed must still dispatch `close`.
-        if this.send_buffer.readable_length() == 0 {
-            // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
-            // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
-            unsafe { (*this.as_ptr()).finish_pending_close() };
-            return;
-        }
         // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
         // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
-        let _ = unsafe { (*this.as_ptr()).send_buffer_out() };
-        if this.send_buffer.readable_length() == 0 {
-            // SAFETY: as above; the `&mut` from send_buffer_out() has ended.
-            unsafe { (*this.as_ptr()).finish_pending_close() };
-        }
+        unsafe { (*this.as_ptr()).drain_send_buffer_and_finish_close() };
     }
 
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).

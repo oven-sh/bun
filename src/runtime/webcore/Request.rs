@@ -115,7 +115,7 @@ pub struct Request {
     pub internal_event_callback: JsCell<InternalJSEventCallback>,
 }
 
-// A `#[repr(C)]` 4-byte struct for direct
+// A `#[repr(C)]` struct for direct
 // field access — `Request` is only ever passed to C++ by **pointer** with size
 // reported via the codegen'd `Request__ZigStructSize`, so the absolute size is
 // not ABI-locked. `#[repr(C)]` + `assert_ffi_layout!` make the layout

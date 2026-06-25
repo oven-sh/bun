@@ -3488,15 +3488,21 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 // with it (see evaluateModuleWithCapturedAsyncContext). JSC's dynamic-import
 // microtasks never restore m_asyncContextData; Node preserves it via V8's
 // continuation-preserved embedder data. Returns the key to remove on cleanup, or
-// null when nothing was recorded.
+// null when nothing was recorded. When there is no active context, any entry a
+// prior import of this key left behind without evaluating (e.g. a load that
+// failed after its own fetch succeeded, so no fetch-failure seam fired) is
+// dropped here, so a stale context is never applied to this evaluation.
 static JSC::JSString* captureDynamicImportAsyncContext(Zig::GlobalObject* globalObject, JSC::VM& vm, const JSC::Identifier& resolvedIdentifier)
 {
     if (!globalObject->isAsyncContextTrackingEnabled())
         return nullptr;
-    JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    if (asyncContext.isUndefined())
-        return nullptr;
     JSC::JSMap* map = globalObject->m_pendingDynamicImportAsyncContexts.get();
+    JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (asyncContext.isUndefined()) {
+        if (map && map->size())
+            map->remove(globalObject, jsString(vm, resolvedIdentifier.string()));
+        return nullptr;
+    }
     if (!map) {
         map = JSC::JSMap::create(vm, globalObject->mapStructure());
         globalObject->m_pendingDynamicImportAsyncContexts.set(vm, globalObject, map);

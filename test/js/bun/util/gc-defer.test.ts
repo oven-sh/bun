@@ -42,6 +42,23 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
     expect(warnings.some(w => w.includes("gcAllow"))).toBe(true);
   });
 
+  test("nesting to depth 16 emits exactly one process warning", async () => {
+    const warnings: string[] = [];
+    const onWarning = (w: Error | string) => warnings.push(String(typeof w === "string" ? w : w.message));
+    process.on("warning", onWarning);
+    let depth = 0;
+    try {
+      for (let i = 0; i < 18; i++) depth = Bun.unsafe.gcDefer();
+      expect(depth).toBe(18);
+      await new Promise<void>(resolve => process.nextTick(resolve));
+    } finally {
+      while (depth > 0) depth = Bun.unsafe.gcAllow();
+      process.off("warning", onWarning);
+    }
+    const deep = warnings.filter(w => /gcDefer/i.test(w) && /16|depth|deep/i.test(w));
+    expect(deep.length).toBe(1);
+  });
+
   test("collection is held off inside the bracket and resumes after", () => {
     // Validate the actual DeferGCForAWhile contract, not just the depth
     // counter. Inside the bracket the eden collector must not reclaim
@@ -62,8 +79,9 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
       // the loop body, so without the bracket an eden GC would fire and
       // capacity would saw-tooth instead of climbing.
       let sink = 0;
+      const s16 = "xxxxxxxxxxxxxxxx";
       for (let i = 0; i < 200_000; i++) {
-        sink += JSON.stringify({ i, a: [i, i + 1, i + 2], s: "x".repeat(16) }).length;
+        sink += JSON.stringify({ i, a: [i, i + 1, i + 2], s: s16 }).length;
       }
       expect(sink).toBeGreaterThan(0);
       insideCapacity = heapStats().heapCapacity;
@@ -76,10 +94,17 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
     // gcAllow() does NOT itself collect — DeferGCForAWhile's dtor only
     // decrements m_deferralDepth. Trigger an explicit sync collection (a
     // normal allocation slow path would do the same) and verify the heap
-    // dropped back near baseline.
+    // dropped back near baseline. If gcAllow() failed to release the
+    // bracket, gc(true) would itself be deferred → capacity would NOT
+    // drop and heapSize() would still be frozen at baselineSize, so the
+    // first assertion below catches that failure mode explicitly.
     Bun.gc(true);
+    const afterCapacity = heapStats().heapCapacity;
     const afterSize = heapSize();
-    // Loose: under 4× baseline + 64 MB slack (live set from this test ≈ 0).
+    // Capacity must have dropped well below the in-bracket peak — proves
+    // the deferral was released and a collection actually ran.
+    expect(afterCapacity).toBeLessThan(insideCapacity / 2);
+    // And size returned near baseline (live set from this test ≈ 0).
     expect(afterSize).toBeLessThan(baselineSize * 4 + 64 * 1024 * 1024);
   });
 

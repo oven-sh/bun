@@ -809,13 +809,19 @@ const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*")
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
 const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
+const ACCEPT_ENCODING_NO_BROTLI: &[u8] = b"gzip, deflate, zstd";
 const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION);
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
+const ACCEPT_ENCODING_HEADER_NO_BROTLI: picohttp::Header =
+    picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_BROTLI);
 
-const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
-{
+// OHOS: Brotli C lib + mimalloc has compatibility issues, producing
+// corrupted output. Fall back to gzip/deflate/zstd which work fine.
+const ACCEPT_ENCODING_HEADER: picohttp::Header = if cfg!(target_env = "ohos") {
+    ACCEPT_ENCODING_HEADER_NO_BROTLI
+} else if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT {
     ACCEPT_ENCODING_HEADER_NO_COMPRESSION
 } else {
     ACCEPT_ENCODING_HEADER_COMPRESSION

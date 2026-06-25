@@ -1814,7 +1814,10 @@ describe("Bun.Archive", () => {
     });
 
     test("gzip compression level is respected when writing via Bun.write", async () => {
-      const payload = Buffer.alloc(8192, "abcdefgh").toString();
+      // Same payload/assertion shape as the sibling archive.blob() level test:
+      // level 12 must compress strictly smaller than level 1, which only holds
+      // if `level` actually threads through the Bun.write path.
+      const payload = Buffer.alloc(50000, "Hello, World!");
       using dir = tempDir("archive-bunwrite-gzip-level", {});
 
       const lowPath = join(String(dir), "low.tar.gz");
@@ -1832,9 +1835,8 @@ describe("Bun.Archive", () => {
       expect(lowBytes.slice(0, 2)).toEqual(new Uint8Array([0x1f, 0x8b]));
       expect(highBytes.slice(0, 2)).toEqual(new Uint8Array([0x1f, 0x8b]));
 
-      // Higher compression level must produce a file no larger than level 1 for this
-      // repetitive payload.
-      expect(high.size).toBeLessThanOrEqual(low.size);
+      // Level 12 must produce a strictly smaller file than level 1.
+      expect(high.size).toBeLessThan(low.size);
     });
 
     test("writes gzipped archive to a Bun.file() destination", async () => {

@@ -155,6 +155,7 @@
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
+#include <JavaScriptCore/DeferGCInlines.h>
 #include "wtf-bindings.h"
 
 #if ASSERT_ENABLED
@@ -2865,6 +2866,62 @@ void JSC__VM__collectAsync(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);
     vm->heap.collectAsync();
+}
+
+// Bun.unsafe.gcDefer() / gcAllow(): bracket a latency-sensitive region
+// (e.g. a UI render frame) so an eden GC doesn't fire mid-region. Uses
+// DeferGCForAWhile semantics — the matching decrement does NOT trigger
+// a collection; the next regular allocation slow path will, so the
+// deferred pressure is handled at the first opportunity *outside* the
+// bracket.
+//
+// DeferGCForAWhile has WTF_FORBID_HEAP_ALLOCATION (which also deletes
+// placement-new), so it can't sit in a std::optional or be new'd
+// directly. Wrapping it as a member of a heap-allocated struct is
+// permitted: member-subobject construction doesn't go through any
+// operator new of the member's type.
+//
+// Only one heap-deferral level is held regardless of JS-side nesting;
+// the depth counter is purely for balance tracking. Per-thread state
+// since each Worker has its own VM. The pointer is trivially destructible
+// so an unbalanced gcDefer at thread exit just leaks the bracket (and
+// the warning at depth==16 will already have fired).
+namespace {
+struct BunGCDeferBracket {
+    BunGCDeferBracket(JSC::VM& vm)
+        : m_defer(vm)
+    {
+    }
+    JSC::DeferGCForAWhile m_defer;
+};
+thread_local unsigned s_bunGCDeferDepth = 0;
+thread_local BunGCDeferBracket* s_bunGCDeferBracket = nullptr;
+}
+
+extern "C" int32_t JSC__VM__gcDeferralIncrement(JSC::VM* vm)
+{
+    if (!s_bunGCDeferDepth) {
+        ASSERT(!s_bunGCDeferBracket);
+        s_bunGCDeferBracket = new BunGCDeferBracket(*vm);
+    }
+    ++s_bunGCDeferDepth;
+    if (s_bunGCDeferDepth == 16) [[unlikely]]
+        WTF::dataLog("[Bun.unsafe.gcDefer] depth reached 16; gcDefer/gcAllow likely unbalanced\n");
+    return static_cast<int32_t>(s_bunGCDeferDepth);
+}
+
+extern "C" int32_t JSC__VM__gcDeferralDecrement(JSC::VM*)
+{
+    if (!s_bunGCDeferDepth) [[unlikely]] {
+        WTF::dataLog("[Bun.unsafe.gcAllow] called with deferral depth already 0; unbalanced\n");
+        return 0;
+    }
+    --s_bunGCDeferDepth;
+    if (!s_bunGCDeferDepth) {
+        delete s_bunGCDeferBracket;
+        s_bunGCDeferBracket = nullptr;
+    }
+    return static_cast<int32_t>(s_bunGCDeferDepth);
 }
 
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)

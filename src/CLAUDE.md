@@ -62,10 +62,10 @@ Key types and functions:
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
 `bun_sys::Error` carries `errno`, `syscall: Tag`, `path: Box<[u8]>`. Convert
-to a JS exception via `bun_jsc::ErrorJsc::to_js`:
+to a JS exception via `bun_sys_jsc::ErrorJsc::to_js`:
 
 ```rust
-use bun_jsc::ErrorJsc;
+use bun_sys_jsc::ErrorJsc;
 match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
     Ok(f) => f,
     Err(err) => return Ok(err.to_js(global)?),

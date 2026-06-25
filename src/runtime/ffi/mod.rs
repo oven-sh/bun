@@ -22,10 +22,10 @@ pub use host_fns::{generate_symbol_for_function, generate_symbols};
 mod ffi_body;
 
 /// `js2native` codegen resolves `$rust(ffi.rs, Bun__FFI__cc)` to
-/// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.zig` basename.
+/// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.rs` basename.
 /// `FFI::bun_ffi_cc` lives in `ffi_body` — re-export it under
 /// the codegen-expected path so the dispatch table links without forcing the
-/// generator to special-case `ffi/ffi.zig`.
+/// generator to special-case `ffi/ffi.rs`.
 pub mod ffi {
     pub use super::ffi_body::bun__ffi__cc;
 }

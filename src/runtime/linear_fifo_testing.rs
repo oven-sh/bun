@@ -12,8 +12,8 @@
 //! Lives in `bun_runtime` (not `bun_collections`) because it needs the JSC
 //! types; `bun_runtime` already depends on both `bun_collections` and
 //! `bun_jsc`. Registered via `$newRustFunction("collections/linear_fifo.rs",
-//! "TestingAPIs.orderedRemoveProbe", 1)` — the `.zig` path is only the codegen
-//! key; the implementation is this Rust function (see `dispatch_js2native.rs`).
+//! "TestingAPIs.orderedRemoveProbe", 1)` — the path is only the codegen key;
+//! the implementation is this Rust function (see `dispatch_js2native.rs`).
 
 use bun_collections::linear_fifo::{LinearFifo, StaticBuffer};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};

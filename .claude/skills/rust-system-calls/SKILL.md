@@ -44,10 +44,10 @@ pub fn write_file(path: &[u8], data: &[u8]) -> Result<(), bun_sys::Error> {
 
 ## Error Handling with Maybe<T>
 
-`bun_sys` functions return `Maybe<T> = Result<T, bun_sys::Error>`. Propagate with `?`; convert to a JS exception via `bun_jsc::ErrorJsc::to_js`:
+`bun_sys` functions return `Maybe<T> = Result<T, bun_sys::Error>`. Propagate with `?`; convert to a JS exception via `bun_sys_jsc::ErrorJsc::to_js`:
 
 ```rust
-use bun_jsc::ErrorJsc;
+use bun_sys_jsc::ErrorJsc;
 use bun_sys::{File, Fd, O};
 
 let file = match File::openat(Fd::cwd(), path, O::RDONLY, 0) {

@@ -1,22 +1,10 @@
 // Regression test for https://github.com/oven-sh/bun/issues/29772
 //
-// Bun.SQL's postgres binary-numeric decoder had two correctness bugs:
-//
-// 1. Zero values in a numeric(p, s) column lost their scale formatting on the
-//    prepared/binary protocol path. The decoder short-circuited when
-//    ndigits == 0 and returned the static string "0" regardless of dscale,
-//    so numeric(10, 4) zero came back as "0" instead of "0.0000".
-//
-// 2. Fractional values smaller than ~1e-8 (first base-10000 digit group at
-//    weight <= -3) were under-padded with leading zeros. The fractional
-//    loop used a single counter for both the digit-array index and the
-//    dscale position, conflating postgres' two separate counters (digit
-//    index +1, dscale position +4). Example: 0.000000001234 came back as
-//    "0.000012340000".
-//
-// These tests stand up a minimal postgres wire-protocol mock that returns
-// a single numeric column with hand-crafted binary encodings, exercising
-// parse_binary_numeric directly — no docker / no live postgres required.
+// Asserts the postgres binary-numeric decoder (parse_binary_numeric) preserves
+// scale: zero-scale formatting for numeric(p, s) zeros and correct leading-zero
+// padding for tiny fractional magnitudes. Uses a minimal postgres wire-protocol
+// mock so the hand-encoded binary payloads exercise the decoder directly — no
+// docker / no live postgres required. Per-case comments document each encoding.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import net from "net";
@@ -85,6 +73,15 @@ function rowDescriptionNumeric(name: string): Buffer {
  *   i16 ndigits, i16 weight, u16 sign, i16 dscale, then i16 digits × ndigits.
  */
 function numericBinary(ndigits: number, weight: number, sign: number, dscale: number, digits: number[]): Buffer {
+  // Guard against hand-encoding mistakes that would mask test intent.
+  if (digits.length !== ndigits) {
+    throw new Error(`numericBinary: ndigits (${ndigits}) must equal digits.length (${digits.length})`);
+  }
+  for (const digit of digits) {
+    if (!Number.isInteger(digit) || digit < 0 || digit > 9999) {
+      throw new Error(`numericBinary: base-10000 digit out of range [0, 9999]: ${digit}`);
+    }
+  }
   const buf = Buffer.alloc(8 + 2 * digits.length);
   buf.writeInt16BE(ndigits, 0);
   buf.writeInt16BE(weight, 2);

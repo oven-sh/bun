@@ -3,70 +3,19 @@
 // mock, so no docker / live postgres is required.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import net from "net";
-
-// --- postgres wire protocol helpers ---
-
-/** Prepend a 1-byte type + 4-byte length (inclusive) to a payload. */
-function pgPacket(type: string, payload: Buffer): Buffer {
-  const header = Buffer.alloc(5);
-  header.write(type, 0, 1, "ascii");
-  header.writeInt32BE(payload.length + 4, 1);
-  return Buffer.concat([header, payload]);
-}
-
-/** ReadyForQuery ('Z') with transaction status 'I' (idle). */
-const READY_FOR_QUERY_IDLE = pgPacket("Z", Buffer.from([0x49]));
-
-/** AuthenticationOk ('R', int32 = 0). */
-const AUTH_OK = pgPacket("R", Buffer.from([0, 0, 0, 0]));
-
-/** ParseComplete ('1'). */
-const PARSE_COMPLETE = pgPacket("1", Buffer.alloc(0));
-
-/** BindComplete ('2'). */
-const BIND_COMPLETE = pgPacket("2", Buffer.alloc(0));
-
-/** Build CommandComplete ('C') for "SELECT <rows>". */
-function commandComplete(rows: number): Buffer {
-  return pgPacket("C", Buffer.concat([Buffer.from(`SELECT ${rows}`, "ascii"), Buffer.from([0])]));
-}
-
-/** ParameterDescription ('t') listing the int4 oid (23) for each param. */
-function parameterDescription(paramCount: number): Buffer {
-  const buf = Buffer.alloc(2 + 4 * paramCount);
-  buf.writeInt16BE(paramCount, 0);
-  for (let i = 0; i < paramCount; i++) {
-    buf.writeInt32BE(23, 2 + i * 4); // int4 oid
-  }
-  return pgPacket("t", buf);
-}
+import {
+  listeningServer,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "../../js/sql/wire-frames";
 
 /**
- * RowDescription ('T') with a single field named `name`, type oid 1700
- * (numeric), binary format code.
- */
-function rowDescriptionNumeric(name: string): Buffer {
-  const nameBuf = Buffer.from(name + "\0", "ascii");
-  // fields: 2 bytes count
-  // per field: name + table_oid(4) + column_index(2) + type_oid(4)
-  //          + type_size(2) + type_modifier(4) + format_code(2)
-  const body = Buffer.concat([
-    Buffer.from([0x00, 0x01]), // field count = 1
-    nameBuf,
-    Buffer.from([0, 0, 0, 0]), // table_oid = 0
-    Buffer.from([0, 0]), // column_index = 0
-    Buffer.from([0, 0, 0x06, 0xa4]), // type_oid = 1700 (numeric)
-    Buffer.from([0xff, 0xff]), // type_size = -1 (var-width)
-    Buffer.from([0xff, 0xff, 0xff, 0xff]), // type_modifier = -1
-    Buffer.from([0x00, 0x01]), // format_code = 1 (binary)
-  ]);
-  return pgPacket("T", body);
-}
-
-/**
- * Build a postgres binary-numeric byte sequence:
- *   i16 ndigits, i16 weight, u16 sign, i16 dscale, then i16 digits × ndigits.
+ * Build a postgres binary-numeric column payload (the value bytes carried by a
+ * DataRow, not a wire frame): i16 ndigits, i16 weight, u16 sign, i16 dscale,
+ * then i16 digits × ndigits.
  */
 function numericBinary(ndigits: number, weight: number, sign: number, dscale: number, digits: number[]): Buffer {
   // Guard against hand-encoding mistakes that would mask test intent.
@@ -89,100 +38,40 @@ function numericBinary(ndigits: number, weight: number, sign: number, dscale: nu
   return buf;
 }
 
-/** DataRow ('D') with one column carrying the supplied bytes. */
-function dataRowOneColumn(value: Buffer): Buffer {
-  const body = Buffer.alloc(2 + 4 + value.length);
-  body.writeInt16BE(1, 0); // column count
-  body.writeInt32BE(value.length, 2); // column length
-  value.copy(body, 6);
-  return pgPacket("D", body);
-}
-
 /**
- * Mock postgres server that answers the extended-protocol flow and returns
- * `rows` (binary numeric byte strings) from Execute, so parse_binary_numeric
- * decodes them via the real `sql.unsafe(query, [...])` path.
+ * Decode `rows` (each a binary numeric column payload) through the real client.
+ * The mock advertises binary format (oid 1700) in its RowDescription, so the
+ * bytes flow through parse_binary_numeric exactly as on the prepared path.
  */
-function startMockPostgres(rows: Buffer[]): Promise<{ port: number; close: () => void }> {
-  return new Promise(resolve => {
-    const server = net.createServer(socket => {
-      let phase: "startup" | "ready" = "startup";
-      let buf = Buffer.alloc(0);
-
-      socket.on("data", chunk => {
-        buf = Buffer.concat([buf, chunk]);
-
-        // Startup is special: first message has no type byte, just length.
-        if (phase === "startup") {
-          if (buf.length < 4) return;
-          const startupLen = buf.readInt32BE(0);
-          if (buf.length < startupLen) return;
-          buf = buf.subarray(startupLen);
-          phase = "ready";
-          // AuthenticationOk → ReadyForQuery. Skip ParameterStatus /
-          // BackendKeyData — the bun client doesn't require them to proceed.
-          socket.write(Buffer.concat([AUTH_OK, READY_FOR_QUERY_IDLE]));
-        }
-
-        // Extended protocol: consume framed messages (type + 4B length).
-        while (buf.length >= 5) {
-          const msgLen = buf.readInt32BE(1);
-          const total = 1 + msgLen;
-          if (buf.length < total) break;
-          const type = String.fromCharCode(buf[0]!);
-          buf = buf.subarray(total);
-
-          if (type === "P") {
-            // Parse → ParseComplete
-            socket.write(PARSE_COMPLETE);
-          } else if (type === "D") {
-            // Describe statement → ParameterDescription + RowDescription
-            socket.write(Buffer.concat([parameterDescription(1), rowDescriptionNumeric("v")]));
-          } else if (type === "B") {
-            // Bind → BindComplete
-            socket.write(BIND_COMPLETE);
-          } else if (type === "E") {
-            // Execute → DataRows + CommandComplete
-            const packets: Buffer[] = [];
-            for (const row of rows) packets.push(dataRowOneColumn(row));
-            packets.push(commandComplete(rows.length));
-            socket.write(Buffer.concat(packets));
-          } else if (type === "S") {
-            // Sync → ReadyForQuery. Flush ('H') is a no-op for this mock.
-            socket.write(READY_FOR_QUERY_IDLE);
-          } else if (type === "X") {
-            // Terminate
-            socket.end();
-          }
-        }
-      });
-    });
-
-    server.listen(0, "127.0.0.1", () => {
-      const port = (server.address() as net.AddressInfo).port;
-      resolve({ port, close: () => server.close() });
-    });
-  });
-}
-
-/** Run a single `SELECT ... $1` against the mock and return the decoded column. */
 async function runQuery(rows: Buffer[]): Promise<string[]> {
-  const mock = await startMockPostgres(rows);
-  try {
-    await using sql = new SQL({
-      adapter: "postgres",
-      hostname: "127.0.0.1",
-      port: mock.port,
-      username: "mock",
-      database: "mock",
-      ssl: false,
-      max: 1,
-      idleTimeout: 1,
+  const { port, server } = await listeningServer(socket => {
+    let startup = true;
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        return;
+      }
+      if (data[0] !== 0x51 /* 'Q' (simple query) */) return;
+      socket.write(
+        Buffer.concat([
+          pgRowDescription([{ name: "v", typeOid: 1700, format: 1 }]),
+          ...rows.map(r => pgDataRow([r])),
+          pgCommandComplete(`SELECT ${rows.length}`),
+          pgReadyForQuery(),
+        ]),
+      );
     });
-    const result = await sql.unsafe("SELECT v FROM t LIMIT $1", [rows.length]);
+    socket.on("error", () => {});
+  });
+
+  const sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+  try {
+    const result = await sql`select v`.simple();
     return result.map((r: any) => r.v as string);
   } finally {
-    mock.close();
+    await sql.close().catch(() => {});
+    await new Promise<void>(r => server.close(() => r()));
   }
 }
 

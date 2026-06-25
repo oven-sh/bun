@@ -2875,52 +2875,52 @@ void JSC__VM__collectAsync(JSC::VM* vm)
 // deferred pressure is handled at the first opportunity *outside* the
 // bracket.
 //
-// DeferGCForAWhile has WTF_FORBID_HEAP_ALLOCATION (which also deletes
-// placement-new), so it can't sit in a std::optional or be new'd
-// directly. Wrapping it as a member of a heap-allocated struct is
-// permitted: member-subobject construction doesn't go through any
-// operator new of the member's type.
-//
-// Only one heap-deferral level is held regardless of JS-side nesting;
-// the depth counter is purely for balance tracking. Per-thread state
-// since each Worker has its own VM. The pointer is trivially destructible
-// so an unbalanced gcDefer at thread exit just leaks the bracket (and
-// the warning at depth==16 will already have fired).
+// Heap::increment/decrementDeferralDepth are private; the public RAII
+// handle is DeferGCForAWhile, which has WTF_FORBID_HEAP_ALLOCATION (deletes
+// class-scope new including placement-new). A ::new-expression bypasses
+// class-scope lookup ([expr.new]/12), so we placement-new the RAII guard
+// directly into thread_local storage — no heap allocation, no wrapper
+// struct. Only one heap-deferral level is held regardless of JS-side
+// nesting; the depth counter is purely for balance tracking. Per-thread
+// state since each Worker has its own VM. The storage is trivially
+// destructible, so an unbalanced gcDefer at thread exit just leaves
+// m_deferralDepth bumped (and the depth-16 warning will already have fired).
+extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+
 namespace {
-struct BunGCDeferBracket {
-    BunGCDeferBracket(JSC::VM& vm)
-        : m_defer(vm)
-    {
-    }
-    JSC::DeferGCForAWhile m_defer;
-};
 thread_local unsigned s_bunGCDeferDepth = 0;
-thread_local BunGCDeferBracket* s_bunGCDeferBracket = nullptr;
+thread_local bool s_bunGCDeferWarned = false;
+alignas(JSC::DeferGCForAWhile) thread_local unsigned char s_bunGCDeferStorage[sizeof(JSC::DeferGCForAWhile)];
+
+void bunGCDeferEmitWarning(JSC::VM& vm, ASCIILiteral message)
+{
+    auto* globalObject = defaultGlobalObject();
+    if (!globalObject) [[unlikely]]
+        return;
+    auto undef = JSC::JSValue::encode(JSC::jsUndefined());
+    Bun__Process__emitWarning(globalObject, JSC::JSValue::encode(JSC::jsString(vm, String(message))), undef, undef, undef);
+}
 }
 
 extern "C" int32_t JSC__VM__gcDeferralIncrement(JSC::VM* vm)
 {
-    if (!s_bunGCDeferDepth) {
-        ASSERT(!s_bunGCDeferBracket);
-        s_bunGCDeferBracket = new BunGCDeferBracket(*vm);
+    if (s_bunGCDeferDepth++ == 0)
+        ::new (static_cast<void*>(s_bunGCDeferStorage)) JSC::DeferGCForAWhile(*vm);
+    if (s_bunGCDeferDepth >= 16 && !s_bunGCDeferWarned) [[unlikely]] {
+        s_bunGCDeferWarned = true;
+        bunGCDeferEmitWarning(*vm, "Bun.unsafe.gcDefer depth reached 16; gcDefer/gcAllow likely unbalanced"_s);
     }
-    ++s_bunGCDeferDepth;
-    if (s_bunGCDeferDepth == 16) [[unlikely]]
-        WTF::dataLog("[Bun.unsafe.gcDefer] depth reached 16; gcDefer/gcAllow likely unbalanced\n");
     return static_cast<int32_t>(s_bunGCDeferDepth);
 }
 
-extern "C" int32_t JSC__VM__gcDeferralDecrement(JSC::VM*)
+extern "C" int32_t JSC__VM__gcDeferralDecrement(JSC::VM* vm)
 {
     if (!s_bunGCDeferDepth) [[unlikely]] {
-        WTF::dataLog("[Bun.unsafe.gcAllow] called with deferral depth already 0; unbalanced\n");
+        bunGCDeferEmitWarning(*vm, "Bun.unsafe.gcAllow called with no matching gcDefer"_s);
         return 0;
     }
-    --s_bunGCDeferDepth;
-    if (!s_bunGCDeferDepth) {
-        delete s_bunGCDeferBracket;
-        s_bunGCDeferBracket = nullptr;
-    }
+    if (--s_bunGCDeferDepth == 0)
+        std::launder(reinterpret_cast<JSC::DeferGCForAWhile*>(s_bunGCDeferStorage))->~DeferGCForAWhile();
     return static_cast<int32_t>(s_bunGCDeferDepth);
 }
 

@@ -1040,7 +1040,10 @@ fn parse_binary_numeric<'a>(
         }
         result.push(b'0');
         result.push(b'.');
-        result.resize(result.len() + usize::try_from(dscale).expect("int cast"), b'0');
+        result.resize(
+            result.len() + usize::try_from(dscale).expect("int cast"),
+            b'0',
+        );
         return Ok(PGNummericString::Dynamic(result.as_slice()));
     }
 

@@ -13,7 +13,7 @@ const macroSource = `
   };
 `;
 
-test.concurrent("bun build: macro called as tagged template literal", async () => {
+test("bun build: macro called as tagged template literal", async () => {
   using dir = tempDir("issue-18047", {
     "macro.ts": macroSource,
     "index.ts": `
@@ -42,7 +42,7 @@ test.concurrent("bun build: macro called as tagged template literal", async () =
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("bun run: macro called as tagged template literal", async () => {
+test("bun run: macro called as tagged template literal", async () => {
   using dir = tempDir("issue-18047-run", {
     "macro.ts": macroSource,
     "index.ts": `

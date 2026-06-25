@@ -11,7 +11,6 @@ import defaultMacro, {
   identity as identity1,
   identity as identity2,
   ireturnapromise,
-  templateTag,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };
@@ -129,22 +128,6 @@ test("namespace import", () => {
 //   expect(identity(`©${""}`)).toBe("©");
 // });
 
-// https://github.com/oven-sh/bun/issues/18047
-// In-process coverage is kept minimal here; the full cooked/raw/escape matrix
-// is exercised via subprocess in test/regression/issue/18047.test.ts.
-test("tagged template literal", () => {
-  expect(ico`hello`).toBe("/svg/spritesheet.svg#hello");
-  expect(templateTag`a${1}b${"two"}c`).toEqual({
-    cooked: ["a", "b", "c"],
-    raw: ["a", "b", "c"],
-    values: [1, "two"],
-  });
-});
-
-test("tagged template via namespace import", () => {
-  expect(macros.ico`world`).toBe("/svg/spritesheet.svg#world");
-});
-
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
@@ -173,4 +156,14 @@ test("object argument with a sparse numeric key", async () => {
     exitCode: 0,
     signalCode: null,
   });
+});
+
+// https://github.com/oven-sh/bun/issues/18047
+// The cooked/raw/escape matrix is exercised via subprocess in
+// test/regression/issue/18047.test.ts; keep only a minimal in-process check
+// here (and after ireturnapromise, whose event-loop spin interacts poorly
+// with heavy macro activity under debug JSC assertions).
+test("tagged template literal", () => {
+  expect(ico`hello`).toBe("/svg/spritesheet.svg#hello");
+  expect(macros.ico`world`).toBe("/svg/spritesheet.svg#world");
 });

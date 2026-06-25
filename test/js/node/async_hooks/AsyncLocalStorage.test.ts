@@ -1,6 +1,6 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -565,5 +565,96 @@ describe("async context passes through", () => {
       });
     });
     expect(a).toBe("value");
+  });
+});
+
+describe("dynamic import() preserves the AsyncLocalStorage context (#32693)", () => {
+  test("during the imported module's top-level evaluation", async () => {
+    using dir = tempDir("als-dynamic-import", {
+      "store.mjs": `
+        import { AsyncLocalStorage } from 'node:async_hooks';
+        export const store = new AsyncLocalStorage();
+      `,
+      // Imported lazily from inside store.run(). Its top-level code (module
+      // evaluation) must observe the store that was active at the import() site,
+      // matching Node. A nested run() inside the body must still scope correctly
+      // and restore to the imported context afterwards.
+      "imported.mjs": `
+        import { store } from './store.mjs';
+        console.log("eval:" + store.getStore());
+        store.run("NESTED", () => {
+          console.log("nested:" + store.getStore());
+        });
+        console.log("after-nested:" + store.getStore());
+      `,
+      // Imported with no active context: must evaluate with an undefined store,
+      // proving the captured context does not leak into unrelated imports.
+      "no-context.mjs": `
+        import { store } from './store.mjs';
+        console.log("no-context-eval:" + store.getStore());
+      `,
+      "index.mjs": `
+        import { store } from './store.mjs';
+        await store.run('CONTEXT', () => import('./imported.mjs'));
+        console.log("after-import:" + store.getStore());
+        await import('./no-context.mjs');
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe(
+      [
+        "eval:CONTEXT",
+        "nested:NESTED",
+        "after-nested:CONTEXT",
+        "after-import:undefined",
+        "no-context-eval:undefined",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("CONTEXT");
+  });
+
+  // A top-level-await module resumes through JSC's async-module machinery, which
+  // runs outside this hook; only the synchronous prefix observes the context. The
+  // guarantee here is that capturing the context does not crash that path.
+  test("a top-level-await module sees the context during its synchronous prefix and does not crash", async () => {
+    using dir = tempDir("als-dynamic-import-tla", {
+      "store.mjs": `
+        import { AsyncLocalStorage } from 'node:async_hooks';
+        export const store = new AsyncLocalStorage();
+      `,
+      "tla.mjs": `
+        import { store } from './store.mjs';
+        console.log("tla-sync:" + store.getStore());
+        await Promise.resolve();
+        console.log("done");
+      `,
+      "index.mjs": `
+        import { store } from './store.mjs';
+        await store.run('CONTEXT', () => import('./tla.mjs'));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("tla-sync:CONTEXT\ndone\n");
+    expect(exitCode).toBe(0);
   });
 });

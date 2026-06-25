@@ -3588,6 +3588,26 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginZ.deref();
     }
 
+    // If this import() runs inside an AsyncLocalStorage context, record that
+    // context keyed by the resolved module key so the imported module's
+    // top-level evaluation can run with it (see moduleLoaderEvaluate). Node
+    // preserves the context across dynamic-import evaluation via V8's
+    // continuation-preserved embedder data; JSC's dynamic-import microtasks
+    // never touch m_asyncContextData, so we thread it through the module key.
+    JSC::JSString* asyncContextKey = nullptr;
+    if (globalObject->isAsyncContextTrackingEnabled()) {
+        JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+        if (!asyncContext.isUndefined()) {
+            JSC::JSMap* map = globalObject->m_pendingDynamicImportAsyncContexts.get();
+            if (!map) {
+                map = JSC::JSMap::create(vm, globalObject->mapStructure());
+                globalObject->m_pendingDynamicImportAsyncContexts.set(vm, globalObject, map);
+            }
+            asyncContextKey = jsString(vm, resolvedIdentifier.string());
+            map->set(globalObject, asyncContextKey, asyncContext);
+        }
+    }
+
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
@@ -3595,6 +3615,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    }
+
+    // Only a still-pending import reaches moduleLoaderEvaluate to consume the
+    // entry above; an already-evaluated (cached) module settles synchronously
+    // and never re-evaluates, so drop its entry to avoid retaining the context.
+    if (asyncContextKey && (!result || result->status() != JSC::JSPromise::Status::Pending)) {
+        if (auto* map = globalObject->m_pendingDynamicImportAsyncContexts.get())
+            map->remove(globalObject, asyncContextKey);
     }
 
     ASSERT(result);
@@ -3703,13 +3731,45 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 
+// Reinstate the AsyncLocalStorage context captured at this module's import()
+// call site (see moduleLoaderImportModule) around its synchronous top-level
+// evaluation. JSC drives dynamic-import evaluation from an internal microtask
+// that never restores m_asyncContextData, so getStore() would otherwise be
+// undefined during module init (#32693). A top-level-await module's post-await
+// continuations resume through JSC's async-module machinery outside this hook
+// and are not covered here.
+static JSC::JSValue evaluateModuleWithCapturedAsyncContext(Zig::GlobalObject* globalObject,
+    JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue,
+    RefPtr<JSC::ScriptFetcher>&& scriptFetcher, JSValue sentValue, JSValue resumeMode)
+{
+    auto& vm = JSC::getVM(globalObject);
+
+    JSC::JSValue capturedAsyncContext;
+    if (auto* map = globalObject->m_pendingDynamicImportAsyncContexts.get()) {
+        if (map->size() && map->has(globalObject, key)) {
+            capturedAsyncContext = map->get(globalObject, key);
+            map->remove(globalObject, key);
+        }
+    }
+
+    if (!capturedAsyncContext || capturedAsyncContext.isUndefined() || !globalObject->isAsyncContextTrackingEnabled())
+        return moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSC::JSValue restoreAsyncContext = asyncContextData->getInternalField(0);
+    asyncContextData->putInternalField(vm, 0, capturedAsyncContext);
+    JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+    asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    return result;
+}
+
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
-    return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
-        WTF::move(scriptFetcher), sentValue, resumeMode);
+    return evaluateModuleWithCapturedAsyncContext(uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject),
+        moduleLoader, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
@@ -3724,8 +3784,8 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
-        WTF::move(scriptFetcher), sentValue, resumeMode);
+    JSC::JSValue result = evaluateModuleWithCapturedAsyncContext(globalObject, moduleLoader, key,
+        moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of
     // evaluateNonVirtual; the old JS-side ModuleLoader.js swallowed it before
     // dispatching here. Don't call back into native code (which opens an

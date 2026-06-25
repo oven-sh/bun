@@ -12,6 +12,7 @@
 namespace JSC {
 class Structure;
 class Identifier;
+class JSMap;
 class LazyClassStructure;
 class ScriptFetcher;
 class ScriptFetchParameters;
@@ -501,6 +502,10 @@ public:
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapOriginStructure)                   \
                                                                                                              \
     V(public, WriteBarrier<Bun::JSNextTickQueue>, m_nextTickQueue)                                           \
+                                                                                                             \
+    /* AsyncLocalStorage context captured at an import() call site, keyed by resolved module key, */         \
+    /* reinstated around the dynamically imported module's top-level evaluation (#32693). */                 \
+    V(public, WriteBarrier<JSC::JSMap>, m_pendingDynamicImportAsyncContexts)                                 \
                                                                                                              \
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \

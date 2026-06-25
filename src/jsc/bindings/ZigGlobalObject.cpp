@@ -3499,6 +3499,8 @@ static JSC::JSString* captureDynamicImportAsyncContext(Zig::GlobalObject* global
     JSC::JSMap* map = globalObject->m_pendingDynamicImportAsyncContexts.get();
     JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
     if (asyncContext.isUndefined()) {
+        // JSMap::remove cannot throw. Clears a stale entry left by a prior import
+        // of this key that never evaluated, so no context leaks into this one.
         if (map && map->size())
             map->remove(globalObject, jsString(vm, resolvedIdentifier.string()));
         return nullptr;
@@ -3508,6 +3510,8 @@ static JSC::JSString* captureDynamicImportAsyncContext(Zig::GlobalObject* global
         globalObject->m_pendingDynamicImportAsyncContexts.set(vm, globalObject, map);
     }
     JSC::JSString* key = jsString(vm, resolvedIdentifier.string());
+    // JSMap::set opens an internal throw scope (it can only fail on OOM). The
+    // caller checks the scope right after this returns, so don't add one here.
     map->set(globalObject, key, asyncContext);
     return key;
 }
@@ -3516,6 +3520,7 @@ static void dropDynamicImportAsyncContext(Zig::GlobalObject* globalObject, JSC::
 {
     if (!key)
         return;
+    // JSMap::remove cannot throw.
     if (auto* map = globalObject->m_pendingDynamicImportAsyncContexts.get())
         map->remove(globalObject, key);
 }
@@ -3570,13 +3575,15 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
             JSC::JSString* asyncContextKey = captureDynamicImportAsyncContext(globalObject, vm, resolvedIdentifier);
+            RETURN_IF_EXCEPTION(scope, JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
             auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
             if (scope.exception()) [[unlikely]] {
-                dropDynamicImportAsyncContext(globalObject, asyncContextKey);
                 return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
             }
-            if (asyncContextKey && (!result || result->status() != JSC::JSPromise::Status::Pending))
+            if (asyncContextKey && (!result || result->status() != JSC::JSPromise::Status::Pending)) {
                 dropDynamicImportAsyncContext(globalObject, asyncContextKey);
+                scope.assertNoException(); // JSMap::remove (non-allocating) cannot throw
+            }
             return result;
         }
     }
@@ -3630,6 +3637,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     }
 
     JSC::JSString* asyncContextKey = captureDynamicImportAsyncContext(globalObject, vm, resolvedIdentifier);
+    RETURN_IF_EXCEPTION(scope, JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
 
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
@@ -3637,17 +3645,20 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
         JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
-        dropDynamicImportAsyncContext(globalObject, asyncContextKey);
+        // A synchronous importModule failure leaves the captured entry; it is
+        // cleared on the next import of this key (see captureDynamicImportAsyncContext).
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
 
     // Only a still-pending import reaches moduleLoaderEvaluate to consume the
     // entry; a cached (already-evaluated) module settles synchronously and never
-    // re-evaluates. A pending import that later rejects without evaluating is
-    // cleaned up at its fetch-failure seam (Bun__onFulfillAsyncModule) or, for
-    // transitive failures, overwritten on the next import of the same key.
-    if (asyncContextKey && (!result || result->status() != JSC::JSPromise::Status::Pending))
+    // re-evaluates, so drop its entry now. A pending import that later rejects
+    // without evaluating is cleaned up at its fetch-failure seam
+    // (Bun__onFulfillAsyncModule) or overwritten on the next import of the key.
+    if (asyncContextKey && (!result || result->status() != JSC::JSPromise::Status::Pending)) {
         dropDynamicImportAsyncContext(globalObject, asyncContextKey);
+        scope.assertNoException(); // JSMap::remove (non-allocating) cannot throw
+    }
 
     ASSERT(result);
     return result;
@@ -3768,20 +3779,26 @@ static JSC::JSValue evaluateModuleWithCapturedAsyncContext(Zig::GlobalObject* gl
 {
     auto& vm = JSC::getVM(globalObject);
 
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue capturedAsyncContext;
-    if (auto* map = globalObject->m_pendingDynamicImportAsyncContexts.get()) {
-        if (map->size() && map->has(globalObject, key)) {
-            capturedAsyncContext = map->get(globalObject, key);
+    if (auto* map = globalObject->m_pendingDynamicImportAsyncContexts.get(); map && map->size()) {
+        // get/remove each open an internal throw scope (they can only fail on
+        // OOM), so check after each. get returns jsUndefined() when absent.
+        capturedAsyncContext = map->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!capturedAsyncContext.isUndefined()) {
             map->remove(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
     if (!capturedAsyncContext || capturedAsyncContext.isUndefined() || !globalObject->isAsyncContextTrackingEnabled())
-        return moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+        RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 
     auto* asyncContextData = globalObject->m_asyncContextData.get();
     JSC::JSValue restoreAsyncContext = asyncContextData->getInternalField(0);
     asyncContextData->putInternalField(vm, 0, capturedAsyncContext);
+    scope.release();
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
     asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     return result;

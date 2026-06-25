@@ -73,6 +73,7 @@ pub mod task_tag {
         ArchiveExtractTask,
         ArchiveBlobTask,
         ArchiveWriteTask,
+        ArchiveCompressWriteTask,
         ArchiveFilesTask,
         AsyncGlobWalkTask,
         AsyncImageTask,

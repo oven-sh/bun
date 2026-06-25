@@ -1751,7 +1751,7 @@ it("socket handler validation errors don't steal GC protection from live sockets
         console.log("done");
       `,
     ],
-    env: { ...bunEnv, Malloc: "1" },
+    env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
     stdout: "pipe",
     stderr: "pipe",
   });

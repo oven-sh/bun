@@ -3262,6 +3262,7 @@ pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_core::ZStr) -> Optio
 }
 
 pub use bun_windows_sys::externs::LoadLibraryA;
+pub use bun_windows_sys::externs::kernel32::LoadLibraryExW;
 
 unsafe extern "system" {
     #[link_name = "CreateHardLinkW"]

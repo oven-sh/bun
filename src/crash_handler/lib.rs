@@ -65,8 +65,10 @@ pub(crate) extern "Rust" fn __bun_crash_handler_dump_stack_trace(
 pub use draft::*;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local shim for `bun_debug` (no such crate exists yet). These are
-// placeholders to be replaced with a real debug-info backend in a later pass.
+// Local shim for `bun_debug` (no such crate exists yet). On POSIX these are
+// placeholders (dladdr-only, no DWARF line tables) to be replaced with a real
+// debug-info backend in a later pass. On Windows, symbol + file:line lookup
+// is real: it goes through `dbghelp.dll` (see the `dbghelp` submodule below).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod debug {
     use super::draft::StackTrace;
@@ -99,7 +101,6 @@ pub mod debug {
     // Previously lived in `bun_jsc::btjs::zig_std_debug`; relocated here so the
     // crash handler (lower-tier crate) gets real symbol names in debug builds
     // and `btjs` re-exports from this module.
-    #[cfg(not(windows))]
     use bun_collections::HashMap;
     use bun_core::{Error, err};
     #[cfg(not(windows))]
@@ -108,15 +109,15 @@ pub mod debug {
     pub use bun_core::debug::{SourceLocation, SymbolInfo};
 
     pub struct SelfInfo {
-        #[cfg(not(windows))]
         address_map: HashMap<usize, Box<Module>>,
     }
 
     /// A loaded module, resolving `address → {name, CU, source_location}`.
-    /// There is no DWARF/MachO parser; `dladdr(3)`
+    /// On POSIX there is no DWARF/MachO parser; `dladdr(3)`
     /// provides the symbol-name half (which is what `btjs` actually consumes for
-    /// its `__`/`_llint_call_javascript` prefix checks). `source_location` is left
-    /// `None`, which `print_line_info` already handles.
+    /// its `__`/`_llint_call_javascript` prefix checks) and `source_location` is
+    /// left `None`, which `print_line_info` already handles. On Windows, symbols
+    /// and file:line come from the loaded PE's PDB via `dbghelp.dll`.
     pub struct Module {
         base_address: usize,
         name: Box<[u8]>,
@@ -142,9 +143,7 @@ pub mod debug {
                 windows,
             ))]
             {
-                // SelfInfo.init — non-Windows path is just an empty address_map.
                 return Ok(SelfInfo {
-                    #[cfg(not(windows))]
                     address_map: HashMap::new(),
                 });
             }
@@ -171,8 +170,7 @@ pub mod debug {
             }
             #[cfg(windows)]
             {
-                let _ = address;
-                return Err(err!("MissingDebugInfo"));
+                return self.lookup_module_win(address);
             }
             #[cfg(not(any(target_vendor = "apple", windows)))]
             {
@@ -189,8 +187,7 @@ pub mod debug {
             }
             #[cfg(windows)]
             {
-                let _ = address;
-                return None;
+                return lookup_module_name_win(address);
             }
             #[cfg(not(any(target_vendor = "apple", windows)))]
             {
@@ -210,6 +207,23 @@ pub mod debug {
                 self.address_map.insert(m.base_address, obj_di);
             }
             Ok(self.address_map.get_mut(&m.base_address).unwrap())
+        }
+
+        #[cfg(windows)]
+        fn lookup_module_win(&mut self, address: usize) -> Result<&mut Module, Error> {
+            let module = bun_sys::windows::get_module_handle_from_address(address)
+                .ok_or_else(|| err!("MissingDebugInfo"))?;
+            let base_address = module as usize;
+            if !self.address_map.contains_key(&base_address) {
+                let mut buf: [u16; 512] = [0; 512];
+                let name = match bun_sys::windows::get_module_name_w(module, &mut buf) {
+                    Some(name_w) => bun_core::strings::to_utf8_alloc(name_w).into_boxed_slice(),
+                    None => Box::default(),
+                };
+                self.address_map
+                    .insert(base_address, Box::new(Module { base_address, name }));
+            }
+            Ok(self.address_map.get_mut(&base_address).unwrap())
         }
 
         #[cfg(target_vendor = "apple")]
@@ -240,22 +254,25 @@ pub mod debug {
     }
 
     impl Module {
-        /// Port of `Module.getSymbolAtAddress`.
+        /// Port of `Module.getSymbolAtAddress`. dbghelp allocates internally,
+        /// which is fine here: this only runs on the report-printing path,
+        /// never inside the exception-dispatch frame.
         #[cfg(windows)]
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
-            // Windows symbol resolution via the loaded PE's PDB
-            // (`dbghelp.dll` `SymFromAddr`) is not implemented yet, so
-            // every Windows backtrace currently prints bare addresses even
-            // when a PDB is shipped. Return the default-initialized
-            // `Symbol` (`name = "???"`) so the caller still prints the
-            // address line, but the dbghelp lookup must be implemented
-            // before Windows crash reports are usable.
-            let _ = (address, self.base_address);
-            Ok(SymbolInfo {
-                name: b"???".to_vec().into_boxed_slice(),
-                compile_unit_name: bun_paths::basename(&self.name).to_vec().into_boxed_slice(),
-                source_location: None,
-            })
+            let _ = self.base_address;
+            let compile_unit_name = bun_paths::basename(&self.name).to_vec().into_boxed_slice();
+            match dbghelp::lookup(address) {
+                Some((name, source_location)) => Ok(SymbolInfo {
+                    name,
+                    compile_unit_name,
+                    source_location,
+                }),
+                None => Ok(SymbolInfo {
+                    name: b"???".to_vec().into_boxed_slice(),
+                    compile_unit_name,
+                    source_location: None,
+                }),
+            }
         }
         /// Port of `Module.getSymbolAtAddress`.
         #[cfg(not(windows))]
@@ -300,6 +317,275 @@ pub mod debug {
     fn lookup_module_name_dl(address: usize) -> Option<Box<[u8]>> {
         bun_sys::elf::find_loaded_module(address)
             .map(|m| bun_paths::basename(&m.name).to_vec().into_boxed_slice())
+    }
+
+    #[cfg(windows)]
+    fn lookup_module_name_win(address: usize) -> Option<Box<[u8]>> {
+        let module = bun_sys::windows::get_module_handle_from_address(address)?;
+        let mut buf: [u16; 512] = [0; 512];
+        let name_w = bun_sys::windows::get_module_name_w(module, &mut buf)?;
+        let utf8 = bun_core::strings::to_utf8_alloc(name_w);
+        Some(bun_paths::basename(&utf8).to_vec().into_boxed_slice())
+    }
+
+    /// PDB-backed symbol lookup via lazily-loaded `dbghelp.dll`. dbghelp is
+    /// not thread-safe; every call into it is serialized under one mutex.
+    #[cfg(windows)]
+    mod dbghelp {
+        use core::ffi::c_void;
+
+        use super::SourceLocation;
+        use bun_sys::windows::HANDLE;
+
+        const SYMOPT_UNDNAME: u32 = 0x0000_0002;
+        const SYMOPT_DEFERRED_LOADS: u32 = 0x0000_0004;
+        const SYMOPT_LOAD_LINES: u32 = 0x0000_0010;
+
+        /// Symbol-name capacity in UTF-16 units; longer names truncate.
+        const MAX_NAME_CHARS: usize = 512;
+
+        /// `SYMBOL_INFOW` with the variable-length `Name` buffer inlined.
+        /// `SizeOfStruct` must be the C header's `sizeof` (88), not the size
+        /// of this widened struct.
+        #[repr(C)]
+        struct SymbolInfoW {
+            size_of_struct: u32,
+            type_index: u32,
+            reserved: [u64; 2],
+            index: u32,
+            size: u32,
+            mod_base: u64,
+            flags: u32,
+            value: u64,
+            address: u64,
+            register: u32,
+            scope: u32,
+            tag: u32,
+            name_len: u32,
+            max_name_len: u32,
+            name: [u16; MAX_NAME_CHARS + 1],
+        }
+        const SYMBOL_INFOW_SIZE: u32 = 88;
+        // SAFETY: repr(C) integers/arrays; all-zero is a valid value.
+        unsafe impl bun_core::Zeroable for SymbolInfoW {}
+
+        /// `IMAGEHLP_LINEW64`. `FileName` is owned by dbghelp and only valid
+        /// until the next dbghelp call.
+        #[repr(C)]
+        struct ImagehlpLineW64 {
+            size_of_struct: u32,
+            key: *mut c_void,
+            line_number: u32,
+            file_name: *const u16,
+            address: u64,
+        }
+        // SAFETY: repr(C) integers/pointers; all-zero is a valid value.
+        unsafe impl bun_core::Zeroable for ImagehlpLineW64 {}
+
+        type SymInitializeWFn =
+            unsafe extern "system" fn(process: HANDLE, search_path: *const u16, invade: i32) -> i32;
+        type SymGetOptionsFn = unsafe extern "system" fn() -> u32;
+        type SymSetOptionsFn = unsafe extern "system" fn(options: u32) -> u32;
+        type SymFromAddrWFn = unsafe extern "system" fn(
+            process: HANDLE,
+            address: u64,
+            displacement: *mut u64,
+            symbol: *mut SymbolInfoW,
+        ) -> i32;
+        type SymGetLineFromAddrW64Fn = unsafe extern "system" fn(
+            process: HANDLE,
+            address: u64,
+            displacement: *mut u32,
+            line: *mut ImagehlpLineW64,
+        ) -> i32;
+        type SymRefreshModuleListFn = unsafe extern "system" fn(process: HANDLE) -> i32;
+
+        struct Api {
+            sym_from_addr_w: SymFromAddrWFn,
+            sym_get_line_from_addr_w64: SymGetLineFromAddrW64Fn,
+        }
+
+        enum State {
+            Untried,
+            /// Never retried — a missing dbghelp.dll or export won't appear
+            /// on a second attempt.
+            Failed,
+            Ready(Api),
+        }
+
+        static STATE: bun_threading::Guarded<State> = bun_threading::Guarded::new(State::Untried);
+
+        fn init() -> State {
+            // Load only from System32 so a rogue dbghelp.dll on the default
+            // DLL search path can't be injected into the crashing process.
+            const DBGHELP_W: &[u16] = bun_core::wstr!("dbghelp.dll");
+            const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
+            // SAFETY: DBGHELP_W is NUL-terminated.
+            let lib = unsafe {
+                bun_sys::windows::LoadLibraryExW(
+                    DBGHELP_W.as_ptr(),
+                    core::ptr::null_mut(),
+                    LOAD_LIBRARY_SEARCH_SYSTEM32,
+                )
+            };
+            if lib.is_null() {
+                return State::Failed;
+            }
+            let get = |name: &bun_core::ZStr| bun_sys::windows::GetProcAddressA(Some(lib), name);
+            let (
+                Some(sym_initialize_w),
+                Some(sym_get_options),
+                Some(sym_set_options),
+                Some(sym_from_addr_w),
+                Some(sym_get_line_from_addr_w64),
+            ) = (
+                get(bun_core::zstr!("SymInitializeW")),
+                get(bun_core::zstr!("SymGetOptions")),
+                get(bun_core::zstr!("SymSetOptions")),
+                get(bun_core::zstr!("SymFromAddrW")),
+                get(bun_core::zstr!("SymGetLineFromAddrW64")),
+            )
+            else {
+                return State::Failed;
+            };
+            // SAFETY: pointers resolved from dbghelp.dll under these exported
+            // names; signatures per dbghelp.h.
+            let (
+                sym_initialize_w,
+                sym_get_options,
+                sym_set_options,
+                sym_from_addr_w,
+                sym_get_line_from_addr_w64,
+            ) = unsafe {
+                (
+                    core::mem::transmute::<*mut c_void, SymInitializeWFn>(sym_initialize_w),
+                    core::mem::transmute::<*mut c_void, SymGetOptionsFn>(sym_get_options),
+                    core::mem::transmute::<*mut c_void, SymSetOptionsFn>(sym_set_options),
+                    core::mem::transmute::<*mut c_void, SymFromAddrWFn>(sym_from_addr_w),
+                    core::mem::transmute::<*mut c_void, SymGetLineFromAddrW64Fn>(
+                        sym_get_line_from_addr_w64,
+                    ),
+                )
+            };
+            // SAFETY: plain bitmask. SymSetOptions replaces the process-global
+            // mask, so OR into the existing options (another in-process user,
+            // e.g. std::backtrace, may have configured dbghelp already). Must
+            // precede SymInitializeW so the options apply to the initial
+            // module enumeration.
+            unsafe {
+                sym_set_options(
+                    sym_get_options() | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES,
+                );
+            }
+            let process = bun_sys::windows::kernel32::GetCurrentProcess();
+            // SAFETY: current-process pseudo-handle; null search path =
+            // default order; invade=1 enumerates already-loaded modules.
+            // Modules loaded after this point are never registered and
+            // degrade to the `???` path.
+            if unsafe { sym_initialize_w(process, core::ptr::null(), 1) } == 0 {
+                // ERROR_INVALID_PARAMETER means dbghelp was already
+                // initialized for this process — e.g. by Rust's
+                // `std::backtrace` (which calls SymInitializeW and ignores
+                // the result). The session is usable; treat it as success.
+                // Note: std's internal dbghelp lock and `STATE`'s mutex are
+                // independent, so concurrent std backtrace captures aren't
+                // serialized against our calls — acceptable for a
+                // best-effort crash path.
+                if bun_sys::windows::get_last_win32_error()
+                    != bun_sys::windows::Win32Error::INVALID_PARAMETER
+                {
+                    return State::Failed;
+                }
+                // The earlier init captured the module list as of that
+                // moment, so DLLs loaded since (e.g. NAPI addons) would
+                // symbolize as `???`. Refresh to the crash-time module list;
+                // best-effort, ignore failure.
+                if let Some(sym_refresh_module_list) = get(bun_core::zstr!("SymRefreshModuleList"))
+                {
+                    // SAFETY: pointer resolved from dbghelp.dll under this
+                    // exported name; signature per dbghelp.h.
+                    unsafe {
+                        core::mem::transmute::<*mut c_void, SymRefreshModuleListFn>(
+                            sym_refresh_module_list,
+                        )(process);
+                    }
+                }
+            }
+            State::Ready(Api {
+                sym_from_addr_w,
+                sym_get_line_from_addr_w64,
+            })
+        }
+
+        /// Resolve `address` to `(symbol_name, file:line)`; `None` when
+        /// dbghelp/PDB is unavailable or the address has no symbol.
+        pub(super) fn lookup(address: usize) -> Option<(Box<[u8]>, Option<SourceLocation>)> {
+            // try_lock: a fault inside a dbghelp call can re-enter lookup;
+            // a blocking lock would deadlock the crash report.
+            let mut state = STATE.try_lock()?;
+            if matches!(&*state, State::Untried) {
+                *state = init();
+            }
+            let api = match &*state {
+                State::Ready(api) => api,
+                _ => return None,
+            };
+            let process = bun_sys::windows::kernel32::GetCurrentProcess();
+
+            let mut symbol: SymbolInfoW = bun_core::ffi::zeroed();
+            symbol.size_of_struct = SYMBOL_INFOW_SIZE;
+            symbol.max_name_len = MAX_NAME_CHARS as u32;
+            let mut sym_displacement: u64 = 0;
+            // SAFETY: serialized under `STATE`'s mutex; `symbol` is a valid
+            // out-param.
+            if unsafe {
+                (api.sym_from_addr_w)(process, address as u64, &mut sym_displacement, &mut symbol)
+            } == 0
+            {
+                return None;
+            }
+            // dbghelp versions disagree on whether NameLen counts the NUL;
+            // clamp and re-scan.
+            let mut name_chars = (symbol.name_len as usize).min(MAX_NAME_CHARS);
+            if let Some(z) = symbol.name[..name_chars].iter().position(|&c| c == 0) {
+                name_chars = z;
+            }
+            if name_chars == 0 {
+                return None;
+            }
+            let name =
+                bun_core::strings::to_utf8_alloc(&symbol.name[..name_chars]).into_boxed_slice();
+
+            let mut line: ImagehlpLineW64 = bun_core::ffi::zeroed();
+            line.size_of_struct = core::mem::size_of::<ImagehlpLineW64>() as u32;
+            let mut line_displacement: u32 = 0;
+            // SAFETY: serialized under `STATE`'s mutex; `line` is a valid
+            // out-param. `FileName` is copied out before the mutex is released.
+            let source_location = if unsafe {
+                (api.sym_get_line_from_addr_w64)(
+                    process,
+                    address as u64,
+                    &mut line_displacement,
+                    &mut line,
+                )
+            } != 0
+                && !line.file_name.is_null()
+            {
+                // SAFETY: `FileName` is a valid NUL-terminated wide string
+                // while the mutex is held.
+                let wide = unsafe { bun_core::WStr::from_ptr(line.file_name) }.as_slice();
+                Some(SourceLocation {
+                    file_name: bun_core::strings::to_utf8_alloc(wide).into_boxed_slice(),
+                    line: line.line_number,
+                    // dbghelp has no column info; 0 makes `print_line_info`
+                    // skip the caret.
+                    column: 0,
+                })
+            } else {
+                None
+            };
+            Some((name, source_location))
+        }
     }
 
     #[cfg(target_vendor = "apple")]
@@ -3539,12 +3825,9 @@ mod draft {
                             out_stream.write_all(b"^\n")?;
                         }
                     }
-                    Err(e)
-                        if e == bun_core::err!("EndOfFile")
-                            || e == bun_core::err!("FileNotFound")
-                            || e == bun_core::err!("BadPathName")
-                            || e == bun_core::err!("AccessDenied") => {}
-                    Err(e) => return Err(e),
+                    // The source preview is best-effort: the PDB/DWARF path may
+                    // not exist on this machine. Never abort the trace over it.
+                    Err(_) => {}
                 }
             }
         }
@@ -3661,7 +3944,8 @@ mod draft {
         }
         // expand the highlight to one word
         let mut left = (source_location.column as usize).saturating_sub(1);
-        let mut right = left + 1;
+        // Clamp: column 0 on an empty line would otherwise slice [0..1).
+        let mut right = (left + 1).min(line_without_newline.len());
         while left > 0 {
             match line_without_newline[left] {
                 b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b' ' | b'\t' => break,

@@ -10,9 +10,8 @@
 //! image.
 //!
 //! Lives in `bun_runtime` (not `bun_exe_format`) because it needs the JSC
-//! types. Registered via `$newZigFunction("pe.zig",
-//! "TestingAPIs.linkAddon", 3)` — the `.zig` path is only the codegen key;
-//! the implementation is this Rust function (see `dispatch_js2native.rs`).
+//! types. Registered via `$newRustFunction("exe_format/pe.rs",
+//! "TestingAPIs.linkAddon", 3)` (see `dispatch_js2native.rs`).
 
 use bun_exe_format::pe;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};

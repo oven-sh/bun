@@ -2085,14 +2085,17 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // Mirrors handle_writable(): once the buffer drains, a close frame
         // that was only partially flushed must still dispatch `close`.
-        // SAFETY (both blocks): `_guard` keeps `*this_ptr` live; sole owner on
-        // this thread, and each `&mut *this_ptr` ends before `_guard` drops.
         if this.send_buffer.readable_length() == 0 {
+            // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
+            // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
             unsafe { (*this.as_ptr()).finish_pending_close() };
             return;
         }
+        // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
+        // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
         let _ = unsafe { (*this.as_ptr()).send_buffer_out() };
         if this.send_buffer.readable_length() == 0 {
+            // SAFETY: as above; the `&mut` from send_buffer_out() has ended.
             unsafe { (*this.as_ptr()).finish_pending_close() };
         }
     }

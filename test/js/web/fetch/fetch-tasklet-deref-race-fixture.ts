@@ -22,28 +22,38 @@ using server = Bun.serve({
 
 const url = server.url.href;
 
-async function one() {
+let completed = 0;
+
+async function one(shouldAbort: boolean) {
   // A mix of straight fetches and aborted fetches: the abort path feeds
   // schedule_shutdown to the HTTP thread which is where the final callback
   // with has_more=false (the is_done deref) originates, and the completion
   // path exercises the normal enqueue-then-deref order.
   const controller = new AbortController();
-  const abort = Math.random() < 0.5;
-  if (abort) queueMicrotask(() => controller.abort());
+  if (shouldAbort) queueMicrotask(() => controller.abort());
   try {
     const res = await fetch(url, { signal: controller.signal });
     await res.arrayBuffer();
-  } catch {}
+    if (!shouldAbort) completed++;
+  } catch (error) {
+    if (!shouldAbort) throw error;
+  }
 }
 
 let done = 0;
 async function worker() {
-  while (done++ < iterations) {
-    await one();
+  while (true) {
+    const i = done++;
+    if (i >= iterations) break;
+    await one((i & 1) === 0);
   }
 }
 
 await Promise.all(Array.from({ length: concurrency }, worker));
+
+if (completed === 0) {
+  throw new Error("fixture never completed a non-aborted fetch");
+}
 
 // Force a collection so any queued deinit_callback tasks have a chance to
 // run against memory that has been recycled.

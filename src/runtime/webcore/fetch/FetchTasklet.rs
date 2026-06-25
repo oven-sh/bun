@@ -409,10 +409,9 @@ impl FetchTasklet {
             unsafe { FetchTasklet::dealloc_for_shutdown(this) };
             return;
         }
-        // this is really unlikely to happen, but can happen
-        // lets make sure that we always call deinit from main thread
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
-        // takes ownership of it.
+        // Defensive fallback for release builds; unreachable per the
+        // is_shutting_down() assert above. Bounce deinit to the JS thread
+        // via a fresh heap `ConcurrentTaskItem` that the queue owns.
         Self::enqueue_concurrent(
             self_.javascript_vm,
             ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),

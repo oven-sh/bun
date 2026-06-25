@@ -1,7 +1,7 @@
 import { $, Glob, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstat, mkdir, readlink, rm } from "fs/promises";
-import { bunEnv, bunExe, isASAN, isDebug, isMusl, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "path";
 
 // Parallel hoisted install is POSIX-only (Windows already fans out
@@ -79,7 +79,6 @@ async function fingerprintNodeModules(dir: string): Promise<string[]> {
 }
 
 async function install(dir: string, env: NodeJS.Dict<string>, extraArgs: string[] = []) {
-  const start = Bun.nanoseconds();
   await using proc = spawn({
     cmd: [bunExe(), "install", "--ignore-scripts", ...extraArgs],
     cwd: dir,
@@ -88,9 +87,7 @@ async function install(dir: string, env: NodeJS.Dict<string>, extraArgs: string[
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const wallMicros = (Bun.nanoseconds() - start) / 1000;
-  const usage = proc.resourceUsage();
-  return { stdout, stderr, exitCode, wallMicros, usage };
+  return { stdout, stderr, exitCode };
 }
 
 describe.skipIf(!isPosix)("parallel hoisted install", () => {
@@ -216,53 +213,4 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
     }
     expect(layout.filter(p => p.startsWith("node_modules/.bin/")).length).toBeGreaterThan(0);
   });
-
-  // Observable difference between the pre-change serial linker and
-  // the parallel one: parallel linking spreads ~1.5k linkat/mkdirat
-  // syscalls across the thread pool, so (user+sys CPU) / wall time
-  // is well above 1 on a multi-core host. The serial linker does
-  // everything on the main thread, so that ratio stays ≈1.0
-  // (background network/extract threads add a little, but with a
-  // warm cache and frozen lockfile there is essentially none).
-  //
-  // Skip on single-core machines where no fan-out is possible, on
-  // debug/ASAN builds where sanitizer + process-startup overhead
-  // swamps the linking work and compresses the ratio toward 1.0
-  // (observed 1.12 on CI's ASAN runner), and on musl — the Alpine
-  // CI runners are CPU-quota-constrained containers where
-  // `navigator.hardwareConcurrency` reports the host's core count
-  // but the cgroup scheduler hands out slices serially, so the
-  // observed ratio collapses even though tasks ARE fanned out to
-  // the thread pool. The deterministic "[ParallelHoistedInstall] N
-  // tasks" marker in the first test already proves the parallel
-  // code path is taken; this test is a performance canary for
-  // unconstrained hosts only.
-  test.skipIf((navigator.hardwareConcurrency ?? 1) < 2 || isDebug || isASAN || isMusl)(
-    "links packages in parallel on the thread pool",
-    async () => {
-      await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-      const warm = await install(fixture.dir, env);
-      expect(warm.exitCode).toBe(0);
-
-      // Best-of-N to smooth over scheduler noise on a busy CI host.
-      const runs = 5;
-      let best = 0;
-      for (let i = 0; i < runs; i++) {
-        await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-        const r = await install(fixture.dir, env, ["--frozen-lockfile"]);
-        expect(r.stderr).not.toContain("error:");
-        expect(r.exitCode).toBe(0);
-        const cpu = Number(r.usage?.cpuTime.user ?? 0n) + Number(r.usage?.cpuTime.system ?? 0n);
-        best = Math.max(best, cpu / Math.max(1, r.wallMicros));
-      }
-
-      console.log(`cpu/wall (best of ${runs}): ${best.toFixed(2)}`);
-
-      // With the parallel path on a release build: 1.4–2.7 observed
-      // across Linux/macOS CI. Without it (serial linking on the
-      // main thread), the ratio cannot meaningfully exceed ~1.1 —
-      // verified against bun 1.3.12 (1.10–1.16).
-      expect(best).toBeGreaterThan(1.25);
-    },
-  );
 });

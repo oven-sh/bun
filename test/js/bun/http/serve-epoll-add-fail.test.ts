@@ -1,21 +1,16 @@
-// epoll_ctl(EPOLL_CTL_ADD) for a listen socket can fail with ENOSPC when
-// fs.epoll.max_user_watches is exhausted. uSockets used to discard the
-// epoll_ctl return code, so Bun.serve() returned a healthy-looking server
-// whose listener was never registered with the event loop: the kernel kept
-// completing TCP handshakes into the backlog while no request was ever
-// answered. This test injects that ENOSPC via an LD_PRELOAD shim and asserts
-// Bun.serve / Bun.listen now throw instead of silently going deaf.
-import { beforeAll, expect, test } from "bun:test";
+// An LD_PRELOAD shim makes epoll_ctl(EPOLL_CTL_ADD) fail with ENOSPC (what the
+// kernel returns when fs.epoll.max_user_watches is exhausted) so Bun.serve /
+// Bun.listen must throw and accepted connections must be closed, not parked.
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// The shim makes epoll_ctl(ADD) fail with ENOSPC for either listening sockets
-// (SO_ACCEPTCONN == 1) or connected TCP sockets (SO_TYPE == SOCK_STREAM &&
-// SO_ACCEPTCONN == 0), selected by the FAIL_EPOLL_ADD env var. Non-socket fds
-// (timerfd, eventfd) always pass through so the event loop can start.
+// FAIL_EPOLL_ADD=listener fails ADD for listening sockets (SO_ACCEPTCONN);
+// FAIL_EPOLL_ADD=accepted fails ADD for connected SOCK_STREAM sockets.
+// Non-socket fds (timerfd, eventfd) always pass through.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -76,11 +71,8 @@ try {
 }
 `;
 
-// For the accepted-socket case: the listener registers fine, but every
-// accepted connection's EPOLL_CTL_ADD fails. The server prints its port,
-// then "OPEN" for each socket that reaches the open() handler. With the fix
-// the fd is closed before open() is dispatched, so the client sees the
-// connection close and the server never prints "OPEN".
+// Listener registers fine; every accepted connection's EPOLL_CTL_ADD fails.
+// open() must never fire and the client must observe the connection close.
 const ACCEPT_FIXTURE = /* js */ `
 const server = Bun.listen({
   port: 0,
@@ -97,7 +89,7 @@ process.stdin.once("data", () => { server.stop(true); process.exit(0); });
 `;
 
 let shimPath: string;
-let dir: ReturnType<typeof tempDir>;
+let dir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
   if (!isLinux || !cc) return;
@@ -120,6 +112,10 @@ beforeAll(async () => {
   }
 });
 
+afterAll(() => {
+  dir?.[Symbol.dispose]();
+});
+
 async function runWithShim(script: string, mode: "listener" | "accepted" = "listener") {
   await using proc = Bun.spawn({
     cmd: [bunExe(), script],
@@ -135,17 +131,13 @@ async function runWithShim(script: string, mode: "listener" | "accepted" = "list
 test.skipIf(!isLinux || !cc)("Bun.serve throws when epoll_ctl(EPOLL_CTL_ADD) for the listen socket fails", async () => {
   const { stdout, stderr, exitCode } = await runWithShim("serve.js");
   const line = stdout.trim().split("\n").pop() ?? "";
-  expect(line).not.toBe("");
+  expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
   const result = JSON.parse(line);
-  // Before the fix: { ok: true, port: <n> } and the server is a zombie.
-  expect({ stderr, result }).toEqual({
-    stderr: "",
-    result: {
-      ok: false,
-      code: "ENOSPC",
-      syscall: "listen",
-      message: expect.stringContaining("ENOSPC"),
-    },
+  expect(result).toEqual({
+    ok: false,
+    code: "ENOSPC",
+    syscall: "listen",
+    message: expect.stringContaining("ENOSPC"),
   });
   expect(exitCode).toBe(0);
 });
@@ -155,12 +147,15 @@ test.skipIf(!isLinux || !cc)(
   async () => {
     const { stdout, stderr, exitCode } = await runWithShim("listen.js");
     const line = stdout.trim().split("\n").pop() ?? "";
-    expect(line).not.toBe("");
+    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
     const result = JSON.parse(line);
-    expect({ stderr, ok: result.ok }).toEqual({ stderr: "", ok: false });
-    expect(result.errno).toBe(28); // ENOSPC
-    expect(result.code).toBe("ENOSPC");
-    expect(result.syscall).toBe("listen");
+    expect(result).toEqual({
+      ok: false,
+      errno: 28, // ENOSPC
+      code: "ENOSPC",
+      syscall: "listen",
+      message: expect.any(String),
+    });
     expect(exitCode).toBe(0);
   },
 );
@@ -175,6 +170,7 @@ test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL
     stdin: "pipe",
   });
 
+  const stderrPromise = proc.stderr.text();
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
@@ -196,11 +192,8 @@ test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL
   expect(portLine).toMatch(/^PORT \d+$/);
   const port = Number(portLine!.slice("PORT ".length));
 
-  // Connect from the test process (no shim here). With the fix the server
-  // closes the accepted fd immediately because epoll_ctl failed, so the
-  // client observes close/end. Without the fix the server dispatches
-  // open() and leaves the socket parked forever; this await never resolves
-  // and the test fails on Bun's default per-test timeout.
+  // The shim is only in the child; this client must see the server close
+  // the accepted fd (epoll_ctl failed) instead of leaving it parked.
   const closed = await new Promise<string>(resolve => {
     const sock = net.connect({ host: "127.0.0.1", port }, () => {
       sock.write("ping");
@@ -210,12 +203,18 @@ test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL
   });
   expect(["close", "error:ECONNRESET"]).toContain(closed);
 
-  // The server must not have reached open() for the dead connection.
   proc.stdin.write("done\n");
   proc.stdin.end();
-  const stderr = await proc.stderr.text();
-  let rest = "";
-  for (let line; (line = await readLine()) !== null; ) rest += line + "\n";
-  expect({ stderr, rest }).toEqual({ stderr: "", rest: "" });
-  expect(await proc.exited).toBe(0);
+  const [stderr, rest, exitCode] = await Promise.all([
+    stderrPromise,
+    (async () => {
+      let out = "";
+      for (let line; (line = await readLine()) !== null; ) out += line + "\n";
+      return out;
+    })(),
+    proc.exited,
+  ]);
+  // open() must not have fired (no "OPEN" line after PORT).
+  expect({ stderr, rest }).toEqual({ stderr: expect.any(String), rest: "" });
+  expect(exitCode).toBe(0);
 });

@@ -108,22 +108,18 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
     expect(afterSize).toBeLessThan(baselineSize * 4 + 64 * 1024 * 1024);
   });
 
-  test("Bun.gc(true) outside a bracket still collects (no leaked deferral)", () => {
-    // If an earlier test had leaked a deferral level, Bun.gc(true) would
-    // be a no-op. heapSize() is frozen-at-last-collection so it can't
-    // detect that — use heapCapacity (live block reservation) which
-    // grows under allocation and drops on a real collection.
-    Bun.gc(true);
-    const baselineCap = heapStats().heapCapacity;
-    let sink = 0;
-    for (let i = 0; i < 100_000; i++) sink += { i, p: [i, i, i, i] }.p.length;
-    expect(sink).toBeGreaterThan(0);
-    const grownCap = heapStats().heapCapacity;
-    expect(grownCap).toBeGreaterThan(baselineCap);
-    Bun.gc(true);
-    const postCap = heapStats().heapCapacity;
-    // If a deferral had leaked, gc(true) is a no-op and capacity stays
-    // at grownCap. A real collection drops it well below the grown peak.
-    expect(postCap).toBeLessThan((baselineCap + grownCap) / 2);
+  test("no deferral leaked from earlier tests", () => {
+    // Direct check: if an earlier test left a bracket open, gcDefer()
+    // here would return >1. The contract test above already proves
+    // gc(true) works after a properly-closed bracket; this test only
+    // needs to prove the depth state is clean. (Heap-size-based checks
+    // are unreliable here because without a bracket eden GC fires
+    // mid-loop and saw-tooths capacity to a build-dependent threshold.)
+    const depth = Bun.unsafe.gcDefer();
+    try {
+      expect(depth).toBe(1);
+    } finally {
+      Bun.unsafe.gcAllow();
+    }
   });
 });

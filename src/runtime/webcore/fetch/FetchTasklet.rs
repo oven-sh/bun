@@ -2190,8 +2190,10 @@ impl FetchTasklet {
         let task_ref = Self::from_raw_mut(task);
 
         task_ref.mutex.lock();
-        // we need to unlock before task.deref();
-        // explicit unlock + deref at end instead of nested defers.
+        // The mutex stays held through deref_from_thread at every exit so the
+        // HTTP-side deref is never the 1→0 transition (on_progress_update
+        // needs this mutex to release the JS-side initial ref).
+        //
         // Sync HTTP-thread state back into the JS-side instance via an
         // explicit field-subset copy (`AsyncHTTP` is not `Copy`:
         // `HTTPClient: Drop`, owned Vecs); see `AsyncHTTP::sync_progress_from`

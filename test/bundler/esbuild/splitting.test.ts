@@ -633,7 +633,6 @@ describe("bundler", () => {
     },
   });
   // https://github.com/oven-sh/bun/issues/32395
-  // Previously this panicked with: called `Option::unwrap()` on a `None` value
   for (const format of ["cjs", "iife"] as const) {
     for (const backend of ["cli", "api"] as const) {
       itBundled(`splitting/ErrorWithNonEsmFormat_${format}_${backend}`, {

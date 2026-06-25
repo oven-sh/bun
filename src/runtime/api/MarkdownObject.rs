@@ -475,11 +475,10 @@ struct ParseStackEntry {
     children: JSValue,
     data: u32,
     flags: u32,
-    // Note: `SpanDetail` borrows from `src_text`; the `RendererImpl`
-    // trait erases that lifetime, so we extend it to `'static` at the
-    // `enter_span` boundary (see SAFETY note there). Entries are popped
-    // and consumed strictly before `src_text` is dropped.
-    detail: md::SpanDetail<'static>,
+    // Owned copies of the span detail: reference-style links hand us
+    // slices into temporaries that drop before `leave_span` runs.
+    href: Box<[u8]>,
+    title: Box<[u8]>,
 }
 
 impl Default for ParseStackEntry {
@@ -488,7 +487,8 @@ impl Default for ParseStackEntry {
             children: JSValue::ZERO,
             data: 0,
             flags: 0,
-            detail: md::SpanDetail::default(),
+            href: Box::default(),
+            title: Box::default(),
         }
     }
 }
@@ -820,17 +820,12 @@ impl<'a> ParseRenderer<'a> {
             return Err(self.global_object.throw_stack_overflow());
         }
 
-        // SAFETY: `detail.href`/`.title` borrow from `self.src_text`, which
-        // outlives this renderer; the `RendererImpl` trait erases that
-        // lifetime so we extend it here. The entry is popped (and the slices
-        // consumed) in `leave_span_impl` before `src_text` is dropped.
-        let detail: md::SpanDetail<'static> = unsafe { detail.detach_lifetime() };
-
         let array = JSValue::create_empty_array(self.global_object, 0)?;
         self.marked_args.append(array);
         self.stack.push(ParseStackEntry {
             children: array,
-            detail,
+            href: Box::from(detail.href),
+            title: Box::from(detail.title),
             ..Default::default()
         });
         Ok(())
@@ -854,13 +849,13 @@ impl<'a> ParseRenderer<'a> {
         match span_type {
             md::SpanType::A => {
                 props_count += 1; // href
-                if !entry.detail.title.is_empty() {
+                if !entry.title.is_empty() {
                     props_count += 1;
                 }
             }
             md::SpanType::Img => {
                 props_count += 1; // src
-                if !entry.detail.title.is_empty() {
+                if !entry.title.is_empty() {
                     props_count += 1;
                 }
             }
@@ -883,19 +878,19 @@ impl<'a> ParseRenderer<'a> {
         // Set metadata props
         match span_type {
             md::SpanType::A => {
-                props.put(g, b"href", create_utf8_for_js(g, entry.detail.href)?);
-                if !entry.detail.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, entry.detail.title)?);
+                props.put(g, b"href", create_utf8_for_js(g, &entry.href)?);
+                if !entry.title.is_empty() {
+                    props.put(g, b"title", create_utf8_for_js(g, &entry.title)?);
                 }
             }
             md::SpanType::Img => {
-                props.put(g, b"src", create_utf8_for_js(g, entry.detail.href)?);
-                if !entry.detail.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, entry.detail.title)?);
+                props.put(g, b"src", create_utf8_for_js(g, &entry.href)?);
+                if !entry.title.is_empty() {
+                    props.put(g, b"title", create_utf8_for_js(g, &entry.title)?);
                 }
             }
             md::SpanType::Wikilink => {
-                props.put(g, b"target", create_utf8_for_js(g, entry.detail.href)?);
+                props.put(g, b"target", create_utf8_for_js(g, &entry.href)?);
             }
             md::SpanType::LatexmathDisplay => {
                 props.put(g, b"display", JSValue::TRUE);
@@ -1048,11 +1043,10 @@ struct CallbackStackEntry {
     /// For ul/ol: number of li children seen so far (next li's index).
     /// For li: this item's 0-based index within its parent list.
     child_index: u32,
-    // Note: `SpanDetail` borrows from `src_text`; the `RendererImpl`
-    // trait erases that lifetime, so we extend it to `'static` at the
-    // `enter_span` boundary (see SAFETY note there). Entries are popped
-    // and consumed strictly before `src_text` is dropped.
-    detail: md::SpanDetail<'static>,
+    // Owned copies of the span detail: reference-style links hand us
+    // slices into temporaries that drop before `leave_span` runs.
+    href: Box<[u8]>,
+    title: Box<[u8]>,
 }
 
 impl Default for CallbackStackEntry {
@@ -1063,7 +1057,8 @@ impl Default for CallbackStackEntry {
             data: 0,
             flags: 0,
             child_index: 0,
-            detail: md::SpanDetail::default(),
+            href: Box::default(),
+            title: Box::default(),
         }
     }
 }
@@ -1268,12 +1263,11 @@ impl<'a> JsCallbackRenderer<'a> {
         // Note: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
         let saved = if self.stack.len() > 1 {
             CallbackStackEntry {
-                buffer: Vec::new(),
                 block_type: self.stack.last().unwrap().block_type,
                 data: self.stack.last().unwrap().data,
                 flags: self.stack.last().unwrap().flags,
                 child_index: self.stack.last().unwrap().child_index,
-                detail: self.stack.last().unwrap().detail,
+                ..Default::default()
             }
         } else {
             CallbackStackEntry::default()
@@ -1291,14 +1285,9 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        // SAFETY: `detail` borrows from `src_text`, which outlives every
-        // `CallbackStackEntry` (the stack is fully drained before `src_text`
-        // is dropped). The `RendererImpl` trait erases the concrete lifetime,
-        // so we widen it to `'static` for storage on the stack — same pattern
-        // as `ParseStackEntry` above.
-        let detail: md::SpanDetail<'static> = unsafe { detail.detach_lifetime() };
         self.stack.push(CallbackStackEntry {
-            detail,
+            href: Box::from(detail.href),
+            title: Box::from(detail.title),
             ..Default::default()
         });
         Ok(())
@@ -1310,12 +1299,13 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_span_callback(span_type);
-        let detail = if self.stack.len() > 1 {
-            self.stack.last().unwrap().detail
+        let (href, title): (&[u8], &[u8]) = if self.stack.len() > 1 {
+            let top = self.stack.last().unwrap();
+            (&top.href, &top.title)
         } else {
-            md::SpanDetail::default()
+            (b"", b"")
         };
-        let meta = self.create_span_meta(span_type, &detail)?;
+        let meta = self.create_span_meta(span_type, href, title)?;
         self.pop_and_callback(callback, meta)?;
         Ok(())
     }
@@ -1553,14 +1543,15 @@ impl<'a> JsCallbackRenderer<'a> {
     fn create_span_meta(
         &self,
         span_type: md::SpanType,
-        detail: &md::SpanDetail<'_>,
+        href: &[u8],
+        title: &[u8],
     ) -> JsResult<Option<JSValue>> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {
-                let href = create_utf8_for_js(g, detail.href)?;
-                let title = if !detail.title.is_empty() {
-                    create_utf8_for_js(g, detail.title)?
+                let href = create_utf8_for_js(g, href)?;
+                let title = if !title.is_empty() {
+                    create_utf8_for_js(g, title)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1573,9 +1564,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 // second slot, so just fall back to the generic path here —
                 // images are rare enough that it doesn't matter.
                 let obj = JSValue::create_empty_object(g, 2);
-                obj.put(g, b"src", create_utf8_for_js(g, detail.href)?);
-                if !detail.title.is_empty() {
-                    obj.put(g, b"title", create_utf8_for_js(g, detail.title)?);
+                obj.put(g, b"src", create_utf8_for_js(g, href)?);
+                if !title.is_empty() {
+                    obj.put(g, b"title", create_utf8_for_js(g, title)?);
                 }
                 Ok(Some(obj))
             }

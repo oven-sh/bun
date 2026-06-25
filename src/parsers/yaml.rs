@@ -110,7 +110,7 @@ pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<'_, Enc>, writer: &mut
     // (currently unreachable — `rg yaml::print src/` has no callers) path.
     let _ = (stream, writer);
     panic!(
-        "yaml::print: Printer is commented out in yaml.zig (dead-by-spec; uses removed Node type)"
+        "yaml::print: Printer is commented out in the Zig original (dead-by-spec; uses removed Node type)"
     );
 }
 

@@ -89,7 +89,7 @@ pub use windows_named_pipe_context::WindowsNamedPipeContext;
 /// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
 /// resolve against the real struct, not an opaque placeholder.
 pub mod udp_socket {
-    /// `generated_js2native.rs` lowers `$zig(udp_socket.zig, UDPSocket.jsConnect)`
+    /// `generated_js2native.rs` lowers `$rust(udp_socket.rs, UDPSocket.jsConnect)`
     /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
     /// `udp_socket` segment is the snake-cased struct name; aliasing the type
     /// lets the associated-fn path resolve directly.
@@ -100,7 +100,7 @@ pub use udp_socket::UDPSocket;
 
 /// Codegen path alias.
 ///
-/// `generated_js2native.rs` lowers `$zig(socket.zig, fnName)` to
+/// `generated_js2native.rs` lowers `$rust(socket.rs, fnName)` to
 /// `crate::socket::socket::fn_name(...)` (one path segment per directory plus
 /// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
 /// `mod.rs` as the wiring layer, so re-export the js2native entry points under

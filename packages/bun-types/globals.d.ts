@@ -735,13 +735,16 @@ interface ReadableStreamDirectController {
    * which resolves once the destination has drained:
    *
    * ```ts
-   * if (controller.write(chunk) < 0) {
+   * const n = controller.write(chunk);
+   * if (typeof n === "number" && n < 0) {
    *   await controller.flush(true);
    * }
    * ```
    *
    * For some destinations (e.g. {@link Bun.FileSink} on Windows pipes) the
-   * write itself is asynchronous and a `Promise<number>` is returned instead.
+   * write itself is asynchronous and a `Promise<number>` is returned instead;
+   * the `typeof` check above skips the backpressure wait for those — the
+   * promise carries its own flow control.
    */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;

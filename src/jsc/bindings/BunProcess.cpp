@@ -941,7 +941,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
     if (callFrame->argumentCount() > 0 && !arg0.isUndefined()) {
         JSArray* relativeArray = dynamicDowncast<JSC::JSArray>(arg0);
         if (!relativeArray) {
-            return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "time"_s, "Array"_s, arg0);
+            return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, globalObject, "time"_s, "Array"_s, arg0);
         }
         if (relativeArray->length() != 2) return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject_, "time"_s, "2"_s, jsNumber(relativeArray->length()));
 
@@ -3156,7 +3156,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     auto* groupsArray = dynamicDowncast<JSC::JSArray>(groups);
     if (!groupsArray) [[unlikely]] {
         // validateArray uses JSC::isArray() which accepts Proxy->Array, but jsDynamicCast returns null.
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "groups"_s, "Array"_s, groups);
+        return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "groups"_s, "Array"_s, groups);
     }
     auto count = groupsArray->length();
     gid_t groupsStack[64];

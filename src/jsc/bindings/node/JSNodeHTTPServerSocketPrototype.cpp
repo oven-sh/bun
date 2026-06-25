@@ -13,8 +13,12 @@ extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" void us_socket_resume(us_socket_t*);
 extern "C" void us_socket_pause(us_socket_t*);
-// us_socket_get_fd is declared in <libusockets.h>, transitively included via
-// JSNodeHTTPServerSocket.h / the uSockets headers.
+// LIBUS_SOCKET_DESCRIPTOR is SOCKET (uintptr_t) on Windows, int elsewhere.
+#if OS(WINDOWS)
+extern "C" uintptr_t us_socket_get_fd(struct us_socket_t* s);
+#else
+extern "C" int us_socket_get_fd(struct us_socket_t* s);
+#endif
 
 namespace Bun {
 

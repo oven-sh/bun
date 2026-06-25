@@ -5,10 +5,10 @@
 // completing TCP handshakes into the backlog while no request was ever
 // answered. This test injects that ENOSPC via an LD_PRELOAD shim and asserts
 // Bun.serve / Bun.listen now throw instead of silently going deaf.
-import { test, expect, beforeAll } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { join } from "node:path";
 import net from "node:net";
+import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
@@ -132,26 +132,23 @@ async function runWithShim(script: string, mode: "listener" | "accepted" = "list
   return { stdout, stderr, exitCode };
 }
 
-test.skipIf(!isLinux || !cc)(
-  "Bun.serve throws when epoll_ctl(EPOLL_CTL_ADD) for the listen socket fails",
-  async () => {
-    const { stdout, stderr, exitCode } = await runWithShim("serve.js");
-    const line = stdout.trim().split("\n").pop() ?? "";
-    expect(line).not.toBe("");
-    const result = JSON.parse(line);
-    // Before the fix: { ok: true, port: <n> } and the server is a zombie.
-    expect({ stderr, result }).toEqual({
-      stderr: "",
-      result: {
-        ok: false,
-        code: "ENOSPC",
-        syscall: "listen",
-        message: expect.stringContaining("ENOSPC"),
-      },
-    });
-    expect(exitCode).toBe(0);
-  },
-);
+test.skipIf(!isLinux || !cc)("Bun.serve throws when epoll_ctl(EPOLL_CTL_ADD) for the listen socket fails", async () => {
+  const { stdout, stderr, exitCode } = await runWithShim("serve.js");
+  const line = stdout.trim().split("\n").pop() ?? "";
+  expect(line).not.toBe("");
+  const result = JSON.parse(line);
+  // Before the fix: { ok: true, port: <n> } and the server is a zombie.
+  expect({ stderr, result }).toEqual({
+    stderr: "",
+    result: {
+      ok: false,
+      code: "ENOSPC",
+      syscall: "listen",
+      message: expect.stringContaining("ENOSPC"),
+    },
+  });
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(!isLinux || !cc)(
   "Bun.listen throws when epoll_ctl(EPOLL_CTL_ADD) for the listen socket fails",
@@ -168,60 +165,57 @@ test.skipIf(!isLinux || !cc)(
   },
 );
 
-test.skipIf(!isLinux || !cc)(
-  "accepted connection is closed when epoll_ctl(EPOLL_CTL_ADD) fails for it",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "accept.js"],
-      cwd: String(dir),
-      env: { ...bunEnv, LD_PRELOAD: shimPath, FAIL_EPOLL_ADD: "accepted" },
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "pipe",
-    });
+test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL_CTL_ADD) fails for it", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "accept.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, LD_PRELOAD: shimPath, FAIL_EPOLL_ADD: "accepted" },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "pipe",
+  });
 
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let buffered = "";
-    async function readLine(): Promise<string | null> {
-      for (;;) {
-        const i = buffered.indexOf("\n");
-        if (i >= 0) {
-          const line = buffered.slice(0, i);
-          buffered = buffered.slice(i + 1);
-          return line;
-        }
-        const { value, done } = await reader.read();
-        if (done) return buffered.length ? buffered : null;
-        buffered += decoder.decode(value, { stream: true });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  async function readLine(): Promise<string | null> {
+    for (;;) {
+      const i = buffered.indexOf("\n");
+      if (i >= 0) {
+        const line = buffered.slice(0, i);
+        buffered = buffered.slice(i + 1);
+        return line;
       }
+      const { value, done } = await reader.read();
+      if (done) return buffered.length ? buffered : null;
+      buffered += decoder.decode(value, { stream: true });
     }
+  }
 
-    const portLine = await readLine();
-    expect(portLine).toMatch(/^PORT \d+$/);
-    const port = Number(portLine!.slice("PORT ".length));
+  const portLine = await readLine();
+  expect(portLine).toMatch(/^PORT \d+$/);
+  const port = Number(portLine!.slice("PORT ".length));
 
-    // Connect from the test process (no shim here). With the fix the server
-    // closes the accepted fd immediately because epoll_ctl failed, so the
-    // client observes close/end. Without the fix the server dispatches
-    // open() and leaves the socket parked forever; this await never resolves
-    // and the test fails on Bun's default per-test timeout.
-    const closed = await new Promise<string>(resolve => {
-      const sock = net.connect({ host: "127.0.0.1", port }, () => {
-        sock.write("ping");
-      });
-      sock.on("error", err => resolve("error:" + (err as NodeJS.ErrnoException).code));
-      sock.on("close", () => resolve("close"));
+  // Connect from the test process (no shim here). With the fix the server
+  // closes the accepted fd immediately because epoll_ctl failed, so the
+  // client observes close/end. Without the fix the server dispatches
+  // open() and leaves the socket parked forever; this await never resolves
+  // and the test fails on Bun's default per-test timeout.
+  const closed = await new Promise<string>(resolve => {
+    const sock = net.connect({ host: "127.0.0.1", port }, () => {
+      sock.write("ping");
     });
-    expect(["close", "error:ECONNRESET"]).toContain(closed);
+    sock.on("error", err => resolve("error:" + (err as NodeJS.ErrnoException).code));
+    sock.on("close", () => resolve("close"));
+  });
+  expect(["close", "error:ECONNRESET"]).toContain(closed);
 
-    // The server must not have reached open() for the dead connection.
-    proc.stdin.write("done\n");
-    proc.stdin.end();
-    const stderr = await proc.stderr.text();
-    let rest = "";
-    for (let line; (line = await readLine()) !== null; ) rest += line + "\n";
-    expect({ stderr, rest }).toEqual({ stderr: "", rest: "" });
-    expect(await proc.exited).toBe(0);
-  },
-);
+  // The server must not have reached open() for the dead connection.
+  proc.stdin.write("done\n");
+  proc.stdin.end();
+  const stderr = await proc.stderr.text();
+  let rest = "";
+  for (let line; (line = await readLine()) !== null; ) rest += line + "\n";
+  expect({ stderr, rest }).toEqual({ stderr: "", rest: "" });
+  expect(await proc.exited).toBe(0);
+});

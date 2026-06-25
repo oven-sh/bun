@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { once } from "events";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { connect } from "net";
-import { once } from "events";
 
 // When the process is at its fd limit and a connection is waiting in the
 // listen backlog, accept() returns EMFILE. The listener poll is

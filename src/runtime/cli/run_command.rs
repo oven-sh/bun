@@ -2958,17 +2958,9 @@ impl RunCommand {
         let user = ::core::mem::take(&mut ctx.runtime_options.eval.script);
         let mut script = Vec::with_capacity(user.len() + 6 + bootstrap.len());
         if !user.is_empty() {
-            // `bun --interactive -e 'code'` (Node's `node -i -e`): run the
-            // user script first, then enter the REPL. The bootstrap passes
-            // `useGlobal: true`, so globals it sets are visible at the prompt.
-            // Wrap the user script in a block so user `const`/`let` don't
-            // collide with the bundled bootstrap's top-level wrapper vars
-            // (`__commonJS`/`__require` in debug, minifier-chosen short names
-            // in release); the bootstrap itself ends in `export default …` so
-            // it must remain at the module's top level. The block also means a
-            // static `import`/`export` in the user script is a syntax error
-            // (matching `node -i -e`, whose eval is CJS) — use
-            // `await import()` / `require()` instead.
+            // `node -i -e`: run user code first, then the REPL (useGlobal=true).
+            // Block-wrap user code so its const/let can't collide with the
+            // bootstrap's top-level vars; static import/export thus errors (as in Node).
             script.extend_from_slice(b"{\n");
             script.extend_from_slice(&user);
             script.extend_from_slice(b"\n};\n");

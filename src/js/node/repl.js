@@ -1013,10 +1013,8 @@ class REPLServer extends Interface {
       decorateErrorStack(e);
 
       if (isError(e)) {
-        // V8 stores `.stack` as an accessor (the setter survives Object.freeze);
-        // JSC stores it as an own data property, so under freeze the strict-mode
-        // writes below throw. Swallow that so the REPL prints the original error
-        // instead of a TypeError.
+        // JSC's `.stack` is an own data property (V8's is an accessor), so under
+        // Object.freeze the writes below throw in strict mode; swallow that.
         try {
           if (e.stack) {
             if (e.name === "SyntaxError") {

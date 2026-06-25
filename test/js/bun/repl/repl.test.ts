@@ -1250,10 +1250,8 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
   });
 });
 
-// `node -i -e 'code'` runs the eval and then enters the REPL with the eval'd
-// globals visible (the documented "load a script then go interactive" pattern).
-// `__commonJS` is a top-level var the bundled REPL bootstrap declares; the user
-// script is wrapped in a block so a user const of the same name doesn't collide.
+// `node -i -e 'code'`: eval first, then REPL with the eval'd globals visible.
+// `__commonJS` collides with the bootstrap unless the user script is block-wrapped.
 test("--interactive -e runs the eval first and enters the REPL with its globals visible", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--interactive", "-e", "const __commonJS = 0; globalThis.fromEval = 42"],
@@ -1269,10 +1267,9 @@ test("--interactive -e runs the eval first and enters the REPL with its globals 
   expect(exitCode).toBe(0);
 });
 
-// V8 keeps Error#stack as an accessor (the setter survives Object.freeze); JSC
-// stores it as an own data property, so the strict-mode `e.stack = …` rewrites
-// in node:repl's _handleError throw on a frozen error. The Bun port guards
-// those writes so the REPL prints the original error and continues like Node.
+// JSC's Error#stack is an own data property (V8's is an accessor), so a frozen
+// error makes _handleError's strict-mode `e.stack = …` rewrites throw; the Bun
+// port guards those writes so the REPL prints the error and continues like Node.
 describe.concurrent("node:repl prints a frozen thrown error and continues", () => {
   test.each([
     ["Error in sloppy mode", "SLOPPY", "throw Object.freeze(new Error('boom'))", "Uncaught Error: boom"],

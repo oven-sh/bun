@@ -27,11 +27,9 @@ function assignFunctionName(name, fn) {
 }
 
 function decorateErrorStack(err) {
-  // JSC materializes error stacks eagerly, so Node's overrideStackTrace-based
-  // trimming never runs. Reproduce it: convert JSC's "<anonymous> (loc)"
-  // frames to V8's bare "loc" form, then cut at the last anonymous frame
-  // (Node's null-functionName boundary) - that drops the REPL top-level frame
-  // and the vm runner frames below it.
+  // JSC materializes stacks eagerly so Node's overrideStackTrace never runs;
+  // reproduce it by normalizing "<anonymous> (loc)" frames and cutting at the
+  // last REPLn:l:c frame (drops the REPL top-level + vm runner frames).
   if (typeof err?.stack !== "string") return err;
   let lines = err.stack.split("\n");
   lines = lines.map(l => l.replace(/^(\s+at )<anonymous> \((.+)\)$/, "$1$2"));
@@ -196,11 +194,9 @@ let builtinLibs;
 
 function getBuiltinLibs() {
   if (!builtinLibs) {
-    // Bun's Module.builtinModules also lists `bun`, `bun:*`, and the bundled
-    // third-party shims (`undici`, `ws`); none of these resolve under the
-    // `node:` scheme and none exist in a Node REPL, so exclude them here so
-    // tab completion doesn't offer e.g. `node:undici` and the REPL global
-    // scope matches Node's.
+    // Bun's builtinModules also lists `bun`, `bun:*`, `undici`, `ws`; none
+    // resolve under `node:`, so exclude them so completion and the REPL
+    // global scope match Node's.
     builtinLibs = Module.builtinModules.filter(
       id => !id.startsWith("_") && !id.startsWith("node:") && !id.startsWith("bun") && id !== "undici" && id !== "ws",
     );

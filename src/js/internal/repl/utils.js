@@ -799,11 +799,8 @@ function getREPLResourceName() {
 
 const globalBuiltins = new SafeSet(vm.runInNewContext("Object.getOwnPropertyNames(globalThis)"));
 
-// Upstream filters only `_*` and `node:*`. In Bun, Module.builtinModules also
-// contains `bun`, `bun:*`, `undici`, and `ws`; node-shims' getBuiltinLibs()
-// applies the upstream filter plus those Bun-specific exclusions so the
-// `node:`-prefixed completion list (completion.js) doesn't offer specifiers
-// the resolver rejects (e.g. `node:undici`).
+// node-shims' getBuiltinLibs() also excludes Bun-specific entries (`bun*`,
+// `undici`, `ws`) so completion doesn't offer e.g. `node:undici`.
 let _builtinLibs = getBuiltinLibs().slice();
 
 // Note: the `getReplBuiltinLibs` and `setReplBuiltinLibs` are functions used to provide getters and

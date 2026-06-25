@@ -1,6 +1,9 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import crypto from "node:crypto";
+import tls from "node:tls";
+import { createConnectProxy, startProxy } from "./proxy-test-utils";
 
 const skip = !fault.available() || isWindows;
 
@@ -404,5 +407,69 @@ describe.skipIf(skip)("Bun.serve WebSocket server under injected syscall faults 
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(skip)("WebSocket client (wss:// via HTTP CONNECT proxy) under injected syscall faults", () => {
+  // Regression for the proxy-tunnel pending-close path: a close frame that is
+  // only partially flushed defers `close` until handle_tunnel_writable() drains
+  // it. The wss endpoint below never answers the close frame, so the deferred
+  // dispatch is the ONLY way `onclose` can fire — without the drain this hangs.
+  test("send → short writes (1 byte): close() still dispatches 'close' once the tunnel drains", async () => {
+    const wss = tls.createServer({ cert: certs.cert, key: certs.key }, sock => {
+      let buf = Buffer.alloc(0);
+      let upgraded = false;
+      sock.on("data", chunk => {
+        if (upgraded) return; // absorb frames (including close) without replying
+        buf = Buffer.concat([buf, chunk]);
+        const end = buf.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const m = /Sec-WebSocket-Key:\s*([A-Za-z0-9+/=]+)/i.exec(buf.subarray(0, end).toString("latin1"));
+        if (!m) return sock.destroy();
+        const accept = crypto
+          .createHash("sha1")
+          .update(m[1] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        upgraded = true;
+      });
+      sock.on("error", () => {});
+    });
+    await new Promise<void>(r => wss.listen(0, "127.0.0.1", () => r()));
+    const proxy = createConnectProxy();
+    const proxyPort = await startProxy(proxy);
+    try {
+      const url = `wss://127.0.0.1:${(wss.address() as import("node:net").AddressInfo).port}/`;
+      const r = await runWSClient(
+        url,
+        { syscall: "send", action: "short", bytes: 1, repeat: -1 },
+        /* js */ `
+          const ws = new WebSocket(url, {
+            proxy: "http://127.0.0.1:${proxyPort}",
+            tls: { rejectUnauthorized: false },
+          });
+          // Arm only once the tunnel is up so CONNECT + TLS handshake stay fast.
+          // Two sends before close(): the 1st short-writes into the tunnel's
+          // write_buffer, so the 2nd queues in send_buffer under backpressure.
+          // That is the only tunnel state where the close dispatch is deferred
+          // (the SSL layer always absorbs the close frame itself in full).
+          ws.onopen = () => {
+            fault.set(rule);
+            ws.send(Buffer.alloc(256, 0x41));
+            ws.send("b");
+            ws.close(1000, "bye");
+          };
+          ws.onerror = () => {};
+          ws.onclose = e => { fault.clear(); out({ ok: true, code: e.code }); process.exit(0); };
+        `,
+      );
+      expect(r).toMatchObject({ ok: true, code: 1000, signal: null, exitCode: 0 });
+    } finally {
+      proxy.close();
+      wss.close();
+    }
   });
 });

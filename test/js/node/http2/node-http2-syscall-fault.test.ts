@@ -193,7 +193,7 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
       stream.end(body);
     });
     for (let i = 0; i < 6; i++) {
-      const sc = "recv" as const;
+      const sc: "recv" | "send" = rand() < 0.5 ? "recv" : "send";
       const bytes = 1 + Math.floor(rand() * 16);
       fault.set({ syscall: sc, action: "short", bytes, repeat: -1 });
       const client = http2.connect(server.url);

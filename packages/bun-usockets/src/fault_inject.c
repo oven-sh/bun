@@ -16,13 +16,18 @@ struct us_fault_slot {
 
 /* Process-global so rules armed on the JS thread also affect the HTTP-client
  * thread (fetch) and any worker threads. Per-socket isolation is provided by
- * rule.target_fd instead. The release store on us_fault_armed in
- * us_fault_recompute_armed() pairs with the acquire load in US_FAULT_CHECK so
- * a reader observing armed==1 also sees the rule fields written before it.
- * calls_seen/fired are atomic counters so cross-thread firings preserve
- * after/repeat determinism. */
+ * rule.target_fd instead. */
 static struct us_fault_slot us_fault_state[US_FAULT_COUNT];
 
+/* Guards every access to us_fault_state so a re-arm on the JS thread cannot
+ * tear the rule (or its counters) out from under a faulting I/O thread. Only
+ * taken once the lock-free us_fault_armed fast path in US_FAULT_CHECK has
+ * passed, so the disarmed hot path never touches it. */
+static zig_mutex_t us_fault_lock;
+
+/* Caller must hold us_fault_lock. The release store pairs with the acquire
+ * load in US_FAULT_CHECK; a reader that observes armed==1 then re-reads the
+ * rule under the lock in us_fault_hit(), so it never sees a torn rule. */
 static void us_fault_recompute_armed(void) {
     int any = 0;
     for (int i = 0; i < US_FAULT_COUNT; i++) {
@@ -36,41 +41,55 @@ static void us_fault_recompute_armed(void) {
 
 void us_fault_set(int sc, const struct us_fault_rule *rule) {
     if ((unsigned)sc >= US_FAULT_COUNT) return;
+    Bun__lock(&us_fault_lock);
     us_fault_state[sc].rule = *rule;
-    __atomic_store_n(&us_fault_state[sc].calls_seen, 0, __ATOMIC_RELAXED);
-    __atomic_store_n(&us_fault_state[sc].fired, 0, __ATOMIC_RELAXED);
+    us_fault_state[sc].calls_seen = 0;
+    us_fault_state[sc].fired = 0;
     us_fault_recompute_armed();
+    Bun__unlock(&us_fault_lock);
 }
 
 void us_fault_clear(int sc) {
     if ((unsigned)sc >= US_FAULT_COUNT) return;
-    __atomic_store_n(&us_fault_state[sc].rule.action, US_FAULT_NONE, __ATOMIC_RELAXED);
-    __atomic_store_n(&us_fault_state[sc].calls_seen, 0, __ATOMIC_RELAXED);
-    __atomic_store_n(&us_fault_state[sc].fired, 0, __ATOMIC_RELAXED);
+    Bun__lock(&us_fault_lock);
+    us_fault_state[sc].rule.action = US_FAULT_NONE;
+    us_fault_state[sc].calls_seen = 0;
+    us_fault_state[sc].fired = 0;
     us_fault_recompute_armed();
+    Bun__unlock(&us_fault_lock);
 }
 
 void us_fault_clear_all(void) {
+    Bun__lock(&us_fault_lock);
     for (int i = 0; i < US_FAULT_COUNT; i++) {
-        __atomic_store_n(&us_fault_state[i].rule.action, US_FAULT_NONE, __ATOMIC_RELAXED);
+        us_fault_state[i].rule.action = US_FAULT_NONE;
     }
     __atomic_store_n(&us_fault_armed, 0, __ATOMIC_RELEASE);
+    Bun__unlock(&us_fault_lock);
 }
 
 int us_fault_hit(int sc, int fd, ssize_t *out, int *clamp) {
+    Bun__lock(&us_fault_lock);
     struct us_fault_slot *slot = &us_fault_state[sc];
-    /* Snapshot the rule so a concurrent disarm cannot tear fields mid-switch. */
+    /* Snapshot under the lock so the post-release switch below acts on one
+     * coherent rule even if another thread swaps it right after we unlock.
+     * Single lock/unlock pair: every exit funnels through the one release. */
     struct us_fault_rule rule = slot->rule;
-    if (rule.action == US_FAULT_NONE) return 0;
-    if (rule.target_fd >= 0 && rule.target_fd != fd) return 0;
-    int seen = __atomic_fetch_add(&slot->calls_seen, 1, __ATOMIC_RELAXED);
-    if (seen < rule.after_n_calls) return 0;
-    int f = __atomic_fetch_add(&slot->fired, 1, __ATOMIC_ACQ_REL);
-    if (rule.repeat >= 0 && f >= rule.repeat) {
-        __atomic_store_n(&slot->rule.action, US_FAULT_NONE, __ATOMIC_RELAXED);
-        us_fault_recompute_armed();
-        return 0;
+    int fire = 0;
+    if (rule.action != US_FAULT_NONE && (rule.target_fd < 0 || rule.target_fd == fd)) {
+        int seen = slot->calls_seen++;
+        if (seen >= rule.after_n_calls) {
+            int f = slot->fired++;
+            if (rule.repeat >= 0 && f >= rule.repeat) {
+                slot->rule.action = US_FAULT_NONE;
+                us_fault_recompute_armed();
+            } else {
+                fire = 1;
+            }
+        }
     }
+    Bun__unlock(&us_fault_lock);
+    if (!fire) return 0;
     switch (rule.action) {
         case US_FAULT_ERRNO:
 #ifdef _WIN32

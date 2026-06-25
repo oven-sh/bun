@@ -44,6 +44,7 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       await proc.exited;
     }
     expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
   });
 
   test("send → short writes deliver complete streaming ReadableStream body", async () => {
@@ -66,6 +67,8 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       proc.kill("SIGTERM");
       await proc.exited;
     }
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
   });
 
   test("recv → short reads (1 byte) deliver complete request body to handler", async () => {
@@ -85,6 +88,8 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       proc.kill("SIGTERM");
       await proc.exited;
     }
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
   });
 
   test("https: send → short writes deliver complete body over TLS", async () => {
@@ -108,22 +113,22 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       proc.kill("SIGTERM");
       await proc.exited;
     }
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
   });
 
   test("client abort under server-side 1-byte sends: every response reaches a terminal state", async () => {
     const { proc, port } = await spawnServer(/* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
-      let finished = 0;
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
-        fetch: () => {
-          const r = new Response(new ReadableStream({
-            start(c) { c.enqueue(Buffer.alloc(32768, 0x42)); c.close(); }
-          }));
-          return r;
-        } });
+        fetch: () => new Response(new ReadableStream({
+          start(c) { c.enqueue(Buffer.alloc(32768, 0x42)); c.close(); }
+        })) });
       fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
       console.log(s.port);
-      process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
+      // Graceful stop() resolves only once every in-flight response has
+      // reached a terminal state, so a leaked/hung response = test timeout.
+      process.on("SIGTERM", () => { fault.clear(); s.stop().then(() => process.exit(0)); });
     `);
     try {
       const N = 6;

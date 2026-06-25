@@ -20,6 +20,25 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     expect(() => fault.set({ syscall: "recv", action: "bogus" as any })).toThrow(/rule\.action must be one of/);
   });
 
+  // Only recv/send have a byte count to clamp; arming "short" on any other
+  // syscall used to succeed silently and never fire.
+  test("set() rejects 'short' for syscalls that cannot clamp a byte count", () => {
+    for (const syscall of [
+      "writev",
+      "sendmsg",
+      "recvmsg",
+      "connect",
+      "accept",
+      "socket",
+      "close",
+      "shutdown",
+    ] as const) {
+      expect(() => fault.set({ syscall, action: "short", bytes: 1 })).toThrow(/only supported for syscall/);
+    }
+    expect(fault.set({ syscall: "recv", action: "short", bytes: 1 })).toBe(true);
+    expect(fault.set({ syscall: "send", action: "short", bytes: 1 })).toBe(true);
+  });
+
   test("set() rejects unknown errno name", () => {
     expect(() => fault.set({ syscall: "recv", action: "errno", errno: "ENOSUCHERR" as any })).toThrow(
       /unknown errno name/,

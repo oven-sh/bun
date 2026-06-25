@@ -308,7 +308,7 @@ export type SocketFaultRule = {
 };
 
 export const socketFaultInjection = {
-  /** True when the current binary was built with `--socket-fault-injection=on` (default for debug builds). */
+  /** True when the current binary was built with `--socket-fault-injection=on` (defaults to on for ASan builds). */
   available: $newZigFunction(
     "runtime/socket/socket.zig",
     "TestingAPIs.jsSocketFaultInjectionAvailable",

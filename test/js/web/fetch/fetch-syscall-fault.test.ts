@@ -138,7 +138,9 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  test("body reader cancel under 1-byte sends settles cleanly", async () => {
+  // `send` faults the request-write path; `recv` faults the response-read path
+  // that the cancel is racing against. Both must settle without a leak/hang.
+  test.each(["send", "recv"] as const)("body reader cancel under 1-byte %s settles cleanly", async syscall => {
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -146,10 +148,46 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
     });
     const r = await runClientFetch(
       server.url.href,
-      { syscall: "send", action: "short", bytes: 1, repeat: -1 },
+      { syscall, action: "short", bytes: 1, repeat: -1 },
       { abort: true, readBytes: 256 },
     );
     expect(r).toMatchObject({ ok: true, status: 200, signal: null, exitCode: 0 });
+  });
+
+  test("re-arming rules from JS during an in-flight fetch keeps the rule coherent", async () => {
+    const body = Buffer.alloc(32 * 1024, "r");
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(body) });
+    // Regression: us_fault_set() published the rule with a plain struct write
+    // while the HTTP-client thread read it concurrently in us_fault_hit(), so
+    // a re-arm during a download could observe a torn rule. Hammer set() while
+    // the body streams and require the bytes to still arrive intact. The clamp
+    // floor of 8 keeps the syscall count bounded on slow ASan runners.
+    const fixture = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      fault.set({ syscall: "recv", action: "short", bytes: 16, repeat: -1 });
+      const done = fetch(${JSON.stringify(server.url.href)}).then(r => r.arrayBuffer());
+      let flips = 0;
+      const rearm = setInterval(() => {
+        flips++;
+        fault.set({ syscall: "recv", action: "short", bytes: 8 + (flips % 56), repeat: -1 });
+        fault.set({ syscall: "send", action: "short", bytes: 8 + (flips % 8), repeat: -1 });
+      }, 0);
+      const buf = await done;
+      clearInterval(rearm);
+      fault.clear();
+      console.log(JSON.stringify({ ok: true, length: buf.byteLength, flips }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Assert the output before the exit code so a failure shows what the fixture printed.
+    expect(JSON.parse(stdout.trim() || "{}")).toMatchObject({ ok: true, length: body.length });
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
   });
 });
 

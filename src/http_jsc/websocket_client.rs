@@ -2075,7 +2075,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
         // (the tunnel calls through its raw `connected_websocket` backref).
         let this = unsafe { ThisPtr::new(this_ptr) };
-        if this.close_received {
+        if this.close_received && this.close_dispatch_pending.is_none() {
             return;
         }
         // send_buffer → tunnel.write() can re-enter fail() synchronously
@@ -2083,12 +2083,18 @@ impl<const SSL: bool> WebSocket<SSL> {
         // on_writable() but not this struct.
         let _guard = this.ref_guard();
 
+        // Mirrors handle_writable(): once the buffer drains, a close frame
+        // that was only partially flushed must still dispatch `close`.
+        // SAFETY (both blocks): `_guard` keeps `*this_ptr` live; sole owner on
+        // this thread, and each `&mut *this_ptr` ends before `_guard` drops.
         if this.send_buffer.readable_length() == 0 {
+            unsafe { (*this.as_ptr()).finish_pending_close() };
             return;
         }
-        // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
-        // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
         let _ = unsafe { (*this.as_ptr()).send_buffer_out() };
+        if this.send_buffer.readable_length() == 0 {
+            unsafe { (*this.as_ptr()).finish_pending_close() };
+        }
     }
 
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).

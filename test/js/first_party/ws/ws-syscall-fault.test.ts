@@ -53,13 +53,17 @@ describe.skipIf(skip)("ws (thirdparty) under injected syscall faults", () => {
       wss.on("listening", () => {
         fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
         const c = new WebSocket("ws://127.0.0.1:" + wss.address().port);
-        let pong = false;
-        c.on("open", () => { c.ping(); c.send(Buffer.alloc(1024, 0x77)); });
-        c.on("pong", () => { pong = true; });
-        c.on("message", m => {
-          console.log(JSON.stringify({ ok: true, len: m.length, pong }));
+        // Report only once BOTH the echo and the pong have arrived: 'pong' is
+        // a separate event with no ordering guarantee relative to 'message'.
+        let pong = false, echoed = null;
+        const report = () => {
+          if (!pong || !echoed) return;
+          console.log(JSON.stringify({ ok: true, len: echoed.length, pong }));
           c.close();
-        });
+        };
+        c.on("open", () => { c.ping(); c.send(Buffer.alloc(1024, 0x77)); });
+        c.on("pong", () => { pong = true; report(); });
+        c.on("message", m => { echoed = m; report(); });
         c.on("close", () => { fault.clear(); wss.close(() => process.exit(0)); });
         c.on("error", () => console.log(JSON.stringify({ ok: false })));
       });

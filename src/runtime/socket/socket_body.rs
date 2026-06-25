@@ -4849,6 +4849,14 @@ pub mod testing_apis {
                 )));
             };
 
+            // "short" clamps a byte count, which only recv/send have; arming it
+            // on any other syscall would silently never fire.
+            if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
+                return Err(global.throw(format_args!(
+                    "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
+                )));
+            }
+
             let errno_value: c_int = match opts.get_truthy(global, "errno")? {
                 None if action == fi::ACTION_ERRNO => {
                     return Err(global.throw(format_args!(

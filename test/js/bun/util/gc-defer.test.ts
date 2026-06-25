@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { heapSize } from "bun:jsc";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.unsafe.gcDefer / gcAllow", () => {
   test("are exposed as functions", () => {

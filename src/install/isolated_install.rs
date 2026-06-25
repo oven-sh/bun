@@ -770,15 +770,13 @@ pub(crate) fn install_isolated_packages(
                             // npm range had been written directly.
                             let catalog_resolved;
                             let peer_version = if peer_dep.version.tag == VersionTag::Catalog {
-                                catalog_resolved =
-                                    lockfile.resolve_catalog_dependency(peer_dep);
+                                catalog_resolved = lockfile.resolve_catalog_dependency(peer_dep);
                                 catalog_resolved.as_ref().unwrap_or(&peer_dep.version)
                             } else {
                                 &peer_dep.version
                             };
 
-                            if peer_version.tag != VersionTag::Npm
-                                || res.tag != ResolutionTag::Npm
+                            if peer_version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm
                             {
                                 // TODO: print warning for this? we don't have a version
                                 // to compare to say if this satisfies or not.

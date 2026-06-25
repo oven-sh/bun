@@ -1061,14 +1061,14 @@ impl Tree {
                 // resolved npm version range. Look it up so a catalog peer hoists
                 // the same way the equivalent npm range would.
                 let catalog_resolved;
-                let peer_version =
-                    if dependency.version.tag == crate::dependency::VersionTag::Catalog {
-                        catalog_resolved =
-                            builder.lockfile().resolve_catalog_dependency(dependency);
-                        catalog_resolved.as_ref().unwrap_or(&dependency.version)
-                    } else {
-                        &dependency.version
-                    };
+                let peer_version = if dependency.version.tag
+                    == crate::dependency::VersionTag::Catalog
+                {
+                    catalog_resolved = builder.lockfile().resolve_catalog_dependency(dependency);
+                    catalog_resolved.as_ref().unwrap_or(&dependency.version)
+                } else {
+                    &dependency.version
+                };
 
                 if peer_version.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =

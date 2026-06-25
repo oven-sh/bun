@@ -33,6 +33,7 @@ enum us_fault_syscall {
     US_FAULT_RECVMSG,
     US_FAULT_CONNECT,
     US_FAULT_ACCEPT,
+    /* Reserved: no bsd.c hooks yet, so the JS setter does not accept them. */
     US_FAULT_SOCKET,
     US_FAULT_CLOSE,
     US_FAULT_SHUTDOWN,

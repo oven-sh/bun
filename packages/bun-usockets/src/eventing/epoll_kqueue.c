@@ -203,7 +203,10 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 continue;
             }
             int events = loop->ready_polls[loop->current_ready_poll].events;
-            const int error = events & EPOLLERR;
+            /* Normalize to 0/1 like the kqueue path's EV_ERROR: the value is
+             * forwarded as a libus close code, and a raw EPOLLERR (8) would
+             * read as errno 8 (ENOEXEC) in the JS error path. */
+            const int error = !!(events & EPOLLERR);
             const int eof = events & EPOLLHUP;
             events &= us_poll_events(poll);
             if (events || error || eof) {

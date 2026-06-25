@@ -266,17 +266,8 @@ export const setSocketOptions: setSocketOptionsFn = $newZigFunction(
   3,
 );
 
-export type SocketFaultSyscall =
-  | "recv"
-  | "send"
-  | "writev"
-  | "sendmsg"
-  | "recvmsg"
-  | "connect"
-  | "accept"
-  | "socket"
-  | "close"
-  | "shutdown";
+/** Only the syscalls instrumented in bsd.c; arming anything else is rejected. */
+export type SocketFaultSyscall = "recv" | "send" | "writev" | "sendmsg" | "recvmsg" | "connect" | "accept";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
@@ -297,7 +288,7 @@ export type SocketFaultRule = {
     | "ENETUNREACH"
     | "EHOSTUNREACH"
     | number;
-  /** clamp recv/send length to this many bytes (only used when action === "short") */
+  /** clamp recv/send length to this many bytes; required and > 0 when action === "short" */
   bytes?: number;
   /** skip the first N matching calls before triggering. Default 0. */
   after?: number;

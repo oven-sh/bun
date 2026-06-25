@@ -4812,15 +4812,11 @@ pub mod testing_apis {
                 fi::CONNECT
             } else if syscall_str.eql_comptime(b"accept") {
                 fi::ACCEPT
-            } else if syscall_str.eql_comptime(b"socket") {
-                fi::SOCKET
-            } else if syscall_str.eql_comptime(b"close") {
-                fi::CLOSE
-            } else if syscall_str.eql_comptime(b"shutdown") {
-                fi::SHUTDOWN
             } else {
+                // socket/close/shutdown have enum slots but no bsd.c hooks;
+                // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, socket, close, shutdown"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept"
                 )));
             };
 
@@ -4896,10 +4892,19 @@ pub mod testing_apis {
                 }
             };
 
+            let clamp_bytes = get_i32("bytes", 0)?;
+            // A 0-byte clamp makes recv()/send() length-0 syscalls, which read
+            // back as EOF/backpressure — silently aliasing action "zero".
+            if action == fi::ACTION_SHORT && clamp_bytes <= 0 {
+                return Err(global.throw(format_args!(
+                    "rule.bytes must be > 0 when action is \"short\""
+                )));
+            }
+
             let rule = fi::UsFaultRule {
                 action,
                 errno_value,
-                clamp_bytes: get_i32("bytes", 0)?,
+                clamp_bytes,
                 after_n_calls: get_i32("after", 0)?,
                 repeat: get_i32("repeat", 1)?,
                 target_fd: get_i32("fd", -1)?,

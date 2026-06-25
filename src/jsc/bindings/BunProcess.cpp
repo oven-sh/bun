@@ -276,12 +276,9 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-// If the user replaced `process.emit` with a custom function (e.g.
-// signal-exit's monkey-patch), returns that function. Otherwise returns
-// empty. Uses `getDirect` so only an own-property override is observed —
-// we must NOT route through the prototype's default emit binding here,
-// which is `emitForBindings` and early-returns when
-// `scriptExecutionContext()` is gone during natural shutdown.
+// Own-property `process.emit` override if the user installed one, else
+// empty. `getDirect` only — the prototype's `emitForBindings` early-returns
+// when `scriptExecutionContext()` is gone during natural shutdown.
 static JSC::JSValue userEmitOverride(JSC::VM& vm, Process* process)
 {
     JSC::JSValue emitValue = process->getDirect(vm, JSC::Identifier::fromString(vm, "emit"_s));
@@ -290,9 +287,7 @@ static JSC::JSValue userEmitOverride(JSC::VM& vm, Process* process)
     return emitValue;
 }
 
-// Invoke a user-installed `process.emit` override with (eventName, arg).
-// Returns true iff the override returned truthy — mirrors Node's
-// EventEmitter#emit contract where truthy means "had listeners".
+// Invoke a user-installed `process.emit` override; true iff it returned truthy.
 static bool callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* process, JSC::JSValue emitValue, ASCIILiteral eventName, JSC::JSValue arg)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -332,8 +327,7 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    // Match Node: set `_exiting` unconditionally during shutdown,
-    // regardless of whether any 'exit' listener is registered.
+    // Node: `_exiting` is set regardless of whether any 'exit' listener exists.
     process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
     if (JSC::JSValue userEmit = userEmitOverride(vm, process)) {
@@ -348,17 +342,9 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
         emitter.emit(event, arguments);
     }
 
-    // Node drains Promise microtasks once more after the 'exit' event so
-    // that a promise rejected from an 'exit' listener (signal-exit ->
-    // inquirer's ExitPromptError) can reach its .catch()/.finally()
-    // before the process dies. Without this, @inquirer/prompts never
-    // runs its `.catch(() => process.exit(0))` on stdin close (#17636).
-    //
-    // Node does NOT drain process.nextTick here — nextTick() itself is a
-    // no-op once _exiting is set, and anything already queued is dropped.
-    // Running previously-queued nextTick callbacks after _exiting would
-    // break test/js/node/test/parallel/test-event-capture-rejections.js
-    // whose common.mustCall() guards on process._exiting.
+    // Node drains Promise microtasks once after 'exit' so shutdown-time
+    // rejections reach their handlers. Do NOT drain nextTick — it is a
+    // no-op once `_exiting` is set and queued callbacks are dropped.
     if (!vm.hasTerminationRequest()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         vm.drainMicrotasks();
@@ -904,11 +890,8 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     bool shouldDrainNextTick;
     if (JSC::JSValue userEmit = userEmitOverride(vm, process)) {
         callUserEmitOverride(globalObject, process, userEmit, "beforeExit"_s, jsNumber(exitCode));
-        // A user override's return value is not a reliable "had
-        // listeners" signal — it may have enqueued nextTick work and
-        // still returned false/undefined. Drain unconditionally so
-        // that work (and any pending TLA continuation) can run before
-        // the loop decides to shut down.
+        // A user override's return value isn't a reliable "had listeners"
+        // signal — it may have queued nextTick work and returned falsy.
         shouldDrainNextTick = true;
     } else {
         MarkedArgumentBuffer arguments;

@@ -1,15 +1,5 @@
 // https://github.com/oven-sh/bun/issues/17636
-//
-// @inquirer/prompts (via signal-exit) expects the runtime to:
-//   1. Stop waiting on a top-level await once the event loop has nothing
-//      left that could settle it (Node exits 13 here; Bun used to
-//      busy-spin at 100% CPU forever).
-//   2. Route the 'exit' / 'beforeExit' events through the user-visible
-//      `process.emit` so a monkey-patched emit (signal-exit) can observe
-//      shutdown and reject the pending prompt promise.
-//
-// These tests cover the observable behaviour without depending on the
-// @inquirer/prompts package itself.
+// @inquirer/prompts hang on stdin close: unsettled TLA + process.emit override bypassed
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
@@ -22,9 +12,7 @@ const timeout = isDebug ? 30_000 : 10_000;
 test.concurrent(
   "unsettled top-level await exits 13 once the event loop is idle instead of hanging",
   async () => {
-    // Reduced from inquirer's search() prompt: stdin closes, readline closes,
-    // nothing is left to settle the awaited promise. Node prints a warning
-    // and exits 13. Bun previously busy-looped in waitForPromise forever.
+    // stdin closes → readline closes → nothing left to settle the TLA.
     const source = `
     import * as readline from "node:readline";
 
@@ -59,9 +47,6 @@ test.concurrent(
 test.concurrent(
   "monkey-patched process.emit observes 'beforeExit' and 'exit' on natural shutdown",
   async () => {
-    // signal-exit's mechanism: replace process.emit to intercept the 'exit'
-    // event. Bun was calling the internal C++ EventEmitter directly, so the
-    // override never ran and signal-exit never fired its callbacks.
     const source = `
     const seen = [];
     const original = process.emit;
@@ -90,11 +75,8 @@ test.concurrent(
 test.concurrent(
   "signal-exit pattern rejects a pending TLA prompt on stdin close (inquirer flow)",
   async () => {
-    // End-to-end reduction of issue #17636: a prompt library awaits a promise
-    // at top level that is only settled by user input or by signal-exit's
-    // onExit hook. When stdin closes, Node runs beforeExit -> detects the
-    // unsettled TLA -> emits 'exit' through the patched process.emit ->
-    // signal-exit rejects the prompt -> the user's .catch() runs.
+    // End-to-end reduction: patched process.emit observes 'exit', rejects
+    // the prompt, and the .catch() microtask runs before the process dies.
     using dir = tempDir("issue-17636", {
       "index.mjs": `
       import * as readline from "node:readline";
@@ -148,9 +130,6 @@ test.concurrent(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // The patched process.emit must observe 'exit', reject the prompt, and
-    // the .catch() microtask must run before the process dies. Without the
-    // fix the process hangs forever instead.
     expect(stderr).toContain("unsettled top-level await");
     expect(stdout.trim()).toBe("CAUGHT:User force closed the prompt with 13 null");
     expect(exitCode).toBe(0);
@@ -161,13 +140,8 @@ test.concurrent(
 test.concurrent(
   "Promise microtasks queued from an 'exit' listener run, but nextTick does not",
   async () => {
-    // Node drains Promise microtasks once more after the 'exit' event so
-    // that shutdown-time promise reactions observe the exit (needed for
-    // the signal-exit -> inquirer rejection to reach its .catch()).
-    // process.nextTick, however, is a no-op once _exiting is set and
-    // anything already queued is dropped — running it would break
-    // callbacks that guard on process._exiting (e.g. Node's
-    // common.mustCall()).
+    // Node drains Promise microtasks once after 'exit'; nextTick is a
+    // no-op once _exiting is set (queued callbacks are dropped).
     const source = `
     process.on("exit", code => {
       console.log("exit-listener:" + code);

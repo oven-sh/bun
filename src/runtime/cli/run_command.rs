@@ -1586,12 +1586,9 @@ impl Run {
 
                 vm.on_before_exit();
 
-                // load_entry_point() may have returned with the module's
-                // evaluation promise still pending (nothing left in the
-                // event loop that could settle it). A beforeExit listener
-                // may have just scheduled work that will settle it —
-                // drain once and re-enter if so. Otherwise fall through
-                // and the still-pending promise becomes exit code 13.
+                // load_entry_point() may have left the entry promise pending.
+                // A beforeExit listener may have just scheduled work that
+                // settles it — drain once and re-enter if so.
                 if let Some(p) = vm.pending_internal_promise {
                     if JSPromise::status_ptr(p) == PromiseStatus::Pending {
                         vm.tick();
@@ -1650,11 +1647,8 @@ impl Run {
                 }
             }
 
-            // Node: if the entry module's top-level await never settled and
-            // no explicit exit code was set, warn and exit 13. If it
-            // rejected after the initial .rejected check (e.g. a beforeExit
-            // listener rejected it), surface the error so it isn't
-            // swallowed.
+            // Node: still-pending entry TLA → warn + exit 13 (unless an exit
+            // code was set); late-rejected → surface via uncaughtException.
             if let Some(p) = vm.pending_internal_promise {
                 match JSPromise::status_ptr(p) {
                     PromiseStatus::Pending => {

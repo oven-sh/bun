@@ -68,9 +68,12 @@ impl DeferredTaskQueue {
         // returns `true`), so `self.map.len()` and entry positions can change
         // under us. Re-read `len()` each iteration and, after the callback,
         // re-check whether `key` is still at `i` to decide whether to advance.
-        // `remaining` bounds the pass to the initial entry count so a callback
-        // that both removes and re-posts can't spin and entries appended
-        // mid-run are left for the next `run()`.
+        // `remaining` caps the pass at the initial entry count so re-entrant
+        // remove+repost can't spin; it is a livelock bound, not a strict
+        // "no new entries this pass" guarantee (a swap-remove can pull a
+        // freshly appended entry forward). Each callback flushes its own
+        // object's buffer to its own fd/socket, so relative order within a
+        // pass has no correctness effect; anything skipped runs next pass.
         let mut i: usize = 0;
         let mut remaining = self.map.len();
         while remaining > 0 && i < self.map.len() {

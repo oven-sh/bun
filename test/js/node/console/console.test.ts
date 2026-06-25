@@ -113,14 +113,17 @@ describe("console.trace", () => {
   });
 
   test("no arguments prints bare 'Trace'", async () => {
-    const { stdout, stderr } = await run(`console.trace()`);
+    const { stdout, stderr, exitCode } = await run(`console.trace()`);
     expect(stdout).toBe("");
     expect(stderr).toStartWith("Trace\n");
     expect(stderr).toContain("at ");
+    expect(exitCode).toBe(0);
   });
 
   test("applies format specifiers", async () => {
-    const { stderr } = await run(`console.trace("x=%d", 5)`);
+    const { stdout, stderr, exitCode } = await run(`console.trace("x=%d", 5)`);
+    expect(stdout).toBe("");
     expect(stderr).toStartWith("Trace: x=5\n");
+    expect(exitCode).toBe(0);
   });
 });

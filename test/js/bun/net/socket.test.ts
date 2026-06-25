@@ -1672,3 +1672,92 @@ it("socket handler validation errors throw instead of crashing", async () => {
   expect(exitCode).toBe(0);
   void stderr;
 });
+
+// https://bun-p9.sentry.io/issues/7573683042/ (BUN-3PK7)
+it("socket handler validation errors don't steal GC protection from live sockets sharing the same callbacks", async () => {
+  // node:net passes one module-level handler table to every connection, so
+  // every live socket protects the same JSFunction identities. A Handlers
+  // dropped on a validation error before protect() ran must not gcUnprotect
+  // those shared functions, or GC collects them while a live socket's
+  // Handlers still points at the freed cells and the socket's finalizer
+  // later dereferences cell->vm() inside Bun__JSValue__unprotect.
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let listener;
+        let errors = 0;
+        (function setup() {
+          // Function expressions (not declarations) so this IIFE is their
+          // only JS root; once setup() returns, the listener's Handlers'
+          // gcProtect is the sole thing keeping them alive.
+          const open = function (s) { s.write("hello"); };
+          const close = function () {};
+          const data = function (s) { s.end(); };
+          const drain = function () {};
+          const error = function () {};
+          const handshake = function () {};
+
+          listener = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: { open, close, data, drain, error, handshake },
+          });
+
+          // Each validation error drops a Handlers whose open/close/data/
+          // drain/error/handshake slots were assigned from the shared
+          // functions but never protect()ed. On an unguarded build each
+          // such drop issues one gcUnprotect per shared callback and the
+          // first one zeroes the listener's protection.
+          for (let i = 0; i < 4; i++) {
+            for (const api of ["connect", "listen"]) {
+              try {
+                Bun[api]({
+                  hostname: "127.0.0.1",
+                  port: api === "connect" ? listener.port : 0,
+                  socket: { open, close, data, drain, error, handshake, session: 1 },
+                });
+              } catch { errors++; }
+            }
+          }
+        })();
+        console.log("errors=" + errors);
+
+        // No JS roots remain for the shared callbacks; if protection was
+        // stolen they are now collectible.
+        for (let i = 0; i < 20; i++) Bun.gc(true);
+
+        // The listener's Handlers still holds the shared callbacks; they
+        // must be live for open -> data -> end to round-trip.
+        const { promise, resolve, reject } = Promise.withResolvers();
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open() {},
+            data(s, b) { resolve(b.toString()); s.end(); },
+            close() {},
+            error(_s, e) { reject(e); },
+            connectError(_s, e) { reject(e); },
+          },
+        }).then(s => { s; }, reject);
+        console.log("received=" + (await promise));
+
+        // And they must survive the listener's own teardown.
+        listener.stop(true);
+        listener = null;
+        for (let i = 0; i < 20; i++) Bun.gc(true);
+        console.log("done");
+      `,
+    ],
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("errors=8\nreceived=hello\ndone\n");
+  expect(exitCode).toBe(0);
+  void stderr;
+});

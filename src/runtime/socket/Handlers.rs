@@ -56,8 +56,12 @@ pub struct Handlers {
     /// `Strong` is never borrowed across a reentrant call.
     pub promise: JsCell<Strong>, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
 
-    #[cfg(debug_assertions)]
-    pub protection_count: u32,
+    /// Set by [`protect`](Self::protect), cleared by
+    /// [`unprotect`](Self::unprotect). Gates `unprotect()` so dropping a
+    /// `Handlers` that never reached `protect()` cannot issue unbalanced
+    /// `gcUnprotect` calls that steal another socket's protection of a shared
+    /// callback (node:net reuses one handler table across all connections).
+    protected: bool,
 }
 
 // Bare JSValue fields are heap-stored here, but they are kept alive via JSC
@@ -303,9 +307,8 @@ impl Handlers {
         is_server: bool,
     ) -> JsResult<Handlers> {
         // inline for (callback_fields) |field| { ... @field(generated, field) ... }
-        // Validated before `Handlers` is constructed: `Drop` unconditionally
-        // `unprotect()`s, so an error return must not drop a `Handlers` whose
-        // callbacks were never `protect()`ed.
+        // Validated before `Handlers` is constructed so an error return
+        // never drops a partially-assigned struct.
         macro_rules! validated_callback {
             ($field:ident, $name:literal) => {{
                 let value = generated.$field;
@@ -371,8 +374,7 @@ impl Handlers {
                 SocketMode::Client
             },
             promise: JsCell::new(Strong::empty()),
-            #[cfg(debug_assertions)]
-            protection_count: 0,
+            protected: false,
         };
         result.with_async_context_if_needed(global_object);
         result.protect();
@@ -383,25 +385,13 @@ impl Handlers {
         if self.vm.is_shutting_down() {
             return;
         }
-
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(self.protection_count > 0);
-            self.protection_count -= 1;
+        if !self.protected {
+            return;
         }
-        self.on_open.unprotect();
-        self.on_close.unprotect();
-        self.on_data.unprotect();
-        self.on_writable.unprotect();
-        self.on_timeout.unprotect();
-        self.on_connect_error.unprotect();
-        self.on_end.unprotect();
-        self.on_error.unprotect();
-        self.on_handshake.unprotect();
-        self.on_session.unprotect();
-        self.on_keylog.unprotect();
-        self.on_server_name.unprotect();
-        self.on_alpn_callback.unprotect();
+        self.protected = false;
+        for_each_callback_field!(self, |f| {
+            core::mem::replace(f, JSValue::ZERO).unprotect();
+        });
     }
 
     fn with_async_context_if_needed(&mut self, global_object: &JSGlobalObject) {
@@ -415,23 +405,11 @@ impl Handlers {
     }
 
     fn protect(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            self.protection_count += 1;
-        }
-        self.on_open.protect();
-        self.on_close.protect();
-        self.on_data.protect();
-        self.on_writable.protect();
-        self.on_timeout.protect();
-        self.on_connect_error.protect();
-        self.on_end.protect();
-        self.on_error.protect();
-        self.on_handshake.protect();
-        self.on_session.protect();
-        self.on_keylog.protect();
-        self.on_server_name.protect();
-        self.on_alpn_callback.protect();
+        debug_assert!(!self.protected);
+        self.protected = true;
+        for_each_callback_field!(self, |f| {
+            f.protect();
+        });
     }
 }
 

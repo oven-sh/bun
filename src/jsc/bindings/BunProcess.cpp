@@ -332,11 +332,7 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
 
     if (JSC::JSValue userEmit = userEmitOverride(vm, process)) {
         callUserEmitOverride(globalObject, process, userEmit, "exit"_s, jsNumber(exitCode));
-    } else {
-        auto event = Identifier::fromString(vm, "exit"_s);
-        if (!emitter.hasEventListeners(event)) {
-            return;
-        }
+    } else if (auto event = Identifier::fromString(vm, "exit"_s); emitter.hasEventListeners(event)) {
         MarkedArgumentBuffer arguments;
         arguments.append(jsNumber(exitCode));
         emitter.emit(event, arguments);

@@ -542,8 +542,7 @@ impl Route {
                         // `Log::print` accepts it via the `*mut io::Writer`
                         // `IntoLogWrite` adapter and dispatches on
                         // `enable_ansi_colors_stderr` internally.
-                        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-                        let _ = log.print(writer);
+                        let _ = bun_output::with_error_writer_buffered(|w| log.print(w));
                         bun_output::flush();
                     }
                 }

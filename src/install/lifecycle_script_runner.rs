@@ -831,16 +831,22 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             if stdout_len > 0 {
                 let stdout = self.stdout.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())));
+                // SAFETY: `write_fmt` here does not re-enter `bun_core::output`.
+                let _ = Output::with_error_writer(|w| {
+                    unsafe { &mut *w }
+                        .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())))
+                });
                 stdout.clear();
                 stdout.shrink_to_fit();
             }
 
             if stderr_len > 0 {
                 let stderr = self.stderr.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())));
+                // SAFETY: see the stdout arm above.
+                let _ = Output::with_error_writer(|w| {
+                    unsafe { &mut *w }
+                        .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())))
+                });
                 stderr.clear();
                 stderr.shrink_to_fit();
             }

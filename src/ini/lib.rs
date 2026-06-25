@@ -227,7 +227,7 @@ mod draft {
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
     use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
     use bun_ast::E::Rope;
-    use bun_ast::{E, Expr, ExprData};
+    use bun_ast::{E, Expr, ExprData, StoreRef};
     use bun_ast::{IntoStr, Loc, Log, Source};
     use bun_collections::{ArrayHashMap, VecExt};
     use bun_core::ZStr;
@@ -253,14 +253,18 @@ mod draft {
     // Parser
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub struct Parser<'a> {
+    /// `'a` is the parse-input lifetime; `'e` is the env-loader's data
+    /// lifetime, split from `'a` so a `&mut DotEnvLoader<'static>` can be
+    /// reborrowed for a shorter parser lifetime despite `&mut` invariance.
+    pub struct Parser<'a, 'e: 'a> {
         pub opts: Options,
         pub source: Source,
         pub src: &'a [u8],
         pub out: Expr,
         pub logger: Log,
-        pub arena: Arena,
-        pub env: &'a mut DotEnvLoader<'a>,
+        /// Caller-owned arena; must outlive every read of `out`.
+        pub arena: &'a Arena,
+        pub env: &'a mut DotEnvLoader<'e>,
     }
 
     // The result type depends on the usage (`.section -> *Rope`, `.key ->
@@ -290,8 +294,13 @@ mod draft {
         bun_core::enum_unwrap!(PrepareResult, Key     => into fn into_key     -> &'bump [u8]);
     }
 
-    impl<'a> Parser<'a> {
-        pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
+    impl<'a, 'e: 'a> Parser<'a, 'e> {
+        pub fn init(
+            path: &[u8],
+            src: &'a [u8],
+            env: &'a mut DotEnvLoader<'e>,
+            arena: &'a Arena,
+        ) -> Parser<'a, 'e> {
             // TODO: bun_ast::Source<'bump> — `Source::init_path_string`
             // currently takes `Str = &'static [u8]`; once the lower tier threads a
             // lifetime through `Source`, pass `path`/`src` directly. They outlive
@@ -305,27 +314,19 @@ mod draft {
                 src,
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
                 source: Source::init_path_string(path_s, src_s),
-                arena: Arena::new(),
+                arena,
                 env,
             }
         }
 
-        // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
-
-        pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
-            // borrowck — `arena_allocator` is passed separately (rather than
-            // read off `self.arena`) to avoid overlapping &mut self borrows.
+        pub fn parse(&mut self) -> OOM<()> {
+            let bump: &'a Arena = self.arena;
             let src = self.src;
             let mut iter = src.split(|&b| b == b'\n');
-            // TODO: borrowck — `head` aliases into `self.out.data.e_object` while
-            // `self` is also borrowed mutably for prepare_str(). Kept as raw `*mut`
-            // (the underlying `E::Object` lives in the Expr Store, not on `self`).
-            let mut head: *mut E::Object = std::ptr::from_mut::<E::Object>(
-                self.out
-                    .data
-                    .e_object_mut()
-                    .expect("Parser.out is E.Object"),
-            );
+            let mut head: StoreRef<E::Object> = match self.out.data {
+                ExprData::EObject(o) => o,
+                _ => unreachable!("Parser.out is E.Object"),
+            };
 
             let ropealloc = bump;
 
@@ -379,7 +380,7 @@ mod draft {
                             .data
                             .e_object_mut()
                             .expect("Parser.out is E.Object");
-                        let mut parent_object = match root.get_or_put_object(section, bump) {
+                        let parent_object = match root.get_or_put_object(section, bump) {
                             Ok(v) => v,
                             Err(E::SetError::OutOfMemory) => return Err(AllocError),
                             Err(E::SetError::Clobber) => {
@@ -418,12 +419,10 @@ mod draft {
                                 break 'treat_as_key;
                             }
                         };
-                        head = std::ptr::from_mut::<E::Object>(
-                            parent_object
-                                .data
-                                .e_object_mut()
-                                .expect("get_or_put_object returns E.Object"),
-                        );
+                        head = match parent_object.data {
+                            ExprData::EObject(o) => o,
+                            _ => unreachable!("get_or_put_object returns E.Object"),
+                        };
                         break 'treat_as_key;
                     }
                     if !treat_as_key {
@@ -509,9 +508,7 @@ mod draft {
                     _ => value_raw,
                 };
 
-                // SAFETY: head points into self.out's E::Object tree, valid for the
-                // duration of parse().
-                let head_ref = unsafe { &mut *head };
+                let head_ref: &mut E::Object = &mut *head;
 
                 if is_array {
                     if let Some(val) = head_ref.get(key) {
@@ -1305,9 +1302,7 @@ mod draft {
                 }
                 Output::flush();
             }
-            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                Output::error_writer(),
-            ));
+            let _ = Output::with_error_writer(|w| log.print(w));
         }
     }
 
@@ -1319,25 +1314,12 @@ mod draft {
         source: &Source,
         configs: &mut Vec<ConfigItem>,
     ) -> OOM<()> {
-        // TODO: lifetime — `Parser<'a>` ties `src` and `env: &'a mut DotEnvLoader<'a>`
-        // to a single invariant `'a`; threading that through this fn signature poisons
-        // the `load_npmrc_config` loop (env borrowed-for-'a across iterations). The
-        // local `parser` is dropped before this fn returns, so erase both to a fresh
-        // `'p` (matches `Parser::init`'s own erasures for `path`/`src`).
-        // SAFETY: `parser` does not outlive `env`/`source.contents`.
-        let contents: &'static [u8] = source.contents.as_ref().into_str();
-        // SAFETY: `parser` is dropped before this function returns and so does not
-        // outlive `env` or its borrowed data; this cast only erases lifetimes.
-        let env = unsafe {
-            &mut *std::ptr::from_mut::<DotEnvLoader<'_>>(env).cast::<DotEnvLoader<'static>>()
-        };
-        let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
-        // TODO: borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
-        // TODO(refactor): restructure Parser so the bump is passed externally or split borrows.
-        let bump_ptr: *const Arena = &raw const parser.arena;
-        // SAFETY: arena outlives all bump-allocated slices used below.
-        let bump: &Arena = unsafe { &*bump_ptr };
-        parser.parse(bump)?;
+        // Arena declared before `parser` so it drops after it; everything
+        // kept past this function is duped.
+        let arena = Arena::new();
+        let bump = &arena;
+        let mut parser = Parser::init(npmrc_path.as_bytes(), source.contents.as_ref(), env, bump);
+        parser.parse()?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
         // deinitialized at the end of the scope.
@@ -1515,7 +1497,7 @@ mod draft {
         let mut registry_map = install.scoped.take().unwrap_or_default();
 
         // SAFETY: `parser.out` is an `E::Object` produced by `Parser::parse`; the
-        // arena pointee lives until `parser` drops at end of fn.
+        // arena pointee lives until the local arena drops at end of fn.
         let out_obj: &E::Object = unsafe {
             &*parser
                 .out

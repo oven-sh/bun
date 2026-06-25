@@ -692,3 +692,82 @@ it("does not match a dynamic route whose static segment merely collides on lengt
   // A different segment that only collides on (length, 32-bit hash) must not.
   expect(router.match(`/${attackSegment}/42`)).toBeNull();
 });
+
+it("query map and params stay valid under forced GC (owned URLPath/QueryStringMap backing)", async () => {
+  // `MatchedRoute.query`/`params` are backed by an owned copy of the request
+  // path: neither may point at the caller's (transient) URL string or at a
+  // shared decode buffer. Loop matches with both plain and percent-encoded
+  // URLs, forcing GC between the match and the reads so a dangling backing
+  // buffer would be reused/poisoned before the values are observed.
+  // Run in a subprocess so a crash is observable instead of killing the runner.
+  using dir = tempDir("fsr-gc-query-backing", {
+    "pages/posts/[id].tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const matches = [];
+    for (let i = 0; i < 64; i++) {
+      // Build the URL from parts so the string is a fresh heap allocation
+      // each iteration (collectable as soon as match() returns).
+      const id = "item%20" + i;
+      const m = router.match("/posts/" + id + "?name=foo%20bar&i=" + i + "&dup=a&dup=b");
+      if (!m) throw new Error("expected match at " + i);
+      matches.push([m, i]);
+      Bun.gc(true);
+    }
+    Bun.gc(true);
+    for (const [m, i] of matches) {
+      if (m.params.id !== "item " + i) throw new Error("param corrupted at " + i + ": " + JSON.stringify(m.params.id));
+      const q = m.query;
+      if (q.name !== "foo bar") throw new Error("query name corrupted at " + i + ": " + JSON.stringify(q.name));
+      if (q.i !== String(i)) throw new Error("query i corrupted at " + i + ": " + JSON.stringify(q.i));
+      Bun.gc(true);
+      // Re-read after another collection; the map must be stable.
+      if (m.query.name !== "foo bar") throw new Error("query re-read corrupted at " + i);
+    }
+    console.log("ok");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
+it("matches routes with extensions, sourcemap suffixes and root path after the SoA route-list rewrite", () => {
+  // Exercises RouteIndexList over static + dynamic routes; the boxed Route
+  // allocations must stay valid for matching after the list is fully built.
+  const { dir } = make([
+    "index.tsx",
+    "a.tsx",
+    "b.tsx",
+    "abc/index.tsx",
+    "abc/[id].tsx",
+    "abc/def/[id].tsx",
+    "[id].tsx",
+  ]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(router.match("/")?.name).toBe("/");
+  expect(router.match("/a")?.name).toBe("/a");
+  expect(router.match("/abc")?.name).toBe("/abc");
+  expect(router.match("/abc/123")?.name).toBe("/abc/[id]");
+  expect(router.match("/abc/def/456")?.params.id).toBe("456");
+  expect(router.match("/zzz")?.name).toBe("/[id]");
+  // .map extension handling goes through URLPath's sourcemap backup-extname
+  // path: "/a.js.map" is normalized to the path segment "a.js", which falls
+  // through the static routes and matches the root dynamic route.
+  const mapMatch = router.match("/a.js.map");
+  expect(mapMatch?.name).toBe("/[id]");
+  expect(mapMatch?.params.id).toBe("a.js");
+});

@@ -1626,7 +1626,7 @@ impl Package<u64> {
         let json = match crate::bun_json::parse_package_json_utf8(source, log, &bump) {
             Ok(j) => j,
             Err(err) => {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = Output::with_error_writer(|w| log.print(w));
                 bun_core::pretty_errorln!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),

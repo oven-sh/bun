@@ -19,13 +19,12 @@ use crate::{
 
 use bun_dotenv as dot_env;
 
-/// `'a` is forced by LIFETIMES.tsv (BORROW_PARAM on `Request::*.network`).
-/// TODO: lifetime — Task lives in an intrusive cross-thread queue
-/// (`next`, `package_manager` BACKREF). A `&'a mut NetworkTask` cannot soundly
-/// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
-pub struct Task<'a> {
+/// Lives in an intrusive cross-thread queue; request payloads hold
+/// `*mut NetworkTask` because the manager thread keeps its own pointers into
+/// the same slot while the task is in flight.
+pub struct Task {
     pub tag: Tag,
-    pub request: Request<'a>,
+    pub request: Request,
     pub data: Data,
     /// default: `Status::Waiting`
     pub status: Status,
@@ -42,14 +41,14 @@ pub struct Task<'a> {
     pub apply_patch_task: Option<Box<PatchTask>>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
-    pub next: bun_threading::Link<Task<'a>>,
+    pub next: bun_threading::Link<Task>,
 }
 
 /// Callers MUST overwrite `tag`, `request`, `id`, `package_manager` before
 /// the task is observed. Exposed as a module-level fn so call sites that import this
 /// module as `Task` can write `..Task::uninit()` in struct-update position.
 #[inline]
-pub(crate) fn uninit() -> Task<'static> {
+pub(crate) fn uninit() -> Task {
     Task {
         // Overwritten by every caller; placeholder value.
         tag: Tag::PackageManifest,
@@ -79,7 +78,7 @@ pub(crate) fn uninit() -> Task<'static> {
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
 // `link()` always projects to it.
-unsafe impl<'a> bun_threading::Linked for Task<'a> {
+unsafe impl bun_threading::Linked for Task {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -161,7 +160,7 @@ impl Id {
     }
 }
 
-impl<'a> Task<'a> {
+impl Task {
     // ── Tag-checked projectors for the untagged `Request`/`Data` unions ────
     // `Task.tag` is the single discriminant for both; every variant payload is
     // POD or `ManuallyDrop`-wrapped (no drop on overwrite), so reading the
@@ -169,8 +168,8 @@ impl<'a> Task<'a> {
     // `as *const $Ty` cast unwraps `ManuallyDrop<$Ty>` (`repr(transparent)`).
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: request;
-        PackageManifest => request_package_manifest @ package_manifest: PackageManifestRequest<'a>, mut request_package_manifest_mut;
-        Extract         => request_extract          @ extract:          ExtractRequest<'a>,         mut request_extract_mut;
+        PackageManifest => request_package_manifest @ package_manifest: PackageManifestRequest, mut request_package_manifest_mut;
+        Extract         => request_extract          @ extract:          ExtractRequest,         mut request_extract_mut;
         GitClone        => request_git_clone        @ git_clone:        GitCloneRequest,            mut request_git_clone_mut;
         GitCheckout     => request_git_checkout     @ git_checkout:     GitCheckoutRequest,         mut request_git_checkout_mut;
         LocalTarball    => request_local_tarball    @ local_tarball:    LocalTarballRequest,        mut request_local_tarball_mut;
@@ -231,15 +230,15 @@ impl<'a> Task<'a> {
     }
 }
 
-impl<'a> Task<'a> {
+impl Task {
     pub unsafe fn callback(task: *mut thread_pool::Task) {
         Output::Source::configure_thread();
 
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
-        let this: *mut Task<'a> = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        let this: *mut Task = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
         // SAFETY: exclusive access — task runs on exactly one worker thread
-        let this: &mut Task<'a> = unsafe { &mut *this };
+        let this: &mut Task = unsafe { &mut *this };
         // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
         // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
         // shared-read sites below; `manager` is kept as a raw `*mut` for the
@@ -263,10 +262,9 @@ impl<'a> Task<'a> {
                     // SAFETY: tag == PackageManifest discriminates the union
                     let manifest = unsafe { &mut *this.request.package_manifest };
 
-                    // split-borrow `manifest.network` so the mutable
-                    // `response_buffer` borrow doesn't overlap the immutable
-                    // `response`/`callback` reads below.
-                    let network = &mut *manifest.network;
+                    // SAFETY: pool-owned slot; the manager thread does not touch
+                    // it while the task is in flight, so this reborrow is exclusive.
+                    let network = unsafe { &mut *manifest.network };
                     // Take ownership so the
                     // multi-MB manifest buffer drops on every exit of this arm
                     // instead of staying live on the NetworkTask until recycle.
@@ -384,9 +382,11 @@ impl<'a> Task<'a> {
 
                     // SAFETY: tag == Extract discriminates the union
                     let extract = unsafe { &mut *this.request.extract };
+                    // SAFETY: same argument as the PackageManifest arm above.
+                    let network = unsafe { &mut *extract.network };
                     // Take ownership so the
                     // tarball body drops on every exit of this arm.
-                    let mut buffer = core::mem::take(&mut extract.network.response_buffer);
+                    let mut buffer = core::mem::take(&mut network.response_buffer);
 
                     let result = match extract.tarball.run(&mut this.log, buffer.slice()) {
                         Ok(v) => v,
@@ -566,16 +566,11 @@ impl<'a> Task<'a> {
                 };
                 if apply.logger.errors > 0 {
                     // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
-                    let _ = apply
-                        .logger
-                        .print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = Output::with_error_writer(|w| apply.logger.print(w));
                 }
             }
         }
-        let task = core::ptr::NonNull::from(this).cast::<Task<'static>>();
-        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
-        // a phantom on `&mut NetworkTask` borrows that the queue never reads
-        // through); erasing to `'static` is sound for the queue.
+        let task = core::ptr::NonNull::from(this);
         // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
         // shared raw deref — no `&mut PackageManager` is formed.
         unsafe {
@@ -638,27 +633,26 @@ pub union Data {
 }
 
 /// Untagged union. Discriminated externally by `Task.tag`.
-pub union Request<'a> {
+pub union Request {
     /// package name
     // todo: Registry URL
-    pub package_manifest: ManuallyDrop<PackageManifestRequest<'a>>,
-    pub extract: ManuallyDrop<ExtractRequest<'a>>,
+    pub package_manifest: ManuallyDrop<PackageManifestRequest>,
+    pub extract: ManuallyDrop<ExtractRequest>,
     pub git_clone: ManuallyDrop<GitCloneRequest>,
     pub git_checkout: ManuallyDrop<GitCheckoutRequest>,
     pub local_tarball: ManuallyDrop<LocalTarballRequest>,
 }
 
-pub struct PackageManifestRequest<'a> {
+pub struct PackageManifestRequest {
     pub name: StringOrTinyString,
-    // BORROW_PARAM per LIFETIMES.tsv
-    // TODO: lifetime — see note on `Task<'a>`; likely should demote to `*mut NetworkTask`.
-    pub network: &'a mut NetworkTask,
+    // SHARED — pool-owned `NetworkTask` slot that outlives the task; deref
+    // with a statement-scoped reborrow only.
+    pub network: *mut NetworkTask,
 }
 
-pub struct ExtractRequest<'a> {
-    // BORROW_PARAM per LIFETIMES.tsv
-    // TODO: lifetime — see note on `Task<'a>`; likely should demote to `*mut NetworkTask`.
-    pub network: &'a mut NetworkTask,
+pub struct ExtractRequest {
+    // SHARED — pool-owned `NetworkTask` slot; see `PackageManifestRequest::network`.
+    pub network: *mut NetworkTask,
     pub tarball: ExtractTarball,
 }
 

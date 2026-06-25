@@ -28,9 +28,10 @@ pub struct PackageInstall<'a> {
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
     pub cache_dir: Fd,
     pub cache_dir_subpath: &'a ZStr,
-    // TODO: `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
-    // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
-    pub destination_dir_subpath: &'a ZStr,
+    /// Length of the NUL-terminated subpath prefix in
+    /// `destination_dir_subpath_buf`; install steps temporarily append past
+    /// it and restore the NUL. See [`Self::destination_dir_subpath`].
+    pub destination_dir_subpath_len: usize,
     pub destination_dir_subpath_buf: &'a mut [u8],
 
     pub progress: Option<&'a mut Progress>,
@@ -767,6 +768,14 @@ impl UninstallTask {
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
 impl<'a> PackageInstall<'a> {
+    /// NUL-terminated prefix view into `destination_dir_subpath_buf`.
+    fn destination_dir_subpath(&self) -> &ZStr {
+        ZStr::from_buf(
+            self.destination_dir_subpath_buf,
+            self.destination_dir_subpath_len,
+        )
+    }
+
     ///
     fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
@@ -775,7 +784,7 @@ impl<'a> PackageInstall<'a> {
         let bunhashtag = buntaghashbuf_make(&mut buf, patchfile_contents_hash);
 
         let patch_tag_path = path::resolve_path::join_z::<path::platform::Posix>(&[
-            self.destination_dir_subpath.as_bytes(),
+            self.destination_dir_subpath().as_bytes(),
             bunhashtag,
         ]);
 
@@ -802,7 +811,7 @@ impl<'a> PackageInstall<'a> {
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against the resolved version
     fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
-        let dest_len = self.destination_dir_subpath.len();
+        let dest_len = self.destination_dir_subpath_len;
         let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
         // Reshaped for borrowck — write into buf via raw indices.
         self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
@@ -869,7 +878,7 @@ impl<'a> PackageInstall<'a> {
     // it might not exist
     fn verify_transitive_symlinked_folder(&self, root_node_modules_dir: &Dir) -> bool {
         self.node_modules
-            .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath)
+            .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath())
     }
 
     fn get_installed_package_json_source(
@@ -883,7 +892,7 @@ impl<'a> PackageInstall<'a> {
         mutable.reset();
         mutable.expand_to_capacity();
 
-        let dest_len = self.destination_dir_subpath.len();
+        let dest_len = self.destination_dir_subpath_len;
         // Write the literal directly into the path buffer; no intermediate Vec.
         let suffix: &[u8] = &[
             SEP, b'p', b'a', b'c', b'k', b'a', b'g', b'e', b'.', b'j', b's', b'o', b'n',
@@ -1111,7 +1120,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         let subdir = match destination_dir.make_open_path(
-            self.destination_dir_subpath.as_bytes(),
+            self.destination_dir_subpath().as_bytes(),
             OpenDirOptions::default(),
         ) {
             Ok(d) => d,
@@ -1131,8 +1140,8 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         destination_dir: &Dir,
     ) -> Result<InstallResult, bun_core::Error> {
-        if self.destination_dir_subpath.as_bytes()[0] == b'@' {
-            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
+        if self.destination_dir_subpath().as_bytes()[0] == b'@' {
+            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath(), SEP) {
                 let slash = slash as usize;
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
@@ -1146,7 +1155,7 @@ impl<'a> PackageInstall<'a> {
             self.cache_dir,
             self.cache_dir_subpath,
             destination_dir.fd(),
-            self.destination_dir_subpath,
+            self.destination_dir_subpath(),
         ) {
             Ok(()) => Ok(InstallResult::Success),
             Err(e) => match e.get_errno() {
@@ -1171,7 +1180,7 @@ impl<'a> PackageInstall<'a> {
         method: Method,
     ) -> InstallResult {
         let destbase = destination_dir;
-        let destpath = self.destination_dir_subpath;
+        let destpath = self.destination_dir_subpath();
 
         state.cached_package_dir = match {
             #[cfg(windows)]
@@ -1990,7 +1999,7 @@ impl<'a> PackageInstall<'a> {
     }
 
     pub fn uninstall(&self, destination_dir: &Dir) {
-        let _ = destination_dir.delete_tree(self.destination_dir_subpath.as_bytes());
+        let _ = destination_dir.delete_tree(self.destination_dir_subpath().as_bytes());
     }
 
     pub fn uninstall_before_install(&self, destination_dir: &Dir) {
@@ -2009,7 +2018,7 @@ impl<'a> PackageInstall<'a> {
 
         match sys::renameat(
             destination_dir.fd(),
-            self.destination_dir_subpath,
+            self.destination_dir_subpath(),
             destination_dir.fd(),
             temp_path,
         ) {
@@ -2136,7 +2145,7 @@ impl<'a> PackageInstall<'a> {
     }
 
     pub fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
-        let dest_path = self.destination_dir_subpath;
+        let dest_path = self.destination_dir_subpath();
         // If this fails, we don't care.
         // we'll catch it the next error
         if !skip_delete && dest_path.as_bytes() != b"." {
@@ -2269,7 +2278,7 @@ impl<'a> PackageInstall<'a> {
                 Err(err_) => 'brk: {
                     let mut err = err_;
                     if err.get_errno() == sys::E::EEXIST {
-                        let _ = sys::rmdirat(destination_dir.fd(), self.destination_dir_subpath);
+                        let _ = sys::rmdirat(destination_dir.fd(), self.destination_dir_subpath());
                         match sys::symlink_or_junction(dest_z, target_z, None) {
                             Err(e) => err = e,
                             Ok(_) => break 'brk,
@@ -2451,7 +2460,7 @@ impl<'a> PackageInstall<'a> {
 
         // If this fails, we don't care.
         // we'll catch it the next error
-        if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
+        if !skip_delete && self.destination_dir_subpath().as_bytes() != b"." {
             self.uninstall_before_install(destination_dir);
         }
 

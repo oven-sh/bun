@@ -9705,3 +9705,98 @@ it("does not create a cache index entry outside the cache directory for a depend
   expect(outOk).toContain("1 package installed");
   expect(exitCodeOk).toBe(0);
 });
+
+it("installs and re-verifies scoped folder dependencies (destination subpath buffer handling)", async () => {
+  // The installer writes the destination path (`@scope/pkg`) into a single
+  // path buffer and temporarily appends suffixes (`/package.json`, NUL at the
+  // scope's `/`) into the same buffer during install/verify. A bug in the
+  // prefix/length bookkeeping corrupts the install path for scoped packages
+  // specifically. Install twice: the second run takes the verify path that
+  // appends `/package.json` past the stored prefix.
+  using dir = tempDir("scoped-folder-dep", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: {
+        "@myscope/aliased": "file:./vendor/scoped-pkg",
+        "plain-pkg": "file:./vendor/plain-pkg",
+      },
+    }),
+    "vendor/scoped-pkg/package.json": JSON.stringify({ name: "@myscope/aliased", version: "1.2.3" }),
+    "vendor/scoped-pkg/index.js": "module.exports = 'scoped';",
+    "vendor/plain-pkg/package.json": JSON.stringify({ name: "plain-pkg", version: "0.0.1" }),
+    "vendor/plain-pkg/index.js": "module.exports = 'plain';",
+  });
+
+  for (let run = 0; run < 2; run++) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const installedScoped = await file(join(String(dir), "node_modules", "@myscope", "aliased", "package.json")).json();
+  expect(installedScoped.name).toBe("@myscope/aliased");
+  expect(installedScoped.version).toBe("1.2.3");
+  const installedPlain = await file(join(String(dir), "node_modules", "plain-pkg", "package.json")).json();
+  expect(installedPlain.name).toBe("plain-pkg");
+
+  await using runProc = spawn({
+    cmd: [bunExe(), "-e", "console.log(require('@myscope/aliased'), require('plain-pkg'))"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [runOut, , runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+  expect(runOut.trim()).toBe("scoped plain");
+  expect(runExit).toBe(0);
+});
+
+it("isolated install of scoped folder dependencies succeeds and reports progress cleanup safely", async () => {
+  // Exercises the isolated-install path, whose progress-node pointers must
+  // be cleared on every exit path. A success run plus an immediate second run
+  // (lockfile present) covers both the fresh-store and verify paths.
+  using dir = tempDir("isolated-scoped-folder-dep", {
+    "package.json": JSON.stringify({
+      name: "app-isolated",
+      version: "1.0.0",
+      dependencies: {
+        "@myscope/dep": "file:./vendor/dep",
+      },
+    }),
+    "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+    "vendor/dep/package.json": JSON.stringify({ name: "@myscope/dep", version: "2.0.0" }),
+    "vendor/dep/index.js": "module.exports = 'isolated-dep';",
+  });
+
+  for (let run = 0; run < 2; run++) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  await using runProc = spawn({
+    cmd: [bunExe(), "-e", "console.log(require('@myscope/dep'))"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [runOut, , runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+  expect(runOut.trim()).toBe("isolated-dep");
+  expect(runExit).toBe(0);
+});

@@ -1733,10 +1733,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 port,
                 hostname: _hostname,
             } => {
+                let errno = bun_sys::get_errno(-1i32);
                 // Rust's `target_os = "linux"` excludes
                 // Android, so match both explicitly.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                if bun_sys::get_errno(-1i32) == bun_sys::E::EACCES {
+                if errno == bun_sys::E::EACCES {
                     let host = _hostname
                         .as_ref()
                         .map(|h| h.as_bytes())
@@ -1754,16 +1755,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let _ = global.throw_value(err.to_error_instance(global));
                     return;
                 }
-                jsc::SystemError {
-                    message: bun_core::String::create_format(format_args!(
-                        "Failed to start server. Is port {} in use?",
-                        port
-                    )),
-                    code: bun_core::String::static_("EADDRINUSE"),
-                    syscall: bun_core::String::static_("listen"),
-                    ..Default::default()
+                if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
+                    // bind()/listen() failures other than "port in use" — e.g.
+                    // ENOSPC from epoll_ctl(EPOLL_CTL_ADD) when
+                    // fs.epoll.max_user_watches is exhausted. Surface the real
+                    // errno instead of misreporting EADDRINUSE.
+                    jsc::SystemError::from(
+                        bun_sys::Error::from_code(errno, bun_sys::Tag::listen).to_system_error(),
+                    )
+                    .to_error_instance(global)
+                } else {
+                    jsc::SystemError {
+                        message: bun_core::String::create_format(format_args!(
+                            "Failed to start server. Is port {} in use?",
+                            port
+                        )),
+                        code: bun_core::String::static_("EADDRINUSE"),
+                        syscall: bun_core::String::static_("listen"),
+                        ..Default::default()
+                    }
+                    .to_error_instance(global)
                 }
-                .to_error_instance(global)
             }
             server_config::Address::Unix(unix) => {
                 let unix = unix.as_bytes();

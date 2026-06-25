@@ -415,7 +415,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-                        us_poll_start(accepted_p, loop, LIBUS_SOCKET_READABLE);
+                        if (us_poll_start_rc(accepted_p, loop, LIBUS_SOCKET_READABLE) != 0) {
+                            /* EPOLL_CTL_ADD failed (e.g. ENOSPC). Close the fd so the
+                             * peer sees a RST instead of a connection that silently
+                             * never answers. */
+                            bsd_close_socket(client_fd);
+                            us_poll_free(accepted_p, loop);
+                            continue;
+                        }
 
                         struct us_socket_t *s = (struct us_socket_t *) accepted_p;
 

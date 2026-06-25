@@ -57,39 +57,41 @@ impl DeferredTaskQueue {
     }
 
     pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
-        // Order is irrelevant for this map's contract (see file doc — "order
-        // may not particularly matter"), so plain `remove().is_some()` works.
-        self.map.remove(&ctx).is_some()
+        // Order is irrelevant for this map's contract (see file doc), so
+        // swap-remove is fine and O(1).
+        self.map.swap_remove(&ctx)
     }
 
     pub fn run(&mut self) {
-        // The current `ArrayHashMap` exposes `keys()/values()` slices and
-        // `swap_remove(&K)` (hash lookup) but not `swap_remove_at` (O(1) by
-        // index). Keys here are `Copy` pointers, so copy the key out and
-        // remove by key — semantically identical (keys are unique), just an
-        // extra hash per removal.
-        // PERF: swap_remove(&K) re-hashes; restore swap_remove_at when
-        // bun_collections::ArrayHashMap grows it.
+        // Callbacks may re-entrantly `post_task` / `unregister_task` on this
+        // same map (e.g. `H2FrameParser::on_auto_flush` unregisters itself and
+        // returns `true`), so `self.map.len()` and entry positions can change
+        // under us. Re-read `len()` each iteration and, after the callback,
+        // re-check whether `key` is still at `i` to decide whether to advance.
+        // `remaining` bounds the pass to the initial entry count so a callback
+        // that both removes and re-posts can't spin and entries appended
+        // mid-run are left for the next `run()`.
         let mut i: usize = 0;
-        let mut last = self.map.len();
-        while i < last {
+        let mut remaining = self.map.len();
+        while remaining > 0 && i < self.map.len() {
+            remaining -= 1;
             let key = self.map.keys()[i];
             let Some(nn) = key else {
-                self.map.swap_remove(&key);
-                last = self.map.len();
+                self.map.swap_remove_at(i);
                 continue;
             };
 
-            // Copy the fn ptr out before calling (borrowck).
             let task = self.map.values()[i];
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
             // callback contract (`HasAutoFlusher::on_auto_flush`) is that
             // `task` may be invoked with exactly that pointer until it returns
             // `false` or is explicitly unregistered.
-            if !unsafe { task(nn.as_ptr()) } {
+            let keep = unsafe { task(nn.as_ptr()) };
+            if !keep {
+                // `key` may already be gone (callback unregistered it) or may
+                // have moved; remove by key, not index.
                 self.map.swap_remove(&key);
-                last = self.map.len();
-            } else {
+            } else if self.map.keys().get(i) == Some(&key) {
                 i += 1;
             }
         }

@@ -106,3 +106,19 @@ test("http2 client write callback that opens new streams during flushQueue does 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
 });
+
+// H2FrameParser::on_auto_flush calls flush -> uncork -> unregister_auto_flush,
+// removing its own entry from the DeferredTaskQueue mid-iteration and then
+// returning true. With a second auto-flusher (an HTTPServerWritable small
+// write) sitting after it in the map, DeferredTaskQueue::run would index past
+// the new length and panic.
+test("DeferredTaskQueue::run tolerates an on_auto_flush callback that unregisters itself and returns true", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "node-http2-deferred-task-queue.fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "OK", exitCode: 0 });
+});

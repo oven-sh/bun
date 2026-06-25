@@ -154,13 +154,19 @@ impl<'a> PatchFile<'a> {
                     let Some(hunk) = &file_creation.hunk else {
                         continue;
                     };
+                    // A crafted `@@ -0,0 +0,0 @@` header with no body parses to a
+                    // hunk with zero parts; treat it as an empty file rather than
+                    // indexing `parts[0]`.
+                    let Some(first_part) = hunk.parts.first() else {
+                        continue;
+                    };
 
-                    let last_line = hunk.parts[0].lines.len().saturating_sub(1);
-                    let no_newline_at_end_of_file = hunk.parts[0].no_newline_at_end_of_file;
+                    let last_line = first_part.lines.len().saturating_sub(1);
+                    let no_newline_at_end_of_file = first_part.no_newline_at_end_of_file;
 
                     let count = {
                         let mut total: usize = 0;
-                        for (i, line) in hunk.parts[0].lines.iter().enumerate() {
+                        for (i, line) in first_part.lines.iter().enumerate() {
                             total += line.len();
                             total += (i < last_line) as usize;
                         }
@@ -175,7 +181,7 @@ impl<'a> PatchFile<'a> {
                     let file_contents: Vec<u8> = {
                         let mut contents = vec![0u8; count];
                         let mut i: usize = 0;
-                        for (idx, line) in hunk.parts[0].lines.iter().enumerate() {
+                        for (idx, line) in first_part.lines.iter().enumerate() {
                             contents[i..i + line.len()].copy_from_slice(line);
                             i += line.len();
                             if idx < last_line || !no_newline_at_end_of_file {
@@ -306,22 +312,22 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         }
         file_line_count = count;
 
-        // Adjust to account for the changes
+        // Adjust to account for the changes. This is only a capacity hint for
+        // `lines` below; saturate so a header that claims more deletions than
+        // the file has cannot panic (bounds are enforced during the splice).
         for hunk in &patch.hunks {
-            count = usize::try_from(
-                i64::try_from(count).expect("int cast") + i64::from(hunk.header.patched.len)
-                    - i64::from(hunk.header.original.len),
-            )
-            .unwrap();
+            count = count
+                .saturating_add(hunk.header.patched.len as usize)
+                .saturating_sub(hunk.header.original.len as usize);
             for part in &hunk.parts {
                 let part: &PatchMutationPart = part;
                 match part.ty {
                     PartType::Deletion => {
                         // deleting the no newline pragma so we are actually adding a line
-                        count += if part.no_newline_at_end_of_file { 1 } else { 0 };
+                        count = count.saturating_add(part.no_newline_at_end_of_file as usize);
                     }
                     PartType::Insertion => {
-                        count -= if part.no_newline_at_end_of_file { 1 } else { 0 };
+                        count = count.saturating_sub(part.no_newline_at_end_of_file as usize);
                     }
                     PartType::Context => {}
                 }

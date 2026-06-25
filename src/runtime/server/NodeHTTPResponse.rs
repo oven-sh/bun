@@ -1339,9 +1339,13 @@ impl NodeHTTPResponse {
             self.deref();
             return;
         };
+        if on_writable.is_undefined() {
+            self.deref();
+            return;
+        }
         let vm = vm_get();
         let global_this = vm.global();
-        js::on_writable_set_cached(this_value, global_this, JSValue::UNDEFINED); // TODO(@heimskr): is this necessary?
+        js::on_writable_set_cached(this_value, global_this, JSValue::ZERO);
 
         vm.event_loop_ref().run_callback(
             on_writable,

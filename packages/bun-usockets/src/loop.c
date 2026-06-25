@@ -706,9 +706,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * isn't fired for a passive close. The poll flag only says THAT
                  * the socket failed; fetch the real errno (like the connect-error
                  * path) so the close code is ECONNRESET and not a poll bit that
-                 * callers would either misread as an errno or drop entirely. */
+                 * callers would either misread as an errno or drop entirely.
+                 * Values 0..2 collide with the libus CloseCode enum that JS
+                 * filters out as self-initiated; SO_ERROR can't be EPERM/ENOENT
+                 * for an established TCP socket, so clamp them defensively. */
                 int socket_error = us_socket_get_error(s);
-                s = us_internal_socket_close_raw(s, socket_error ? socket_error : ECONNRESET, NULL);
+                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : ECONNRESET, NULL);
                 return;
             }
             break;

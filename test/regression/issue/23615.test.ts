@@ -1,13 +1,4 @@
 // https://github.com/oven-sh/bun/issues/23615
-//
-// When a workspace package declares a peer dependency using `catalog:`,
-// the dependency's version tag is `.catalog` instead of `.npm`. The
-// lockfile tree builder only ran the peer `satisfies()` hoist check for
-// `.npm` versions, so `catalog:` peers could end up placed at a nested
-// tree level (writing an extra `"<pkg>/<peer>"` entry into bun.lock) and
-// resolving to a different package than the equivalent npm range would.
-// With the isolated linker this surfaces as the workspace package linking
-// to a different copy of the peer than its consumer, breaking dedup.
 
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";

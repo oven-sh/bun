@@ -363,7 +363,7 @@ Depending on the target, Bun will apply different module resolution rules and op
   calling some functions, like `fs.readFile` will not work.
 </Card>
 
-<Card title="bun" icon="server">
+<Card title="bun" icon="/icons/bun.svg">
 For generating bundles that are intended to be run by the Bun runtime. In many cases, it isn't necessary to bundle server-side code; you can directly execute the source code without modification. However, bundling your server code can reduce startup times and improve running performance. This is the target to use for building full-stack applications with build-time HTML imports, where both server and client code are bundled together.
 
 All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which indicates to the Bun runtime that there's no need to re-transpile the file before execution.

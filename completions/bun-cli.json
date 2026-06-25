@@ -1689,6 +1689,13 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "changelog",
+          "description": "Show changelog URLs for outdated packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [

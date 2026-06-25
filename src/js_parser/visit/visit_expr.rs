@@ -700,9 +700,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // interpolation values so the parts loop can force constant folding
         // (matching `.e_call`, which sets these flags before visiting its
         // arguments on the macro path).
-        let macro_ref: Option<(bun_ast::Ref, crate::MacroRefData)> =
-            if Self::ALLOW_MACROS && e_.tag.is_some() && !p.options.features.is_macro_runtime {
-                let ref_ = match &e_.tag.unwrap().data {
+        let macro_ref: Option<(bun_ast::Ref, crate::MacroRefData)> = match e_.tag {
+            Some(tag) if Self::ALLOW_MACROS && !p.options.features.is_macro_runtime => {
+                let ref_ = match &tag.data {
                     Data::EImportIdentifier(ident) => Some(ident.ref_),
                     Data::EDot(dot) => match &dot.target.data {
                         Data::EIdentifier(id) => Some(id.ref_),
@@ -711,9 +711,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     _ => None,
                 };
                 ref_.and_then(|r| p.macro_.refs.get(&r).copied().map(|d| (r, d)))
-            } else {
-                None
-            };
+            }
+            _ => None,
+        };
 
         // Visit the interpolation values before the macro dispatch below: its
         // early-return paths (dead code, macros disabled, node_modules, macro

@@ -322,8 +322,18 @@ fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Res
         } else if let Some(range_parts) = split_range(base) {
             let lo = parse_value(range_parts[0], min, max, kind)
                 .map_err(|_| CronError::InvalidNumber)?;
-            let hi = parse_value(range_parts[1], min, max, kind)
+            let mut hi = parse_value(range_parts[1], min, max, kind)
                 .map_err(|_| CronError::InvalidNumber)?;
+            // Named SUN/Sunday maps to 0; promote to 7 at the end of a range so
+            // FRI-SUN behaves like 5-7 (folded to {0,5,6} below). Gate on an
+            // alphabetic token so numeric `5-0` still rejects per Vixie semantics.
+            if kind == NameKind::Weekday
+                && hi == 0
+                && lo > 0
+                && range_parts[1].first().is_some_and(u8::is_ascii_alphabetic)
+            {
+                hi = 7;
+            }
             if lo > hi {
                 return Err(CronError::InvalidRange);
             }

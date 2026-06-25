@@ -537,6 +537,85 @@ describe("apply", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // A crafted patch from an untrusted source must never panic the process. Both
+  // cases below used to crash `bun install` when applying patchedDependencies.
+  describe.concurrent("malformed patches do not crash", () => {
+    test("file creation hunk with empty parts creates an empty file", async () => {
+      const dir = tempDirWithFiles("patch-empty-parts", { ".keep": "" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           import { readFileSync } from "node:fs";
+           const patch = [
+             "diff --git a/newfile.txt b/newfile.txt",
+             "new file mode 100644",
+             "--- /dev/null",
+             "+++ b/newfile.txt",
+             "@@ -0,0 +0,0 @@",
+             "",
+           ].join("\\n");
+           try {
+             const ok = patchInternals.apply(patch, ${JSON.stringify(dir)});
+             console.log("ok=" + ok + " contents=" + JSON.stringify(readFileSync(${JSON.stringify(dir)} + "/newfile.txt", "utf8")));
+           } catch (e) {
+             console.log("threw: " + e.code + " " + e.message);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: 'ok=true contents=""',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("header deleting more lines than the target file has returns EINVAL", async () => {
+      const dir = tempDirWithFiles("patch-underflow", { "target.txt": "only line\n" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const body = [" only line"];
+           for (let i = 0; i < 9; i++) body.push("-deleted " + i);
+           const patch = [
+             "diff --git a/target.txt b/target.txt",
+             "--- a/target.txt",
+             "+++ b/target.txt",
+             "@@ -1,10 +1,1 @@",
+             ...body,
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(dir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "caught: EINVAL",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe("parse", () => {

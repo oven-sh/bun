@@ -696,6 +696,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(e_.tag.as_mut().unwrap());
         }
 
+        // Determine whether the tag resolves to a macro before visiting the
+        // interpolation values so the parts loop can force constant folding
+        // (matching `.e_call`, which sets these flags before visiting its
+        // arguments on the macro path).
+        let macro_ref: Option<(bun_ast::Ref, crate::MacroRefData)> = if Self::ALLOW_MACROS
+            && e_.tag.is_some()
+            && !p.options.features.is_macro_runtime
+        {
+            let ref_ = match &e_.tag.unwrap().data {
+                Data::EImportIdentifier(ident) => Some(ident.ref_),
+                Data::EDot(dot) => match &dot.target.data {
+                    Data::EIdentifier(id) => Some(id.ref_),
+                    _ => None,
+                },
+                _ => None,
+            };
+            ref_.and_then(|r| p.macro_.refs.get(&r).copied().map(|d| (r, d)))
+        } else {
+            None
+        };
+
         // Visit the interpolation values before the macro dispatch below: its
         // early-return paths (dead code, macros disabled, node_modules, macro
         // failure) replace the whole expression without visiting the parts,
@@ -704,25 +725,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // while visiting" on the next scope push. Mirrors e_call, which visits
         // its arguments before macro handling.
         // `Template.parts` is arena-owned.
-        for part in e_.parts_mut().iter_mut() {
-            p.visit_expr(&mut part.value);
+        {
+            let old_ce = p.options.ignore_dce_annotations;
+            let old_fold = p.should_fold_typescript_constant_expressions;
+            if macro_ref.is_some() {
+                p.options.ignore_dce_annotations = true;
+                p.should_fold_typescript_constant_expressions = true;
+            }
+
+            for part in e_.parts_mut().iter_mut() {
+                p.visit_expr(&mut part.value);
+            }
+
+            p.options.ignore_dce_annotations = old_ce;
+            p.should_fold_typescript_constant_expressions = old_fold;
         }
 
         if let Some(tag) = e_.tag {
             if Self::ALLOW_MACROS {
-                let ref_ = match &e_.tag.unwrap().data {
-                    Data::EImportIdentifier(ident) => Some(ident.ref_),
-                    Data::EDot(dot) => match &dot.target.data {
-                        Data::EIdentifier(id) => Some(id.ref_),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-
-                if let Some(ref_) = ref_
-                    && !p.options.features.is_macro_runtime
-                {
-                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
+                if let Some((ref_, macro_ref_data)) = macro_ref {
+                    {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
@@ -745,25 +767,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                             *e = p.new_expr(E::Undefined {}, expr.loc);
                             return;
-                        }
-
-                        // Visit substitution values before calling the macro so that
-                        // statically-known identifiers are resolved before `toJS`.
-                        // Force constant folding (as the `.e_call` path does) so
-                        // expressions like `"a" + "b"` collapse to a single literal
-                        // that `toJS` can convert.
-                        {
-                            let old_ce = p.options.ignore_dce_annotations;
-                            let old_fold = p.should_fold_typescript_constant_expressions;
-                            p.options.ignore_dce_annotations = true;
-                            p.should_fold_typescript_constant_expressions = true;
-
-                            for part in e_.parts_mut().iter_mut() {
-                                p.visit_expr(&mut part.value);
-                            }
-
-                            p.options.ignore_dce_annotations = old_ce;
-                            p.should_fold_typescript_constant_expressions = old_fold;
                         }
 
                         p.macro_call_count += 1;
@@ -830,9 +833,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // The macro returned the original tagged template (e.g. because
-                        // it threw or returned undefined at top level). Parts were
-                        // already visited above, so skip the second visit below.
-                        // `E.Template.fold` is a no-op when `tag != null`, so no fold here.
+                        // it threw). `E.Template.fold` is a no-op when `tag != null`.
                         return;
                     }
                 }

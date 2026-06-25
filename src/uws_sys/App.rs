@@ -135,6 +135,19 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
     }
 
+    pub fn set_slash_normalization(
+        &mut self,
+        ignore_trailing_slash: bool,
+        ignore_duplicate_slashes: bool,
+    ) {
+        c::uws_app_set_slash_normalization(
+            Self::SSL_FLAG,
+            self.as_raw(),
+            ignore_trailing_slash,
+            ignore_duplicate_slashes,
+        )
+    }
+
     pub fn clear_routes(&mut self) {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
@@ -517,6 +530,12 @@ pub mod c {
             ssl: i32,
             app: &mut uws_app_t,
             max_header_size: u64,
+        );
+        pub(crate) safe fn uws_app_set_slash_normalization(
+            ssl: i32,
+            app: &mut uws_app_t,
+            ignore_trailing_slash: bool,
+            ignore_duplicate_slashes: bool,
         );
         pub(crate) fn uws_app_get(
             ssl: i32,

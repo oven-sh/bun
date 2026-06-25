@@ -229,7 +229,7 @@ test("numeric very small fractional values render correctly (weight = -5)", asyn
   expect(await runQuery([tinier])).toEqual(["0.00000000000000001234"]);
 });
 
-test("numeric weight = -2 (previously accidentally correct) still renders correctly", async () => {
+test("numeric weight = -2 renders correctly", async () => {
   // 0.00005678 : ndigits=1, weight=-2, dscale=8, digits=[5678].
   const v = numericBinary(1, -2, 0x0000, 8, [5678]);
   expect(await runQuery([v])).toEqual(["0.00005678"]);

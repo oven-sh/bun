@@ -1,6 +1,8 @@
-import { heapSize } from "bun:jsc";
+import { heapSize, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 
+// Each test fully unwinds the bracket in `finally` so a failing assertion
+// can't leave the VM with a non-zero deferral depth and poison later tests.
 describe("Bun.unsafe.gcDefer / gcAllow", () => {
   test("are exposed as functions", () => {
     expect(typeof Bun.unsafe.gcDefer).toBe("function");
@@ -8,10 +10,19 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
   });
 
   test("track nesting depth and return to zero", () => {
-    expect(Bun.unsafe.gcDefer()).toBe(1);
-    expect(Bun.unsafe.gcDefer()).toBe(2);
-    expect(Bun.unsafe.gcAllow()).toBe(1);
-    expect(Bun.unsafe.gcAllow()).toBe(0);
+    let depth = 0;
+    try {
+      depth = Bun.unsafe.gcDefer();
+      expect(depth).toBe(1);
+      depth = Bun.unsafe.gcDefer();
+      expect(depth).toBe(2);
+      depth = Bun.unsafe.gcAllow();
+      expect(depth).toBe(1);
+      depth = Bun.unsafe.gcAllow();
+      expect(depth).toBe(0);
+    } finally {
+      while (depth > 0) depth = Bun.unsafe.gcAllow();
+    }
   });
 
   test("gcAllow at depth zero emits a process warning, returns 0, and does not throw", async () => {
@@ -31,41 +42,61 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
     expect(warnings.some(w => w.includes("gcAllow"))).toBe(true);
   });
 
-  test("allocating heavily inside a deferred region does not crash, and GC catches up after", () => {
-    const before = heapSize();
-    Bun.unsafe.gcDefer();
+  test("collection is held off inside the bracket and resumes after", () => {
+    // Validate the actual DeferGCForAWhile contract, not just the depth
+    // counter. Inside the bracket the eden collector must not reclaim
+    // garbage even under pressure; after gcAllow() a sync collection
+    // brings the heap back near baseline.
+    //
+    // Use heapStats().heapCapacity (current reserved blocks) to observe
+    // growth — heapSize() is the size at the LAST collection, so it's
+    // frozen for the duration of the bracket by definition.
+    Bun.gc(true);
+    const baselineCapacity = heapStats().heapCapacity;
+    const baselineSize = heapSize();
+    let depth = 0;
+    let insideCapacity = 0;
     try {
-      // Generate enough garbage to normally trigger an eden collection.
+      depth = Bun.unsafe.gcDefer();
+      // Generate well past the eden trigger. None of this is rooted past
+      // the loop body, so without the bracket an eden GC would fire and
+      // capacity would saw-tooth instead of climbing.
       let sink = 0;
       for (let i = 0; i < 200_000; i++) {
-        sink += JSON.stringify({ i, a: [i, i + 1, i + 2], s: "x".repeat(8) }).length;
+        sink += JSON.stringify({ i, a: [i, i + 1, i + 2], s: "x".repeat(16) }).length;
       }
       expect(sink).toBeGreaterThan(0);
+      insideCapacity = heapStats().heapCapacity;
     } finally {
-      expect(Bun.unsafe.gcAllow()).toBe(0);
+      while (depth > 0) depth = Bun.unsafe.gcAllow();
     }
-    // Deferred pressure resolves at the next sync collection point — an
-    // explicit Bun.gc(true) must still work (deferral depth is back to 0).
+    // Inside the bracket capacity grew by the garbage we created. 8 MB is
+    // a conservative floor (200k × ~50-byte JSON × overhead is tens of MB).
+    expect(insideCapacity).toBeGreaterThan(baselineCapacity + 8 * 1024 * 1024);
+    // gcAllow() does NOT itself collect — DeferGCForAWhile's dtor only
+    // decrements m_deferralDepth. Trigger an explicit sync collection (a
+    // normal allocation slow path would do the same) and verify the heap
+    // dropped back near baseline.
     Bun.gc(true);
-    const after = heapSize();
-    // After a full sync GC the heap should not have grown unboundedly.
-    // Loose bound: under 4× the pre-test size + 64 MB slack (the loop's
-    // live set is ~0).
-    expect(after).toBeLessThan(before * 4 + 64 * 1024 * 1024);
+    const afterSize = heapSize();
+    // Loose: under 4× baseline + 64 MB slack (live set from this test ≈ 0).
+    expect(afterSize).toBeLessThan(baselineSize * 4 + 64 * 1024 * 1024);
   });
 
   test("Bun.gc(true) outside a bracket still collects (no leaked deferral)", () => {
-    // If a previous test had leaked a deferral level, Bun.gc(true) would
-    // be a no-op and the heap would be unbounded after generating garbage.
+    // If an earlier test had leaked a deferral level, Bun.gc(true) would
+    // be a no-op and post-GC heapSize would not return to baseline.
+    Bun.gc(true);
+    const baseline = heapSize();
     let sink = 0;
-    for (let i = 0; i < 100_000; i++) sink += { i, p: [i, i] }.p.length;
+    for (let i = 0; i < 100_000; i++) sink += { i, p: [i, i, i, i] }.p.length;
     expect(sink).toBeGreaterThan(0);
-    const pre = heapSize();
     Bun.gc(true);
     const post = heapSize();
-    // heapSize after a full GC isn't guaranteed to be <= pre (object-space
-    // accounting can transiently rise around a sweep), so use a generous
-    // bound that only fails if collection was actually skipped.
-    expect(post).toBeLessThan(pre + 32 * 1024 * 1024);
+    // heapSize after a full GC isn't guaranteed monotone, but it must be
+    // back near the pre-allocation baseline — bound at baseline + slack
+    // so a leaked deferral (gc skipped → post tracks the grown heap)
+    // actually fails.
+    expect(post).toBeLessThan(baseline + 16 * 1024 * 1024);
   });
 });

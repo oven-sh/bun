@@ -155,7 +155,6 @@
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
-#include <JavaScriptCore/DeferGCInlines.h>
 #include "wtf-bindings.h"
 
 #if ASSERT_ENABLED
@@ -2868,61 +2867,7 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-// Bun.unsafe.gcDefer() / gcAllow(): bracket a latency-sensitive region
-// (e.g. a UI render frame) so an eden GC doesn't fire mid-region. Uses
-// DeferGCForAWhile semantics — the matching decrement does NOT trigger
-// a collection; the next regular allocation slow path will, so the
-// deferred pressure is handled at the first opportunity *outside* the
-// bracket.
-//
-// Heap::increment/decrementDeferralDepth are private; the public RAII
-// handle is DeferGCForAWhile, which has WTF_FORBID_HEAP_ALLOCATION (deletes
-// class-scope new including placement-new). A ::new-expression bypasses
-// class-scope lookup ([expr.new]/12), so we placement-new the RAII guard
-// directly into thread_local storage — no heap allocation, no wrapper
-// struct. Only one heap-deferral level is held regardless of JS-side
-// nesting; the depth counter is purely for balance tracking. Per-thread
-// state since each Worker has its own VM. The storage is trivially
-// destructible, so an unbalanced gcDefer at thread exit just leaves
-// m_deferralDepth bumped (and the depth-16 warning will already have fired).
-extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
-
-namespace {
-thread_local unsigned s_bunGCDeferDepth = 0;
-thread_local bool s_bunGCDeferWarned = false;
-alignas(JSC::DeferGCForAWhile) thread_local unsigned char s_bunGCDeferStorage[sizeof(JSC::DeferGCForAWhile)];
-
-void bunGCDeferEmitWarning(JSC::VM& vm, ASCIILiteral message)
-{
-    auto* globalObject = defaultGlobalObject();
-    if (!globalObject) [[unlikely]]
-        return;
-    auto undef = JSC::JSValue::encode(JSC::jsUndefined());
-    Bun__Process__emitWarning(globalObject, JSC::JSValue::encode(JSC::jsString(vm, String(message))), undef, undef, undef);
-}
-}
-
-extern "C" int32_t JSC__VM__gcDeferralIncrement(JSC::VM* vm)
-{
-    if (s_bunGCDeferDepth++ == 0)
-        ::new (static_cast<void*>(s_bunGCDeferStorage)) JSC::DeferGCForAWhile(*vm);
-    if (s_bunGCDeferDepth >= 16 && !s_bunGCDeferWarned) [[unlikely]] {
-        s_bunGCDeferWarned = true;
-        bunGCDeferEmitWarning(*vm, "Bun.unsafe.gcDefer depth reached 16; gcDefer/gcAllow likely unbalanced"_s);
-    }
-    return static_cast<int32_t>(s_bunGCDeferDepth);
-}
-
-extern "C" int32_t JSC__VM__gcDeferralDecrement(JSC::VM* vm)
-{
-    if (!s_bunGCDeferDepth) [[unlikely]] {
-        bunGCDeferEmitWarning(*vm, "Bun.unsafe.gcAllow called with no matching gcDefer"_s);
-        return 0;
-    }
-    if (--s_bunGCDeferDepth == 0)
-        std::launder(reinterpret_cast<JSC::DeferGCForAWhile*>(s_bunGCDeferStorage))->~DeferGCForAWhile();
-    return static_cast<int32_t>(s_bunGCDeferDepth);
-}
+// JSC__VM__gcDeferralIncrement / Decrement live in BunGCDefer.cpp.
 
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {

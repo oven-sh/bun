@@ -116,11 +116,16 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
+function shimEnv(mode: "listener" | "accepted") {
+  const existing = bunEnv.LD_PRELOAD;
+  return { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath, FAIL_EPOLL_ADD: mode };
+}
+
 async function runWithShim(script: string, mode: "listener" | "accepted" = "listener") {
   await using proc = Bun.spawn({
     cmd: [bunExe(), script],
     cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: shimPath, FAIL_EPOLL_ADD: mode },
+    env: shimEnv(mode),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -164,7 +169,7 @@ test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL
   await using proc = Bun.spawn({
     cmd: [bunExe(), "accept.js"],
     cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: shimPath, FAIL_EPOLL_ADD: "accepted" },
+    env: shimEnv("accepted"),
     stdout: "pipe",
     stderr: "pipe",
     stdin: "pipe",

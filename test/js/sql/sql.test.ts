@@ -11635,7 +11635,7 @@ CREATE TABLE ${table_name} (
         ];
         const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
         results.forEach(row => {
-          expect(row.price).toBe("0");
+          expect(row.price).toBe("0.0000"); // NUMERIC(10,4) zero keeps its scale on the binary path
         });
       });
 

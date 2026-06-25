@@ -92,9 +92,14 @@ test.skipIf(!isPosix)("Bun.serve does not spin at 100% CPU when accept() fails w
   // TCP_DEFER_ACCEPT lets the listener poll fire. In the child, accept()
   // now fails with EMFILE.
   const sock = connect({ port: ready.port, host: "127.0.0.1" });
-  sock.on("error", () => {});
   await once(sock, "connect");
-  sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  await new Promise<void>((resolve, reject) => {
+    sock.once("error", reject);
+    sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", err =>
+      err ? reject(err) : resolve(),
+    );
+  });
+  sock.on("error", () => {});
 
   proc.stdin.write("go\n");
 

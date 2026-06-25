@@ -69,6 +69,7 @@ void us_fault_clear_all(void) {
 }
 
 int us_fault_hit(int sc, int fd, ssize_t *out, int *clamp) {
+    if ((unsigned)sc >= US_FAULT_COUNT) return 0;
     Bun__lock(&us_fault_lock);
     struct us_fault_slot *slot = &us_fault_state[sc];
     /* Snapshot under the lock so the post-release switch below acts on one

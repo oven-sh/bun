@@ -59,6 +59,15 @@ const response = await fetch("http://example.com", {
 });
 ```
 
+The proxy URL can use `http://`, `https://`, `socks5://`, or `socks5h://`.
+SOCKS proxies support username/password credentials in the proxy URL. With `socks5://`, Bun resolves the target hostname locally and sends the resolved IP address to the proxy. With `socks5h://`, Bun sends the hostname to the proxy and lets the proxy resolve DNS:
+
+```ts
+const response = await fetch("https://example.com", {
+  proxy: "socks5h://username:password@127.0.0.1:1080",
+});
+```
+
 You can also use an object format to send custom headers to the proxy server:
 
 ```ts
@@ -73,7 +82,7 @@ const response = await fetch("http://example.com", {
 });
 ```
 
-The `headers` are sent directly to the proxy in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets). If you provide a `Proxy-Authorization` header, it overrides any credentials in the proxy URL.
+The `headers` are sent directly to HTTP and HTTPS proxies in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets). If you provide a `Proxy-Authorization` header, it overrides any credentials in the proxy URL. Custom proxy headers do not apply to SOCKS proxies.
 
 ### Custom headers
 

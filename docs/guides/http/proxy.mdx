@@ -4,7 +4,7 @@ sidebarTitle: Proxy HTTP requests using fetch()
 mode: center
 ---
 
-In Bun, `fetch` supports sending requests through an HTTP or HTTPS proxy. This is useful on corporate networks or when you need to ensure a request is sent through a specific IP address.
+In Bun, `fetch` supports sending requests through an HTTP, HTTPS, or SOCKS proxy. This is useful on corporate networks or when you need to ensure a request is sent through a specific IP address.
 
 ```ts proxy.ts icon="/icons/typescript.svg"
 await fetch("https://example.com", {
@@ -15,7 +15,17 @@ await fetch("https://example.com", {
 
 ---
 
-The `proxy` option can be a URL string or an object with `url` and optional `headers`. The URL can include the username and password if the proxy requires authentication. It can be `http://` or `https://`.
+The `proxy` option can be a URL string or an object with `url` and optional `headers`. The URL can include the username and password if the proxy requires authentication. It can be `http://`, `https://`, `socks5://`, or `socks5h://`.
+
+```ts socks-proxy.ts icon="/icons/typescript.svg"
+await fetch("https://example.com", {
+  proxy: "socks5h://username:password@127.0.0.1:1080",
+});
+```
+
+For SOCKS proxies, credentials are sent using SOCKS username/password authentication. With `socks5://`, Bun resolves the target hostname locally and sends the resolved IP address to the proxy. With `socks5h://`, Bun sends the hostname to the proxy and lets the proxy resolve DNS.
+
+Custom `proxy.headers` only apply to HTTP and HTTPS proxies.
 
 ---
 
@@ -35,7 +45,7 @@ await fetch("https://example.com", {
 });
 ```
 
-The `headers` property accepts a plain object or a `Headers` instance. These headers are sent directly to the proxy server in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets).
+The `headers` property accepts a plain object or a `Headers` instance. These headers are sent directly to HTTP and HTTPS proxy servers in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets).
 
 If you provide a `Proxy-Authorization` header, it will override any credentials specified in the proxy URL.
 
@@ -47,4 +57,8 @@ You can also set the `$HTTP_PROXY` or `$HTTPS_PROXY` environment variable to the
 
 ```sh terminal icon="terminal"
 HTTPS_PROXY=https://username:password@proxy.example.com:8080 bun run index.ts
+```
+
+```sh terminal icon="terminal"
+HTTPS_PROXY=socks5h://username:password@127.0.0.1:1080 bun run index.ts
 ```

@@ -3316,6 +3316,8 @@ void GlobalObject::handleRejectedPromises()
 
             Bun__handleRejectedPromise(this, promise);
             if (auto ex = scope.exception()) {
+                if (virtual_machine.isTerminationException(ex)) [[unlikely]]
+                    return;
                 (void)scope.tryClearException();
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }

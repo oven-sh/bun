@@ -807,10 +807,9 @@ describe.concurrent(() => {
   });
 
   it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
-    // handleRejectedPromises drains the pending-rejection list in one O(n) pass
-    // (instead of takeFirst() per element). This test pins the observable
-    // behaviour: order is preserved, late .catch() suppresses delivery, and a
-    // rejection raised from inside the handler is also delivered.
+    // Pins the observable behaviour: order is preserved, late .catch()
+    // suppresses delivery, and a rejection raised from inside the handler is
+    // also delivered.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

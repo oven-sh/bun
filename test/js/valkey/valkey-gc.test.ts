@@ -131,6 +131,111 @@ test.concurrent("RedisClient survives GC across many short-lived instances", asy
   expect(exitCode).toBe(0);
 });
 
+// Fuzzer: onclose/onconnect are user-settable cached slots with no type
+// validation in the setter. When the connection later fails or succeeds,
+// the runtime used to pass the stored value straight to JSValue::call /
+// queueMicrotask, tripping isCallable() assertions in debug builds and
+// surfacing a spurious unhandled TypeError in release builds. Non-callable
+// values should just be skipped.
+test.concurrent("RedisClient ignores non-callable onclose/onconnect handlers", async () => {
+  const src = `
+    const net = require("node:net");
+
+    process.on("uncaughtException", err => {
+      console.error("uncaughtException: " + err);
+      process.exit(1);
+    });
+    process.on("unhandledRejection", err => {
+      console.error("unhandledRejection: " + err);
+      process.exit(1);
+    });
+
+    // onclose path: connect to a listener that hangs up before completing
+    // the HELLO handshake, so the close callback runs.
+    {
+      const { promise: closed, resolve: onServerClose } = Promise.withResolvers();
+      const server = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.destroy();
+      });
+      await new Promise((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const port = server.address().port;
+
+      for (const bad of [{}, 42, "nope", [1, 2, 3], null, true]) {
+        const client = new Bun.RedisClient("redis://127.0.0.1:" + port, {
+          connectionTimeout: 2000,
+          autoReconnect: false,
+        });
+        client.onclose = bad;
+        client.onconnect = bad;
+        if (client.onclose !== bad) throw new Error("onclose setter should accept any value");
+        let caught;
+        try { await client.connect(); } catch (e) { caught = e; }
+        if (!caught || !/connection closed|socket closed|failed to connect/i.test(caught.message)) {
+          throw new Error("expected a connection error, got: " + caught);
+        }
+        client.close();
+      }
+      server.close(onServerClose);
+      await closed;
+    }
+
+    // onconnect path: mock server accepts the HELLO handshake so onconnect
+    // would be queued as a microtask.
+    {
+      const server = net.createServer(socket => {
+        socket.on("data", data => {
+          if (data.includes("HELLO")) socket.write("+OK\\r\\n");
+        });
+        socket.on("error", () => {});
+      });
+      await new Promise((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const port = server.address().port;
+
+      const client = new Bun.RedisClient("redis://127.0.0.1:" + port, {
+        connectionTimeout: 2000,
+        autoReconnect: false,
+      });
+      client.onconnect = { not: "callable" };
+      client.onclose = 123;
+      await client.connect();
+      if (!client.connected) throw new Error("expected client to be connected");
+      await 1;
+
+      // A callable handler assigned afterwards still fires.
+      let closeArg;
+      client.onclose = err => { closeArg = err; };
+      client.close();
+      await 1;
+      if (!(closeArg instanceof Error)) throw new Error("callable onclose should still be invoked");
+
+      server.close();
+    }
+
+    console.log("OK");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("is not a function");
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 // A RESP scalar line (simple string, error, integer, ...) must end with CRLF.
 // The reader bounds how many bytes it will accumulate while waiting for that
 // terminator (MAX_LINE_LEN = 512 KiB), so a server that streams an endless

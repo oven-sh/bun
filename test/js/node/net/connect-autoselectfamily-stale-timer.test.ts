@@ -1,17 +1,7 @@
 // https://github.com/oven-sh/bun/issues/25633
-//
-// node:net's autoSelectFamily path arms a per-attempt timer with the current
-// `self._handle`. When an address fails synchronously at the connect()
-// syscall, Bun's native layer dispatches the connectError handler *inside*
-// kConnectTcp. That recurses through afterConnectMultiple →
-// internalConnectMultiple for every remaining address and, once exhausted,
-// destroys the socket (nulling `_handle`) before unwinding. The outer frame
-// then resumed and armed its timer with `self._handle` === null, and the
-// timer's `handle.close()` threw `TypeError: null is not an object`.
-//
-// A separate path leaves the same timer armed after a user destroy() while an
-// attempt is in flight, since Socket._destroy can't reach the per-context
-// timer.
+// Each fixture exits 1 (reason on stderr) if the autoSelectFamily per-attempt
+// timer outlives its attempt, and prints "OK" only after outliving the window
+// in which that stale timer would fire.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS } from "harness";
 import { join } from "node:path";
@@ -27,16 +17,19 @@ async function run(fixture: string) {
   return { stdout, stderr, exitCode };
 }
 
-// The synchronous connect() rejection for Class E that drives the recursion
-// is a macOS kernel behavior; other platforms route or black-hole it.
+// The fixture needs connect() to fail synchronously inside the dispatch (a
+// TCP connect to a multicast group); macOS is where that dispatch is verified
+// and where the crash reproduces, so keep the assertion surface there.
 test.concurrent.skipIf(!isMacOS)(
   "autoSelectFamily: synchronously-failing addresses do not arm a stale per-attempt timer",
   async () => {
     const { stdout, stderr, exitCode } = await run("connect-autoselectfamily-sync-fail-fixture.js");
-    expect(stderr).not.toContain("UNCAUGHT");
-    expect(stderr).not.toContain("null is not an object");
+    expect({ exitCode, stdout, stderr }).toMatchObject({
+      exitCode: 0,
+      // The 'error' line proves the attempts surfaced the expected AggregateError.
+      stdout: expect.stringContaining("error "),
+    });
     expect(stdout).toContain("OK");
-    expect(exitCode).toBe(0);
   },
 );
 
@@ -44,9 +37,11 @@ test.concurrent(
   "autoSelectFamily: destroy() while an attempt is pending does not leave the per-attempt timer to fire",
   async () => {
     const { stdout, stderr, exitCode } = await run("connect-autoselectfamily-destroy-fixture.js");
-    expect(stderr).not.toContain("UNCAUGHT");
-    expect(stderr).not.toContain("null is not an object");
+    expect({ exitCode, stdout, stderr }).toMatchObject({
+      exitCode: 0,
+      // Proves destroy() landed while attempt 0 was still pending.
+      stdout: expect.stringContaining("connecting at destroy: true"),
+    });
     expect(stdout).toContain("OK");
-    expect(exitCode).toBe(0);
   },
 );

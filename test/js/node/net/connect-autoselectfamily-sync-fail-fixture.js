@@ -5,10 +5,9 @@ process.on("uncaughtException", e => {
   process.exit(1);
 });
 
-// Two addresses force the autoSelectFamily multi-attempt path. 240.0.0.0/4
-// (Class E) is rejected synchronously by the macOS kernel, which is what
-// triggers the connectError-inside-kConnectTcp recursion this test covers;
-// the test wrapper gates this fixture to macOS for that reason.
+// Two addresses force the multi-attempt path; TCP to a multicast group is
+// rejected synchronously by the kernel regardless of routing, which drives
+// the connectError-inside-kConnectTcp recursion this fixture covers.
 const sock = net.connect({
   host: "test.invalid",
   port: 443,
@@ -16,20 +15,26 @@ const sock = net.connect({
   autoSelectFamilyAttemptTimeout: 50,
   lookup(host, opts, cb) {
     process.nextTick(cb, null, [
-      { address: "240.0.0.1", family: 4 },
-      { address: "240.0.0.2", family: 4 },
+      { address: "224.0.0.1", family: 4 },
+      { address: "224.0.0.2", family: 4 },
     ]);
   },
 });
+let sawConnectError = false;
 sock.on("error", e => {
-  // Expected: AggregateError of per-address failures.
+  // Expected: AggregateError of the per-address synchronous failures.
+  sawConnectError = true;
   console.log("error", e.code || e.constructor.name);
 });
 
-// Wait past the per-attempt timeout to catch any stale timer firing as an
-// uncaughtException. Not gated on 'close' so the fixture is bounded even if
-// the kernel ever stops rejecting Class E synchronously.
+// Wait past the per-attempt timeout so a stale timer (the bug) fires as an
+// uncaughtException instead of being skipped by an early exit.
 setTimeout(() => {
+  if (!sawConnectError) {
+    // No 'error' means the failing attempts never ran; the run proved nothing.
+    console.error("MISSING_EXPECTED_CONNECT_ERROR");
+    process.exit(1);
+  }
   if (!sock.destroyed) sock.destroy();
   console.log("OK");
   process.exit(0);

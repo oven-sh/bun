@@ -391,7 +391,15 @@ impl FetchTasklet {
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
         }
+        // The 1→0 transition should only be reachable at shutdown. The
+        // `callback` paths that call this hold the tasklet mutex, which
+        // blocks on_progress_update from releasing the JS-side initial ref,
+        // so at least one other ref is always live there.
         let self_ = Self::from_raw_ref(this);
+        debug_assert!(
+            self_.javascript_vm.is_shutting_down(),
+            "FetchTasklet::deref_from_thread reached 1->0 outside shutdown",
+        );
         if self_.javascript_vm.is_shutting_down() {
             // SAFETY: last ref; exclusive access. `deinit()` would run
             // `clear_data()` + `Drop` for the JSC `Strong`/`Weak` fields, which
@@ -2261,11 +2269,8 @@ impl FetchTasklet {
             }
             if success && task_ref.result.has_more {
                 // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
+                // `has_more` is true here so `is_done` is always false; unlock only.
                 task_ref.mutex.unlock();
-                if is_done {
-                    // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-                    FetchTasklet::deref_from_thread(task);
-                }
                 return;
             }
         } else {
@@ -2287,11 +2292,16 @@ impl FetchTasklet {
             Ordering::Relaxed,
         ) {
             if has_schedule_callback {
-                task_ref.mutex.unlock();
+                // Deref while still holding the mutex. on_progress_update
+                // (the only releaser of the JS-side initial ref) needs this
+                // mutex, so the initial ref is still held here and this
+                // deref is never the 1→0 transition.
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
                     FetchTasklet::deref_from_thread(task);
                 }
+                // SAFETY: `task` is still live (initial ref still held).
+                Self::from_raw_ref(task).mutex.unlock();
                 return;
             }
         }
@@ -2337,13 +2347,17 @@ impl FetchTasklet {
         // queue takes ownership of its `next` link.
         Self::enqueue_concurrent(task_ref.javascript_vm, ct);
 
-        task_ref.mutex.unlock();
-        // we are done with the http client so we can deref our side
-        // this is a atomic operation and will enqueue a task to deinit on the main thread
+        // Deref while still holding the mutex. on_progress_update (the only
+        // releaser of the JS-side initial ref) needs this mutex, so the
+        // initial ref is still held here and this deref is never the 1→0
+        // transition — deref_from_thread therefore never schedules
+        // deinit_callback from this path.
         if is_done {
             // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
             FetchTasklet::deref_from_thread(task);
         }
+        // SAFETY: `task` is still live (initial ref still held).
+        Self::from_raw_ref(task).mutex.unlock();
     }
 }
 

@@ -1544,11 +1544,11 @@ impl Request {
                 if !(is_base_iter && init_has_key) {
                     match value.get(global_this, "referrer") {
                         Ok(Some(referrer_value)) => {
-                            let referrer_str =
-                                match BunString::from_js(referrer_value, global_this) {
-                                    Ok(s) => s,
-                                    Err(e) => bail!(Err(e)),
-                                };
+                            let referrer_str = match BunString::from_js(referrer_value, global_this)
+                            {
+                                Ok(s) => s,
+                                Err(e) => bail!(Err(e)),
+                            };
                             if referrer_str.is_empty() {
                                 // Static: no allocation. Getter maps this
                                 // sentinel to "".

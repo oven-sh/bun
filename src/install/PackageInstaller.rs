@@ -445,9 +445,19 @@ impl ParallelHoistedTask {
     }
 
     fn run(&mut self) -> package_install::InstallResult {
-        // SAFETY: BACKREF — see field doc. `root_node_modules_folder` and
-        // `lockfile` are read-only here; `parallel_wait_group` is atomic.
-        let installer: &PackageInstaller<'_> = unsafe { &*self.installer };
+        // SAFETY: BACKREF — see field doc. Project the two fields we need
+        // via raw place expressions so no `&PackageInstaller` is formed
+        // while the main thread may hold `&mut PackageInstaller`
+        // (`run_tasks(this, &mut installer, ...)` and the next tree's
+        // `install_package(&mut self)` run concurrently with workers).
+        // `root_node_modules_folder` is never mutated during the install
+        // pass; `lockfile` is a stable raw pointer.
+        let (root_node_modules_folder, lockfile): (&Dir, &Lockfile) = unsafe {
+            (
+                &*core::ptr::addr_of!((*self.installer).root_node_modules_folder),
+                &*core::ptr::addr_of!((*self.installer).lockfile).read(),
+            )
+        };
 
         // For nested trees open (and if racing another worker, create)
         // the destination `node_modules`. The root tree reuses the
@@ -474,9 +484,7 @@ impl ParallelHoistedTask {
             };
             Some(opened)
         };
-        let destination_dir: &Dir = owned_dir
-            .as_ref()
-            .unwrap_or(&installer.root_node_modules_folder);
+        let destination_dir: &Dir = owned_dir.as_ref().unwrap_or(root_node_modules_folder);
 
         let local_node_modules = NodeModulesFolder {
             tree_id: self.tree_id,
@@ -507,7 +515,7 @@ impl ParallelHoistedTask {
             package_version: b"",
             patch: None,
             node_modules: &local_node_modules,
-            lockfile: installer.lockfile(),
+            lockfile,
         };
 
         let result = pi.install(
@@ -712,6 +720,11 @@ impl<'a> PackageInstaller<'a> {
                 );
             } else {
                 let resolution = self.resolutions[t.package_id as usize];
+                // `destination_dir_fd` is only consumed by the EACCES
+                // fstat writability check. The parallel path only runs
+                // on a fresh `node_modules` where bun just created
+                // every nested dir itself (same owner/mode as root), so
+                // root's writability is representative.
                 self.handle_install_result(
                     t.dependency_id,
                     t.package_id,

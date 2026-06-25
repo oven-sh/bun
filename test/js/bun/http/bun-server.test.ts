@@ -1606,7 +1606,10 @@ describe.concurrent("node:http socket.fd (Bun extension)", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), signalCode: proc.signalCode ?? null, exitCode }).toMatchObject({
+    // stderr is diagnostic-only here: toMatchObject ignores keys absent from the
+    // expected object, so a future assertion-abort backtrace surfaces in the diff
+    // without asserting on (noisy) stderr content.
+    expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode ?? null, exitCode }).toMatchObject({
       stdout: "OK",
       signalCode: null,
       exitCode: 0,

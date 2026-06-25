@@ -287,8 +287,7 @@ static JSC::JSValue userEmitOverride(JSC::VM& vm, Process* process)
     return emitValue;
 }
 
-// Invoke a user-installed `process.emit` override; true iff it returned truthy.
-static bool callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* process, JSC::JSValue emitValue, ASCIILiteral eventName, JSC::JSValue arg)
+static void callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* process, JSC::JSValue emitValue, ASCIILiteral eventName, JSC::JSValue arg)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -297,22 +296,14 @@ static bool callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* pro
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsString(vm, String(eventName)));
     args.append(arg);
-    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, args);
+    (void)JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, args);
 
     if (auto* exception = scope.exception()) {
         (void)scope.tryClearException();
         if (!vm.hasPendingTerminationException()) {
             Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         }
-        return false;
     }
-
-    bool ret = result.toBoolean(globalObject);
-    if (scope.exception()) {
-        (void)scope.tryClearException();
-        return false;
-    }
-    return ret;
 }
 
 static bool processIsExiting = false;

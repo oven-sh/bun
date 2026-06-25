@@ -162,6 +162,24 @@ impl WindowsNamedPipeContext {
         });
     }
 
+    fn on_session(this: *mut Self, session: &[u8]) {
+        // Only the TLS wrapper parks sessions; the TCP arm can never get here.
+        // SAFETY: see `on_open`.
+        if let SocketType::Tls(s) = unsafe { (*this).socket } {
+            // SAFETY: see `on_data`; `on_session` takes `*mut Self`
+            // (noalias re-entrancy) and routes JS errors internally.
+            let _ = unsafe { TLSSocket::on_session(s, session) };
+        }
+    }
+
+    fn on_keylog(this: *mut Self, line: &[u8]) {
+        // SAFETY: same as `on_session` above.
+        if let SocketType::Tls(s) = unsafe { (*this).socket } {
+            // SAFETY: same as `on_session` above.
+            let _ = unsafe { TLSSocket::on_keylog(s, line) };
+        }
+    }
+
     fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: see `on_open`.
         let pipe = unsafe { ptr::addr_of_mut!((*this).named_pipe) };
@@ -317,6 +335,8 @@ impl WindowsNamedPipeContext {
             on_error: |p, e| Self::on_error(p.cast::<Self>(), &e),
             on_timeout: |p| Self::on_timeout(p.cast::<Self>()),
             on_close: |p| Self::on_close(p.cast::<Self>()),
+            on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
+            on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
         };
         #[cfg(not(windows))]
         {

@@ -23,11 +23,6 @@ pub struct ImportRecord {
 
     pub source_index: Index,
 
-    /// Dead field: the only reader (`js_printer`'s `print_bundled_import`)
-    /// has been deleted. Always 0. Remove together with the `module_id: 0` initializers
-    /// in the parser/bundler/css constructors when those files are next touched.
-    pub module_id: u32,
-
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.
     /// Used for metafile generation.

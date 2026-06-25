@@ -13,9 +13,8 @@ use bun_core::{pretty, pretty_error, pretty_errorln};
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "ci_info.rs"]
 pub mod ci_info;
-/// CI-provider detection table, copied from watson/ci-info@4.0.0; since the
-/// Rust build has no codegen hook for this yet, the table is maintained by
-/// hand. Keep in sync with `src/codegen/ci_info.ts`.
+/// CI-provider detection table, copied from watson/ci-info@4.0.0; maintained by
+/// hand. Keep in sync with the vendors.json upstream.
 pub(crate) mod ci_info_generated {
     use bun_core::{getenv_z, zstr};
 
@@ -321,10 +320,7 @@ pub use bun_bunfig::bunfig;
 #[path = "run_command.rs"]
 pub mod run_command;
 
-// ─── per-subcommand bodies (un-gated for `Command::start` dispatch) ──────────
-// Heavy bodies inside re-gate on whatever
-// lower-tier crate surface they still need; the dispatch arm just calls
-// `<Mod>Command::exec(ctx)`.
+// ─── per-subcommand bodies ───────────────────────────────────────────────────
 #[path = "build_command.rs"]
 pub mod build_command;
 #[path = "bunx_command.rs"]

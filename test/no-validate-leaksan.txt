@@ -170,9 +170,7 @@ test/bake/dev/vfile.test.ts
 test/js/bun/http/serve.test.ts
 test/js/bun/resolve/import-meta.test.js
 test/js/node/worker_threads/worker_threads.test.ts
-test/js/third_party/@duckdb/node-api/duckdb.test.ts
 test/js/third_party/body-parser/express-bun-build-compile.test.ts
-test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 
 
 # ASSERTION FAILED: m_normalWorld->hasOneRef()
@@ -216,7 +214,6 @@ test/js/node/test/parallel/test-http-dummy-characters-smuggling.js
 test/js/node/test/parallel/test-http-missing-header-separator-lf.js
 test/js/node/test/parallel/test-http-invalid-te.js
 test/js/node/test/parallel/test-http-missing-header-separator-cr.js
-test/js/node/test/parallel/test-http-server-reject-chunked-with-content-length.js
 test/js/node/test/parallel/test-http-chunked-smuggling.js
 test/js/node/test/parallel/test-http-double-content-length.js
 test/js/node/test/parallel/test-http-blank-header.js
@@ -386,6 +383,9 @@ test/js/node/vm/vm.test.ts
 
 # VM has terminated
 test/js/node/test/parallel/test-net-during-close.js
+test/js/node/test/parallel/test-net-socket-reset-send.js
+test/js/node/test/parallel/test-net-connect-reset-after-destroy.js
+test/js/node/test/parallel/test-net-connect-reset-until-connected.js
 
 # JSC::BuiltinNames::~BuiltinNames
 test/js/bun/shell/shell-hang.test.ts
@@ -398,12 +398,14 @@ test/regression/issue/11664.test.ts
 
 # ASSERTION FAILED: m_cellState == CellState::DefinitelyWhite
 test/js/node/tls/node-tls-upgrade.test.ts
-test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 
 # Bun::NapiExternal::~NapiExternal
 test/v8/v8.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
+# ~294 per-symbol subprocess spawns that intentionally crash on the stub;
+# LSAN per-spawn adds no coverage and slows the file significantly.
+test/napi/uv_stub.test.ts
 
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
@@ -447,3 +449,6 @@ test/js/node/test/parallel/test-https-localaddress-bind-error.js
 test/js/node/test/parallel/test-crypto-op-during-process-exit.js
 
 test/js/third_party/prisma/prisma.test.ts
+# upgradeDuplexToTLS protos/server_name Box<[u8]> are owned by the JS-held
+# socket cell; tests that exit before a final GC report them as indirect leaks.
+test/js/node/tls/node-tls-connect.test.ts

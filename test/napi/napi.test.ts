@@ -1051,6 +1051,26 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("napi_is_arraybuffer", () => {
+    it("distinguishes ArrayBuffer from SharedArrayBuffer and typed arrays", async () => {
+      // https://github.com/oven-sh/bun/issues/32624
+      // napi_is_arraybuffer must report false for a SharedArrayBuffer the way
+      // Node does, even though JSC gives it the same cell type as a plain
+      // ArrayBuffer. napi_get_arraybuffer_info still accepts a SharedArrayBuffer
+      // in Node (napi_ok), so the check below pins that asymmetry too.
+      // napi_ok is 0 and napi_invalid_arg is 1.
+      const output = await checkSameOutput(
+        "test_is_arraybuffer",
+        "[new ArrayBuffer(8), new SharedArrayBuffer(8), new Uint8Array(8)]",
+      );
+      expect(output.split("\n")).toEqual([
+        "napi_is_arraybuffer=true napi_get_arraybuffer_info=0",
+        "napi_is_arraybuffer=false napi_get_arraybuffer_info=0",
+        "napi_is_arraybuffer=false napi_get_arraybuffer_info=1",
+      ]);
+    });
+  });
+
   describe("error handling", () => {
     it("removing non-existent env cleanup hook should not crash", async () => {
       // Test that removing non-existent hooks doesn't crash the process

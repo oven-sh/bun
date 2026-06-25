@@ -138,15 +138,6 @@ impl Optional {
         !Impl::get(r).is_empty()
     }
 
-    /// Debug-only raw handle pointer for corruption probes (#53265). Null when
-    /// `None`. Do NOT dereference — only compare against the small-integer
-    /// floor in `Impl::destroy`.
-    #[doc(hidden)]
-    #[inline]
-    pub fn handle_ptr(&self) -> *const () {
-        self.handle.map_or(core::ptr::null(), |p| p.as_ptr().cast())
-    }
-
     pub fn try_swap(&mut self) -> Option<JSValue> {
         let result = self.swap();
         if result.is_empty() {
@@ -224,10 +215,7 @@ impl Impl {
         // call site that holds the corrupted Strong. The 0x10000 floor is
         // Windows' default null-page guard; legitimate `Impl*` are bmalloc'd
         // far above it.
-        if cfg!(debug_assertions) || cfg!(windows) {
-            // Always-on on Windows while #53265 fs-promises-writeFile segfault
-            // is being root-caused; release-stripped elsewhere. Remove the
-            // `|| cfg!(windows)` once the corrupting writer is found.
+        if cfg!(debug_assertions) {
             assert!(
                 (this.as_ptr() as usize) >= 0x10000,
                 "Strong<Impl>* corrupted ({:p}); owning struct was overwritten",

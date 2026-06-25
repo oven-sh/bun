@@ -488,6 +488,59 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     return Bun::toStringRef(builder.toString());
 }
 
+// Port of Node's addNumericalSeparator: groups digits in threes from the right
+// ("18446744073709551616" -> "18_446_744_073_709_551_616").
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L883
+static WTF::String addNumericalSeparator(const WTF::String& val)
+{
+    WTF::String res = emptyString();
+    unsigned start = (!val.isEmpty() && val[0] == '-') ? 1 : 0;
+    unsigned i = val.length();
+    for (; i >= start + 4; i -= 3) {
+        res = makeString("_"_s, StringView(val).substring(i - 3, 3), res);
+    }
+    return makeString(StringView(val).substring(0, i), res);
+}
+
+// ERR_OUT_OF_RANGE renders the received value with numeric separators for
+// integers and bigints whose magnitude exceeds 2**32, matching Node.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1648-L1663
+static void appendOutOfRangeReceived(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue input)
+{
+    if (input.isNumber()) {
+        double d = input.asNumber();
+        if (std::isfinite(d) && std::trunc(d) == d && std::abs(d) > 4294967296.0) {
+            builder.append(addNumericalSeparator(input.toWTFString(globalObject)));
+            return;
+        }
+    } else if (input.isBigInt()) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        WTF::String digits = input.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        // Separators apply beyond +-2**32. Compare on the digit string: 2**32
+        // is "4294967296" (10 digits), so longer strings are always larger and
+        // equal-length strings compare lexicographically.
+        StringView magnitude = StringView(digits).substring(digits.startsWith('-') ? 1 : 0);
+        bool beyond32Bits = magnitude.length() > 10;
+        if (magnitude.length() == 10) {
+            constexpr const char limit[] = "4294967296";
+            for (unsigned i = 0; i < 10; i++) {
+                if (magnitude[i] != static_cast<char16_t>(limit[i])) {
+                    beyond32Bits = magnitude[i] > static_cast<char16_t>(limit[i]);
+                    break;
+                }
+            }
+        }
+        if (beyond32Bits)
+            digits = addNumericalSeparator(digits);
+        builder.append(digits);
+        builder.append('n');
+        return;
+    }
+    JSValueToStringSafe(globalObject, builder, input);
+}
+
 namespace Message {
 
 void addList(WTF::StringBuilder& result, WTF::Vector<WTF::String>& types)
@@ -539,7 +592,28 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     WTF::StringBuilder result;
     result.append("The "_s);
     addParameter(result, arg_name);
-    result.append(" must be of type "_s);
+    result.append(" must be "_s);
+
+    // Node categorizes a free-form phrase like "Array of unique strings"
+    // (spaces, but not a flattened "X, Y, or Z" list) as neither a primitive
+    // type name nor a class name: it renders "must be an Array of unique
+    // strings", not "must be of type ...". Flattened lists keep the legacy
+    // "of type" rendering.
+    bool isPhrase = expected_type.contains(' ') && !expected_type.contains(", "_s) && !expected_type.contains(" or "_s);
+    if (isPhrase) {
+        bool hasUppercase = false;
+        for (unsigned i = 0; i < expected_type.length(); i++) {
+            if (isASCIIUpper(expected_type[i])) {
+                hasUppercase = true;
+                break;
+            }
+        }
+        if (hasUppercase)
+            result.append("an "_s);
+    } else {
+        result.append("of type "_s);
+    }
+
     result.append(expected_type);
     result.append(". Received "_s);
     determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
@@ -547,6 +621,31 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     return result.toString();
 }
 
+// Matches Node's kTypes list: primitive type names accepted by ERR_INVALID_ARG_TYPE.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L72
+static bool isPrimitiveTypeName(const WTF::String& type)
+{
+    return type == "string"_s || type == "function"_s || type == "number"_s
+        || type == "object"_s || type == "Function"_s || type == "Object"_s
+        || type == "boolean"_s || type == "bigint"_s || type == "symbol"_s;
+}
+
+// Matches Node's classRegExp /^[A-Z][a-zA-Z0-9]*$/.
+static bool isClassName(const WTF::String& type)
+{
+    if (type.isEmpty() || !isASCIIUpper(type[0]))
+        return false;
+    for (unsigned i = 1; i < type.length(); i++) {
+        if (!isASCIIAlphanumeric(type[i]))
+            return false;
+    }
+    return true;
+}
+
+// Port of Node's ERR_INVALID_ARG_TYPE list rendering: expected entries are
+// grouped into primitive type names ("of type ..."), class names ("an
+// instance of ..."), and everything else.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1404
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, ArgList expected_types, JSValue actual_value)
 {
     WTF::StringBuilder result;
@@ -554,38 +653,58 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     result.append("The "_s);
     addParameter(result, arg_name);
     result.append(" must be "_s);
-    result.append("of type "_s);
 
-    unsigned length = expected_types.size();
-    if (length == 1) {
-        auto* str = expected_types.at(0).toString(globalObject);
+    WTF::Vector<WTF::String> types;
+    WTF::Vector<WTF::String> instances;
+    WTF::Vector<WTF::String> other;
+
+    for (unsigned i = 0, length = expected_types.size(); i < length; i++) {
+        auto* str = expected_types.at(i).toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        result.append(str->view(globalObject));
+        auto view = str->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-    } else if (length == 2) {
-        auto* str1 = expected_types.at(0).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        result.append(str1->view(globalObject));
-        RETURN_IF_EXCEPTION(scope, {});
-        result.append(" or "_s);
-        auto* str2 = expected_types.at(1).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        result.append(str2->view(globalObject));
-        RETURN_IF_EXCEPTION(scope, {});
-    } else {
-        for (unsigned i = 0, end = length - 1; i < end; i++) {
-            JSValue expected_type = expected_types.at(i);
-            auto* str = expected_type.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            result.append(str->view(globalObject));
-            RETURN_IF_EXCEPTION(scope, {});
-            result.append(", "_s);
+        WTF::String value = view->toString();
+        if (isPrimitiveTypeName(value))
+            types.append(value.convertToASCIILowercase());
+        else if (isClassName(value))
+            instances.append(value);
+        else
+            other.append(value);
+    }
+
+    // Special handle `object` in case other instances are allowed to outline
+    // the differences between each other.
+    if (!instances.isEmpty()) {
+        size_t pos = types.find("object"_s);
+        if (pos != WTF::notFound) {
+            types.removeAt(pos);
+            instances.append("Object"_s);
         }
-        result.append("or "_s);
-        auto* str = expected_types.at(length - 1).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        result.append(str->view(globalObject));
-        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!types.isEmpty()) {
+        result.append(types.size() > 1 ? "one of type "_s : "of type "_s);
+        addList(result, types);
+        if (!instances.isEmpty() || !other.isEmpty())
+            result.append(" or "_s);
+    }
+
+    if (!instances.isEmpty()) {
+        result.append("an instance of "_s);
+        addList(result, instances);
+        if (!other.isEmpty())
+            result.append(" or "_s);
+    }
+
+    if (!other.isEmpty()) {
+        if (other.size() > 1) {
+            result.append("one of "_s);
+            addList(result, other);
+        } else {
+            if (other.at(0).convertToASCIILowercase() != other.at(0))
+                result.append("an "_s);
+            result.append(other.at(0));
+        }
     }
 
     result.append(". Received "_s);
@@ -639,7 +758,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     builder.append("\" is out of range. It must be "_s);
     builder.append(range);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, val_input);
+    appendOutOfRangeReceived(globalObject, builder, val_input);
     RETURN_IF_EXCEPTION(scope, {});
 
     return builder.toString();
@@ -745,7 +864,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     builder.append(" and <= "_s);
     builder.append(upper);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, actual);
+    appendOutOfRangeReceived(globalObject, builder, actual);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
@@ -768,7 +887,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     builder.append(" and <= "_s);
     builder.append(upper);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, actual);
+    appendOutOfRangeReceived(globalObject, builder, actual);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
@@ -790,7 +909,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     builder.append(bound == LOWER ? ">= "_s : "<= "_s);
     builder.append(bound_num);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, actual);
+    appendOutOfRangeReceived(globalObject, builder, actual);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
@@ -811,7 +930,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     builder.append("\" is out of range. It must be "_s);
     builder.append(msg);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, actual);
+    appendOutOfRangeReceived(globalObject, builder, actual);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
@@ -827,7 +946,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     builder.append("\" is out of range. It must be "_s);
     builder.append(msg);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, actual);
+    appendOutOfRangeReceived(globalObject, builder, actual);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, builder.toString()));
@@ -1060,12 +1179,10 @@ JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
 JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue encodingValue)
 {
-    WTF::String encodingString = encodingValue.toWTFString(globalObject);
-    RELEASE_RETURN_IF_EXCEPTION(scope, {});
-
     WTF::StringBuilder builder;
     builder.append("Unknown encoding: "_s);
-    builder.append(encodingString);
+    JSValueToStringSafe(globalObject, builder, encodingValue);
+    RELEASE_RETURN_IF_EXCEPTION(scope, {});
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, builder.toString()));
     scope.release();
     return {};
@@ -1180,10 +1297,10 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSG
 
 JSC::EncodedJSValue CRYPTO_UNKNOWN_CIPHER(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& cipherName)
 {
-    WTF::StringBuilder builder;
-    builder.append("Unknown cipher: "_s);
-    builder.append(cipherName);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_CIPHER, builder.toString()));
+    // Node dropped the cipher name from the message (exact-match asserted by
+    // test-crypto-cipheriv-decipheriv.js and test-crypto-keygen.js).
+    UNUSED_PARAM(cipherName);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_CIPHER, "Unknown cipher"_s));
     throwScope.release();
     return {};
 }
@@ -1542,7 +1659,7 @@ static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalOb
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
 }
 
-static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, JSC::JSValue reason)
+static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, JSC::JSValue reason, ErrorCode code = ErrorCode::ERR_INVALID_ARG_VALUE)
 {
     ASSERT(name.isString());
     auto* jsNameString = name.toString(globalObject);
@@ -1568,7 +1685,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
         builder.append(" is invalid. Received "_s);
         JSValueToStringSafe(globalObject, builder, value, true);
         RETURN_IF_EXCEPTION(throwScope, {});
-        return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
+        return createError(globalObject, code, builder.toString());
     }
 
     auto* jsReasonString = reason.toString(globalObject);
@@ -1582,7 +1699,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     builder.append(". Received "_s);
     JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
-    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
+    return createError(globalObject, code, builder.toString());
 }
 
 extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, BunString* message)
@@ -1779,15 +1896,32 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_ARG_VALUE_RangeError: {
+        JSValue arg0 = callFrame->argument(1);
+        JSValue arg1 = callFrame->argument(2);
+        JSValue arg2 = callFrame->argument(3);
+        return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2, ErrorCode::ERR_INVALID_ARG_VALUE_RangeError));
+    }
+
+    case Bun::ErrorCode::ERR_STREAM_ITER_MISSING_FLAG: {
+        return JSC::JSValue::encode(createError(globalObject, error, "The stream/iter API requires the --experimental-stream-iter flag"_s));
+    }
+
+    case Bun::ErrorCode::ERR_OPERATION_FAILED: {
+        auto arg0 = callFrame->argument(1);
+        WTF::StringBuilder builder;
+        builder.append("Operation failed: "_s);
+        JSValueToStringSafe(globalObject, builder, arg0);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
     case Bun::ErrorCode::ERR_UNKNOWN_ENCODING: {
         auto arg0 = callFrame->argument(1);
-        auto* jsString = arg0.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto param = jsString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
         WTF::StringBuilder builder;
         builder.append("Unknown encoding: "_s);
-        builder.append(param);
+        JSValueToStringSafe(globalObject, builder, arg0);
+        RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 
@@ -2435,12 +2569,16 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION, "Socket closed before the connection was established"_s));
     case ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED, "TLS session renegotiation disabled for this socket"_s));
+    case ErrorCode::ERR_TLS_RENEGOTIATION_UNSUPPORTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_RENEGOTIATION_UNSUPPORTED, "TLS session renegotiation is unsupported by this TLS implementation"_s));
     case ErrorCode::ERR_UNAVAILABLE_DURING_EXIT:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_UNAVAILABLE_DURING_EXIT, "Cannot call function in process exit handler"_s));
     case ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
+    case ErrorCode::ERR_TLS_INVALID_STATE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_INVALID_STATE, "TLS socket connection must be securely established"_s));
     case ErrorCode::ERR_INVALID_URI:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
     case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:

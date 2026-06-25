@@ -348,21 +348,21 @@ impl<'a> TOML<'a> {
             T::t_numeric_literal => {
                 let value = self.lexer.number;
                 self.lexer.next()?;
-                Ok(self.e(E::Number { value }, loc))
+                Ok(self.e(E::Number::new(value), loc))
             }
             T::t_minus => {
                 self.lexer.next()?;
                 let value = self.lexer.number;
 
                 self.lexer.expect(T::t_numeric_literal)?;
-                Ok(self.e(E::Number { value: -value }, loc))
+                Ok(self.e(E::Number::new(-value), loc))
             }
             T::t_plus => {
                 self.lexer.next()?;
                 let value = self.lexer.number;
 
                 self.lexer.expect(T::t_numeric_literal)?;
-                Ok(self.e(E::Number { value }, loc))
+                Ok(self.e(E::Number::new(value), loc))
             }
             T::t_open_brace => {
                 self.lexer.next()?;

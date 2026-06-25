@@ -1705,6 +1705,45 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
+  // (prints symbol.original_name verbatim), so the `generatedSymbolName`
+  // hash suffix on the automatic JSX runtime import is the sole collision
+  // guard against a user local of the same name in the first JSX element's
+  // scope. With `minify.identifiers`, MinifyRenamer assigns distinct slots
+  // and the hash suffix is not emitted.
+  it("JSX automatic runtime import is not shadowed by a user local", () => {
+    const input =
+      "export function f() { let jsx: any; let jsxDEV: any; let Fragment: any; return [<><div /></>, jsx, jsxDEV, Fragment] }";
+
+    const noop = new Bun.Transpiler({
+      loader: "tsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    }).transformSync(input);
+    expect(noop).toContain("jsxDEV_7x81h0kn(");
+    expect(noop).toContain("Fragment_8vg9x3sq,");
+    expect(noop).toContain("let jsx;");
+    expect(noop).toContain("let jsxDEV;");
+    expect(noop).toContain("let Fragment;");
+    expect(noop).not.toMatch(/\bjsxDEV\(/);
+
+    const minified = new Bun.Transpiler({
+      loader: "tsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      minify: { identifiers: true },
+      autoImportJSX: true,
+    }).transformSync(input);
+    expect(minified).not.toContain("_7x81h0kn");
+    expect(minified).not.toContain("_8vg9x3sq");
+    // Import aliases must not collide with the user's `let` bindings.
+    const aliases = [...minified.matchAll(/\b\w+ as (\w+)\b/g)].map(m => m[1]);
+    const locals = [...minified.matchAll(/\blet (\w+);/g)].map(m => m[1]);
+    expect(aliases).toHaveLength(2);
+    expect(locals).toHaveLength(3);
+    for (const alias of aliases) {
+      expect(locals).not.toContain(alias);
+    }
+  });
+
   it("JSX bare key prop followed by key with a value does not crash", async () => {
     await using proc = Bun.spawn({
       cmd: [

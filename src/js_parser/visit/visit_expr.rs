@@ -161,6 +161,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        // The substitution revisit re-enters with an already-resolved `Ref`.
+        // `find_symbol` below only looks in `scope.members`, so a symbol that
+        // lives only in `scope.generated` (e.g. a React Compiler outlined
+        // function) would be re-bound to a fresh `Unbound` and the renamer
+        // would lose the link to its declaration.
+        if p.is_revisit_for_substitution {
+            return;
+        }
         let expr = *e;
         let mut e_ = expr
             .data
@@ -244,7 +252,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
-            p.symbols[result.r#ref.inner_index() as usize].has_been_assigned_to = true;
+            p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);
         }
 
         let mut original_name: Option<&[u8]> = None;
@@ -478,6 +486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             } else {
                                 E::CallUnwrap::Never
                             },
+                            was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
                             ..Default::default()
                         },
@@ -1059,9 +1068,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.options.features.minify_syntax {
             if let Some(number) = index.data.as_e_number() {
-                if number.value >= 0.0
-                    && number.value < (usize::MAX as f64)
-                    && number.value % 1.0 == 0.0
+                if number.value() >= 0.0
+                    && number.value() < (usize::MAX as f64)
+                    && number.value() % 1.0 == 0.0
                 {
                     // "foo"[2] -> "o"
                     if let Some(str_) = target.data.as_e_string() {
@@ -1088,7 +1097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else if let Some(array) = target.data.as_e_array() {
                         // [x][0] -> x
-                        if array.items.len_u32() == 1 && number.value == 0.0 {
+                        if array.items.len_u32() == 1 && number.value() == 0.0 {
                             let inlined = *array.items.at(0);
                             if inlined.can_be_inlined_from_property_access() {
                                 *e = inlined;
@@ -1097,7 +1106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // ['a', 'b', 'c'][1] -> 'b'
-                        let int: usize = number.value as usize;
+                        let int: usize = number.value() as usize;
                         if int < array.items.len_u32() as usize
                             && p.expr_can_be_removed_if_unused(&target)
                         {
@@ -1273,9 +1282,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.should_fold_typescript_constant_expressions {
                             if let Some(value) = SideEffects::to_number(&e_.value.data) {
                                 *e = p.new_expr(
-                                    E::Number {
-                                        value: f64::from(!float_to_int32(value)),
-                                    },
+                                    E::Number::new(f64::from(!float_to_int32(value))),
                                     expr.loc,
                                 );
                                 return;
@@ -1290,13 +1297,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     Op::UnPos => {
                         if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            *e = p.new_expr(E::Number { value: num }, expr.loc);
+                            *e = p.new_expr(E::Number::new(num), expr.loc);
                             return;
                         }
                     }
                     Op::UnNeg => {
                         if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            *e = p.new_expr(E::Number { value: -num }, expr.loc);
+                            *e = p.new_expr(E::Number::new(-num), expr.loc);
                             return;
                         }
                     }
@@ -1503,7 +1510,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 if is_call_target && e_.yes.has_value_for_this_in_call() {
                     *e = p
-                        .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
+                        .new_expr(E::Number::new(0.0), e_.test_.loc)
                         .join_with_comma(e_.yes);
                     return;
                 }
@@ -1531,7 +1538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 if is_call_target && e_.no.has_value_for_this_in_call() {
                     *e = p
-                        .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
+                        .new_expr(E::Number::new(0.0), e_.test_.loc)
                         .join_with_comma(e_.no);
                     return;
                 }
@@ -2315,16 +2322,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let str_ = target_str.data;
                         let arg1 = e_.args.at(0).unwrap_inlined();
                         if let Data::ENumber(n) = &arg1.data {
-                            let float = n.value;
+                            let float = n.value();
                             if float % 1.0 == 0.0 && float < (str_.len() as f64) && float >= 0.0 {
                                 let char_ = str_[float as usize];
                                 if char_ < 0x80 {
-                                    *e = p.new_expr(
-                                        E::Number {
-                                            value: f64::from(char_),
-                                        },
-                                        expr.loc,
-                                    );
+                                    *e = p.new_expr(E::Number::new(f64::from(char_)), expr.loc);
                                     return;
                                 }
                             }
@@ -2493,8 +2495,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
+        let rc_binding = p.react_compiler_candidate_name.take();
+        if rc_binding.is_some() {
+            let mut flags = bun_ast::flags::FUNCTION_NONE;
+            if e_.is_async {
+                flags |= bun_ast::flags::Function::IsAsync;
+            }
+            if e_.has_rest_arg {
+                flags |= bun_ast::flags::Function::HasRestArg;
+            }
+            if e_.has_react_hooks_suppression {
+                flags |= bun_ast::flags::Function::HasReactHooksSuppression;
+            }
+            p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
+                args: e_.args,
+                flags,
+                body_loc: e_.body.loc,
+                args_loc: e_.body.loc,
+                binding: rc_binding,
+                in_react_hoc: core::mem::take(&mut p.react_compiler_in_react_hoc),
+            });
+        }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
+        p.react_compiler_pending = None;
+        if let Some(result) = p.react_compiler_result.take() {
+            e_.args = result.args;
+            e_.is_async = result.flags.contains(bun_ast::flags::Function::IsAsync);
+            e_.has_rest_arg = result.flags.contains(bun_ast::flags::Function::HasRestArg);
+            e_.prefer_expr = false;
+            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+                p.record_usage(b);
+            }
+        }
         p.pop_scope();
         p.pop_scope();
 
@@ -2574,8 +2607,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.func.name.is_some()
-            && e_.func.name.unwrap().ref_.is_some()
-            && p.symbols[e_.func.name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
+            && !e_.func.name.unwrap().ref_.is_empty()
+            && p.symbols[e_.func.name.unwrap().ref_.inner_index() as usize]
                 .use_count_estimate
                 == 0
         {
@@ -2601,7 +2634,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             final_expr = p.keep_expr_symbol_name(
                 final_expr,
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                p.symbols[name.ref_.inner_index() as usize]
                     .original_name
                     .slice(),
             );
@@ -2643,8 +2676,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.class_name.is_some()
-            && e_.class_name.unwrap().ref_.is_some()
-            && p.symbols[e_.class_name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
+            && !e_.class_name.unwrap().ref_.is_empty()
+            && p.symbols[e_.class_name.unwrap().ref_.inner_index() as usize]
                 .use_count_estimate
                 == 0
         {

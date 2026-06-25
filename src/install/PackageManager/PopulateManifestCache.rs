@@ -175,7 +175,8 @@ pub fn populate_manifest_cache(
                 let pkg_name_slice = pkg_name.slice(string_buf);
                 // `options` is not mutated between here and the
                 // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
-                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
+                let needs_extended_manifest =
+                    mgr_ref.options.minimum_release_age_ms.is_some() || mgr_ref.options.changelog;
 
                 // `scope_for_package_name` borrows only `options` (via the
                 // BACKREF `mgr_ref`); `manifests` is a disjoint field projected
@@ -193,7 +194,12 @@ pub fn populate_manifest_cache(
                     ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
                 );
-                if cached.is_none() {
+                // The disk cache never stores repository_url; --changelog re-fetches it.
+                let needs_refetch = match cached {
+                    None => true,
+                    Some(m) => mgr_ref.options.changelog && m.repository_url.is_empty(),
+                };
+                if needs_refetch {
                     start_manifest_task(
                         // SAFETY: `manager_ptr` is the SRW provenance root;
                         // `start_manifest_task` only touches the network-task
@@ -234,7 +240,8 @@ pub fn populate_manifest_cache(
 
                     // `options` read via BACKREF `mgr_ref` — see provenance-root
                     // note above.
-                    let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
+                    let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some()
+                        || mgr_ref.options.changelog;
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
                     // See disjoint-field note on the `.All` arm above.
                     let scope =
@@ -248,7 +255,12 @@ pub fn populate_manifest_cache(
                         ManifestLoad::LoadFromMemoryFallbackToDisk,
                         needs_extended_manifest,
                     );
-                    if cached.is_none() {
+                    // The disk cache never stores repository_url; --changelog re-fetches it.
+                    let needs_refetch = match cached {
+                        None => true,
+                        Some(m) => mgr_ref.options.changelog && m.repository_url.is_empty(),
+                    };
+                    if needs_refetch {
                         start_manifest_task(
                             // SAFETY: `manager_ptr` is the SRW provenance
                             // root; `start_manifest_task` only touches the

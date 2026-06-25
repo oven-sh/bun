@@ -270,6 +270,9 @@ static OUTDATED_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "-r, --recursive                        Check outdated packages in all workspaces"
         ),
+        clap::param!(
+            "--changelog                            Show changelog URLs for outdated packages"
+        ),
         clap::param!("<POS> ...                              Package patterns to filter by"),
     ]
 ];
@@ -386,6 +389,7 @@ pub struct CommandLineArguments {
     pub interactive: bool,
     pub json_output: bool,
     pub(crate) recursive: bool,
+    pub(crate) changelog: bool,
     pub(crate) filters: &'static [&'static [u8]],
 
     pub(crate) pack_destination: &'static [u8],
@@ -469,6 +473,7 @@ impl Default for CommandLineArguments {
             interactive: false,
             json_output: false,
             recursive: false,
+            changelog: false,
             filters: &[],
 
             pack_destination: b"",
@@ -1121,6 +1126,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
             // fake --dry-run, we don't actually resolve+clean the lockfile
             cli.dry_run = true;
             cli.recursive = args.flag(b"--recursive");
+            cli.changelog = args.flag(b"--changelog");
             // cli.json_output = args.flag(b"--json");
         }
 

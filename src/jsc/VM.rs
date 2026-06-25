@@ -137,7 +137,7 @@ impl VM {
     /// **not** itself collect; the next allocation slow path will, so any
     /// deferred pressure resolves outside the bracket. Returns the new
     /// JS-side nesting depth; the underlying heap deferral is held at one
-    /// level regardless. See `JSC__VM__gcDeferralIncrement` in bindings.cpp.
+    /// level regardless. See `JSC__VM__gcDeferralIncrement` in BunGCDefer.cpp.
     pub fn gc_deferral_increment(&self) -> i32 {
         JSC__VM__gcDeferralIncrement(self)
     }

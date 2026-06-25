@@ -7,7 +7,6 @@ use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyCon
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
 use css::prefixes::Feature as PrefixFeature;
-use css::prefixes::is_flex_2009;
 use css::{PrintErr, Printer, VendorPrefix};
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
@@ -718,7 +717,7 @@ impl FlexHandler {
                     .targets
                     .prefixes(VendorPrefix::NONE, PrefixFeature::FlexDirection);
                 let mut prefixes_2009 = VendorPrefix::empty();
-                if is_flex_2009(targets) {
+                if PrefixFeature::is_flex_2009(targets) {
                     prefixes_2009.insert(VendorPrefix::WEBKIT);
                 }
                 if prefixes.contains(VendorPrefix::MOZ) {
@@ -815,7 +814,7 @@ impl FlexHandler {
                                 // 2009 spec, implemented by webkit and firefox
                                 if let Some(targets) = &context.targets.browsers {
                                     let mut prefixes_2009 = VendorPrefix::empty();
-                                    if is_flex_2009(targets) {
+                                    if PrefixFeature::is_flex_2009(targets) {
                                         prefixes_2009.insert(VendorPrefix::WEBKIT);
                                     }
                                     if prefix.contains(VendorPrefix::MOZ) {
@@ -864,7 +863,7 @@ impl FlexHandler {
                     .targets
                     .prefixes(VendorPrefix::NONE, PrefixFeature::FlexGrow);
                 let mut prefixes_2009 = VendorPrefix::empty();
-                if is_flex_2009(targets) {
+                if PrefixFeature::is_flex_2009(targets) {
                     prefixes_2009.insert(VendorPrefix::WEBKIT);
                 }
                 if prefixes.contains(VendorPrefix::MOZ) {

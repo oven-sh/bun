@@ -364,7 +364,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     us_internal_loop_pre(loop);
 
     /* loop_pre runs lsquic_engine_process_conns and stores the soonest
-     * earliest_adv_tick. The JS event loop folds this in via Timer.zig; other
+     * earliest_adv_tick. The JS event loop folds this in via src/runtime/timer/mod.rs; other
      * callers of us_loop_run_bun_tick (HTTP thread) pass NULL, so fold it
      * here so QUIC retransmit/idle timers fire without other I/O waking us. */
     struct timespec quic_ts;

@@ -32,7 +32,7 @@ typedef void* zig_mutex_t;
 #error "Unsupported platform"
 #endif
 
-// IMPORTANT: When changing this, don't forget to update the zig version in uws.zig as well!
+// IMPORTANT: When changing this, don't forget to update the Rust mirror in src/uws_sys/InternalLoopData.rs as well!
 struct us_quic_socket_context_s;
 
 struct us_internal_loop_data_t {

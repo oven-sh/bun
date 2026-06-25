@@ -194,9 +194,9 @@ test.skipIf(!canRun)("fetch() respects OS getaddrinfo() ordering instead of forc
   // native IPv6 connection shows up as `::1`.
   //
   // uws' start_connections() opens up to CONCURRENT_CONNECTIONS=4 sockets
-  // in the same tick (packages/bun-usockets/src/context.c:596), so strictly
+  // in the same tick (packages/bun-usockets/src/context.c), so strictly
   // this test observes *which loopback connect won the happy-eyeballs
-  // race* — not which entry `processResults()` placed first. On glibc
+  // race* — not which entry `process_results()` placed first. On glibc
   // Linux loopback the first connect syscall wins deterministically in
   // practice: the fix makes it pass 10/10 and the buggy IPv6-first
   // interleave fails 10/10 on the same host. If this ever flakes in CI,

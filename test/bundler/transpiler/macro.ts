@@ -24,14 +24,6 @@ export async function ireturnapromise() {
   return promise;
 }
 
-export function templateTag(strings: TemplateStringsArray, ...values: any[]) {
-  return {
-    cooked: [...strings],
-    raw: [...strings.raw],
-    values,
-  };
-}
-
 export function ico(name: TemplateStringsArray) {
   return `/svg/spritesheet.svg#${name[0]}`;
 }

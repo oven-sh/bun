@@ -10,19 +10,14 @@ for (const expr of ["Bun.postgres", "Bun.sql", "Bun.SQL", "Bun.$"]) {
       cmd: [
         bunExe(),
         "-e",
-        `function F(){try{new this.constructor()}catch(e){}void ${expr}}` +
-          `try{new F()}catch(e){}console.log("OK")`,
+        `function F(){try{new this.constructor()}catch(e){}void ${expr}}` + `try{new F()}catch(e){}console.log("OK")`,
       ],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "OK\n",

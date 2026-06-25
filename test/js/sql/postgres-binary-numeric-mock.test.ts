@@ -1,6 +1,7 @@
-// Regression test for https://github.com/oven-sh/bun/issues/29772
-// Drives parse_binary_numeric with hand-encoded payloads via a wire-protocol
-// mock, so no docker / live postgres is required.
+// Covers the binary numeric decoder (parse_binary_numeric in DataCell.rs): a
+// mock server feeds hand-encoded payloads so decoding runs without docker / a
+// live postgres. See https://github.com/oven-sh/bun/issues/29772.
+// All wire-protocol bytes come from ./wire-frames; do not inline frame bytes.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import {
@@ -10,7 +11,7 @@ import {
   pgDataRow,
   pgReadyForQuery,
   pgRowDescription,
-} from "../../js/sql/wire-frames";
+} from "./wire-frames";
 
 /**
  * Build a postgres binary-numeric column payload (the value bytes carried by a

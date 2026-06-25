@@ -1448,10 +1448,10 @@ describe("bundler", () => {
     },
   });
   // Bun-specific: wildcard `exports` with an extensionless target now
-  // auto-resolves the extension (`.js`, `.mjs`, ...). Node.js errors here,
-  // but bundlers (esbuild in bundle mode, Vite, webpack) and TypeScript's
-  // `moduleResolution: "bundler"` all handle this shape. See
-  // oven-sh/bun#29679.
+  // auto-resolves the extension (`.js`, `.mjs`, ...). Node.js and esbuild
+  // error here (this test is ported from esbuild, which is why it previously
+  // asserted a resolution error); Vite, webpack, and TypeScript's
+  // `moduleResolution: "bundler"` handle this shape. See oven-sh/bun#29679.
   itBundled("packagejson/ExportsNotExactMissingExtensionPattern", {
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,

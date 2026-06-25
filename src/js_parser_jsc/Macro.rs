@@ -1087,8 +1087,7 @@ impl Runner {
                 js_args.args = vec![JSValue::ZERO; 1 + parts.len() + extra];
                 js_args.processed_len = 0;
 
-                let strings_array =
-                    make_template_strings_array(bump, global_object, template)?;
+                let strings_array = make_template_strings_array(bump, global_object, template)?;
                 strings_array.protect();
                 js_args.args[0] = strings_array;
                 js_args.processed_len = 1;

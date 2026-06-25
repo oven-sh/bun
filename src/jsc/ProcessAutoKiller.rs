@@ -40,7 +40,12 @@ impl ProcessAutoKiller {
                 let p: &mut Process = unsafe { &mut *entry.key };
                 if !p.has_exited() {
                     bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
-                    count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
+                    // Count only processes where the signal was actually
+                    // delivered — a `.detached` poller or OS-reported ESRCH
+                    // returns `Ok(false)` from `kill` and should not count.
+                    if let Ok(true) = p.kill(SignalCode::DEFAULT.0) {
+                        count += 1;
+                    }
                 }
             }
             // SAFETY: key live until this releases the ref taken on insert.

@@ -645,7 +645,14 @@ impl Process {
         self.exit_handler = ProcessExitHandler::default();
     }
 
-    pub fn kill(&mut self, signal: u8) -> Maybe<()> {
+    /// Sends `signal` to the process.
+    ///
+    /// Returns `Ok(true)` if the signal was delivered, `Ok(false)` if the
+    /// child could not be reached — either the poller is detached (we
+    /// observed the exit on our side) or the OS reported `ESRCH`. Anything
+    /// JS-visible (e.g. `subprocess.kill()`) needs to propagate this so
+    /// Node's `ChildProcess.kill()` can return `false`.
+    pub fn kill(&mut self, signal: u8) -> Maybe<bool> {
         #[cfg(unix)]
         {
             // Detached is a deliberate no-op: spawnSync's `read_all()` runs
@@ -673,9 +680,12 @@ impl Process {
                         if errno_ != bun_sys::E::ESRCH {
                             return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
                         }
+                        return Ok(false);
                     }
+                    return Ok(true);
                 }
-                _ => {}
+                // Detached: no live child to signal.
+                _ => return Ok(false),
             }
         }
         #[cfg(windows)]
@@ -690,14 +700,16 @@ impl Process {
                         if err.errno != bun_sys::E::ESRCH as u16 {
                             return Err(err);
                         }
+                        return Ok(false);
                     }
-                    return Ok(());
+                    return Ok(true);
                 }
-                _ => {}
+                _ => return Ok(false),
             }
         }
 
-        Ok(())
+        #[cfg(not(any(unix, windows)))]
+        Ok(false)
     }
 }
 

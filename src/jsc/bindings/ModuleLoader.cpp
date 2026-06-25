@@ -470,6 +470,13 @@ extern "C" void Bun__onFulfillAsyncModule(
     JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
+        // The module failed to load and will never evaluate, so no
+        // moduleLoaderEvaluate call will consume a dynamic-import async context
+        // captured for it (#32693); drop it here so it can't pin the store.
+        if (auto* map = globalObject->m_pendingDynamicImportAsyncContexts.get()) {
+            if (map->size())
+                map->remove(globalObject, JSC::jsString(vm, specifier->toWTFString(BunString::ZeroCopy)));
+        }
         RELEASE_AND_RETURN(scope, promise->reject(vm, JSValue::decode(res->result.err.value)));
     }
 

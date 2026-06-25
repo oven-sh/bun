@@ -3483,6 +3483,37 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 }
 
+// Record the AsyncLocalStorage context active at an import() call site, keyed by
+// the resolved module key, so the imported module's top-level evaluation can run
+// with it (see evaluateModuleWithCapturedAsyncContext). JSC's dynamic-import
+// microtasks never restore m_asyncContextData; Node preserves it via V8's
+// continuation-preserved embedder data. Returns the key to remove on cleanup, or
+// null when nothing was recorded.
+static JSC::JSString* captureDynamicImportAsyncContext(Zig::GlobalObject* globalObject, JSC::VM& vm, const JSC::Identifier& resolvedIdentifier)
+{
+    if (!globalObject->isAsyncContextTrackingEnabled())
+        return nullptr;
+    JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (asyncContext.isUndefined())
+        return nullptr;
+    JSC::JSMap* map = globalObject->m_pendingDynamicImportAsyncContexts.get();
+    if (!map) {
+        map = JSC::JSMap::create(vm, globalObject->mapStructure());
+        globalObject->m_pendingDynamicImportAsyncContexts.set(vm, globalObject, map);
+    }
+    JSC::JSString* key = jsString(vm, resolvedIdentifier.string());
+    map->set(globalObject, key, asyncContext);
+    return key;
+}
+
+static void dropDynamicImportAsyncContext(Zig::GlobalObject* globalObject, JSC::JSString* key)
+{
+    if (!key)
+        return;
+    if (auto* map = globalObject->m_pendingDynamicImportAsyncContexts.get())
+        map->remove(globalObject, key);
+}
+
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
@@ -3532,10 +3563,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
+            JSC::JSString* asyncContextKey = captureDynamicImportAsyncContext(globalObject, vm, resolvedIdentifier);
             auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
             if (scope.exception()) [[unlikely]] {
+                dropDynamicImportAsyncContext(globalObject, asyncContextKey);
                 return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
             }
+            if (asyncContextKey && (!result || result->status() != JSC::JSPromise::Status::Pending))
+                dropDynamicImportAsyncContext(globalObject, asyncContextKey);
             return result;
         }
     }
@@ -3588,25 +3623,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginZ.deref();
     }
 
-    // If this import() runs inside an AsyncLocalStorage context, record that
-    // context keyed by the resolved module key so the imported module's
-    // top-level evaluation can run with it (see moduleLoaderEvaluate). Node
-    // preserves the context across dynamic-import evaluation via V8's
-    // continuation-preserved embedder data; JSC's dynamic-import microtasks
-    // never touch m_asyncContextData, so we thread it through the module key.
-    JSC::JSString* asyncContextKey = nullptr;
-    if (globalObject->isAsyncContextTrackingEnabled()) {
-        JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-        if (!asyncContext.isUndefined()) {
-            JSC::JSMap* map = globalObject->m_pendingDynamicImportAsyncContexts.get();
-            if (!map) {
-                map = JSC::JSMap::create(vm, globalObject->mapStructure());
-                globalObject->m_pendingDynamicImportAsyncContexts.set(vm, globalObject, map);
-            }
-            asyncContextKey = jsString(vm, resolvedIdentifier.string());
-            map->set(globalObject, asyncContextKey, asyncContext);
-        }
-    }
+    JSC::JSString* asyncContextKey = captureDynamicImportAsyncContext(globalObject, vm, resolvedIdentifier);
 
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
@@ -3614,16 +3631,17 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
         JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
+        dropDynamicImportAsyncContext(globalObject, asyncContextKey);
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
 
     // Only a still-pending import reaches moduleLoaderEvaluate to consume the
-    // entry above; an already-evaluated (cached) module settles synchronously
-    // and never re-evaluates, so drop its entry to avoid retaining the context.
-    if (asyncContextKey && (!result || result->status() != JSC::JSPromise::Status::Pending)) {
-        if (auto* map = globalObject->m_pendingDynamicImportAsyncContexts.get())
-            map->remove(globalObject, asyncContextKey);
-    }
+    // entry; a cached (already-evaluated) module settles synchronously and never
+    // re-evaluates. A pending import that later rejects without evaluating is
+    // cleaned up at its fetch-failure seam (Bun__onFulfillAsyncModule) or, for
+    // transitive failures, overwritten on the next import of the same key.
+    if (asyncContextKey && (!result || result->status() != JSC::JSPromise::Status::Pending))
+        dropDynamicImportAsyncContext(globalObject, asyncContextKey);
 
     ASSERT(result);
     return result;

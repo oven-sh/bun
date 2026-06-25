@@ -657,4 +657,39 @@ describe("dynamic import() preserves the AsyncLocalStorage context (#32693)", ()
     expect(stdout).toBe("tla-sync:CONTEXT\ndone\n");
     expect(exitCode).toBe(0);
   });
+
+  // A dynamic import that fails to load never evaluates, so the captured context
+  // is cleaned up at the fetch-failure seam instead of being retained. Exercises
+  // that path and confirms it neither crashes nor disturbs a later import.
+  test("a dynamic import that fails to load is caught and does not disturb later imports", async () => {
+    using dir = tempDir("als-dynamic-import-fail", {
+      "store.mjs": `
+        import { AsyncLocalStorage } from 'node:async_hooks';
+        export const store = new AsyncLocalStorage();
+      `,
+      "bad.mjs": `export const x = ;`,
+      "good.mjs": `
+        import { store } from './store.mjs';
+        console.log("good-eval:" + store.getStore());
+      `,
+      "index.mjs": `
+        import { store } from './store.mjs';
+        const outcome = await store.run('A', () => import('./bad.mjs').then(() => 'loaded', () => 'caught'));
+        console.log("bad-import:" + outcome);
+        await store.run('B', () => import('./good.mjs'));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("bad-import:caught\ngood-eval:B\n");
+    expect(exitCode).toBe(0);
+  });
 });

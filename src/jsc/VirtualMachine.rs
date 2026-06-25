@@ -2399,7 +2399,24 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Can't use `wait_for_promise` unconditionally: a never-settling
+            // top-level await (e.g. `await new Promise(() => {})`, or a
+            // promise that only settles via an 'exit'/'beforeExit' listener)
+            // would busy-spin on `tick_without_idle` forever at 100% CPU.
+            // Tick while there is work that could still settle it; if the
+            // loop goes idle with the promise still pending, return so the
+            // caller can fire beforeExit/exit and map it to exit code 13
+            // (Node parity — see #17636, #14951).
+            while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+                self.event_loop_mut().tick();
+                if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
+                    break;
+                }
+                if !self.is_event_loop_alive() {
+                    break;
+                }
+                self.auto_tick();
+            }
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

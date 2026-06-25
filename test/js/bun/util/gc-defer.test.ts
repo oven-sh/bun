@@ -42,7 +42,14 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
     expect(warnings.some(w => w.includes("gcAllow"))).toBe(true);
   });
 
-  test("nesting to depth 16 emits exactly one process warning", async () => {
+  test("nesting to depth 16 emits at most one process warning (one-shot per VM)", async () => {
+    // gcDeferWarned is a per-VM latch (never reset). Under --rerun-each the
+    // file re-runs in the same VM, so iteration 2+ legitimately emits zero
+    // warnings. Track first-run via a global so we can assert ==1 on the
+    // first pass and ==0 thereafter — together that proves both "fires"
+    // and "one-shot".
+    const firstRun = !(globalThis as { __gcDeferDepth16TestRan?: boolean }).__gcDeferDepth16TestRan;
+    (globalThis as { __gcDeferDepth16TestRan?: boolean }).__gcDeferDepth16TestRan = true;
     const warnings: string[] = [];
     const onWarning = (w: Error | string) => warnings.push(String(typeof w === "string" ? w : w.message));
     process.on("warning", onWarning);
@@ -56,7 +63,7 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
       process.off("warning", onWarning);
     }
     const deep = warnings.filter(w => /gcDefer/i.test(w) && /16|depth|deep/i.test(w));
-    expect(deep.length).toBe(1);
+    expect(deep.length).toBe(firstRun ? 1 : 0);
   });
 
   test("collection is held off inside the bracket and resumes after", () => {

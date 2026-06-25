@@ -2,6 +2,7 @@
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/JSString.h>
 
@@ -25,8 +26,6 @@
 // Only one heap-deferral level is held regardless of JS-side nesting; the
 // depth counter is purely for balance tracking.
 
-extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
-
 namespace BunGCDefer {
 
 // JSVMClientData::gcDeferStorage is sized/aligned for a single pointer; that
@@ -45,8 +44,7 @@ static void emitWarning(JSC::VM& vm, ASCIILiteral message)
     // assert_exception_presence_matches(false) trips in debug, and in
     // release the next JS allocation throws an unrelated error.
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto undef = JSC::JSValue::encode(JSC::jsUndefined());
-    Bun__Process__emitWarning(globalObject, JSC::JSValue::encode(JSC::jsString(vm, String(message))), undef, undef, undef);
+    Bun::Process::emitWarning(globalObject, JSC::jsString(vm, String(message)), JSC::jsUndefined(), JSC::jsUndefined(), JSC::jsUndefined());
     CLEAR_IF_EXCEPTION(scope);
 }
 

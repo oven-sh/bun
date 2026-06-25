@@ -893,6 +893,26 @@ it("resolves through many directories without corrupting the dir cache", async (
   expect(exitCode).toBe(0);
 });
 
+// ASAN builds print a warning on stderr that has nothing to do with resolution.
+function stripAsanWarning(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
+async function runWildcardScript(dir: string, entry: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), entry],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
+}
+
 // https://github.com/oven-sh/bun/issues/29679
 // Packages like @modelcontextprotocol/sdk ship a wildcard `exports` entry
 // whose target has no extension, e.g. `"./*": { "import": "./dist/esm/*" }`.
@@ -923,26 +943,6 @@ describe.concurrent("wildcard exports with extensionless target", () => {
     });
   }
 
-  // ASAN builds print a warning on stderr that has nothing to do with resolution.
-  function stripAsanWarning(stderr: string): string {
-    return stderr
-      .split("\n")
-      .filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-  }
-
-  async function runScript(dir: string, entry: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), entry],
-      env: bunEnv,
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
-  }
-
   test("resolves import without extension to `.js`", async () => {
     using dir = makeFixture({
       "index.ts": `
@@ -951,7 +951,7 @@ describe.concurrent("wildcard exports with extensionless target", () => {
       `,
     });
 
-    expect(await runScript(String(dir), "index.ts")).toEqual({
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
       stdout: "stdio",
       stderr: "",
       exitCode: 0,
@@ -966,7 +966,7 @@ describe.concurrent("wildcard exports with extensionless target", () => {
       `,
     });
 
-    expect(await runScript(String(dir), "index.ts")).toEqual({
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
       stdout: "http",
       stderr: "",
       exitCode: 0,
@@ -981,7 +981,7 @@ describe.concurrent("wildcard exports with extensionless target", () => {
       `,
     });
 
-    expect(await runScript(String(dir), "index.ts")).toEqual({
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
       stdout: "stdio",
       stderr: "",
       exitCode: 0,
@@ -996,7 +996,7 @@ describe.concurrent("wildcard exports with extensionless target", () => {
       `,
     });
 
-    expect(await runScript(String(dir), "index.ts")).toEqual({
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
       stdout: "exact",
       stderr: "",
       exitCode: 0,
@@ -1011,7 +1011,7 @@ describe.concurrent("wildcard exports with extensionless target", () => {
       `,
     });
 
-    const result = await runScript(String(dir), "index.ts");
+    const result = await runWildcardScript(String(dir), "index.ts");
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("Cannot find module");
   });
@@ -1024,7 +1024,7 @@ describe.concurrent("wildcard exports with extensionless target", () => {
       `,
     });
 
-    expect(await runScript(String(dir), "index.cjs")).toEqual({
+    expect(await runWildcardScript(String(dir), "index.cjs")).toEqual({
       stdout: "cjs-stdio",
       stderr: "",
       exitCode: 0,
@@ -1050,7 +1050,7 @@ describe.concurrent("wildcard exports with extensionless target", () => {
       `,
     });
 
-    const result = await runScript(String(dir), "index.ts");
+    const result = await runWildcardScript(String(dir), "index.ts");
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("Cannot find module");
   });
@@ -1063,25 +1063,6 @@ describe.concurrent("wildcard exports with extensionless target", () => {
 // is gated on wildcard patterns only — users writing an explicit
 // `"./foo": "./foo.js"` target still get exactly what they asked for.
 describe.concurrent("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
-  function stripAsanWarning(stderr: string): string {
-    return stderr
-      .split("\n")
-      .filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-  }
-
-  async function runScript(dir: string, entry: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), entry],
-      env: bunEnv,
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
-  }
-
   test("package.json `imports` wildcard with `.js` target resolves `.ts` file", async () => {
     using dir = tempDir("wildcard-imports-ts", {
       "package.json": JSON.stringify({
@@ -1098,7 +1079,7 @@ describe.concurrent("wildcard imports/exports with `.js` → `.ts` rewrite", () 
       `,
     });
 
-    expect(await runScript(String(dir), "index.ts")).toEqual({
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
       stdout: "ts file",
       stderr: "",
       exitCode: 0,
@@ -1121,7 +1102,7 @@ describe.concurrent("wildcard imports/exports with `.js` → `.ts` rewrite", () 
       `,
     });
 
-    expect(await runScript(String(dir), "index.ts")).toEqual({
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
       stdout: "mts file",
       stderr: "",
       exitCode: 0,
@@ -1145,7 +1126,7 @@ describe.concurrent("wildcard imports/exports with `.js` → `.ts` rewrite", () 
       `,
     });
 
-    expect(await runScript(String(dir), "index.ts")).toEqual({
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
       stdout: "js file",
       stderr: "",
       exitCode: 0,

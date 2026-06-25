@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createServer } from "node:net";
 import { once } from "node:events";
+import { createServer } from "node:net";
 
 // Drives FetchTasklet::callback through the on_timeout -> fail ->
 // dispatch_result_and_reset path that produced the highest-volume
@@ -49,11 +49,7 @@ test("socket idle timeout delivers a Timeout rejection via FetchTasklet::callbac
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   } finally {

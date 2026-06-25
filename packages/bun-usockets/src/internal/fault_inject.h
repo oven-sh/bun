@@ -46,7 +46,8 @@ enum us_fault_action {
     /* recv/send: clamp the length to clamp_bytes, then run the real syscall.
      * Other syscalls have no length to clamp; the JS setter rejects them. */
     US_FAULT_SHORT,
-    /* recv: return 0 (peer closed); send: return 0 (treated as backpressure) */
+    /* recv/recvmsg: return 0 (peer closed); send/sendmsg/writev: return 0
+     * (treated as backpressure). The JS setter rejects other syscalls. */
     US_FAULT_ZERO,
 };
 

@@ -147,7 +147,7 @@ export interface Config {
   /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
-   * relaxed atomic load per syscall, zero when compiled out.
+   * acquire atomic load per syscall, zero when compiled out.
    */
   socketFaultInjection: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
@@ -872,7 +872,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const fuzzilli = partial.fuzzilli ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
-  // memory errors are detectable, and the disarmed-hot-path cost (one relaxed
+  // memory errors are detectable, and the disarmed-hot-path cost (one acquire
   // atomic load) is acceptable in asan builds but not in shipped release.
   const socketFaultInjection = partial.socketFaultInjection ?? asan;
 

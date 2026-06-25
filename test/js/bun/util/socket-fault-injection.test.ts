@@ -39,6 +39,17 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     expect(fault.set({ syscall: "send", action: "short", bytes: 1 })).toBe(true);
   });
 
+  // A zero return only means something for the data syscalls (EOF on the read
+  // side, backpressure on the write side); connect's wrapper returns errno.
+  test("set() rejects 'zero' for syscalls with no zero-return semantics", () => {
+    for (const syscall of ["connect", "accept", "socket", "close", "shutdown"] as const) {
+      expect(() => fault.set({ syscall, action: "zero" })).toThrow(/only supported for syscall/);
+    }
+    for (const syscall of ["recv", "send", "writev", "sendmsg", "recvmsg"] as const) {
+      expect(fault.set({ syscall, action: "zero" })).toBe(true);
+    }
+  });
+
   test("set() rejects unknown errno name", () => {
     expect(() => fault.set({ syscall: "recv", action: "errno", errno: "ENOSUCHERR" as any })).toThrow(
       /unknown errno name/,

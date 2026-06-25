@@ -4857,6 +4857,20 @@ pub mod testing_apis {
                 )));
             }
 
+            // "zero" only has meaning where the wrapper returns a byte count
+            // (EOF / backpressure); connect returns errno and accept returns a
+            // descriptor, so a zero there is stale errno or nonsense.
+            if action == fi::ACTION_ZERO
+                && !matches!(
+                    syscall,
+                    fi::RECV | fi::SEND | fi::WRITEV | fi::SENDMSG | fi::RECVMSG
+                )
+            {
+                return Err(global.throw(format_args!(
+                    "rule.action \"zero\" is only supported for syscall \"recv\", \"send\", \"writev\", \"sendmsg\" or \"recvmsg\""
+                )));
+            }
+
             let errno_value: c_int = match opts.get_truthy(global, "errno")? {
                 None if action == fi::ACTION_ERRNO => {
                     return Err(global.throw(format_args!(

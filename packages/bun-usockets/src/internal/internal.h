@@ -403,6 +403,10 @@ struct us_listen_socket_t {
   unsigned char accept_kind;
   /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. */
   unsigned char deferred_accept;
+  /* accept() hit EMFILE/ENFILE: listener poll is watching no events (a
+   * level-triggered readable would spin the loop). Holds one sweep-timer
+   * ref while set; the next sweep tick re-arms the poll and clears this. */
+  unsigned char emfile_paused;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

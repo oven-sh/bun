@@ -50,6 +50,39 @@ void sweep_timer_cb(struct us_internal_callback_t *cb);
 // when the sweep timer is disabled, we don't need to do anything
 void sweep_timer_noop(struct us_timer_t *timer) {}
 
+/* accept() returned an error that means "out of file descriptors" (per-process
+ * or system-wide). The listener poll is level-triggered, so leaving it armed
+ * would spin the loop re-failing accept() at full speed. */
+static int us_internal_is_emfile(int err) {
+#ifdef _WIN32
+    return err == WSAEMFILE || err == WSAENOBUFS;
+#else
+    return err == EMFILE || err == ENFILE;
+#endif
+}
+
+static void us_internal_listen_socket_emfile_pause(struct us_listen_socket_t *ls, struct us_loop_t *loop) {
+    if (ls->emfile_paused) return;
+    us_poll_change((struct us_poll_t *) ls, loop, 0);
+    ls->emfile_paused = 1;
+    us_internal_enable_sweep_timer(loop);
+}
+
+/* Re-arm every listener that was paused for EMFILE on a previous tick. Runs
+ * from the sweep timer so a pending connection costs one wakeup per sweep
+ * instead of a pegged core. */
+static void us_internal_resume_emfile_paused_listeners(struct us_loop_t *loop) {
+    for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
+        for (struct us_listen_socket_t *ls = g->head_listen_sockets; ls; ls = ls->next) {
+            if (ls->emfile_paused) {
+                ls->emfile_paused = 0;
+                us_poll_change((struct us_poll_t *) ls, loop, LIBUS_SOCKET_READABLE);
+                us_internal_disable_sweep_timer(loop);
+            }
+        }
+    }
+}
+
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
@@ -323,6 +356,7 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 }
 
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
+    us_internal_resume_emfile_paused_listeners(cb->loop);
     us_internal_timer_sweep(cb->loop);
 }
 
@@ -405,13 +439,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 struct bsd_addr_t addr;
 
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
-                if (client_fd == LIBUS_SOCKET_ERROR) {
-                    /* Todo: start timer here */
-
-                } else {
-
-                    /* Todo: stop timer if any */
-
+                if (client_fd != LIBUS_SOCKET_ERROR) {
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
@@ -463,6 +491,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
 
                     } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                }
+                /* EAGAIN is normal (backlog drained). EMFILE/ENFILE with a
+                 * connection still pending would spin the level-triggered
+                 * poll; stop watching and let the sweep timer re-arm it. */
+                if (client_fd == LIBUS_SOCKET_ERROR
+                    && !us_socket_is_closed(&listen_socket->s)
+                    && us_internal_is_emfile(LIBUS_ERR)) {
+                    us_internal_listen_socket_emfile_pause(listen_socket, loop);
                 }
             }
         break;

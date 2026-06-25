@@ -356,6 +356,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->on_server_name = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
+    ls->emfile_paused = 0;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -408,6 +409,10 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
     if (!us_socket_is_closed(s)) {
         struct us_socket_group_t *group = ls->accept_group;
         struct us_loop_t *loop = s->group->loop;
+        if (ls->emfile_paused) {
+            ls->emfile_paused = 0;
+            us_internal_disable_sweep_timer(loop);
+        }
         us_poll_stop((struct us_poll_t *) s, loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 

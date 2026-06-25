@@ -321,9 +321,8 @@ impl<const SSL: bool> Response<SSL> {
     /// goes straight to `us_socket_get_fd` so the value is a real descriptor
     /// suitable for `getsockopt`/`setsockopt`.
     pub fn get_fd(&mut self) -> Fd {
-        // SAFETY: `downcast_socket` reinterprets the response handle as
-        // `*mut us_socket_t`; uWS lays these out as the same opaque handle.
-        unsafe { (*self.downcast_socket()).get_fd() }
+        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+        us_socket_t::opaque_mut(self.downcast_socket()).get_fd()
     }
 
     pub fn get_remote_address_as_text(&mut self) -> Option<&[u8]> {

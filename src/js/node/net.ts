@@ -2860,7 +2860,8 @@ function internalConnectMultiple(context, canceled?) {
     ArrayPrototypePush.$call(context.errors, ex);
 
     self.emit("connectionAttemptFailed", address, port, addressType, ex);
-    internalConnectMultiple(context);
+    // A listener may destroy() on that event; same guard as afterConnectMultiple.
+    if (self.connecting) internalConnectMultiple(context);
     return;
   }
 

@@ -37,7 +37,6 @@ sock.on("connectionAttemptTimeout", () => {
 // setImmediate runs after the lookup nextTick (which armed the per-attempt
 // timer) and before any setTimeout, so destroy() lands deterministically
 // while the timer for attempt 0 is pending — no wall-clock race.
-let destroyedWhileConnecting = false;
 setImmediate(() => {
   if (!sock.connecting || attemptFailedBeforeDestroy) {
     // This host has no route to TEST-NET-1 (darwin CI; see expectations.txt)
@@ -46,19 +45,13 @@ setImmediate(() => {
     console.log("OK");
     process.exit(0);
   }
-  destroyedWhileConnecting = true;
-  console.log("connecting at destroy:", destroyedWhileConnecting);
+  console.log("connecting at destroy:", sock.connecting);
   destroyed = true;
   sock.destroy();
 });
 
 // Wait past the per-attempt timeout to catch the stale timer firing.
 setTimeout(() => {
-  if (!destroyedWhileConnecting) {
-    // destroy() must land mid-attempt or the stale-timer path was not hit.
-    console.error("MISSING_PENDING_DESTROY");
-    process.exit(1);
-  }
   console.log("OK");
   process.exit(0);
 }, 300);

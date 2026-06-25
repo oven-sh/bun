@@ -1175,10 +1175,9 @@ impl Request {
             if values_to_try.len() != 2 {
                 break 'probe false;
             }
+            // len == 2 guarantees values_to_try[0] == arguments[1] and that it
+            // is an object (both are preconditions of the slice length above).
             let init_obj = values_to_try[0];
-            if !init_obj.is_object() {
-                break 'probe false;
-            }
             const KEYS: [&[u8]; 14] = [
                 b"method",
                 b"headers",
@@ -1761,8 +1760,11 @@ impl Request {
         // The old `req.body` hive ref is intentionally NOT unref'd here:
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was bitwise-copied above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // `url`/`integrity`/`referrer` are `OwnedStringCell`s holding either a
+        // bitwise-copied handle (`url` under preserve_url) or the empty
+        // sentinel both callers seed — so their skipped Drop is a no-op
+        // (empty `deref()` is a no-op). Remaining incoming fields are
+        // None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {

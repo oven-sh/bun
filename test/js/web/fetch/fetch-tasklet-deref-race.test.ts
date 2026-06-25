@@ -22,11 +22,7 @@ test("FetchTasklet HTTP-thread deref is never the final ref", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Include stderr in the failure message for diagnostics without asserting
   // it is exactly empty (debug/ASAN builds may emit benign warnings).

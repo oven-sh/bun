@@ -2277,6 +2277,17 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
     });
 
+    it("import with separator-only or trailing-separator path", () => {
+      expectPrinted_(`import "/"`, `import"/"`);
+      expectPrinted_(`import "//"`, `import"//"`);
+      expectPrinted_(`import "///"`, `import"///"`);
+      expectPrinted_(`import "foo//"`, `import"foo//"`);
+      expectPrinted_(`import "foo///"`, `import"foo///"`);
+      expectPrinted_(`export * from "/"`, `export * from "/"`);
+      expectPrinted_(`export * from "foo//"`, `export * from "foo//"`);
+      expectPrinted_(`export { a } from "/"`, `export { a } from "/"`);
+    });
+
     it("empty string as import/export clause alias", () => {
       // ModuleExportName may be any well-formed string literal, including "".
       expectPrinted_(`import { "" as z } from "m"; z`, `import { "" as z } from "m";\nz`);

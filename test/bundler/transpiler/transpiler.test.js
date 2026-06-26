@@ -258,6 +258,39 @@ describe("Bun.Transpiler", () => {
       exp("export default interface Foo { bar(): void }\nexport const x = 1;", "export const x = 1;\n");
     });
 
+    it("export default of an identifier written with unicode escapes does not crash", () => {
+      // `\u{66}` decodes to `f`, but the decoded buffer lives outside the source
+      // contents, so the parse-time Ref is tagged AllocatedName rather than
+      // SourceContentsSlice. The visit pass must still replace it with a real
+      // symbol before calling record_declared_symbol.
+      const exp = ts.expectPrinted_;
+      exp("export default \\u{66}", "export default f");
+      exp("export default \\u0066", "export default f");
+      exp("export default \\u{66}oo", "export default foo");
+      exp("const \\u{66} = 1; export default \\u{66};", "const f = 1;\nexport default f;\n");
+      exp("export default (function \\u{66}() {})", "export default (function f() {})");
+      exp("export default (class \\u{66} {})", "export default (class f {\n})");
+      exp("export default function \\u{66}() {}", "export default function f() {}");
+      exp("export default class \\u{66} {}", "export default class f {\n}");
+
+      // The exact fuzz repro used the ts loader with target:"node".
+      const node = new Bun.Transpiler({ loader: "ts", target: "node" });
+      expect(node.transformSync("export default \\u{66}")).toBe("export default f;\n");
+
+      // The same shape through the plain JavaScript loader.
+      const js = new Bun.Transpiler({ loader: "js" });
+      expect(js.transformSync("export default \\u{66}")).toBe("export default f;\n");
+      expect(js.transformSync("export default \\u0066oo")).toBe("export default foo;\n");
+
+      // exports.eliminate marks the default export dead and returns early before
+      // the default_name ref is rewritten to a symbol. record_on_exit must not
+      // feed that parse-time ref to record_declared_symbol.
+      const elim = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ["default"] } });
+      expect(elim.transformSync("export default foo")).toBe("");
+      expect(elim.transformSync("export default \\u{66}")).toBe("");
+      expect(elim.transformSync("export default \\u{66}oo")).toBe("");
+    });
+
     it("rejects export clauses inside a non-declare namespace", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

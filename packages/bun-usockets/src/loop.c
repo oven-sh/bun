@@ -614,10 +614,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
+                        /* Stop if on_data paused us (us_socket_pause from the data
+                         * handler, e.g. fetch() receive backpressure or
+                         * net.Socket#pause) — keep honoring the pause instead of
+                         * pulling bytes the caller asked to defer. */
                         if (
                             s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH &&
                             (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) &&
-                            !us_socket_is_closed(s)
+                            !us_socket_is_closed(s) && !s->flags.is_paused
                         ) {
                             repeat_recv_count += error == 0;
 

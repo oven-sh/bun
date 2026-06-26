@@ -10,7 +10,7 @@ use bun_io::Write as _;
 // `bun_install::lockfile::*` path is the stub surface and lacks these items.
 use super::PatchedDep;
 use super::{
-    FormatVersion, Lockfile, Scratch, Stream, StringPool, buffers, package,
+    FormatVersion, Lockfile, Scratch, Stream, StringPool, Tree, buffers, package,
     package_index as PackageIndex,
 };
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
@@ -20,6 +20,7 @@ use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_ast::Log;
 use bun_core::strings;
+use crate::{invalid_dependency_id, invalid_package_id};
 use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
 use bun_semver::{self as semver, String as SemverString};
 
@@ -421,6 +422,12 @@ pub(crate) fn load(
     res.migrated_from_lockb_v2 = migrate_from_v2;
 
     lockfile.buffers = buffers::load(stream, log, manager.as_deref_mut())?;
+
+    // Like `meta.id` above, every slice descriptor and element id in the
+    // package columns and tree list is memcpy'd verbatim from disk, and the
+    // consumers index with them unchecked. Reject out-of-range values here.
+    validate_buffer_ranges(lockfile)?;
+
     if stream.read_int_le::<u64>()? != 0 {
         return Err(bun_core::err!(
             "Lockfile is malformed (expected 0 at the end)"
@@ -798,4 +805,73 @@ pub(crate) fn load(
     }
 
     Ok(res)
+}
+
+/// `true` when the `(off, len)` window stays inside a buffer of `buffer_len`
+/// elements. Computed in `usize` so `off + len` cannot overflow `u32`.
+#[inline]
+fn slice_in_bounds(off: u32, len: u32, buffer_len: usize) -> bool {
+    off as usize + len as usize <= buffer_len
+}
+
+/// `package::serializer::load` and `buffers::load` memcpy slice descriptors
+/// (`(off, len)` pairs) and element ids verbatim from disk, and their
+/// consumers (`ExternalSlice::get`, `Package::clone`, the hoister, the
+/// printers) index with them unchecked. Out-of-range values from a corrupt or
+/// crafted lockfile must fail the parse so the installer can warn and
+/// re-resolve instead of panicking.
+fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
+    let buffers = &lockfile.buffers;
+    let dependencies_len = buffers.dependencies.len();
+    let resolutions_len = buffers.resolutions.len();
+
+    // `dependencies` and `resolutions` are parallel buffers: the tree builder
+    // iterates a package's `resolutions` range and indexes both with it.
+    if resolutions_len != dependencies_len {
+        return Err(bun_core::err!("InvalidLockfile"));
+    }
+
+    for (dependencies, resolutions) in lockfile
+        .packages
+        .items_dependencies()
+        .iter()
+        .zip(lockfile.packages.items_resolutions())
+    {
+        if !slice_in_bounds(dependencies.off, dependencies.len, dependencies_len)
+            || !slice_in_bounds(resolutions.off, resolutions.len, resolutions_len)
+            || dependencies.len != resolutions.len
+        {
+            return Err(bun_core::err!("InvalidLockfile"));
+        }
+    }
+
+    let packages_len = lockfile.packages.len();
+    for &package_id in buffers.resolutions.iter() {
+        if package_id != invalid_package_id && package_id as usize >= packages_len {
+            return Err(bun_core::err!("InvalidLockfile"));
+        }
+    }
+
+    for &dependency_id in buffers.hoisted_dependencies.iter() {
+        if dependency_id != invalid_dependency_id && dependency_id as usize >= dependencies_len {
+            return Err(bun_core::err!("InvalidLockfile"));
+        }
+    }
+
+    let trees_len = buffers.trees.len();
+    let hoisted_len = buffers.hoisted_dependencies.len();
+    for tree in buffers.trees.iter() {
+        // `dependency_id` is a real dependency id or a sentinel
+        // (`ROOT_DEP_ID` / `invalid_dependency_id`, both above any real id);
+        // `buffers::load` already remapped legacy package-id keyed trees.
+        if (tree.dependency_id < Tree::ROOT_DEP_ID
+            && tree.dependency_id as usize >= dependencies_len)
+            || (tree.parent != Tree::INVALID_ID && tree.parent as usize >= trees_len)
+            || !slice_in_bounds(tree.dependencies.off, tree.dependencies.len, hoisted_len)
+        {
+            return Err(bun_core::err!("InvalidLockfile"));
+        }
+    }
+
+    Ok(())
 }

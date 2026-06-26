@@ -433,7 +433,20 @@ impl ReadableStream {
             .reader()
             .from(buffered_reader, ctx_ptr.cast::<c_void>());
 
-        source.to_readable_stream(global_this)
+        let stream = source.to_readable_stream(global_this)?;
+
+        // The transferred reader already has a live poll registered with the
+        // event loop whose owner now points into this allocation. Take the
+        // across-read ref (and root the wrapper) immediately so a GC before
+        // JS first pulls cannot sweep the wrapper and free this box while the
+        // poll is still armed. `on_start` checks `waiting_for_on_reader_done`
+        // and will not take a second ref.
+        if source.context.reader().has_pending_activity() {
+            source.context.waiting_for_on_reader_done.set(true);
+            source.increment_count();
+        }
+
+        Ok(stream)
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {

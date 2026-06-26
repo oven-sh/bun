@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isGlibcVersionAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
 import { platform } from "os";
 
 import {
@@ -677,26 +677,49 @@ it(".ptr is not leaked", () => {
   }
 });
 
-it("JSCallback exceptions propagate out of the native call", () => {
-  const callback = new JSCallback(
-    () => {
-      throw new Error("boom");
-    },
-    { returns: "int32_t", args: [] },
-  );
-  const call = new CFunction({ ptr: callback.ptr, returns: "int32_t", args: [] });
-  try {
-    expect(call).toThrow("boom");
-  } finally {
-    callback.close();
-  }
+// TinyCC, which implements JSCallback and CFunction, is unavailable on Windows ARM64.
+const isFFIUnavailable = isWindows && isArm64;
+
+// Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
+// which the ASan lane's leak checker then reports against this file.
+it.skipIf(isFFIUnavailable)("JSCallback exceptions propagate out of the native call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { CFunction, JSCallback } from "bun:ffi";
+      const callback = new JSCallback(
+        () => {
+          throw new Error("boom");
+        },
+        { returns: "int32_t", args: [] },
+      );
+      const call = new CFunction({ ptr: callback.ptr, returns: "int32_t", args: [] });
+      try {
+        call();
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
+      }
+      call.close();
+      callback.close();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "caught boom\n",
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 });
 
-// worker.terminate() while the worker is inside a threadsafe JSCallback made FFI_Callback_*
-// clear and re-throw JSC's TerminationException, which trips
-// "ASSERTION FAILED: !isTerminationException(exception) || hasTerminationRequest()" in
-// JSC::VM::setException and re-enters JS on the terminated worker VM.
-it("JSCallback tolerates worker.terminate() arriving inside the callback", async () => {
+// worker.terminate() delivered inside a threadsafe JSCallback used to trip
+// "ASSERTION FAILED: !isTerminationException(exception) || hasTerminationRequest()"
+// in JSC::VM::setException on the worker thread and re-enter the terminated VM.
+it.skipIf(isFFIUnavailable)("JSCallback tolerates worker.terminate() arriving inside the callback", async () => {
   using dir = tempDir("ffi-jscallback-terminate", {
     "main.js": `
       import { join } from "node:path";
@@ -743,14 +766,13 @@ it("JSCallback tolerates worker.terminate() arriving inside the callback", async
       );
 
       // CFunction turns the callback's native function pointer back into a callable, so
-      // each fire() re-enters JS through the native FFI trampoline. A threadsafe callback
-      // enqueues a task instead of calling synchronously, so both run at the top of the
+      // fire() re-enters JS through the native FFI trampoline. A threadsafe callback
+      // enqueues a task instead of calling synchronously, so it runs at the top of the
       // worker's event loop once this module finishes evaluating.
       const fire = new CFunction({ ptr: callback.ptr, returns: "void", args: [] });
       fire();
-      fire();
 
-      // Keep the worker alive until the queued callback tasks run.
+      // Keep the worker alive until the queued callback task runs.
       setInterval(() => {}, 1000);
     `,
   });

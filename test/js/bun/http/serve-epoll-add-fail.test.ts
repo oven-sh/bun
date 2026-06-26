@@ -261,18 +261,15 @@ test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isLinux || !cc)(
-  "fetch() rejects when epoll_ctl(EPOLL_CTL_ADD) for the connect socket fails",
-  async () => {
-    const { stdout, stderr, exitCode } = await runWithShim("fetch.js", "accepted");
-    const line = stdout.trim().split("\n").pop() ?? "";
-    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
-    const result = JSON.parse(line);
-    expect(result.settled).toBe("rejected");
-    expect(result.code).toBe("FailedToOpenSocket");
-    expect(exitCode).toBe(0);
-  },
-);
+test.skipIf(!isLinux || !cc)("fetch() rejects when epoll_ctl(EPOLL_CTL_ADD) for the connect socket fails", async () => {
+  const { stdout, stderr, exitCode } = await runWithShim("fetch.js", "accepted");
+  const line = stdout.trim().split("\n").pop() ?? "";
+  expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+  const result = JSON.parse(line);
+  expect(result.settled).toBe("rejected");
+  expect(result.code).toBe("FailedToOpenSocket");
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(!isLinux || !cc)(
   "Bun.connect rejects when epoll_ctl(EPOLL_CTL_ADD) for the connect socket fails",

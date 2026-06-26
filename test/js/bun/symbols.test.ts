@@ -1,8 +1,8 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isArm64, mergeWindowEnvs, tempDir } from "harness";
 import { copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isArm64, mergeWindowEnvs, tempDir } from "harness";
 
 const BUN_EXE = bunExe();
 

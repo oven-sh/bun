@@ -695,8 +695,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         let args = callframe.arguments_old::<1>();
         let tos: i32 = if args.len >= 1 {
+            let arg = args.ptr[0];
+            // validate_integer_range maps NaN to the default; node:net rejects
+            // it with ERR_INVALID_ARG_TYPE, so do that explicitly here.
+            if arg.is_number() && arg.as_number().is_nan() {
+                return Err(global.throw_invalid_property_type_value(b"tos", b"number", arg));
+            }
             global.validate_integer_range(
-                args.ptr[0],
+                arg,
                 0i32,
                 bun_sql_jsc::jsc::IntegerRange {
                     min: 0,

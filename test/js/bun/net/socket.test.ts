@@ -1590,6 +1590,7 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
               };
               check("object", () => s.setTypeOfService({}));
               check("string", () => s.setTypeOfService("x"));
+              check("nan", () => s.setTypeOfService(NaN));
               check("neg", () => s.setTypeOfService(-1));
               check("big", () => s.setTypeOfService(256));
               check("float", () => s.setTypeOfService(1.5));
@@ -1621,6 +1622,7 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
     stdout: [
       "object=ERR_INVALID_ARG_TYPE",
       "string=ERR_INVALID_ARG_TYPE",
+      "nan=ERR_INVALID_ARG_TYPE",
       "neg=ERR_OUT_OF_RANGE",
       "big=ERR_OUT_OF_RANGE",
       "float=ERR_INVALID_ARG_TYPE",

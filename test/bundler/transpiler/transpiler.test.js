@@ -2244,6 +2244,16 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
     });
 
+    it("empty string as import/export clause alias", () => {
+      // ModuleExportName may be any well-formed string literal, including "".
+      expectPrinted_(`import { "" as z } from "m"; z`, `import { "" as z } from "m";\nz`);
+      expectPrinted_(`let z = 1; export { z as "" }`, `let z = 1;\n\nexport { z as "" }`);
+      expectPrinted_(`export { "" as z } from "m"`, `export { "" as z } from "m"`);
+      expectPrinted_(`export { z as "" } from "m"`, `export { z as "" } from "m"`);
+      expectPrinted_(`export { "" as "" } from "m"`, `export { "" } from "m"`);
+      expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
+    });
+
     it("string quote selection", () => {
       expectPrinted_(`console.log("\\n")`, "console.log(`\n`)");
       expectPrinted_(`console.log("\\"")`, `console.log('"')`);

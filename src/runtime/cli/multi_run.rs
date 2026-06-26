@@ -727,7 +727,13 @@ impl<'a> State<'a> {
         // `draw_buf`/`row_buf` (inside `panes`) and each handle's `vt` are
         // mutated in the same loop; destructuring keeps the two `&mut`
         // borrows of `self` provably disjoint.
-        let State { handles, panes, .. } = self;
+        let State {
+            handles,
+            panes,
+            aborted,
+            ..
+        } = self;
+        let aborted = *aborted;
         let Some(panes) = panes.as_mut() else {
             return Ok(());
         };
@@ -830,6 +836,17 @@ impl<'a> State<'a> {
                     panes
                         .draw_buf
                         .extend_from_slice(fmt!("<red>Error<r>\n").as_bytes());
+                }
+                // Never started. A task can be in this state because it is
+                // genuinely waiting on dependencies, or because it will
+                // never run: `skip_dependents` drained its dependency count
+                // without starting it (a pre/main script in its group
+                // failed), or the run was aborted. Rendering "Waiting"
+                // into the final frame for the latter would be a lie.
+                None if aborted || handle.remaining_dependencies == 0 => {
+                    panes
+                        .draw_buf
+                        .extend_from_slice(fmt!("<d>Skipped<r>\n").as_bytes());
                 }
                 None => {
                     write!(

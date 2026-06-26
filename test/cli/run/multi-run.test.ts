@@ -2216,6 +2216,51 @@ describe.skipIf(isWindows)("parallel: pane renderer", () => {
     expect(exitCode).toBe(3);
   });
 
+  // A task that never starts is in the same "no process" state as one that
+  // is genuinely waiting on its dependencies, so the final frame must
+  // distinguish them: a pane left saying "Waiting for N other script(s)"
+  // after the run has exited would be a lie. Both ways a task can end up
+  // never started get their own test, one per clause of the check.
+
+  test("a pre-script failure marks its skipped dependents as Skipped", async () => {
+    using dir = tempDir("mr-pane-skip", {
+      "package.json": JSON.stringify({
+        // `prebad` fails, so `bad` never starts. With --no-exit-on-error
+        // its dependency count is drained (skip_dependents) but no process
+        // is ever attached to it.
+        scripts: { prebad: "exit 7", bad: "echo never-ran" },
+      }),
+    });
+    const { raw, exitCode } = await runOnPty(
+      ["run", "--parallel", "--no-exit-on-error", "bad"],
+      String(dir),
+      allDone(1),
+    );
+    const frame = lastFrame(raw);
+    expect(frame).toContain("└─ Exited with code 7");
+    expect(frame).toContain("└─ Skipped");
+    expect(frame).not.toContain("Waiting");
+    expect(frame).not.toContain("│ never-ran");
+    expect(exitCode).toBe(7);
+  });
+
+  test("aborting the run marks never-started tasks as Skipped", async () => {
+    using dir = tempDir("mr-pane-abort-skip", {
+      "package.json": JSON.stringify({
+        // Without --no-exit-on-error, `prebad` failing aborts the run;
+        // `bad` never starts and still holds its dependency count.
+        scripts: { prebad: "exit 7", bad: "echo never-ran" },
+      }),
+    });
+    const { raw, exitCode } = await runOnPty(["run", "--parallel", "bad"], String(dir), allDone(1));
+    const frame = lastFrame(raw);
+    expect(frame).toContain("└─ Exited with code 7");
+    expect(frame).toContain("└─ Skipped");
+    expect(frame).not.toContain("Waiting");
+    expect(frame).not.toContain("│ never-ran");
+    expect(exitCode).toBe(7);
+  });
+
   test("piped output never renders panes, even with colors forced on", async () => {
     using dir = tempDir("mr-pane-piped", {
       "package.json": JSON.stringify({

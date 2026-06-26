@@ -1875,10 +1875,33 @@ folded: >
           expect(() => YAML.parse("!!float 0x1f")).toThrow();
         });
 
-        test.todo("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
-          // js-yaml/eemeli combine surrogate halves to the supplementary code
-          // point. Currently rejected.
+        test("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
+          // YAML 1.2 is a JSON superset; JSON encodes supplementary code
+          // points as `\uD8xx\uDCxx` surrogate pairs.
           expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("𝄞");
+          expect(YAML.parse('"\\uD83D\\uDE00"')).toBe("😀");
+          expect(YAML.parse('"\\ud83d\\ude00"')).toBe("😀");
+          expect(YAML.parse('"a\\uD83D\\uDE00b"')).toBe("a😀b");
+          expect(YAML.parse('"\\uD83D\\uDE00\\uD83D\\uDE01"')).toBe("😀😁");
+          expect(YAML.parse('"\\uDBFF\\uDFFF"')).toBe("\u{10FFFF}");
+          // Matches JSON.parse on the same document.
+          const doc = '{"k": "\\uD83D\\uDE00"}';
+          expect(YAML.parse(doc)).toEqual(JSON.parse(doc));
+          // `\U` 32-bit escapes for the same code point still work.
+          expect(YAML.parse('"\\U0001F600"')).toBe("😀");
+          // Lone or mis-ordered surrogates are rejected.
+          expect(() => YAML.parse('"\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83Dx"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uDE00"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uDE00\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\u0041"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\n"')).toThrow(SyntaxError);
+          // `\U` ([60] ns-esc-32-bit) names a Unicode character; surrogate
+          // code points are not characters and are never combined.
+          expect(() => YAML.parse('"\\U0000D83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\U0000D83D\\uDE00"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\U0000D83D\\U0000DE00"')).toThrow(SyntaxError);
         });
 
         test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {

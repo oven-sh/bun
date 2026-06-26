@@ -189,6 +189,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // Racing an in-flight async write would alias `&mut Context`
+            // across threads; a closed `Context` cannot be re-initialized.
+            CompressionStream::<Self>::throw_unless_idle(self, global_this)?;
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
@@ -265,6 +268,9 @@ mod _impl {
                 if err.is_error() {
                     // impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
                     self.stream.with_mut(|s| s.close());
+                    // The Context is torn down (`mode` is `NONE`); reject any
+                    // further operation the way `close()` does.
+                    self.closed.set(true);
                     return Ok(JSValue::FALSE);
                 }
             }
@@ -429,6 +435,11 @@ mod _impl {
         }
 
         pub fn do_work(&mut self) {
+            // A handle driven before `init()` has no encoder/decoder state;
+            // brotli dereferences the state pointer unconditionally.
+            if self.state.is_none() {
+                return;
+            }
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
                     let mut next_in = self.next_in;
@@ -521,7 +532,11 @@ mod _impl {
         }
 
         pub fn close(&mut self) {
-            self.deinit_state();
+            // Idempotent: a handle that was never (successfully) initialized,
+            // or that was already closed, has no encoder/decoder to free.
+            if self.state.is_some() {
+                self.deinit_state();
+            }
             self.mode = bun_zlib::NodeMode::NONE;
         }
 

@@ -1669,12 +1669,11 @@ impl Run {
                             let result = promise.result(unsafe { &mut *vm.jsc_vm });
                             let global = vm.global;
                             // SAFETY: `global` valid for VM lifetime.
+                            // uncaught_exception() sets exit_code=1 itself on
+                            // !handled; when handled, respect the listener.
                             let _ = vm.uncaught_exception(unsafe { &*global }, result, true);
                             promise.set_handled();
                             vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
-                            if vm.exit_handler.exit_code == 0 {
-                                vm.exit_handler.exit_code = 1;
-                            }
                         }
                     }
                     PromiseStatus::Fulfilled => {}

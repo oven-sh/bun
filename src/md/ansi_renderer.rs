@@ -2721,6 +2721,10 @@ pub fn render_to_ansi<'a>(
     theme: Theme<'a>,
 ) -> Result<Option<Box<[u8]>>, crate::parser::ParserError> {
     use crate::parser::ParserError;
+    // `AnsiRenderer::init` reserves output space proportional to the input, so
+    // an input the parser cannot address has to be rejected before it is
+    // allocated for, not only when `Parser::init` sees it.
+    crate::parser::input_size(text)?;
     let mut renderer = AnsiRenderer::init(text, theme);
     match root::render_with_renderer(text, options, renderer.renderer()) {
         Ok(()) => {}

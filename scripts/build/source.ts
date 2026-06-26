@@ -669,8 +669,11 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // dep's Zig packages through our downloader, and runs `zig build` in the
   // source dir. restat: the nested zig build is itself incremental, so a
   // no-op install preserves output mtimes and prunes downstream.
+  //
+  // $env is stream.ts `--env=K=V` args (ninja has no native env support);
+  // same mechanism as dep_cargo.
   n.rule("dep_zig_build", {
-    command: `${stream} --cwd=$srcdir ${cfg.jsRuntime} ${q(zigBuildCliPath)} --prefix $prefix --cache $cache $packages -- $args`,
+    command: `${stream} --cwd=$srcdir $env ${cfg.jsRuntime} ${q(zigBuildCliPath)} --prefix $prefix --cache $cache $packages -- $args`,
     description: "zig $name",
     restat: true,
     pool: "dep",
@@ -1438,6 +1441,13 @@ function emitNestedZig(
   // override it and produce a host-arch artifact in a cross build.
   const args = [...spec.args, `-Dtarget=${zigTargetTriple(cfg)}`];
 
+  // Zig has no bundled bionic libc (ziglang/zig#23906), so an Android
+  // cross-compile needs the NDK sysroot. Bun's own Android build already
+  // resolved it; forward it through the env var Zig build scripts
+  // conventionally read (`findNDKPath` in ghostty's pkg/android-ndk).
+  const env: Record<string, string> = {};
+  if (cfg.androidNdk !== undefined) env.ANDROID_NDK_HOME = cfg.androidNdk;
+
   n.build({
     outputs: libs,
     rule: "dep_zig_build",
@@ -1450,6 +1460,9 @@ function emitNestedZig(
       cache: cfg.cacheDir,
       packages: spec.packages.map(p => `--package ${quote(p.url, hostWin)} ${p.hash}`).join(" "),
       args: quoteArgs(args, hostWin),
+      env: Object.entries(env)
+        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+        .join(" "),
     },
   });
   n.phony(name, libs);

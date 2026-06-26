@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { isGlibcVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isGlibcVersionAtLeast, tempDir } from "harness";
 import { platform } from "os";
 
 import {
@@ -675,6 +675,103 @@ it(".ptr is not leaked", () => {
     expect(fn).not.toHaveProperty("ptr");
     expect(fn.ptr).toBeUndefined();
   }
+});
+
+it("JSCallback exceptions propagate out of the native call", () => {
+  const callback = new JSCallback(
+    () => {
+      throw new Error("boom");
+    },
+    { returns: "int32_t", args: [] },
+  );
+  const call = new CFunction({ ptr: callback.ptr, returns: "int32_t", args: [] });
+  try {
+    expect(call).toThrow("boom");
+  } finally {
+    callback.close();
+  }
+});
+
+// worker.terminate() while the worker is inside a threadsafe JSCallback made FFI_Callback_*
+// clear and re-throw JSC's TerminationException, which trips
+// "ASSERTION FAILED: !isTerminationException(exception) || hasTerminationRequest()" in
+// JSC::VM::setException and re-enters JS on the terminated worker VM.
+it("JSCallback tolerates worker.terminate() arriving inside the callback", async () => {
+  using dir = tempDir("ffi-jscallback-terminate", {
+    "main.js": `
+      import { join } from "node:path";
+      import { Worker } from "node:worker_threads";
+
+      const sab = new SharedArrayBuffer(4);
+      const flag = new Int32Array(sab);
+
+      const worker = new Worker(join(import.meta.dir, "worker.js"), { workerData: sab });
+      let terminating = false;
+      worker.on("error", err => {
+        console.error("worker error:", err);
+        process.exit(1);
+      });
+      worker.on("exit", code => {
+        if (!terminating) {
+          console.error("worker exited early:", code);
+          process.exit(1);
+        }
+      });
+
+      // Wait until the worker thread is inside the native -> JS callback frame.
+      while (Atomics.load(flag, 0) === 0) {
+        await Bun.sleep(5);
+      }
+
+      terminating = true;
+      await worker.terminate();
+      console.log("done");
+    `,
+    "worker.js": `
+      import { CFunction, JSCallback } from "bun:ffi";
+      import { workerData } from "node:worker_threads";
+
+      const flag = new Int32Array(workerData);
+
+      const callback = new JSCallback(
+        () => {
+          // Tell the parent we are inside the native -> JS callback frame, then
+          // spin until worker.terminate() delivers the TerminationException.
+          Atomics.store(flag, 0, 1);
+          while (true) {}
+        },
+        { returns: "void", args: [], threadsafe: true },
+      );
+
+      // CFunction turns the callback's native function pointer back into a callable, so
+      // each fire() re-enters JS through the native FFI trampoline. A threadsafe callback
+      // enqueues a task instead of calling synchronously, so both run at the top of the
+      // worker's event loop once this module finishes evaluating.
+      const fire = new CFunction({ ptr: callback.ptr, returns: "void", args: [] });
+      fire();
+      fire();
+
+      // Keep the worker alive until the queued callback tasks run.
+      setInterval(() => {}, 1000);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is not asserted (debug builds write benign noise there), but including it in the
+  // received object surfaces the crash output whenever one of the other fields mismatches.
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "done\n",
+    stderr: expect.any(String),
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 const libPath =

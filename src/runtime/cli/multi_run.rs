@@ -58,7 +58,7 @@ struct ScriptConfig {
 /// so output can be routed to the correct parent stream.
 pub struct PipeReader<'a> {
     reader: BufferedReader,
-    handle: *const ProcessHandle<'a>, // set in ProcessHandle::start()
+    handle: *mut ProcessHandle<'a>, // set in ProcessHandle::start()
     is_stderr: bool,
     line_buffer: Vec<u8>,
 }
@@ -68,7 +68,7 @@ impl<'a> PipeReader<'a> {
         Self {
             // BufferedReader::init(This) — the parent type fills the vtable.
             reader: BufferedReader::init::<Self>(),
-            handle: ptr::null(),
+            handle: ptr::null_mut(),
             is_stderr,
             line_buffer: Vec::new(),
         }
@@ -230,8 +230,10 @@ impl<'a> ProcessHandle<'a> {
         let stderr_fd = spawned.stderr;
         let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
-        self.stdout_reader.handle = std::ptr::from_ref(self);
-        self.stderr_reader.handle = std::ptr::from_ref(self);
+        // The pane reader writes `self.vt` through this backref, so it needs
+        // write provenance: `&raw mut`, never a shared reborrow of `&mut self`.
+        self.stdout_reader.handle = &raw mut *self;
+        self.stderr_reader.handle = &raw mut *self;
         // Compute parent ptrs before calling `set_parent` to avoid
         // borrowck seeing two simultaneous &mut borrows of the same field.
         let stdout_parent = (&raw mut self.stdout_reader).cast::<c_void>();
@@ -492,10 +494,10 @@ impl<'a> State<'a> {
     fn read_chunk(&mut self, pipe: &mut PipeReader<'a>, chunk: &[u8]) -> Result<(), Error> {
         #[cfg(unix)]
         if let Some(panes) = &mut self.panes {
-            // SAFETY: `pipe.handle` is the backref set in `ProcessHandle::
-            // start()`; `vt` is disjoint from `pipe`'s fields. Same pattern
-            // as the prefix path's `&*pipe.handle` below.
-            if let Some(vt) = unsafe { &mut (*pipe.handle.cast_mut()).vt } {
+            // SAFETY: `pipe.handle` is the `&raw mut` backref set in
+            // `ProcessHandle::start()`, so it carries write provenance;
+            // the handle outlives `pipe`, and `vt` is disjoint from `pipe`.
+            if let Some(vt) = unsafe { &mut (*pipe.handle).vt } {
                 vt.write(chunk);
             }
             // Coalesced: `flush_redraw` repaints at most once per tick.

@@ -411,6 +411,35 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect(() => Buffer.alloc(7)[fn](1n, 0)).toThrow(
             expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" }),
           );
+          // On a too-short buffer Node still reports the offset's type and
+          // integer-ness FIRST, and only then the buffer length.
+          expect(() => Buffer.alloc(7)[fn](1n, "x")).toThrow(
+            expect.objectContaining({
+              name: "TypeError",
+              code: "ERR_INVALID_ARG_TYPE",
+              message: `The "offset" argument must be of type number. Received type string ('x')`,
+            }),
+          );
+          expect(() => Buffer.alloc(7)[fn](1n, 1.5)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be an integer. Received 1.5',
+            }),
+          );
+          expect(() => Buffer.alloc(7)[fn](1n, NaN)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be an integer. Received NaN',
+            }),
+          );
+          // An integer (or +-Infinity) offset on a too-short buffer is still
+          // the buffer error: Node's `length < 0` test beats the range message.
+          expect(() => Buffer.alloc(7)[fn](1n, -1)).toThrow(
+            expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" }),
+          );
+          expect(() => Buffer.alloc(7)[fn](1n, Infinity)).toThrow(
+            expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" }),
+          );
         }
       });
 

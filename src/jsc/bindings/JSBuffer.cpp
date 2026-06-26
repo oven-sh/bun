@@ -2647,52 +2647,34 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAll
 
 static size_t validateOffsetBigInt64(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetVal, size_t byteLength)
 {
+    // Node's checkBounds/boundsError validates the offset's type and
+    // integer-ness before reporting a too-short buffer, and reports a
+    // too-short buffer (its `length < 0` test) before the offset's range.
+    double offsetD = 0;
+    if (!offsetVal.isUndefined()) {
+        if (offsetVal.isInt32()) {
+            offsetD = offsetVal.asInt32();
+        } else if (!offsetVal.isNumber()) [[unlikely]] {
+            Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+            return 0;
+        } else {
+            offsetD = offsetVal.asNumber();
+            // Node tests `Math.floor(value) !== value`: true for NaN and
+            // fractions, false for +-Infinity (which get a later error).
+            if (std::floor(offsetD) != offsetD) [[unlikely]] {
+                Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+                return 0;
+            }
+        }
+    }
+
     if (byteLength < 8) [[unlikely]] {
         auto* error = Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s);
         scope.throwException(lexicalGlobalObject, error);
         return 0;
     }
 
-    if (offsetVal.isUndefined()) {
-        return 0;
-    }
-
-    size_t offset;
     size_t maxOffset = byteLength - 8;
-
-    if (offsetVal.isInt32()) {
-        int32_t offsetI = offsetVal.asInt32();
-        // Node's boundsError reports a negative offset as ERR_OUT_OF_RANGE
-        // (">= 0 and <= max"), not ERR_BUFFER_OUT_OF_BOUNDS.
-        if (offsetI < 0) [[unlikely]] {
-            Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, maxOffset, offsetVal);
-            return 0;
-        }
-
-        offset = static_cast<size_t>(offsetI);
-
-        if (offset > maxOffset) [[unlikely]] {
-            Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, maxOffset, offsetVal);
-            return 0;
-        }
-
-        return offset;
-    }
-
-    if (!offsetVal.isNumber()) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-        return 0;
-    }
-
-    auto offsetD = offsetVal.asNumber();
-    // Node's boundsError tests `Math.floor(value) !== value` before the range,
-    // so -1.5 and NaN report "an integer" while +-Infinity (for which floor is
-    // an identity) fall through to the range message.
-    if (std::floor(offsetD) != offsetD) [[unlikely]] {
-        Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
-        return 0;
-    }
-
     // Range-check the double before truncating so +-Infinity never reaches
     // truncateDoubleToUint64.
     if (offsetD < 0 || offsetD > static_cast<double>(maxOffset)) [[unlikely]] {

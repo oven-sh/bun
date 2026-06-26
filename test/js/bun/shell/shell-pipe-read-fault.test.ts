@@ -1,39 +1,17 @@
-// An LD_PRELOAD shim injects ENOMEM into the shell's stdout/stderr pipe setup
-// so the error surfaces synchronously from inside ShellSubprocess::spawn_async.
-// Two faults are covered, both of which used to free live objects out from
-// under the still-running spawn call:
-//
-// 1. recv() fails: the eager read_all errors, Cmd::buffered_output_close
-//    handed back a runnable Yield, and the trampoline reached Cmd::deinit,
-//    freeing the ShellSubprocess the spawn frame still held:
-//      AddressSanitizer: heap-use-after-free (READ)
-//        Readable::start_pipe_reader            shell/subproc.rs:1247
-//        ShellSubprocess::spawn_maybe_sync_impl shell/subproc.rs:888
-//      freed by: Cmd::deinit <- Interpreter::deinit_node
-//                <- PipeReader::run_yield_with <- PipeReader::on_reader_error
-//
-// 2. epoll_ctl() fails: register_poll inside PipeReader::start fires
-//    on_reader_error, whose close_io drops the Readable::Pipe slot's Arc, and
-//    start() then kept dereferencing the freed PipeReader:
-//      AddressSanitizer: heap-use-after-free (READ)
-//        PollOrFd::get_poll                     io/pipes.rs:41
-//        PipeReader::start                      shell/subproc.rs:2015
-//        Readable::start_pipe_reader            shell/subproc.rs:1254
-//      freed by: Arc<PipeReader> drop (the on_reader_error guard)
-//
-// The command must instead finish cleanly with the syscall errno as its exit
-// code (ENOMEM = 12 on Linux).
+// An LD_PRELOAD shim injects ENOMEM into a shell command's pipe setup (recv()
+// on the eager read, or epoll_ctl() registering the pipe) so the reader error
+// surfaces synchronously from inside the spawn call. The command must finish
+// with the syscall errno as its exit code, not tear state down under the spawn.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// SHELL_FAIL_RECV=1 makes every recv fail with ENOMEM. SHELL_FAIL_EPOLL=1
-// makes every epoll_ctl ADD/MOD on a pipe-like fd fail with ENOMEM. Bun's
-// spawn "pipes" are AF_UNIX socketpairs on Linux and FilePoll registers them
-// through the raw syscall(SYS_epoll_ctl, ...) wrapper, not the libc epoll_ctl
-// symbol, so syscall(2) is what the epoll mode interposes.
+// SHELL_FAIL_RECV=1 makes every recv fail with ENOMEM; SHELL_FAIL_EPOLL=1
+// makes every epoll_ctl ADD/MOD on a pipe-like fd fail with ENOMEM. FilePoll
+// registers the socketpair through the raw syscall(SYS_epoll_ctl, ...) wrapper,
+// not the libc epoll_ctl symbol, so the epoll mode interposes syscall(2).
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -150,7 +128,10 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-async function runWithShim(script: string, mode: "SHELL_FAIL_RECV" | "SHELL_FAIL_EPOLL") {
+// The shell surfaces the failed syscall's errno as the command's exit code.
+const ENOMEM = 12;
+
+async function expectShellFault(script: string, mode: "SHELL_FAIL_RECV" | "SHELL_FAIL_EPOLL") {
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
     cmd: [bunExe(), script],
@@ -158,56 +139,53 @@ async function runWithShim(script: string, mode: "SHELL_FAIL_RECV" | "SHELL_FAIL
     env: {
       ...bunEnv,
       LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+      SHELL_FAIL_RECV: undefined,
+      SHELL_FAIL_EPOLL: undefined,
       [mode]: "1",
     },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
-
-// The shell surfaces the failed syscall's errno as the command's exit code.
-const ENOMEM = 12;
-
-function lastJsonLine(stdout: string, stderr: string) {
   const line = stdout.trim().split("\n").pop() ?? "";
-  expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
-  return JSON.parse(line);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    parsed = line;
+  }
+  // One combined assertion so a crash surfaces stderr and the exit code in the diff.
+  expect({ parsed, stderr, exitCode }).toEqual({
+    parsed: { exitCode: ENOMEM },
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 }
 
 test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives a synchronous stdout pipe read error during spawn",
   async () => {
-    const { stdout, stderr, exitCode } = await runWithShim("stdout-only.js", "SHELL_FAIL_RECV");
-    expect(lastJsonLine(stdout, stderr)).toEqual({ exitCode: ENOMEM });
-    expect(exitCode).toBe(0);
+    await expectShellFault("stdout-only.js", "SHELL_FAIL_RECV");
   },
 );
 
 test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives synchronous stdout and stderr pipe read errors during spawn",
   async () => {
-    const { stdout, stderr, exitCode } = await runWithShim("both-pipes.js", "SHELL_FAIL_RECV");
-    expect(lastJsonLine(stdout, stderr)).toEqual({ exitCode: ENOMEM });
-    expect(exitCode).toBe(0);
+    await expectShellFault("both-pipes.js", "SHELL_FAIL_RECV");
   },
 );
 
 test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives a synchronous epoll_ctl failure registering the stdout pipe",
   async () => {
-    const { stdout, stderr, exitCode } = await runWithShim("stdout-only.js", "SHELL_FAIL_EPOLL");
-    expect(lastJsonLine(stdout, stderr)).toEqual({ exitCode: ENOMEM });
-    expect(exitCode).toBe(0);
+    await expectShellFault("stdout-only.js", "SHELL_FAIL_EPOLL");
   },
 );
 
 test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives synchronous epoll_ctl failures registering both pipes",
   async () => {
-    const { stdout, stderr, exitCode } = await runWithShim("both-pipes.js", "SHELL_FAIL_EPOLL");
-    expect(lastJsonLine(stdout, stderr)).toEqual({ exitCode: ENOMEM });
-    expect(exitCode).toBe(0);
+    await expectShellFault("both-pipes.js", "SHELL_FAIL_EPOLL");
   },
 );

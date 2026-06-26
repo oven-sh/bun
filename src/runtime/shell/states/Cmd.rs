@@ -963,11 +963,9 @@ impl Cmd {
                 // through `Builtin::done` → `on_exec_done`.
                 _ => return Yield::suspended(),
             };
-            // Same gate as `on_exit`: `exec.interp` is null until
-            // `transition_to_exec` returns from `spawn_async`. A runnable
-            // Yield here would reach `Cmd::deinit` and free the
-            // `ShellSubprocess` the spawn frame still dereferences;
-            // `transition_to_exec` resumes via its `CmdState::Done` check.
+            // Same gate as `on_exit`: `exec.interp` stays null until the spawn
+            // returns, so a Yield run here would reach `Cmd::deinit` and free the
+            // `ShellSubprocess` still on the spawn frame. `transition_to_exec` resumes.
             if interp.is_null() {
                 return Yield::suspended();
             }

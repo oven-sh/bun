@@ -2545,18 +2545,10 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
                 if dir.is_empty() {
                     writer.write_all(b".")?;
                 } else if sanitize_parent_dirs {
-                    // Sanitize leading `..` so `[dir]` can't escape outdir for an
+                    // Rewrite leading `..` so `[dir]` can't escape outdir for an
                     // out-of-root source. `--compile` skips this: bunfs entries keep
                     // `..` so runtime references to them resolve.
-                    let mut d: &[u8] = dir;
-                    while matches!(d, [b'.', b'.', b'/' | b'\\', ..]) {
-                        PathTemplate::write_replacing_slashes_on_windows(writer, b"_.._/")?;
-                        d = &d[3..];
-                    }
-                    PathTemplate::write_replacing_slashes_on_windows(
-                        writer,
-                        if d == b".." { b"_.._" } else { d },
-                    )?;
+                    write_sanitized_parent_dirs(writer, dir)?;
                 } else {
                     PathTemplate::write_replacing_slashes_on_windows(writer, dir)?;
                 }
@@ -2578,6 +2570,21 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
     }
 
     PathTemplate::write_replacing_slashes_on_windows(writer, remain)
+}
+
+/// Rewrite leading `..` path segments to `_.._` so a relative dir cannot escape
+/// its base directory on disk. Separators become native on Windows, matching
+/// the rest of the path template output.
+pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
+    writer: &mut W,
+    dir: &[u8],
+) -> bun_io::Result<()> {
+    let mut d: &[u8] = dir;
+    while matches!(d, [b'.', b'.', b'/' | b'\\', ..]) {
+        PathTemplate::write_replacing_slashes_on_windows(writer, b"_.._/")?;
+        d = &d[3..];
+    }
+    PathTemplate::write_replacing_slashes_on_windows(writer, if d == b".." { b"_.._" } else { d })
 }
 
 impl PathTemplate {

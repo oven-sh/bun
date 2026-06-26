@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 // https://github.com/oven-sh/bun/issues/32728
@@ -47,4 +48,34 @@ test("compile preserves parent-segment entrypoint path for Worker resolution", a
   expect(runOut).toContain("RESULT:worker started");
   expect(runErr).not.toContain("ModuleNotFound");
   expect(runExit).toBe(0);
+});
+
+// Keeping `..` in the embedded name must not let the debug-only
+// `BUN_FEATURE_FLAG_DUMP_CODE` dump escape its directory: joining `../worker.js`
+// with the dump dir normalizes one level above it. The dump site re-sanitizes
+// independently of the embedded key. Feature is gated to canary/debug builds.
+test.skipIf(!isDebug)("compile code dump stays within BUN_FEATURE_FLAG_DUMP_CODE dir", async () => {
+  using dir = tempDir("compile-dump-escape", {
+    "worker.js": `postMessage("worker started");`,
+    "app/index.js": `console.log("main");`,
+  });
+
+  const appDir = path.join(String(dir), "app");
+  const dumpDir = path.join(appDir, "dump");
+
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "./index.js", "../worker.js", "--outfile", "app"],
+    cwd: appDir,
+    env: { ...bunEnv, BUN_FEATURE_FLAG_DUMP_CODE: dumpDir },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildErr).not.toContain("error:");
+  expect(buildExit).toBe(0);
+
+  // The out-of-root worker dumps to `<dumpDir>/_.._/worker.js` (contained), not
+  // `<dumpDir>/../worker.js` which normalizes to `<appDir>/worker.js`.
+  expect(existsSync(path.join(appDir, "worker.js"))).toBe(false);
+  expect(existsSync(path.join(dumpDir, "_.._", "worker.js"))).toBe(true);
 });

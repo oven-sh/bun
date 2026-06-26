@@ -965,17 +965,24 @@ impl Cmd {
             // `*mut Interpreter` it already holds, landing in `Cmd::next` →
             // `CmdState::Done` → `interp.child_done(...)`.
             self.state = CmdState::Done;
-            let this_id = match &self.exec {
-                Exec::Subproc(sub) => sub.this_id,
+            let (interp, this_id) = match &self.exec {
+                Exec::Subproc(sub) => (sub.interp, sub.this_id),
                 // Only the subprocess path calls this; builtin output goes
                 // through `Builtin::done` → `on_exec_done`.
                 _ => return Yield::suspended(),
             };
+            // Same publication guard as `on_exit`: a null backref means
+            // `transition_to_exec` still holds this NodeId on the stack; it
+            // resumes the `Done` state itself after publishing `interp`.
+            if interp.is_null() {
+                return Yield::suspended();
+            }
             // The `!spawn_arena_freed` arm
-            // (`ShellAsyncSubprocessDone::enqueue`) is unreachable here in
-            // practice — `initSubproc` sets `spawn_arena_freed = true` before
-            // any pipe can close. Kept as the same `Yield::Next` since the
-            // task body (`runFromMainThread`) is identical.
+            // (`ShellAsyncSubprocessDone::enqueue`) is unreachable here:
+            // `transition_to_exec` sets `spawn_arena_freed` before it
+            // publishes `interp`, so the guard above implies it is set. Kept
+            // as the same `Yield::Next` since the task body
+            // (`runFromMainThread`) is identical.
             let _ = self.spawn_arena_freed;
             return Yield::Next(this_id);
         }

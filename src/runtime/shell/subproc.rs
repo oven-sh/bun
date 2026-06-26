@@ -1245,11 +1245,14 @@ impl Readable {
         eager: bool,
     ) -> bun_sys::Result<()> {
         if let Readable::Pipe(pipe) = self {
-            let p = arc_as_mut_ptr(pipe);
-            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell, and
-            // during `spawn` the `Arc<PipeReader>` is uniquely held (the
-            // reader callback is registered by `start` itself), so no other
-            // `&PipeReader` can exist for this scope.
+            // `start`/`read_all` can complete the reader synchronously (poll
+            // registration failure, eager EOF), and that path drops this
+            // `Readable` slot's ref; keep the allocation alive for both calls.
+            let keepalive = Arc::clone(pipe);
+            let p = arc_as_mut_ptr(&keepalive);
+            // SAFETY: see `arc_as_mut_ptr` (single-threaded shell); no other
+            // `&PipeReader` exists for this scope, and re-entrant callbacks
+            // only take raw `*mut PipeReader`.
             let p = unsafe { &mut *p };
             p.start(process, event_loop)?;
             if eager {

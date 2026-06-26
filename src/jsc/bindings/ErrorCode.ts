@@ -134,7 +134,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_ARG_TYPE", TypeError],
   ["ERR_INVALID_ARG_VALUE", TypeError, undefined, RangeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
-  ["ERR_INVALID_BUFFER_SIZE", RangeError],
   ["ERR_INVALID_CHAR", TypeError],
   ["ERR_INVALID_CURSOR_POS", TypeError],
   ["ERR_INVALID_FD_TYPE", TypeError],
@@ -340,5 +339,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_EEXIST", Error],
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
   ["ERR_DIR_CONCURRENT_OPERATION", Error],
+  ["ERR_INVALID_BUFFER_SIZE", RangeError],
 ];
 export default errors;

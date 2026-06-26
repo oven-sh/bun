@@ -2662,6 +2662,43 @@ config:
         expect(YAML.parse(YAML.stringify("with\rcarriage"))).toBe("with\rcarriage");
       });
 
+      test("round-trips U+00A8/U+00A9 and escapes U+2028/U+2029 as \\L/\\P", () => {
+        // U+00A8 (DIAERESIS) and U+00A9 (COPYRIGHT SIGN) are ordinary printable
+        // characters; only U+2028/U+2029 map to the YAML \L and \P escapes.
+        expect(YAML.parse(YAML.stringify("\u00a8"))).toBe("\u00a8");
+        expect(YAML.parse(YAML.stringify("\u00a9"))).toBe("\u00a9");
+        expect(YAML.parse(YAML.stringify("x\u00a8y"))).toBe("x\u00a8y");
+        expect(YAML.parse(YAML.stringify("x\u00a9y"))).toBe("x\u00a9y");
+        expect(YAML.parse(YAML.stringify({ k: "a\u00a8b\u00a9c" }))).toEqual({ k: "a\u00a8b\u00a9c" });
+
+        expect(YAML.stringify("\u00a8")).not.toContain("\\L");
+        expect(YAML.stringify("\u00a9")).not.toContain("\\P");
+        expect(YAML.stringify("\u2028")).toBe('"\\L"');
+        expect(YAML.stringify("\u2029")).toBe('"\\P"');
+        expect(YAML.parse(YAML.stringify("\u2028"))).toBe("\u2028");
+        expect(YAML.parse(YAML.stringify("\u2029"))).toBe("\u2029");
+        expect(YAML.parse(YAML.stringify("a\u2028b\u2029c"))).toBe("a\u2028b\u2029c");
+      });
+
+      test("round-trips every non-surrogate BMP code point", () => {
+        let all = "";
+        for (let cp = 0; cp <= 0xffff; cp++) {
+          if (cp >= 0xd800 && cp <= 0xdfff) continue;
+          all += String.fromCharCode(cp);
+        }
+        const back = YAML.parse(YAML.stringify(all));
+        expect(typeof back).toBe("string");
+        expect(back.length).toBe(all.length);
+        for (let i = 0; i < all.length; i++) {
+          if (back.charCodeAt(i) !== all.charCodeAt(i)) {
+            throw new Error(
+              `U+${all.charCodeAt(i).toString(16).padStart(4, "0")} did not round-trip: ` +
+                `got U+${back.charCodeAt(i).toString(16).padStart(4, "0")}`,
+            );
+          }
+        }
+      });
+
       test("round-trips arrays", () => {
         expect(YAML.parse(YAML.stringify([]))).toEqual([]);
         expect(YAML.parse(YAML.stringify([1, 2, 3]))).toEqual([1, 2, 3]);

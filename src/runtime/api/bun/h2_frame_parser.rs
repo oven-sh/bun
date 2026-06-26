@@ -1297,9 +1297,9 @@ pub struct H2FrameParser {
     /// INITIAL_WINDOW_SIZE of each SETTINGS frame the legacy encoder sent, in send order, drained
     /// into the engine's per-SETTINGS ack queue in rewrite_read (§6.5.3: ACKs apply in order).
     pending_settings_window_submissions: JsCell<Vec<u32>>,
-    /// Stream ids whose legacy-side lifecycle finished while a dispatch held the engine
-    /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
-    /// Drained into Connection::close_stream on the next rewrite_read batch.
+    /// Stream ids to close in the engine on the next rewrite_read batch (see
+    /// Connection::close_stream). Queued by free_resources when a legacy lifecycle finishes,
+    /// and by rstStream for refused pushed ids that never had a legacy entry.
     pending_engine_stream_closes: JsCell<Vec<u32>>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
@@ -5385,10 +5385,11 @@ impl H2FrameParser {
                     engine.pending_local_window_acks.push_back(w);
                 }
             });
-            // Streams done since the last batch: evict the engine entry and, if the legacy
-            // slot exists, free it. Queued by free_resources (legacy entry present, already
-            // torn down) and by rstStream for ids with no legacy entry (refused pushes); the
-            // two producers are exclusive per id, and duplicate ids are no-ops on re-drain.
+            // Streams done since the last batch: close the engine entry (evicted at the end of
+            // this receive pass) and, if the legacy slot exists, free it. Queued by
+            // free_resources (legacy entry present, already torn down) and by rstStream for ids
+            // with no legacy entry (refused pushes); the two producers are exclusive per id,
+            // and duplicate ids are no-ops on re-drain.
             self.pending_engine_stream_closes.with_mut(|v| {
                 for id in v.drain(..) {
                     engine.close_stream(id);

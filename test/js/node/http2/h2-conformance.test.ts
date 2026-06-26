@@ -787,6 +787,47 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.close();
     }
   });
+
+  // After the client refuses a promised stream, the server's response HEADERS for it are
+  // routinely already in flight (§5.1 anticipates exactly this interleaving). The promised id
+  // must be treated as closed - answered with RST_STREAM(STREAM_CLOSED) - not as an id that
+  // was never seen: re-opening it allocates a per-stream native box and Strong-roots a
+  // ClientHttp2Stream the user has no handle to, for the lifetime of the session.
+  test("a refused push's already-in-flight response HEADERS is closed, not re-opened", async () => {
+    const raw = await RawH2Server.listen();
+    // maxReservedRemoteStreams: 0 refuses the very first reservation through the JS count cap
+    // (an RST_STREAM(CANCEL)), the path that queues the promised id for engine eviction.
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxReservedRemoteStreams: 0 });
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
+      const promised = Buffer.alloc(4);
+      promised.writeUInt32BE(2, 0);
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block]));
+      // Waiting for the client's refusal is the synchronization point: it has already queued the
+      // promised id for eviction, so the response HEADERS below arrives in a later socket read.
+      const refusal = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      expect(refusal.payload.readUInt32BE(0)).toBe(ErrorCode.CANCEL);
+      // The pushed response was already on the wire when that RST went out.
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS | END_STREAM */, 2, Buffer.from([0x88]));
+      await raw.waitFor(
+        f =>
+          f.type === FrameType.RST_STREAM && f.streamId === 2 && f.payload.readUInt32BE(0) === ErrorCode.STREAM_CLOSED,
+      );
+      // The late HEADERS neither tore the connection down nor re-opened the stream.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(raw.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });
 
 describe("PUSH_PROMISE flood (maxSessionMemory)", () => {

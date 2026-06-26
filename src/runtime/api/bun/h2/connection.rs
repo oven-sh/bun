@@ -1539,15 +1539,17 @@ impl Connection {
         to_send
     }
 
-    /// Drop a stream entry whose lifecycle completed on the legacy outbound encoder.
-    /// The outbound half does not run through this engine yet, so without this hook a
-    /// completed request's entry would linger as HalfClosedRemote forever — the map (and
-    /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
-    /// has the same observable behavior as scan-eviction of a Closed stream: late frames
-    /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and a late HEADERS re-opens a fresh entry.
+    /// Close a stream entry whose lifecycle completed outside the engine: a legacy outbound
+    /// request that finished, or a refused pushed id the JS layer reset. Marked Closed rather
+    /// than removed: the drain that calls this runs before the current batch is dispatched, so
+    /// a frame for the id already buffered in that batch must see a closed stream (§5.1 ->
+    /// RST_STREAM(STREAM_CLOSED), never surfaced). Removal would make an already-in-flight
+    /// response for a refused push look idle, and handle_headers would re-open it through
+    /// on_stream_open. replenish_windows evicts Closed entries at the end of the same pass.
     pub fn close_stream(&mut self, stream_id: u32) {
-        self.streams.remove(&stream_id);
+        if let Some(s) = self.streams.get_mut(&stream_id) {
+            s.state = State::Closed;
+        }
     }
 
     /// Locally reset a stream (RST_STREAM) and mark it closed.

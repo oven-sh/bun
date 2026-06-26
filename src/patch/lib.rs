@@ -1051,7 +1051,10 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 }
 
 fn is_safe_patch_path(path: &[u8]) -> bool {
+    // An embedded NUL would truncate the C-string view at the syscall
+    // boundary, addressing a different file than the patch claims to target.
     !path.is_empty()
+        && !path.contains(&0)
         && !paths::is_absolute_loose(path)
         && !path
             .split(|&c| c == b'/' || c == b'\\')

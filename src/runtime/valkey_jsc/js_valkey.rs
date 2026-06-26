@@ -1192,10 +1192,10 @@ impl JSValkeyClient {
                 let _ = self.client_fail(msg, protocol::RedisError::ConnectionTimeout);
                 // TODO: properly propagate exception upwards
                 if already_detached {
-                    // `on_valkey_close()` releases one ref in its defer.
+                    // `on_valkey_close()`'s defer runs `update_poll_ref()` and
+                    // releases one ref; balance that release here.
                     self.ref_();
                     let _ = self.on_valkey_close();
-                    self.update_poll_ref();
                 }
             }
         }

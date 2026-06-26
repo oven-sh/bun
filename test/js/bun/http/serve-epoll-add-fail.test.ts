@@ -8,8 +8,8 @@ import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// FAIL_EPOLL_ADD=listener fails ADD for listening sockets (SO_ACCEPTCONN);
-// FAIL_EPOLL_ADD=accepted fails ADD for connected SOCK_STREAM sockets.
+// FAIL_EPOLL_ADD=listener: listening TCP sockets (SO_ACCEPTCONN).
+// FAIL_EPOLL_ADD=accepted: connected SOCK_STREAM. FAIL_EPOLL_ADD=udp: SOCK_DGRAM.
 // Non-socket fds (timerfd, eventfd) always pass through.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
@@ -21,13 +21,13 @@ const SHIM_C = /* c */ `
 #include <sys/socket.h>
 
 static int (*real_epoll_ctl)(int, int, int, struct epoll_event *);
-static int mode = -1; // 0 = listener, 1 = accepted
+static int mode = -1; // 0 = listener, 1 = accepted, 2 = udp
 
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     if (!real_epoll_ctl) {
         real_epoll_ctl = (int (*)(int, int, int, struct epoll_event *)) dlsym(RTLD_NEXT, "epoll_ctl");
         const char *m = getenv("FAIL_EPOLL_ADD");
-        mode = (m && strcmp(m, "accepted") == 0) ? 1 : 0;
+        mode = (m && strcmp(m, "udp") == 0) ? 2 : (m && strcmp(m, "accepted") == 0) ? 1 : 0;
     }
     if (op == EPOLL_CTL_ADD) {
         int acceptconn = 0, type = 0;
@@ -37,7 +37,8 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &acceptconn, &len);
             int is_stream = (type == SOCK_STREAM);
             if ((mode == 0 && is_stream && acceptconn) ||
-                (mode == 1 && is_stream && !acceptconn)) {
+                (mode == 1 && is_stream && !acceptconn) ||
+                (mode == 2 && type == SOCK_DGRAM)) {
                 errno = ENOSPC;
                 return -1;
             }
@@ -123,6 +124,16 @@ try {
 }
 `;
 
+const UDP_FIXTURE = /* js */ `
+try {
+  const sock = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
+  console.log(JSON.stringify({ ok: true, port: sock.port }));
+  sock.close();
+} catch (e) {
+  console.log(JSON.stringify({ ok: false, code: e?.code, errno: e?.errno, message: String(e?.message ?? e) }));
+}
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -135,6 +146,7 @@ beforeAll(async () => {
     "accept.js": ACCEPT_FIXTURE,
     "fetch.js": FETCH_FIXTURE,
     "connect.js": CONNECT_FIXTURE,
+    "udp.js": UDP_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -153,12 +165,12 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-function shimEnv(mode: "listener" | "accepted") {
+function shimEnv(mode: "listener" | "accepted" | "udp") {
   const existing = bunEnv.LD_PRELOAD;
   return { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath, FAIL_EPOLL_ADD: mode };
 }
 
-async function runWithShim(script: string, mode: "listener" | "accepted" = "listener") {
+async function runWithShim(script: string, mode: "listener" | "accepted" | "udp" = "listener") {
   await using proc = Bun.spawn({
     cmd: [bunExe(), script],
     cwd: String(dir),
@@ -290,6 +302,23 @@ test.skipIf(!isLinux || !cc)(
       errno: -111,
       syscall: "connect",
       message: expect.any(String),
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(!isLinux || !cc)(
+  "Bun.udpSocket throws when epoll_ctl(EPOLL_CTL_ADD) for the UDP socket fails",
+  async () => {
+    const { stdout, stderr, exitCode } = await runWithShim("udp.js", "udp");
+    const line = stdout.trim().split("\n").pop() ?? "";
+    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+    const result = JSON.parse(line);
+    expect(result).toEqual({
+      ok: false,
+      code: "ENOSPC",
+      errno: 28,
+      message: expect.stringContaining("ENOSPC"),
     });
     expect(exitCode).toBe(0);
   },

@@ -203,19 +203,14 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
         }
 
         if !data_slice.is_empty() {
-            backpressure |= uws_async_socket_write(
-                ssl_flag,
-                socket_ref,
-                data_slice.as_ptr(),
-                data_slice.len(),
-            );
+            backpressure |=
+                uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), data_slice.len());
             total_written = total_written.saturating_add(data_slice.len());
         } else if ended && !backpressure {
             // handle.end() with nothing to write: probe the buffered amount
             // so shutdown defers until AsyncSocketData::buffer has drained
             // (the deferred shutdown runs from onDrain once it empties).
-            backpressure |=
-                uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), 0);
+            backpressure |= uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), 0);
         }
         if backpressure {
             break 'body JSValue::FALSE;

@@ -7,8 +7,8 @@
  */
 import { once } from "node:events";
 import http from "node:http";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 
 describe("backpressure", () => {
   // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
@@ -121,7 +121,11 @@ describe("backpressure", () => {
     const TAIL = "ZZZ";
     const TOTAL = BIG.length + MARKER.length + TAIL.length;
 
-    const { promise: observed, resolve, reject } = Promise.withResolvers<{
+    const {
+      promise: observed,
+      resolve,
+      reject,
+    } = Promise.withResolvers<{
       bigWriteOk: boolean;
       socketWriteOk: boolean;
     }>();

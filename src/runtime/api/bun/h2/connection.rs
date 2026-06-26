@@ -882,11 +882,9 @@ impl Connection {
             );
             return true;
         }
-        // §5.1.1 mirror for clients: a server only opens an even-id stream by RESERVING it
-        // with PUSH_PROMISE, never with HEADERS. A new even id at a client is either one we
-        // already released (a refused push whose response the server raced onto the wire —
-        // closed per §5.1, answer RST(STREAM_CLOSED) without allocating) or one the server
-        // never reserved at all (connection PROTOCOL_ERROR).
+        // §5.1.1 mirror for clients: a server opens even-id streams only via PUSH_PROMISE. A
+        // new even id here is one we already released: RST(STREAM_CLOSED), no allocation. An
+        // id provably beyond every id seen (> last_stream_id) was never reserved: PROTOCOL_ERROR.
         let late_push = is_new && !self.is_server && hdr.stream_id.is_multiple_of(2);
         if late_push && hdr.stream_id > self.last_stream_id {
             self.send_go_away(

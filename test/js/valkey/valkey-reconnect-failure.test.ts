@@ -111,11 +111,22 @@ describe.skipIf(isWindows)("RedisClient after a synchronously failing reconnect"
   });
 });
 
+async function runInline(fixture: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: normalizeBunSnapshot(stdout), stderr, exitCode, signalCode: proc.signalCode };
+}
+
 // After auto-reconnect exhausts maxRetries and the client fails, the stale
 // `is_reconnecting` flag used to keep the event loop referenced forever, so
 // the process never exited.
 test.concurrent("process exits after auto-reconnect exhausts maxRetries", async () => {
-  const fixture = /* ts */ `
+  const { stdout, stderr, exitCode, signalCode } = await runInline(/* ts */ `
     const srv = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
@@ -136,16 +147,33 @@ test.concurrent("process exits after auto-reconnect exhausts maxRetries", async 
     srv.stop(true);
     const results = await Promise.allSettled([pending, client.get("k")]);
     console.log(results.map(r => r.status + " " + r.reason?.code).join("|"));
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: normalizeBunSnapshot(stdout), exitCode, signalCode: proc.signalCode }, stderr).toEqual({
+  `);
+  expect({ stdout, exitCode, signalCode }, stderr).toEqual({
     stdout: ["connected true", "rejected ERR_REDIS_CONNECTION_CLOSED|rejected ERR_REDIS_CONNECTION_CLOSED"].join("\n"),
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/18895
+// When connectionTimeout fired between reconnect attempts the socket was
+// already detached, so fail()'s close() was a no-op and no close callback ever
+// settled the connect() promise or released the event loop.
+test.concurrent("connectionTimeout during a reconnect backoff settles connect() and exits", async () => {
+  const { stdout, stderr, exitCode, signalCode } = await runInline(/* ts */ `
+    // Bind and release a port so nothing is listening on it.
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const port = probe.port;
+    probe.stop(true);
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + port, { connectionTimeout: 500 });
+    const results = await Promise.allSettled([client.connect(), client.get("k")]);
+    console.log(results.map(r => r.status + " " + r.reason?.code + " " + r.reason?.message).join("|"));
+  `);
+  expect({ stdout, exitCode, signalCode }, stderr).toEqual({
+    stdout: [
+      "rejected ERR_REDIS_CONNECTION_CLOSED Connection closed",
+      "rejected ERR_REDIS_CONNECTION_TIMEOUT Connection timeout reached after 500ms",
+    ].join("|"),
     exitCode: 0,
     signalCode: null,
   });

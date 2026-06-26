@@ -1185,8 +1185,18 @@ impl JSValkeyClient {
                 .expect("unreachable");
                 let len = start - cur.len();
                 let msg = &buf[..len];
+                // Between reconnect attempts the socket is already detached, so
+                // `fail()`'s `close()` is a no-op and no close callback will ever
+                // settle the connection promise or release the poll ref.
+                let already_detached = self.client.get().socket.is_closed();
                 let _ = self.client_fail(msg, protocol::RedisError::ConnectionTimeout);
                 // TODO: properly propagate exception upwards
+                if already_detached {
+                    // `on_valkey_close()` releases one ref in its defer.
+                    self.ref_();
+                    let _ = self.on_valkey_close();
+                    self.update_poll_ref();
+                }
             }
         }
     }

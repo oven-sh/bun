@@ -26,6 +26,9 @@ bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub(crate) struct UpgradedDuplex {
     pub wrapper: Option<WrapperType>,
+    /// Bytes that arrived via the duplex's `'data'` event before the deferred
+    /// StartTLS task created `wrapper`. Drained by `start_wrapper`.
+    pub pending_data: Vec<u8>,
     pub origin: StrongOptional, // any duplex
     // JSC_BORROW per LIFETIMES.tsv.
     pub global: Option<GlobalRef>,
@@ -227,6 +230,10 @@ impl UpgradedDuplex {
             if let Some(wrapper) = &mut self.wrapper {
                 wrapper.receive_data(data);
             }
+        } else {
+            // StartTLS hasn't run yet; buffer so the handshake sees these
+            // bytes instead of silently dropping them.
+            self.pending_data.extend_from_slice(data);
         }
     }
 
@@ -258,6 +265,7 @@ impl UpgradedDuplex {
             origin: StrongOptional::create(origin, global),
             global: Some(GlobalRef::from(global)),
             wrapper: None,
+            pending_data: Vec::new(),
             handlers,
             ssl_error: CertError::default(),
             on_data_callback: StrongOptional::empty(),
@@ -338,7 +346,7 @@ impl UpgradedDuplex {
             },
         )?);
 
-        self.wrapper.as_mut().unwrap().start();
+        self.start_wrapper();
         Ok(())
     }
 
@@ -375,8 +383,21 @@ impl UpgradedDuplex {
         // Success: disarm the errdefer.
         scopeguard::ScopeGuard::into_inner(ctx_guard);
 
-        self.wrapper.as_mut().unwrap().start();
+        self.start_wrapper();
         Ok(())
+    }
+
+    /// Kick the freshly-created wrapper, feeding in any bytes the duplex
+    /// delivered while the StartTLS task was still queued.
+    fn start_wrapper(&mut self) {
+        let pending = core::mem::take(&mut self.pending_data);
+        let wrapper = self.wrapper.as_mut().unwrap();
+        if pending.is_empty() {
+            wrapper.start();
+        } else {
+            bun_output::scoped_log!(UpgradedDuplex, "start ({} buffered bytes)", pending.len());
+            wrapper.start_with_payload(&pending);
+        }
     }
 
     #[uws_callback(export = "UpgradedDuplex__encode_and_write")]
@@ -535,6 +556,7 @@ impl UpgradedDuplex {
             host_fn::set_function_data(callback, None);
             self.on_close_callback.deinit();
         }
+        self.pending_data = Vec::new();
         self.ssl_error = CertError::default();
     }
 }

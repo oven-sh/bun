@@ -504,6 +504,20 @@ impl JSValue {
     pub fn js_number(n: f64) -> JSValue {
         JSC__JSValue__jsNumberFromDouble(n)
     }
+    /// `JSC::purifyNaN` (PureNaN.h) — canonicalizes every NaN to the one
+    /// payload that is safe to NaN-box. Required before boxing any `f64`
+    /// whose bit pattern comes from outside the engine (FFI memory, native
+    /// addons, wire formats): other NaN payloads collide with the JSValue
+    /// tag space and decode as forged cells or immediates.
+    #[inline]
+    pub fn purify_nan(n: f64) -> f64 {
+        if n.is_nan() {
+            // `PNaNAsBits` in PureNaN.h; not `f64::NAN`, whose bit pattern
+            // is not guaranteed.
+            return f64::from_bits(0x7ff8_0000_0000_0000);
+        }
+        n
+    }
     /// `JSValue::jsDoubleNumber` (JSCJSValueInlines.h) — boxes an `f64`
     /// *always* as a double-encoded immediate (no int32 fast path). Required
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and

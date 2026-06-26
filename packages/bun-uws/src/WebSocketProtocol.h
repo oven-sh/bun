@@ -129,8 +129,12 @@ static inline CloseFrame parseClosePayload(char *src, size_t length) {
     if (length >= 2) {
         memcpy(&cf.code, src, 2);
         cf = {cond_byte_swap<uint16_t>(cf.code), src + 2, length - 2};
-        if (cf.code < 1000 || cf.code > 4999 || (cf.code > 1011 && cf.code < 4000) ||
-            (cf.code >= 1004 && cf.code <= 1006) || !isValidUtf8((unsigned char *) cf.message, cf.length)) {
+        // RFC 6455 §7.4: 1000-1015 defined, 1016-2999 reserved (MUST NOT be
+        // used), 3000-3999 IANA-registered for libraries/frameworks, 4000-4999
+        // private use. 1004/1005/1006/1015 are not valid on the wire.
+        if (cf.code < 1000 || cf.code > 4999 || (cf.code > 1015 && cf.code < 3000) ||
+            (cf.code >= 1004 && cf.code <= 1006) || cf.code == 1015 ||
+            !isValidUtf8((unsigned char *) cf.message, cf.length)) {
             /* Even though we got a WebSocket close frame, it in itself is abnormal */
             return {1006, nullptr, 0};
         }

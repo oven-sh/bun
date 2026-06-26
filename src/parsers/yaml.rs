@@ -5491,7 +5491,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // JSON encodes supplementary code points as a `\uD8xx\uDCxx` surrogate
         // pair; YAML 1.2 is a JSON superset. Lone surrogates remain an error.
         if (0xD800..=0xDFFF).contains(&cp) {
-            if !bun_core::strings::u16_is_lead(cp as u16)
+            if !matches!(escape, Escape::LowerU)
+                || !bun_core::strings::u16_is_lead(cp as u16)
                 || Enc::wide(self.peek(1)) != 0x5C /* '\\' */
                 || Enc::wide(self.peek(2)) != 0x75
             /* 'u' */

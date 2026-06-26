@@ -1897,7 +1897,11 @@ folded: >
           expect(() => YAML.parse('"\\uD83D\\uD83D"')).toThrow(SyntaxError);
           expect(() => YAML.parse('"\\uD83D\\u0041"')).toThrow(SyntaxError);
           expect(() => YAML.parse('"\\uD83D\\n"')).toThrow(SyntaxError);
+          // `\U` ([60] ns-esc-32-bit) names a Unicode character; surrogate
+          // code points are not characters and are never combined.
           expect(() => YAML.parse('"\\U0000D83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\U0000D83D\\uDE00"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\U0000D83D\\U0000DE00"')).toThrow(SyntaxError);
         });
 
         test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {

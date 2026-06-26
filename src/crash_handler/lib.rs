@@ -2949,14 +2949,13 @@ mod draft {
 
             // We may be running inside the signal handler for `sig`, in which
             // case the kernel added it to this thread's mask and a re-raise
-            // would sit pending forever. Unblock it (and SIGABRT for the
-            // fallback below). pthread_sigmask is async-signal-safe.
+            // would sit pending forever. Unblock it so the raise below is
+            // delivered. pthread_sigmask is async-signal-safe.
             // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
             unsafe {
                 let mut set: libc::sigset_t = bun_core::ffi::zeroed();
                 libc::sigemptyset(&raw mut set);
                 libc::sigaddset(&raw mut set, sig);
-                libc::sigaddset(&raw mut set, libc::SIGABRT);
                 libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
             }
 

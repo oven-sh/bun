@@ -256,10 +256,9 @@ test("image without a src still works (doesn't crash, doesn't print URL)", () =>
 
 test("data:image/png;base64, with empty payload falls back instead of malformed APC", () => {
   // Trailing comma + no base64 body used to satisfy every check in
-  // extractPngDataUrlBase64 and return a non-null zero-length slice
-  // (Zig's `?[]const u8` treats empty slices as non-null), which
-  // made emitKittyImageDirect emit a malformed empty APC and skip
-  // the camera + alt + URL fallback entirely.
+  // extract_png_data_url_base64 and return a non-null zero-length
+  // slice, which made the direct Kitty transmit emit a malformed
+  // empty APC and skip the camera + alt + URL fallback entirely.
   const out = Bun.markdown.ansi("![oops](data:image/png;base64,)\n", {
     colors: true,
     kittyGraphics: true,

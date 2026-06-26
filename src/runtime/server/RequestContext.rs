@@ -1394,7 +1394,9 @@ where
             // because the teardown it can re-enter frees the sink.
             unsafe {
                 ResponseStream::<SSL_ENABLED, HTTP3>::abort(
-                    sink_ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
+                    sink_ptr
+                        .as_ptr()
+                        .cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
                 );
             }
             return;

@@ -1599,7 +1599,7 @@ impl FetchTasklet {
         if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
-        this.ignore_remaining_response_body();
+        this.ignore_remaining_response_body(false);
     }
 
     fn on_stream_drained_callback(ctx: Option<*mut c_void>) {
@@ -1723,17 +1723,23 @@ impl FetchTasklet {
         )
     }
 
-    fn ignore_remaining_response_body(&mut self) {
+    fn ignore_remaining_response_body(&mut self, from_finalizer: bool) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
         // The response is being abandoned. If the request body is still uploading
         // through a ResumableSink, detach its JS wrapper so the cached
         // `ondrain` closure (and the reader/stream graph it captures) becomes
-        // collectible instead of leaking. `detach_js` runs no JS callbacks, so it
-        // is safe even on the GC-finalizer caller (`on_response_finalize`); the
-        // sink's own teardown (`Drop`/`finalize`) handles the rest once its refs
-        // drain.
-        if let Some(sink) = self.sink_mut() {
-            sink.detach_js();
+        // collectible instead of leaking.
+        //
+        // When reached from `on_response_finalize` (a JSC Weak finalizer inside
+        // `WeakBlock::sweep`), `detach_js()` and `clear_stream_handlers()` must be
+        // skipped: both reach `JSCell::classInfo()` via generated cached-value
+        // setters / `ReadableStreamTag__tagged`, and touching any cell during
+        // `MutatorState::Sweeping` is forbidden. `clear_sink()` in `deinit()` (an
+        // event-loop task, outside sweep) performs the deferred detach.
+        if !from_finalizer {
+            if let Some(sink) = self.sink_mut() {
+                sink.detach_js();
+            }
         }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
@@ -1750,7 +1756,9 @@ impl FetchTasklet {
         let _ = self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // clean any remaining references
-        self.clear_stream_handlers();
+        if !from_finalizer {
+            self.clear_stream_handlers();
+        }
         self.readable_stream_ref.deinit();
         self.response.clear();
 
@@ -2461,11 +2469,11 @@ impl FetchTasklet {
                 if let Some(promise) = locked.promise {
                     if promise.is_empty_or_undefined_or_null() {
                         // Scenario 2b.
-                        this.ignore_remaining_response_body();
+                        this.ignore_remaining_response_body(true);
                     }
                 } else {
                     // Scenario 3.
-                    this.ignore_remaining_response_body();
+                    this.ignore_remaining_response_body(true);
                 }
             }
         }

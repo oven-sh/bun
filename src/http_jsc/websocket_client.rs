@@ -1868,10 +1868,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     ///
     /// # Safety
     /// `ws` must be the live `heap::alloc` allocation returned by `new_ws`,
-    /// with no other `&`/`&mut` borrow of `*ws` live across this call. If
-    /// `buffered_data_len > 0`, `buffered_data` must be a mimalloc allocation
-    /// of that length whose ownership transfers to this call (extern-C
-    /// contract with the upgrade client).
+    /// with no other `&`/`&mut` borrow of `*ws` live across this call.
     unsafe fn finish_init(
         ws: *mut Self,
         global_this: &JSGlobalObject,

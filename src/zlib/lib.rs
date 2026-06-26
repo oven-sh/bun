@@ -1280,9 +1280,8 @@ impl InflateDecoder {
                 ReturnCode::BufError => {
                     if input.is_empty() && self.strm.avail_in == 0 {
                         if is_done {
-                            // All input consumed, stream complete — not an error.
-                            self.state = State::End;
-                            return Ok(());
+                            self.state = State::Error;
+                            return Err(ZlibError::ZlibError);
                         }
                         return Err(ZlibError::ShortRead);
                     }

@@ -1194,10 +1194,11 @@ export const linkerFlags: Flag[] = [
       "-lc++",
       "-lc++abi",
       "-lunwind",
+      "-lz",
       "-lc",
     ].filter(f => f !== ""),
     when: c => c.ohos,
-    desc: "OHOS: link LLVM 22 libc++ + libc++abi + libunwind + dynamic libc",
+    desc: "OHOS: link LLVM 22 libc++ + libc++abi + libunwind + system zlib + dynamic libc",
   },
   {
     flag: [
@@ -1391,12 +1392,9 @@ export const linkerFlags: Flag[] = [
       "-Wl,--undefined=us_socket_sni_resolve",
       "-Wl,--undefined=us_socket_set_tos",
       "-Wl,--undefined=us_socket_tls_feed",
-      "-Wl,--undefined=Bun__dlopen",
-      // Prevent --gc-sections from discarding the .bun section (BUN_COMPILED).
-      // Without this, bun build --compile loses standalone module graph storage.
-      "-Wl,--undefined=BUN_COMPILED"],
+      "-Wl,--undefined=Bun__dlopen"],
     when: c => c.release && c.ohos,
-    desc: "Force-keep uSockets SSL symbols + Bun__dlopen + BUN_COMPILED FFI (OHOS)",
+    desc: "Force-keep uSockets SSL symbols + Bun__dlopen referenced via Rust FFI (OHOS)",
   },
   {
     // Always icf=safe in release. The stripped `bun` shares its build-id

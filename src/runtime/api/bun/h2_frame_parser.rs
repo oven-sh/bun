@@ -1300,6 +1300,7 @@ pub struct H2FrameParser {
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
     stream_reset_burst: Cell<u32>,
+    stream_reset_rate: Cell<u32>,
     max_outstanding_settings: Cell<u32>,
     outstanding_settings: Cell<u32>,
     rejected_streams: Cell<u32>,
@@ -5346,7 +5347,8 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
-            engine.max_peer_resets = self.stream_reset_burst.get();
+            engine
+                .set_reset_rate_limit(self.stream_reset_burst.get(), self.stream_reset_rate.get());
             // Apply any receive-window growth setLocalWindowSize() accumulated while a dispatch
             // held this borrow.
             let pending = self.pending_recv_window_growth.replace(0);
@@ -9146,7 +9148,8 @@ impl H2FrameParser {
             pending_settings_window_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
-            stream_reset_burst: Cell::new(1000),
+            stream_reset_burst: Cell::new(crate::api::h2::connection::DEFAULT_RESET_BURST),
+            stream_reset_rate: Cell::new(crate::api::h2::connection::DEFAULT_RESET_RATE),
             max_outstanding_settings: Cell::new(10),
             outstanding_settings: Cell::new(0),
             rejected_streams: Cell::new(0),
@@ -9275,6 +9278,17 @@ impl H2FrameParser {
                     if stream_reset_burst.is_number() {
                         this_ref.stream_reset_burst.set(
                             stream_reset_burst
+                                .to_uint64_no_truncate()
+                                .min(u32::MAX as u64) as u32,
+                        );
+                    }
+                }
+                if let Some(stream_reset_rate) =
+                    settings_js.get(global_object, "streamResetRate")?
+                {
+                    if stream_reset_rate.is_number() {
+                        this_ref.stream_reset_rate.set(
+                            stream_reset_rate
                                 .to_uint64_no_truncate()
                                 .min(u32::MAX as u64) as u32,
                         );

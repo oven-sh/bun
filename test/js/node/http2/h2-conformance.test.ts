@@ -456,6 +456,73 @@ describe("stream concurrency (§5.1.2)", () => {
     }
   });
 
+  test("rapid-reset paced across read batches is not paid down by completed streams", async () => {
+    // CVE-2023-44487: the reset budget is a rate limit, not a net-outstanding gauge. One
+    // HEADERS→RST per socket write (each confirmed processed before the next is sent), with a
+    // legitimate request completing in between, must still exhaust the burst and GOAWAY.
+    // streamResetRate: 0 pins the budget so event-loop latency on a slow CI runner cannot
+    // regenerate tokens between the paced batches; the timed refill has engine unit tests.
+    const burst = 4;
+    const srv = http2.createServer({ streamResetBurst: burst, streamResetRate: 0 } as any);
+    srv.on("stream", (stream: any) => {
+      stream.on("error", () => {});
+      if (stream.destroyed) return;
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    srv.on("sessionError", () => {});
+    srv.on("error", () => {});
+    srv.listen(0);
+    await once(srv, "listening");
+    const p = (srv.address() as net.AddressInfo).port;
+    const c = await RawH2.connect(p);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      for (let i = 0; i < burst; i++) {
+        const attack = 1 + 4 * i;
+        const legit = 3 + 4 * i;
+        c.send(
+          Buffer.concat([
+            encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, attack, reqBlock),
+            encodeFrame(FrameType.RST_STREAM, 0, attack, cancel),
+            encodeFrame(FrameType.HEADERS, 0x5 /* END_HEADERS | END_STREAM */, legit, reqBlock),
+          ]),
+        );
+        // The legitimate request in this batch is answered and fully closed before the next
+        // batch goes out, so its completion is drained ahead of the next read.
+        await c.waitFor(f => f.streamId === legit && f.type === FrameType.DATA && (f.flags & 0x1) !== 0, 3500);
+        // A PING round-trip gives the server a full event-loop turn past that close.
+        const tag = Buffer.alloc(8);
+        tag.writeUInt32BE(i + 1, 0);
+        c.sendFrame(FrameType.PING, 0, 0, tag);
+        await c.waitFor(
+          f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.readUInt32BE(0) === i + 1,
+          3500,
+        );
+      }
+      // `burst` paced resets were tolerated; the completed streams in between did not
+      // regenerate tokens, so one more paced reset answers GOAWAY(ENHANCE_YOUR_CALM).
+      const over = 1 + 4 * burst;
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, over, reqBlock),
+          encodeFrame(FrameType.RST_STREAM, 0, over, cancel),
+        ]),
+      );
+      const goaway = await c.waitForGoaway(3500);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      await c.waitClosed(3500);
+      expect(c.closed).toBe(true);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
   test("rapid-reset (HEADERS→RST flood) past streamResetBurst answers GOAWAY(ENHANCE_YOUR_CALM)", async () => {
     const srv = http2.createServer({ streamResetBurst: 8 } as any);
     srv.on("stream", (stream: any) => stream.on("error", () => {}));

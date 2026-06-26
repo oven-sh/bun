@@ -60,6 +60,64 @@ pub struct Feed {
     pub fatal: bool,
 }
 
+/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / NGHTTP2_DEFAULT_STREAM_RESET_RATE: the
+/// rapid-reset bucket holds `burst` tokens and regenerates `rate` per second.
+pub const DEFAULT_RESET_BURST: u32 = 1000;
+pub const DEFAULT_RESET_RATE: u32 = 33;
+
+/// nghttp2's NGHTTP2_DEFAULT_MAX_INCOMING_RESERVED_STREAMS. Reserved streams are exempt from
+/// SETTINGS_MAX_CONCURRENT_STREAMS (§5.1.2), so inbound PUSH_PROMISE reservations need their
+/// own bound or a server can hold unbounded reserved state on a client.
+const MAX_INBOUND_RESERVED_STREAMS: u32 = 200;
+
+/// Token bucket mirroring nghttp2's `nghttp2_ratelim`: `val` tokens available, regenerated at
+/// `rate` per second (second-resolution monotonic timestamps) up to `burst`.
+#[derive(Clone, Copy, Debug)]
+struct RateLim {
+    burst: u64,
+    rate: u64,
+    val: u64,
+    tstamp: u64,
+}
+
+impl RateLim {
+    fn new(burst: u64, rate: u64) -> Self {
+        RateLim {
+            burst,
+            rate,
+            val: burst,
+            tstamp: 0,
+        }
+    }
+
+    /// Regenerate tokens for the whole seconds elapsed since the last update. A timestamp that
+    /// did not advance (or went backwards) regenerates nothing.
+    fn update(&mut self, tstamp: u64) {
+        if tstamp <= self.tstamp {
+            self.tstamp = tstamp;
+            return;
+        }
+        let elapsed = tstamp - self.tstamp;
+        self.tstamp = tstamp;
+        if self.val >= self.burst {
+            return;
+        }
+        self.val = self
+            .val
+            .saturating_add(self.rate.saturating_mul(elapsed))
+            .min(self.burst);
+    }
+
+    /// Take one token; false when the bucket is empty.
+    fn drain(&mut self) -> bool {
+        if self.val == 0 {
+            return false;
+        }
+        self.val -= 1;
+        true
+    }
+}
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -139,11 +197,19 @@ pub struct Connection {
     /// session option, nghttp2's max_settings; not a SETTINGS parameter). Frames carrying more
     /// entries are a connection error (ENHANCE_YOUR_CALM, like nghttp2's flood guard).
     pub max_settings: u32,
-    /// Rapid-reset guard (CVE-2023-44487): inbound peer RST_STREAM on an in-flight stream
-    /// increments this, `close_stream` refunds one per completed handler. Exceeding
-    /// `max_peer_resets` (node's `streamResetBurst`) GOAWAYs with ENHANCE_YOUR_CALM.
-    peer_reset_count: u32,
-    pub max_peer_resets: u32,
+    /// Rapid-reset guard (CVE-2023-44487): a token bucket drained by each inbound RST_STREAM
+    /// on a known stream, mirroring nghttp2's `stream_reset_rate_limit`. Running dry answers
+    /// GOAWAY(ENHANCE_YOUR_CALM). Configured via `set_reset_rate_limit`.
+    reset_ratelim: RateLim,
+    /// Monotonic base for the rate limiter's second-resolution clock.
+    epoch: std::time::Instant,
+    /// Peer-initiated streams currently open or half-closed — the set that
+    /// SETTINGS_MAX_CONCURRENT_STREAMS bounds (§5.1.2). Maintained incrementally by
+    /// `set_stream_state`/`insert_stream`/`remove_stream` so the per-HEADERS check is O(1).
+    peer_active_count: u32,
+    /// Peer-initiated streams in reserved (remote): inbound PUSH_PROMISE reservations, which
+    /// §5.1.2 exempts from the concurrency limit (see MAX_INBOUND_RESERVED_STREAMS).
+    peer_reserved_count: u32,
 
     /// Connection-level flow control (§6.9.1). The connection window is fixed at 65535 initially
     /// and is NOT affected by SETTINGS_INITIAL_WINDOW_SIZE (that governs streams only).
@@ -173,9 +239,9 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
-    /// HEADERS would exceed our SETTINGS_MAX_CONCURRENT_STREAMS (§5.1.2): the block is still
-    /// decoded for HPACK-table sync (§4.3), then refused with RST_STREAM(REFUSED_STREAM); no
-    /// stream state is allocated and on_stream_open never fires.
+    /// The block's stream was refused (HEADERS past SETTINGS_MAX_CONCURRENT_STREAMS, §5.1.2, or
+    /// a PUSH_PROMISE past the reserved-stream cap): still decoded for HPACK sync (§4.3), then
+    /// answered with RST_STREAM(REFUSED_STREAM); on_stream_open/on_push_promise never fire.
     header_refused: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
@@ -203,8 +269,10 @@ impl Connection {
             pending_local_window_acks: std::collections::VecDeque::new(),
             invalid_frame_count: 0,
             max_settings: 32,
-            peer_reset_count: 0,
-            max_peer_resets: 1000,
+            reset_ratelim: RateLim::new(DEFAULT_RESET_BURST as u64, DEFAULT_RESET_RATE as u64),
+            epoch: std::time::Instant::now(),
+            peer_active_count: 0,
+            peer_reserved_count: 0,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
             hpack: hpack::Coder::new(local.header_table_size),
@@ -224,6 +292,78 @@ impl Connection {
             preface_received: 0,
             last_stream_id: 0,
             going_away: false,
+        }
+    }
+
+    /// Configure the rapid-reset token bucket (node's `streamResetBurst` / `streamResetRate`
+    /// session options). Idempotent: re-applying unchanged limits between read batches must
+    /// not refill the bucket.
+    pub fn set_reset_rate_limit(&mut self, burst: u32, rate: u32) {
+        if self.reset_ratelim.burst == burst as u64 && self.reset_ratelim.rate == rate as u64 {
+            return;
+        }
+        self.reset_ratelim = RateLim::new(burst as u64, rate as u64);
+    }
+
+    // ---- Stream accounting ---------------------------------------------
+
+    /// §5.1.2: whether `state` counts toward SETTINGS_MAX_CONCURRENT_STREAMS. Open and both
+    /// half-closed states count; idle, reserved, and closed do not.
+    fn counts_active(state: State) -> bool {
+        matches!(
+            state,
+            State::Open | State::HalfClosedLocal | State::HalfClosedRemote
+        )
+    }
+
+    /// Streams the peer initiated: odd ids inbound to a server, even ids (pushes) to a client.
+    fn is_peer_initiated(&self, stream_id: u32) -> bool {
+        (stream_id & 1 == 1) == self.is_server
+    }
+
+    /// Keep the incremental peer-stream gauges exact across a state change (`State::Closed`
+    /// doubles as "removed"). Every state write and removal routes through here, which is what
+    /// lets the §5.1.2 check be O(1) instead of an O(streams) scan per HEADERS.
+    fn account_peer_transition(&mut self, stream_id: u32, prev: State, next: State) {
+        if prev == next || !self.is_peer_initiated(stream_id) {
+            return;
+        }
+        if Self::counts_active(prev) {
+            self.peer_active_count = self.peer_active_count.saturating_sub(1);
+        } else if prev == State::ReservedRemote {
+            self.peer_reserved_count = self.peer_reserved_count.saturating_sub(1);
+        }
+        if Self::counts_active(next) {
+            self.peer_active_count += 1;
+        } else if next == State::ReservedRemote {
+            self.peer_reserved_count += 1;
+        }
+    }
+
+    /// Set a stream's state through the gauge accounting. No-op for an unknown id.
+    fn set_stream_state(&mut self, stream_id: u32, next: State) {
+        let Some(s) = self.streams.get_mut(&stream_id) else {
+            return;
+        };
+        let prev = s.state;
+        s.state = next;
+        self.account_peer_transition(stream_id, prev, next);
+    }
+
+    /// Insert a stream entry through the gauge accounting (a replaced entry counts as removed).
+    fn insert_stream(&mut self, stream_id: u32, stream: Stream) {
+        let next = stream.state;
+        let prev = self
+            .streams
+            .insert(stream_id, stream)
+            .map_or(State::Idle, |old| old.state);
+        self.account_peer_transition(stream_id, prev, next);
+    }
+
+    /// Remove a stream entry through the gauge accounting.
+    fn remove_stream(&mut self, stream_id: u32) {
+        if let Some(s) = self.streams.remove(&stream_id) {
+            self.account_peer_transition(stream_id, s.state, State::Closed);
         }
     }
 
@@ -465,7 +605,7 @@ impl Connection {
             }
         }
         for id in evict.iter() {
-            self.streams.remove(id);
+            self.remove_stream(*id);
         }
         self.evict_buf = evict;
     }
@@ -652,9 +792,7 @@ impl Connection {
             // same as handle_data's Rst path, so the JS stream learns it was reset and the
             // entry is evicted.
             self.send_rst_stream(sink, hdr.stream_id, ErrorCode::ProtocolError);
-            if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                s.state = State::Closed;
-            }
+            self.set_stream_state(hdr.stream_id, State::Closed);
             sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
             return false;
         }
@@ -671,7 +809,7 @@ impl Connection {
         } else if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
             // 6.9.1: a per-stream overflow is a stream error, not a connection error.
             if s.send_window.increase(increment).is_err() {
-                s.state = State::Closed;
+                self.set_stream_state(hdr.stream_id, State::Closed);
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
                 return false;
@@ -723,7 +861,8 @@ impl Connection {
         // window by the PEER's (§6.9.2).
         let send_init = self.remote_settings.initial_window_size;
         let recv_init = self.local_settings.initial_window_size;
-        let is_new = !self.streams.contains_key(&hdr.stream_id);
+        let existing_state = self.streams.get(&hdr.stream_id).map(|s| s.state);
+        let is_new = existing_state.is_none();
         // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
         // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
         // checked here: a client legitimately receives HEADERS on even promised ids that are
@@ -736,84 +875,53 @@ impl Connection {
             );
             return true;
         }
-        // §5.1.2: enforce our SETTINGS_MAX_CONCURRENT_STREAMS before allocating any state.
-        // A refused stream's block is still HPACK-decoded and bumps last_stream_id, but never
-        // enters the map and never fires on_stream_open.
-        let mut refused = false;
-        if is_new && self.is_server {
-            let cap = self.local_settings.max_concurrent_streams;
-            if cap < u32::MAX {
-                let peer_parity = 1u32;
-                let active = self
-                    .streams
-                    .iter()
-                    .filter(|(id, s)| {
-                        **id & 1 == peer_parity
-                            && matches!(
-                                s.state,
-                                State::Open | State::HalfClosedLocal | State::HalfClosedRemote
-                            )
-                    })
-                    .count() as u32;
-                refused = active >= cap;
-            }
-        }
+        // §5.1.2: a HEADERS that would move a peer-initiated stream into the active set (a new
+        // request, or a push response promoting a reserved-remote stream) is refused once
+        // `peer_active_count` reaches our SETTINGS_MAX_CONCURRENT_STREAMS; see header_refused.
+        let opens_peer_stream = self.is_peer_initiated(hdr.stream_id)
+            && matches!(existing_state, None | Some(State::ReservedRemote));
+        let refused = opens_peer_stream
+            && self.peer_active_count >= self.local_settings.max_concurrent_streams;
+        let mut stream_closed = false;
         if refused {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            self.header_block.clear();
-            self.header_block.extend_from_slice(&payload[off..end]);
-            self.header_end_stream = end_stream;
-            self.header_flags = hdr.flags;
-            self.header_target = hdr.stream_id;
-            self.header_push_parent = 0;
-            self.header_stream_closed = false;
-            self.header_refused = true;
-            if !end_headers {
-                self.continuation_stream = hdr.stream_id;
-                return false;
-            }
-            return self.finish_header_block(sink);
-        }
-        let cur_state = self
-            .streams
-            .entry(hdr.stream_id)
-            .or_insert_with(|| Stream::new(send_init, recv_init))
-            .state;
-        let ev = if end_stream {
-            stream::Event::RecvHeadersEndStream
         } else {
-            stream::Event::RecvHeaders
-        };
-        let mut stream_closed = false;
-        match stream::transition(cur_state, ev) {
-            Ok(next) => {
-                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                    s.state = next;
+            let cur_state = self
+                .streams
+                .entry(hdr.stream_id)
+                .or_insert_with(|| Stream::new(send_init, recv_init))
+                .state;
+            let ev = if end_stream {
+                stream::Event::RecvHeadersEndStream
+            } else {
+                stream::Event::RecvHeaders
+            };
+            match stream::transition(cur_state, ev) {
+                Ok(next) => self.set_stream_state(hdr.stream_id, next),
+                Err(stream::TransitionError::Protocol) => {
+                    self.send_go_away(
+                        sink,
+                        ErrorCode::ProtocolError,
+                        b"HEADERS in invalid stream state",
+                    );
+                    return true;
+                }
+                Err(stream::TransitionError::StreamClosed) => {
+                    // §4.3: the field block must still be decompressed even though the frames are
+                    // discarded - skipping it would desync the connection-scoped HPACK table and
+                    // corrupt the next valid stream's headers. Buffer/decode the block, then
+                    // finish_header_block refuses it with RST_STREAM(STREAM_CLOSED).
+                    stream_closed = true;
                 }
             }
-            Err(stream::TransitionError::Protocol) => {
-                self.send_go_away(
-                    sink,
-                    ErrorCode::ProtocolError,
-                    b"HEADERS in invalid stream state",
-                );
-                return true;
+            if is_new {
+                if hdr.stream_id > self.last_stream_id {
+                    self.last_stream_id = hdr.stream_id;
+                }
+                sink.on_stream_open(hdr.stream_id);
             }
-            Err(stream::TransitionError::StreamClosed) => {
-                // §4.3: the field block must still be decompressed even though the frames are
-                // discarded - skipping it would desync the connection-scoped HPACK table and
-                // corrupt the next valid stream's headers. Buffer/decode the block, then
-                // finish_header_block refuses it with RST_STREAM(STREAM_CLOSED).
-                stream_closed = true;
-            }
-        }
-        if is_new {
-            if hdr.stream_id > self.last_stream_id {
-                self.last_stream_id = hdr.stream_id;
-            }
-            sink.on_stream_open(hdr.stream_id);
         }
 
         self.header_block.clear();
@@ -823,7 +931,7 @@ impl Connection {
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
         self.header_stream_closed = stream_closed;
-        self.header_refused = false;
+        self.header_refused = refused;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -968,10 +1076,11 @@ impl Connection {
             return true;
         }
         if refused {
-            // §5.1.2: over our concurrent-stream limit — stream error REFUSED_STREAM. No map
-            // entry exists for `target`; on_stream_rejected budgets it against
-            // maxSessionRejectedStreams.
+            // §5.1.2 / §8.4: past our concurrent-stream limit or the reserved-stream cap —
+            // stream error REFUSED_STREAM, budgeted by on_stream_rejected. A refused push
+            // response still has its reserved-remote entry; set_stream_state closes it.
             self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+            self.set_stream_state(target, State::Closed);
             sink.on_stream_reset(target, ErrorCode::RefusedStream.as_u32());
             sink.on_stream_rejected(target);
             return false;
@@ -980,9 +1089,7 @@ impl Connection {
             // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
             // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
             self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
-            if let Some(s) = self.streams.get_mut(&target) {
-                s.state = State::Closed;
-            }
+            self.set_stream_state(target, State::Closed);
             sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
             return false;
         }
@@ -990,9 +1097,7 @@ impl Connection {
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
             // is not delivered to the application.
             self.send_rst_stream(sink, target, ErrorCode::ProtocolError);
-            if let Some(s) = self.streams.get_mut(&target) {
-                s.state = State::Closed;
-            }
+            self.set_stream_state(target, State::Closed);
             sink.on_stream_reset(target, ErrorCode::ProtocolError.as_u32());
             sink.on_stream_rejected(target);
             return false;
@@ -1001,9 +1106,7 @@ impl Connection {
             // Refuse the oversized header list with a stream error (matches the legacy engine and
             // node's ENHANCE_YOUR_CALM behavior).
             self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
-            if let Some(s) = self.streams.get_mut(&target) {
-                s.state = State::Closed;
-            }
+            self.set_stream_state(target, State::Closed);
             sink.on_stream_reset(target, ErrorCode::EnhanceYourCalm.as_u32());
             sink.on_stream_rejected(target);
             return false;
@@ -1060,7 +1163,7 @@ impl Connection {
             let recv_init = self.local_settings.initial_window_size;
             let mut s = Stream::new(send_init, recv_init);
             s.state = State::Open;
-            self.streams.insert(hdr.stream_id, s);
+            self.insert_stream(hdr.stream_id, s);
         }
         let recv_limit = self
             .acked_local_initial_window
@@ -1075,18 +1178,14 @@ impl Connection {
             Some(st) => {
                 if !stream::can_receive_data(st.state) {
                     self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                    if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
-                        st2.state = State::Closed;
-                    }
+                    self.set_stream_state(hdr.stream_id, State::Closed);
                     sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
                     discard = true;
                 } else {
                     st.recv_window.on_data(hdr.length as i64);
                     if st.recv_window.is_overflowed_with(recv_limit) {
                         self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
-                        if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
-                            st2.state = State::Closed;
-                        }
+                        self.set_stream_state(hdr.stream_id, State::Closed);
                         sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
                         discard = true;
                     }
@@ -1116,17 +1215,10 @@ impl Connection {
     /// `handle_data` does for whole frames.
     fn finish_streamed_data(&mut self, sink: &impl Sink, inflight: &DataInFlight) {
         if inflight.end_stream && !inflight.discard {
-            let state = match self.streams.get_mut(&inflight.stream_id) {
-                Some(s) => {
-                    if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
-                        s.state = next;
-                    }
-                    Some(s.state as u8)
-                }
-                None => None,
-            };
-            if let Some(state) = state {
-                sink.on_stream_end(inflight.stream_id, state);
+            if let Some(cur) = self.streams.get(&inflight.stream_id).map(|s| s.state) {
+                let next = stream::transition(cur, stream::Event::RecvEndStream).unwrap_or(cur);
+                self.set_stream_state(inflight.stream_id, next);
+                sink.on_stream_end(inflight.stream_id, next as u8);
             }
         }
     }
@@ -1185,7 +1277,7 @@ impl Connection {
             let recv_init = self.local_settings.initial_window_size;
             let mut s = Stream::new(send_init, recv_init);
             s.state = State::Open;
-            self.streams.insert(hdr.stream_id, s);
+            self.insert_stream(hdr.stream_id, s);
         }
         let recv_limit = self
             .acked_local_initial_window
@@ -1209,9 +1301,7 @@ impl Connection {
         let stream_inc = match decision {
             DataDecision::Rst(code) => {
                 self.send_rst_stream(sink, hdr.stream_id, code);
-                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                    s.state = State::Closed;
-                }
+                self.set_stream_state(hdr.stream_id, State::Closed);
                 // Surface the stream error (e.g. a peer flow-control violation) to the embedder.
                 sink.on_stream_reset(hdr.stream_id, code.as_u32());
                 return false;
@@ -1230,17 +1320,10 @@ impl Connection {
         // ignores flow control (sending a whole burst past the window in one batch) undetectable.
 
         if end_stream {
-            let state = match self.streams.get_mut(&hdr.stream_id) {
-                Some(s) => {
-                    if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
-                        s.state = next;
-                    }
-                    Some(s.state as u8)
-                }
-                None => None,
-            };
-            if let Some(state) = state {
-                sink.on_stream_end(hdr.stream_id, state);
+            if let Some(cur) = self.streams.get(&hdr.stream_id).map(|s| s.state) {
+                let next = stream::transition(cur, stream::Event::RecvEndStream).unwrap_or(cur);
+                self.set_stream_state(hdr.stream_id, next);
+                sink.on_stream_end(hdr.stream_id, next as u8);
             }
         }
         false
@@ -1250,11 +1333,9 @@ impl Connection {
     fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
         // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
-        let mut in_flight = false;
-        let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
-            Some(s) if s.state != State::Idle => {
-                in_flight = s.state != State::Closed;
-                s.state = State::Closed;
+        let mut on_idle = match self.streams.get(&hdr.stream_id).map(|s| s.state) {
+            Some(state) if state != State::Idle => {
+                self.set_stream_state(hdr.stream_id, State::Closed);
                 false
             }
             _ => true,
@@ -1264,11 +1345,10 @@ impl Connection {
         if on_idle && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
             let recv_init = self.local_settings.initial_window_size;
-            let s = self
-                .streams
+            self.streams
                 .entry(hdr.stream_id)
                 .or_insert_with(|| Stream::new(send_init, recv_init));
-            s.state = State::Closed;
+            self.set_stream_state(hdr.stream_id, State::Closed);
             on_idle = false;
         }
         // §5.1: a stream evicted after full close (per-request memory release) is
@@ -1281,12 +1361,12 @@ impl Connection {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
             return true;
         }
-        // Rapid-reset guard (CVE-2023-44487): count peer resets of still-in-flight streams
-        // (refunded by `close_stream`); exceeding the burst answers GOAWAY(ENHANCE_YOUR_CALM)
-        // like nghttp2's stream_reset_rate_limit.
-        if self.is_server && in_flight && hdr.stream_id & 1 == 1 {
-            self.peer_reset_count = self.peer_reset_count.saturating_add(1);
-            if self.peer_reset_count > self.max_peer_resets {
+        // Rapid-reset guard (CVE-2023-44487): every inbound RST_STREAM on a known stream drains
+        // one token from a bucket refilled at `streamResetRate`/s up to `streamResetBurst`, like
+        // nghttp2's stream_reset_rate_limit. An empty bucket answers GOAWAY(ENHANCE_YOUR_CALM).
+        if self.is_server {
+            self.reset_ratelim.update(self.epoch.elapsed().as_secs());
+            if !self.reset_ratelim.drain() {
                 self.send_go_away(sink, ErrorCode::EnhanceYourCalm, b"stream reset flood");
                 return true;
             }
@@ -1366,14 +1446,19 @@ impl Connection {
             return true;
         }
 
-        // Reserve the promised (even) stream.
-        let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
-        let entry = self
-            .streams
-            .entry(promised)
-            .or_insert_with(|| Stream::new(send_init, recv_init));
-        entry.state = State::ReservedRemote;
+        // Reserved-remote streams are exempt from SETTINGS_MAX_CONCURRENT_STREAMS (§5.1.2), so
+        // inbound reservations are bounded separately (nghttp2's max_incoming_reserved_streams).
+        // A refused push reserves nothing and never fires on_push_promise; see header_refused.
+        let refused = self.peer_reserved_count >= MAX_INBOUND_RESERVED_STREAMS;
+        if !refused {
+            // Reserve the promised (even) stream.
+            let send_init = self.remote_settings.initial_window_size;
+            let recv_init = self.local_settings.initial_window_size;
+            self.streams
+                .entry(promised)
+                .or_insert_with(|| Stream::new(send_init, recv_init));
+            self.set_stream_state(promised, State::ReservedRemote);
+        }
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
@@ -1384,9 +1469,9 @@ impl Connection {
         self.header_end_stream = false; // PUSH_PROMISE carries a request; it never ends the stream
         self.header_flags = 0;
         self.header_target = promised;
-        self.header_push_parent = hdr.stream_id;
+        self.header_push_parent = if refused { 0 } else { hdr.stream_id };
         self.header_stream_closed = false;
-        self.header_refused = false;
+        self.header_refused = refused;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -1502,17 +1587,18 @@ impl Connection {
 
         let send_init = self.remote_settings.initial_window_size;
         let recv_init = self.local_settings.initial_window_size;
-        let s = self
+        let cur = self
             .streams
             .entry(stream_id)
-            .or_insert_with(|| Stream::new(send_init, recv_init));
+            .or_insert_with(|| Stream::new(send_init, recv_init))
+            .state;
         let ev = if end_stream {
             stream::Event::SendHeadersEndStream
         } else {
             stream::Event::SendHeaders
         };
-        if let Ok(next) = stream::transition(s.state, ev) {
-            s.state = next;
+        if let Ok(next) = stream::transition(cur, ev) {
+            self.set_stream_state(stream_id, next);
         }
         if stream_id > self.last_stream_id {
             self.last_stream_id = stream_id;
@@ -1554,9 +1640,10 @@ impl Connection {
         self.send_window.consume(to_send as i64);
         if let Some(s) = self.streams.get_mut(&stream_id) {
             s.send_window.consume(to_send as i64);
+            let cur = s.state;
             if end_stream && send_all {
-                if let Ok(next) = stream::transition(s.state, stream::Event::SendEndStream) {
-                    s.state = next;
+                if let Ok(next) = stream::transition(cur, stream::Event::SendEndStream) {
+                    self.set_stream_state(stream_id, next);
                 }
             }
         }
@@ -1571,21 +1658,13 @@ impl Connection {
     /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
     /// answer) and a late HEADERS re-opens a fresh entry.
     pub fn close_stream(&mut self, stream_id: u32) {
-        // Rapid-reset refill: each completed peer-initiated handler refunds one token to
-        // the reset-burst budget, so legitimate cancels on a long-lived connection never
-        // accumulate past the burst.
-        if self.is_server && stream_id & 1 == 1 {
-            self.peer_reset_count = self.peer_reset_count.saturating_sub(1);
-        }
-        self.streams.remove(&stream_id);
+        self.remove_stream(stream_id);
     }
 
     /// Locally reset a stream (RST_STREAM) and mark it closed.
     pub fn send_reset(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
         self.send_rst_stream(sink, stream_id, code);
-        if let Some(s) = self.streams.get_mut(&stream_id) {
-            s.state = State::Closed;
-        }
+        self.set_stream_state(stream_id, State::Closed);
     }
 
     /// Server-side: emit a PUSH_PROMISE on `parent_id` reserving `promised_id`, carrying the
@@ -1629,11 +1708,10 @@ impl Connection {
 
         let send_init = self.remote_settings.initial_window_size;
         let recv_init = self.local_settings.initial_window_size;
-        let s = self
-            .streams
+        self.streams
             .entry(promised_id)
             .or_insert_with(|| Stream::new(send_init, recv_init));
-        s.state = State::ReservedLocal;
+        self.set_stream_state(promised_id, State::ReservedLocal);
         if promised_id > self.last_stream_id {
             self.last_stream_id = promised_id;
         }
@@ -2015,6 +2093,21 @@ mod tests {
         assert!(!sink.headers_done.borrow().iter().any(|(id, _)| *id == 5));
         // last_stream_id advanced past the refused id so a follow-up RST on 5 is closed, not idle.
         assert_eq!(c.last_stream_id, 5);
+        // The §5.1.2 check reads the incremental gauge, not a map scan.
+        assert_eq!(c.peer_active_count, 2);
+        // Closing stream 1 releases a slot: stream 7 is admitted where 5 was refused.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&frame(
+            FrameType::RstStream,
+            0,
+            1,
+            &ErrorCode::Cancel.as_u32().to_be_bytes(),
+        ));
+        bytes.extend_from_slice(&frame(FrameType::Headers, flags, 7, &block));
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        assert_eq!(*sink.opens.borrow(), vec![1, 3, 7]);
+        assert_eq!(c.peer_active_count, 2);
         // An RST_STREAM echoed out for stream 5 with REFUSED_STREAM.
         let out = sink.out.borrow();
         let mut saw_refused_rst = false;
@@ -2095,12 +2188,48 @@ mod tests {
         assert!(sink.goaway.get().is_none());
     }
 
+    /// Pin a connection's rate-limiter clock in the future so a real wall-clock second tick
+    /// cannot regenerate tokens mid-test (`Instant::elapsed` saturates to zero until then).
+    /// The time-based refill is covered by its own tests.
+    fn freeze_reset_clock(c: &mut Connection) {
+        c.epoch = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+    }
+
+    #[test]
+    fn reset_rate_limiter_regenerates_per_second() {
+        let mut rl = RateLim::new(4, 2);
+        for _ in 0..4 {
+            assert!(rl.drain());
+        }
+        assert!(!rl.drain());
+        // The same timestamp regenerates nothing.
+        rl.update(0);
+        assert!(!rl.drain());
+        // One elapsed second regenerates `rate` tokens.
+        rl.update(1);
+        assert!(rl.drain());
+        assert!(rl.drain());
+        assert!(!rl.drain());
+        // Regeneration is capped at the burst.
+        rl.update(1000);
+        assert_eq!(rl.val, 4);
+        // A clock regression regenerates nothing.
+        rl.update(500);
+        assert_eq!(rl.val, 4);
+        for _ in 0..4 {
+            assert!(rl.drain());
+        }
+        rl.update(400);
+        assert!(!rl.drain());
+    }
+
     #[test]
     fn rapid_reset_flood_trips_reset_burst() {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        c.max_peer_resets = 4;
+        c.set_reset_rate_limit(4, DEFAULT_RESET_RATE);
+        freeze_reset_clock(&mut c);
         let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
         let cancel = ErrorCode::Cancel.as_u32().to_be_bytes();
         let mut bytes = Vec::new();
@@ -2127,18 +2256,74 @@ mod tests {
     }
 
     #[test]
-    fn peer_resets_are_refunded_by_close_stream() {
-        // Legitimate cancels on a long-lived connection: each completed handler
-        // (close_stream) refunds a token, so resets interleaved with completions
-        // never accumulate past the burst.
+    fn rapid_reset_paced_across_batches_still_trips() {
+        // CVE-2023-44487: each HEADERS→RST cycle costs the server a full stream open and
+        // teardown while never leaving a stream outstanding, so only a rate bound catches it.
+        // Pacing the cycles one per read batch — with the embedder completing an unrelated
+        // legitimate request (close_stream) between each — must not pay the budget down.
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        c.max_peer_resets = 4;
+        c.set_reset_rate_limit(4, DEFAULT_RESET_RATE);
+        freeze_reset_clock(&mut c);
         let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
         let cancel = ErrorCode::Cancel.as_u32().to_be_bytes();
-        for i in 0..32u32 {
-            let id = 1 + 2 * i;
+        let mut tripped_at = None;
+        for i in 0..64u32 {
+            let attack = 1 + 4 * i;
+            let legit = 3 + 4 * i;
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&frame(
+                FrameType::Headers,
+                wire::flags::END_HEADERS,
+                attack,
+                &block,
+            ));
+            bytes.extend_from_slice(&frame(FrameType::RstStream, 0, attack, &cancel));
+            bytes.extend_from_slice(&frame(
+                FrameType::Headers,
+                wire::flags::END_HEADERS | wire::flags::END_STREAM,
+                legit,
+                &block,
+            ));
+            let fed = c.receive(&sink, &bytes);
+            if fed.fatal {
+                tripped_at = Some(i);
+                break;
+            }
+            // The embedder's handler-complete signal for the finished legitimate request,
+            // drained before the next read batch. It must not regenerate a reset token.
+            c.close_stream(legit);
+        }
+        // 4 tokens: the resets in batches 0..=3 are allowed, batch 4's answers the GOAWAY
+        // (and aborts the rest of that batch, so only batches 0..=3 opened a legit stream).
+        assert_eq!(tripped_at, Some(4));
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::EnhanceYourCalm.as_u32())
+        );
+        // The legitimate requests were opened normally and never refused or reset.
+        assert_eq!(
+            sink.opens.borrow().iter().filter(|id| *id % 4 == 3).count(),
+            4
+        );
+        assert!(sink.rejected.borrow().is_empty());
+        assert!(!sink.resets.borrow().iter().any(|(id, _)| id % 4 == 3));
+    }
+
+    #[test]
+    fn reset_tokens_regenerate_between_batches() {
+        // The bucket handle_rst_stream drains is the one `update` regenerates: exhaust the
+        // burst, advance the limiter's clock one second, and the regenerated tokens admit
+        // exactly `rate` more resets before the next one trips.
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        c.set_reset_rate_limit(4, 2);
+        freeze_reset_clock(&mut c);
+        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let cancel = ErrorCode::Cancel.as_u32().to_be_bytes();
+        let reset = |c: &mut Connection, id: u32| -> bool {
             let mut bytes = Vec::new();
             bytes.extend_from_slice(&frame(
                 FrameType::Headers,
@@ -2147,12 +2332,122 @@ mod tests {
                 &block,
             ));
             bytes.extend_from_slice(&frame(FrameType::RstStream, 0, id, &cancel));
-            let fed = c.receive(&sink, &bytes);
-            assert!(!fed.fatal);
-            // The embedder's handler-complete signal refunds the token before the next read.
-            c.close_stream(id);
+            c.receive(&sink, &bytes).fatal
+        };
+        for i in 0..4u32 {
+            assert!(!reset(&mut c, 1 + 2 * i));
         }
+        assert_eq!(c.reset_ratelim.val, 0);
+        c.reset_ratelim.update(c.reset_ratelim.tstamp + 1);
+        assert_eq!(c.reset_ratelim.val, 2);
+        assert!(!reset(&mut c, 9));
+        assert!(!reset(&mut c, 11));
+        assert!(reset(&mut c, 13));
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::EnhanceYourCalm.as_u32())
+        );
+    }
+
+    #[test]
+    fn push_promise_past_reserved_cap_is_refused() {
+        // §5.1.2 exempts reserved streams from SETTINGS_MAX_CONCURRENT_STREAMS, so without a
+        // separate cap a server could hold unbounded reserved state and pushed-stream objects
+        // on a client (nghttp2 bounds this with max_incoming_reserved_streams).
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let mut bytes = Vec::new();
+        for i in 0..=MAX_INBOUND_RESERVED_STREAMS {
+            let promised = 2 + 2 * i;
+            let mut payload = Vec::with_capacity(4 + block.len());
+            payload.extend_from_slice(&promised.to_be_bytes());
+            payload.extend_from_slice(&block);
+            bytes.extend_from_slice(&frame(
+                FrameType::PushPromise,
+                wire::flags::END_HEADERS,
+                1,
+                &payload,
+            ));
+        }
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        let over = 2 + 2 * MAX_INBOUND_RESERVED_STREAMS;
+        // Exactly the cap was reserved; the one past it never entered the map, never fired
+        // on_push_promise, never surfaced fields, and was answered with REFUSED_STREAM.
+        assert_eq!(c.peer_reserved_count, MAX_INBOUND_RESERVED_STREAMS);
+        assert_eq!(
+            sink.pushes.borrow().len(),
+            MAX_INBOUND_RESERVED_STREAMS as usize
+        );
+        assert!(!sink.pushes.borrow().iter().any(|(_, p)| *p == over));
+        assert!(!c.streams.contains_key(&over));
+        assert!(!sink.headers.borrow().iter().any(|(id, _, _)| *id == over));
+        assert_eq!(*sink.rejected.borrow(), vec![over]);
+        assert!(
+            sink.resets
+                .borrow()
+                .iter()
+                .any(|(id, code)| *id == over && *code == ErrorCode::RefusedStream.as_u32())
+        );
         assert!(sink.goaway.get().is_none());
-        assert_eq!(c.peer_reset_count, 0);
+    }
+
+    #[test]
+    fn client_push_response_past_max_concurrent_is_refused() {
+        // §5.1.2 applies to both roles: a push response promoting a reserved-remote stream to
+        // half-closed enters the active set the client's SETTINGS_MAX_CONCURRENT_STREAMS bounds.
+        let sink = CaptureSink::default();
+        let mut local = Settings::default();
+        local.max_concurrent_streams = 1;
+        let mut c = Connection::new(false, local);
+        let req = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let resp = encode_block(&[(b":status", b"200")]);
+        let mut bytes = Vec::new();
+        for promised in [2u32, 4] {
+            let mut payload = Vec::with_capacity(4 + req.len());
+            payload.extend_from_slice(&promised.to_be_bytes());
+            payload.extend_from_slice(&req);
+            bytes.extend_from_slice(&frame(
+                FrameType::PushPromise,
+                wire::flags::END_HEADERS,
+                1,
+                &payload,
+            ));
+        }
+        // Both reservations are admitted: reserved streams are exempt from the limit.
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        assert_eq!(c.peer_reserved_count, 2);
+        assert_eq!(c.peer_active_count, 0);
+        // The push response on stream 2 promotes it into the active set.
+        let fed = c.receive(
+            &sink,
+            &frame(FrameType::Headers, wire::flags::END_HEADERS, 2, &resp),
+        );
+        assert!(!fed.fatal);
+        assert_eq!((c.peer_active_count, c.peer_reserved_count), (1, 1));
+        assert_eq!(
+            c.streams.get(&2).map(|s| s.state),
+            Some(State::HalfClosedLocal)
+        );
+        // The response on stream 4 would exceed maxConcurrentStreams=1: refused, and the
+        // reserved entry it had is closed and evicted.
+        let fed = c.receive(
+            &sink,
+            &frame(FrameType::Headers, wire::flags::END_HEADERS, 4, &resp),
+        );
+        assert!(!fed.fatal);
+        assert_eq!((c.peer_active_count, c.peer_reserved_count), (1, 0));
+        assert!(!c.streams.contains_key(&4));
+        assert!(!sink.headers_done.borrow().iter().any(|(id, _)| *id == 4));
+        assert_eq!(*sink.rejected.borrow(), vec![4]);
+        assert!(
+            sink.resets
+                .borrow()
+                .iter()
+                .any(|(id, code)| *id == 4 && *code == ErrorCode::RefusedStream.as_u32())
+        );
+        assert!(sink.goaway.get().is_none());
     }
 }

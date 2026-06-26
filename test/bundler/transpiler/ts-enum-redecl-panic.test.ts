@@ -47,10 +47,10 @@ describe("enum redeclared after a non-mergeable symbol reports an error instead 
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: expect.stringMatching(/^OK \d+$/),
-      stderr: "",
-      exitCode: 0,
-    });
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
+    expect(stdout.trim()).toMatch(/^OK \d+$/);
+    expect(exitCode).toBe(0);
   });
 });

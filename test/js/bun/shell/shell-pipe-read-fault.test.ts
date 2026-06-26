@@ -105,24 +105,18 @@ async function runWithShim(script: string) {
   return { stdout, stderr, exitCode };
 }
 
-test.skipIf(!isLinux || !cc)(
-  "shell survives a synchronous stdout pipe read error during spawn",
-  async () => {
-    const { stdout, stderr, exitCode } = await runWithShim("stdout-only.js");
-    const line = stdout.trim().split("\n").pop() ?? "";
-    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
-    expect(JSON.parse(line)).toEqual({ exitCode: 12 }); // ENOMEM
-    expect(exitCode).toBe(0);
-  },
-);
+test.skipIf(!isLinux || !cc)("shell survives a synchronous stdout pipe read error during spawn", async () => {
+  const { stdout, stderr, exitCode } = await runWithShim("stdout-only.js");
+  const line = stdout.trim().split("\n").pop() ?? "";
+  expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+  expect(JSON.parse(line)).toEqual({ exitCode: 12 }); // ENOMEM
+  expect(exitCode).toBe(0);
+});
 
-test.skipIf(!isLinux || !cc)(
-  "shell survives synchronous stdout and stderr pipe read errors during spawn",
-  async () => {
-    const { stdout, stderr, exitCode } = await runWithShim("both-pipes.js");
-    const line = stdout.trim().split("\n").pop() ?? "";
-    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
-    expect(JSON.parse(line)).toEqual({ exitCode: 12 }); // ENOMEM
-    expect(exitCode).toBe(0);
-  },
-);
+test.skipIf(!isLinux || !cc)("shell survives synchronous stdout and stderr pipe read errors during spawn", async () => {
+  const { stdout, stderr, exitCode } = await runWithShim("both-pipes.js");
+  const line = stdout.trim().split("\n").pop() ?? "";
+  expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+  expect(JSON.parse(line)).toEqual({ exitCode: 12 }); // ENOMEM
+  expect(exitCode).toBe(0);
+});

@@ -1170,7 +1170,7 @@ describe("local SETTINGS_HEADER_TABLE_SIZE resizes the HPACK decoder (RFC 7541 Â
         body(stream.session!);
       }
     });
-    h2server.listen(0);
+    h2server.listen(0, "127.0.0.1");
     await once(h2server, "listening");
     return { h2server, h2port: (h2server.address() as net.AddressInfo).port, sessionErrors };
   }
@@ -1277,7 +1277,7 @@ describe("remote SETTINGS_HEADER_TABLE_SIZE resizes the HPACK encoder (RFC 7541 
       stream.respond({ ":status": 200, "x-shared": shared });
       stream.end("ok");
     });
-    h2server.listen(0);
+    h2server.listen(0, "127.0.0.1");
     await once(h2server, "listening");
     return { h2server, h2port: (h2server.address() as net.AddressInfo).port, sessionErrors };
   }

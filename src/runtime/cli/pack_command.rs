@@ -2417,9 +2417,13 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         );
 
         if !FOR_PUBLISH {
+            // Quiet/silent output must be only the tarball path so `$(bun pm pack --quiet)` works.
+            if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
+                bun_core::pretty!("\n");
+            }
             if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
                 bun_core::pretty!(
-                    "\n{}\n",
+                    "{}\n",
                     fmt_tarball_filename(
                         package_name,
                         package_version,
@@ -2436,7 +2440,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     package_version,
                     &mut dest_buf[..],
                 );
-                bun_core::pretty!("\n{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
+                bun_core::pretty!("{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
             }
         }
 
@@ -2911,13 +2915,17 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     );
 
     if !FOR_PUBLISH {
+        // Quiet/silent output must be only the tarball path so `$(bun pm pack --quiet)` works.
+        if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
+            bun_core::pretty!("\n");
+        }
         if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
             bun_core::pretty!(
-                "\n{}\n",
+                "{}\n",
                 fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize)
             );
         } else {
-            bun_core::pretty!("\n{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
+            bun_core::pretty!("{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
         }
     }
 

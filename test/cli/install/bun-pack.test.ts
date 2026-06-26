@@ -463,8 +463,8 @@ describe("flags", () => {
     expect(out).not.toContain("Packed size:");
     expect(out).not.toContain("bun pack v");
 
-    // Should only contain the tarball name
-    expect(out.trim()).toBe("pack-quiet-test-1.1.1.tgz");
+    // Exactly the tarball name with no leading newline, so `$(bun pm pack --quiet)` works.
+    expect(out).toBe("pack-quiet-test-1.1.1.tgz\n");
 
     // Should still create the tarball
     expect(await exists(join(packageDir, "pack-quiet-test-1.1.1.tgz"))).toBeTrue();

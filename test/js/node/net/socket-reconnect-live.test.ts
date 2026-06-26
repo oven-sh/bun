@@ -3,7 +3,7 @@ import { bunEnv, bunExe } from "harness";
 
 // connect_finish must tear down a still-live previous native socket before
 // reusing the wrapper, not alias two native sockets onto one ext slot.
-describe("socket.connect() on an already-connected socket", () => {
+describe.concurrent("socket.connect() on an already-connected socket", () => {
   it("does not crash and emits connect for the new connection", async () => {
     await using proc = Bun.spawn({
       cmd: [

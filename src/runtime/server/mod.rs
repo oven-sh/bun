@@ -1,8 +1,5 @@
-//! cycle-5: un-gated `NewServer` struct + lifecycle skeleton (start/stop/listen),
-//! `AnyServer` dispatch, `AnyRoute`, and the per-file submodules. JS callback
-//! bodies (`on_request`, `on_upgrade`, `from_js`, …) and methods that need
-//! `bun_uws` write/close surface stay ``-gated inside each file.
-//! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
+//! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
+//! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
 use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
@@ -664,18 +661,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         server.on_pending_request();
 
-        // `vm.eventLoop().debug.enter()/exit()` is debug-build
-        // re-entrancy bookkeeping; `Debug::enter_scope` is the RAII pairing
-        // (no-op enter/exit in release builds).
-        let vm_ptr = server.vm_mut();
-        // SAFETY: vm backref is live for the server's lifetime; `event_loop()`
-        // returns the VM-owned `*mut EventLoop` whose `debug` field outlives
-        // this frame.
-        let _dbg_guard = unsafe {
-            bun_jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
-                (*(*vm_ptr).event_loop()).debug
-            ))
-        };
         req.set_yield(false);
         resp_ref.timeout(server.config.idle_timeout);
 
@@ -1170,12 +1155,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             core::ptr::NonNull::new(this).expect("on_node_http_request: this non-null"),
         );
         let vm = this_ref.vm_mut();
-        // SAFETY: `vm.event_loop()` returns the live VM-owned `*mut EventLoop`.
-        let _dbg = unsafe {
-            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
-                (*(*vm).event_loop()).debug
-            ))
-        };
         req.set_yield(false);
         resp.timeout(this_ref.config.idle_timeout);
 
@@ -1757,23 +1736,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Rust's `target_os = "linux"` excludes
                 // Android, so match both explicitly.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                if bun_sys::get_errno(-1i32) == bun_sys::E::EACCES {
-                    let host = _hostname
-                        .as_ref()
-                        .map(|h| h.as_bytes())
-                        .unwrap_or(b"0.0.0.0");
-                    let err = jsc::SystemError {
-                        message: bun_core::String::create_format(format_args!(
-                            "permission denied {}:{}",
-                            bstr::BStr::new(host),
-                            port
-                        )),
-                        code: bun_core::String::static_("EACCES"),
-                        syscall: bun_core::String::static_("listen"),
-                        ..Default::default()
-                    };
-                    let _ = global.throw_value(err.to_error_instance(global));
-                    return;
+                {
+                    let errno = bun_sys::get_errno(-1i32);
+                    if errno == bun_sys::E::EACCES {
+                        let host = _hostname
+                            .as_ref()
+                            .map(|h| h.as_bytes())
+                            .unwrap_or(b"0.0.0.0");
+                        let err = jsc::SystemError {
+                            message: bun_core::String::create_format(format_args!(
+                                "permission denied {}:{}",
+                                bstr::BStr::new(host),
+                                port
+                            )),
+                            code: bun_core::String::static_("EACCES"),
+                            syscall: bun_core::String::static_("listen"),
+                            ..Default::default()
+                        };
+                        let _ = global.throw_value(err.to_error_instance(global));
+                        return;
+                    }
+                    // e.g. ENOSPC from epoll_ctl(EPOLL_CTL_ADD). Linux-only because
+                    // on other platforms errno is not reliably preserved through
+                    // the C++/callback chain to here; see PR #30364.
+                    if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
+                        let err = jsc::SystemError::from(
+                            bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
+                                .to_system_error(),
+                        );
+                        let _ = global.throw_value(err.to_error_instance(global));
+                        return;
+                    }
                 }
                 jsc::SystemError {
                     message: bun_core::String::create_format(format_args!(

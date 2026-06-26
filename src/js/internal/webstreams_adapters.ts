@@ -19,7 +19,7 @@ const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
 
-const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
+const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;
@@ -293,8 +293,11 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
           if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
             chunk = new Uint8Array(chunk);
           }
-          if (streamWritable.writableNeedDrain || !streamWritable.write(chunk)) {
+          const needDrainBefore = streamWritable.writableNeedDrain;
+          if (needDrainBefore || !streamWritable.write(chunk)) {
             backpressurePromise = PromiseWithResolvers();
+            // write() may set writableNeedDrain; the post-write value is
+            // what decides whether we resolve immediately.
             if (!streamWritable.writableNeedDrain) {
               backpressurePromise.resolve();
             }
@@ -493,11 +496,12 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     throw $ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamReadable);
   }
   validateObject(options, "options");
-  if (options.type !== undefined) {
-    validateOneOf(options.type, "options.type", ["bytes", undefined]);
+  const optionsType = options.type;
+  if (optionsType !== undefined) {
+    validateOneOf(optionsType, "options.type", ["bytes", undefined]);
   }
 
-  const isBYOB = options.type === "bytes";
+  const isBYOB = optionsType === "bytes";
   let controller;
   let wasCanceled = false;
   let strategy;
@@ -635,10 +639,11 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
     type: options.readableType,
   };
 
-  if (options.readableType == null && options.type != null) {
+  let optionsType;
+  if (options.readableType == null && (optionsType = options.type) != null) {
     // 'options.type' is a deprecated alias for 'options.readableType'
     emitDEP0201();
-    readableOptions.type = options.type;
+    readableOptions.type = optionsType;
   }
 
   if (isDestroyed(duplex)) {

@@ -417,6 +417,35 @@ isbar = 'lol'
     });
   });
 
+  describe("empty single-quoted value", () => {
+    test.each([
+      ["a='", { a: "" }],
+      ["a=''", { a: "" }],
+      ["'=x", { "": "x" }],
+      ["''=x", { "": "x" }],
+      ["[']\nx=1", { "": { x: "1" } }],
+      ["['']\nx=1", { "": { x: "1" } }],
+    ])("%s", (ini, expected) => {
+      expect(parse(ini)).toEqual(expected);
+    });
+
+    test("section over empty-quote value does not mutate shared state", () => {
+      expect(parse("a=''\n[a]\nhello=world")).toEqual({ a: "" });
+      expect(parse("x=''")).toEqual({ x: "" });
+    });
+
+    test("fuzz repro ='\\n[]\\n=' does not create a self-referential object", () => {
+      expect(parse("='\n[]\n='")).toEqual({ "": "" });
+    });
+
+    test.each([
+      ["a='\n[a]\nb='", { a: "" }],
+      ["a=''\n[a]\nb=''", { a: "" }],
+    ])("no infinite recursion for %j", (ini, expected) => {
+      expect(parse(ini)).toEqual(expected);
+    });
+  });
+
   describe("duplicate properties", () => {
     test("decode with duplicate properties", () => {
       const ini = /* ini */ `

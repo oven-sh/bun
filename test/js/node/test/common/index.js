@@ -1150,6 +1150,15 @@ const common = {
     return hasOpenSSL(3, 1);
   },
 
+  get isInsideDirWithUnusualChars() {
+    return __dirname.includes('%') ||
+           (!isWindows && __dirname.includes('\\')) ||
+           __dirname.includes('$') ||
+           __dirname.includes('\n') ||
+           __dirname.includes('\r') ||
+           __dirname.includes('\t');
+  },
+
   get hasOpenSSL32() {
     return hasOpenSSL(3, 2);
   },

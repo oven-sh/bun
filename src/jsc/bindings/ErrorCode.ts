@@ -164,6 +164,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MISSING_ARGS", TypeError],
   ["ERR_MISSING_PASSPHRASE", TypeError],
   ["ERR_MISSING_PLATFORM_FOR_WORKER", Error],
+  ["ERR_MODULE_LINK_MISMATCH", TypeError],
   ["ERR_MODULE_NOT_FOUND", Error],
   ["ERR_MULTIPLE_CALLBACK", Error],
   ["ERR_NON_CONTEXT_AWARE_DISABLED", Error],
@@ -335,5 +336,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_GOAWAY_SESSION", Error],
   ["ERR_TLS_ALPN_CALLBACK_INVALID_RESULT", TypeError],
   ["ERR_PROXY_TUNNEL", Error],
+  ["ERR_FS_CP_EEXIST", Error],
+  ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
+  ["ERR_DIR_CONCURRENT_OPERATION", Error],
 ];
 export default errors;

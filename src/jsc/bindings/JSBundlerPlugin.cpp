@@ -667,7 +667,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 {
     auto* globalObject = pluginObject->globalObject();
     MarkedArgumentBuffer arguments;
-    pluginObject->plugin.deferredPromises.moveTo(pluginObject, arguments);
+    pluginObject->plugin.deferredPromises.drainTo(pluginObject, arguments);
     ASSERT(!arguments.hasOverflowed());
 
     auto& vm = pluginObject->vm();

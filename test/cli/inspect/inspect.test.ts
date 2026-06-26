@@ -312,7 +312,7 @@ describe("unix domain socket without websocket", () => {
   });
 
   afterAll(() => {
-    fs.rmdirSync(tempdir, { recursive: true });
+    fs.rmSync(tempdir, { recursive: true, force: true });
   });
 
   if (isPosix) {

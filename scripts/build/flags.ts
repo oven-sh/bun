@@ -772,6 +772,11 @@ export const defines: Flag[] = [
     desc: "Enable debug-only code paths",
   },
   {
+    flag: "LIBUS_SOCKET_FAULT_INJECTION=1",
+    when: c => c.socketFaultInjection,
+    desc: "Compile usockets bsd_* syscall fault-injection hooks (runtime-armed via bun:internal-for-testing)",
+  },
+  {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
     flag: c => `BUN_DYNAMIC_JS_LOAD_PATH=\\"${slash(join(c.buildDir, "js"))}\\"`,
     when: c => c.debug && !c.ci,
@@ -993,12 +998,6 @@ export const linkerFlags: Flag[] = [
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
       // Linux `-Wl,-icf=safe`.
-      //
-      // (This was temporarily /OPT:NOICF so PDB symbolication stayed
-      // unfolded while chasing the Windows-only `Strong<Impl>* corrupted
-      // (0x1)` crash in the fs/promises writeFile async-iterable path under
-      // `panic = "abort"` — flip it back locally if that investigation needs
-      // an unfolded PDB again.)
       "/OPT:SAFEICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.

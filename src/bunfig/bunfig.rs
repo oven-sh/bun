@@ -493,7 +493,7 @@ impl<'a> Parser<'a> {
                 if let Some(expr) = test_.get(b"coverageThreshold") {
                     'outer: {
                         if let ExprData::ENumber(n) = expr.data {
-                            let v = n.value;
+                            let v = n.value();
                             self.ctx.test_options.coverage.fractions.functions = v;
                             self.ctx.test_options.coverage.fractions.lines = v;
                             self.ctx.test_options.coverage.fractions.stmts = v;
@@ -1484,7 +1484,7 @@ impl<'a> Parser<'a> {
         if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
-                    if seconds.value < 0.0 {
+                    if seconds.value() < 0.0 {
                         self.add_error(
                             min_age.loc,
                             b"Expected positive number of seconds for minimumReleaseAge",
@@ -1492,7 +1492,7 @@ impl<'a> Parser<'a> {
                         return Ok(());
                     }
                     const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
-                    install.minimum_release_age_ms = Some(seconds.value * MS_PER_S);
+                    install.minimum_release_age_ms = Some(seconds.value() * MS_PER_S);
                 }
                 _ => {
                     self.add_error(

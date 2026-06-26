@@ -267,6 +267,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
+        "--experimental-stream-iter        Enable the experimental stream/iter API (node:stream/iter, node:zlib/iter)."
+    ),
+    parse_param!(
         "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
     ),
     parse_param!(
@@ -478,6 +481,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"
+        ),
+        parse_param!(
+            "--react-compiler                 Enable the React Compiler optimizing transform"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
@@ -1247,6 +1253,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             }
         }
 
+        if args.flag(b"--experimental-stream-iter") {
+            bun_resolve_builtins::set_stream_iter_enabled(true);
+        }
         if args.flag(b"--no-deprecation") {
             Bun__Node__ProcessNoDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
@@ -2282,7 +2291,10 @@ fn parse_build_command_options(
 
     if let Some(format_str) = args.option(b"--format") {
         let Some(format) = options::Format::from_string(format_str) else {
-            Output::err_generic("Invalid format - must be esm, cjs, or iife", ());
+            Output::err_generic(
+                "Invalid value for --format: {}. Must be 'esm', 'cjs', or 'iife'.",
+                (bun_core::fmt::quote(format_str),),
+            );
             Global::crash();
         };
 
@@ -2362,6 +2374,10 @@ fn parse_build_command_options(
 
     if args.flag(b"--react-fast-refresh") {
         ctx.bundler_options.react_fast_refresh = true;
+    }
+
+    if args.flag(b"--react-compiler") {
+        ctx.bundler_options.react_compiler = true;
     }
 
     if let Some(setting) = args.option(b"--sourcemap") {

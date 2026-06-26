@@ -13,7 +13,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmdirSync,
   rmSync,
   writeFileSync,
 } from "fs";
@@ -233,6 +232,8 @@ export interface BundlerTestInput {
   minifyWhitespace?: boolean;
   splitting?: boolean;
   serverComponents?: boolean;
+  reactCompiler?: boolean;
+  reactCompilerOutputMode?: "client" | "ssr";
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -497,6 +498,8 @@ function expectBundled(
     run,
     runtimeFiles,
     serverComponents = false,
+    reactCompiler = false,
+    reactCompilerOutputMode,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -734,6 +737,9 @@ function expectBundled(
       if (optimizeImports) {
         throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
       }
+      if (reactCompilerOutputMode) {
+        throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
+      }
       const cmd = (
         !ESBUILD
           ? [
@@ -785,6 +791,7 @@ function expectBundled(
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
               serverComponents && "--server-components",
+              reactCompiler && "--react-compiler",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
@@ -1152,6 +1159,8 @@ function expectBundled(
           sourcemap: sourceMap,
           splitting,
           target,
+          reactCompiler,
+          reactCompilerOutputMode,
           bytecode,
           publicPath,
           emitDCEAnnotations,
@@ -1811,7 +1820,7 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
-    rmdirSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
 
     return testRef(id, opts);
   })();

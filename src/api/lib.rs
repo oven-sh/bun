@@ -5,7 +5,7 @@
 //! Ground truth: `src/api/schema.peechy`. The full peechy → `.rs` emitter is
 //! not landed yet; this crate hand-writes the slice of the schema that
 //! downstream crates name today (`bun_ini`, `bun_install`, `bun_runtime`
-//! bunfig parser) so they can un-gate against real field shapes.
+//! bunfig parser).
 //!
 //! LAYERING: the actual data shapes (`NpmRegistry`, `NpmRegistryMap`, `Ca`,
 //! `BunInstall`) were originally hand-written in two places — here *and* in

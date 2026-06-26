@@ -113,9 +113,9 @@ struct addrinfo_result {
     int error;
 };
 
-/* Dispatch — defined out-of-library (Zig: src/deps/uws/dispatch.zig). loop.c
+/* Dispatch — defined out-of-library (src/runtime/socket/uws_dispatch.rs). loop.c
  * never reads s->group->vtable directly; it calls these and the closed-world
- * switch on s->kind decides whether to direct-call into Zig/C++ or fall back
+ * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);
@@ -267,6 +267,10 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
+  /* A graceful TLS shutdown arrived while batched ciphertext was still
+   * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
+   * spill drains so those records are not cut off by our FIN/close_notify. */
+  unsigned char ssl_shutdown_after_spill : 1;
   /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
    * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
    * SSL must not be freed under BoringSSL's feet - the detach is deferred to

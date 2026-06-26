@@ -531,7 +531,7 @@ impl<'a> JSON5Parser<'a> {
             }
             TokenData::Number(n) => {
                 self.scan()?;
-                Ok(Expr::init(E::Number { value: n }, loc))
+                Ok(Expr::init(E::Number::new(n), loc))
             }
             TokenData::Boolean(b) => {
                 self.scan()?;
@@ -544,15 +544,10 @@ impl<'a> JSON5Parser<'a> {
             TokenData::Identifier(s) => {
                 if s == b"NaN" {
                     self.scan()?;
-                    return Ok(Expr::init(E::Number { value: f64::NAN }, loc));
+                    return Ok(Expr::init(E::Number::new(f64::NAN), loc));
                 } else if s == b"Infinity" {
                     self.scan()?;
-                    return Ok(Expr::init(
-                        E::Number {
-                            value: f64::INFINITY,
-                        },
-                        loc,
-                    ));
+                    return Ok(Expr::init(E::Number::new(f64::INFINITY), loc));
                 }
                 Err(ParseError::UnexpectedToken)
             }

@@ -151,18 +151,14 @@ pub mod printer;
 #[path = "values/mod.rs"]
 pub mod values;
 
-/// Data-only value-type stubs re-exported through `values::{color,ident,url}`
-/// while the real `values/*.rs` files stay gated on the calc lattice. These
-/// were the previous `gated_mod!(values, ...)` body — now a real module so
-/// printer.rs / css_parser.rs can name the types.
+/// Re-exports from `values::{color,ident,url}` so callers that still use
+/// the legacy `values_stub` path resolve to the canonical types.
 pub mod values_stub {
     /// Re-export the real `values/color.rs` surface so any remaining
     /// `values_stub::color::*` paths resolve to the canonical types.
     pub mod color {
         pub use crate::values::color::*;
 
-        /// `Maybe` is now un-gated as `core::result::Result`, so this is a
-        /// straight type alias to the real `values::color::ParseResult`.
         pub type CssColorParseResult = crate::values::color::ParseResult;
 
         /// https://drafts.csswg.org/css-color/#hsl-to-rgb (`hue` is 0..1 here).
@@ -171,11 +167,7 @@ pub mod values_stub {
         pub use crate::css_parser::color::hsl_to_rgb;
     }
 
-    /// Re-export of the real `values/ident.rs` — the data-only stub that used
-    /// to live here (so `generics::ident_eql` could compile) is obsolete:
-    /// `values::ident` is un-gated and `generics.rs` imports it directly.
-    /// The stub `IdentOrRef` had diverged (tagged enum vs packed-u128), so
-    /// this also removes a latent type-confusion hazard.
+    /// Re-export of the real `values/ident.rs`.
     pub mod ident {
         pub use crate::values::ident::*;
     }
@@ -183,9 +175,9 @@ pub mod values_stub {
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
 
-/// Hoisted from `css_parser.rs` (gated). Single-variant error type returned by
-/// every `to_css` path; the *kind* lives in `Printer.error_kind` (PrinterError)
-/// — this is just the bubbled signal.
+/// Single-variant error type returned by every `to_css` path; the *kind*
+/// lives in `Printer.error_kind` (PrinterError) — this is just the bubbled
+/// signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrintErr {
     CSSPrintError,
@@ -224,7 +216,7 @@ pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
 pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
 pub use values_stub::color::CssColorParseResult;
 
-// Real re-exports from un-gated modules (cross-crate surface).
+// Cross-crate re-exports.
 pub use error::{
     BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyError, MinifyErrorKind,
     ParseError, ParserError, ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
@@ -241,8 +233,7 @@ pub use rules::import::ImportConditions;
 
 // ───────────────────────────── VendorPrefix ─────────────────────────────
 // Hoisted from css_parser.rs so leaf modules (targets, prefixes) can compile
-// without pulling in the 6k-line parser hub. css_parser.rs re-exports this
-// when it un-gates.
+// without pulling in the 6k-line parser hub.
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -338,8 +329,7 @@ impl VendorPrefix {
 
 // ───────────────────────── Core lexer/location types ─────────────────────────
 // Hoisted from css_parser.rs / rules/mod.rs so leaf modules (error, dependencies)
-// compile without the 6k-line parser hub. css_parser.rs `pub use crate::{..}`s
-// these when it un-gates.
+// compile without the 6k-line parser hub.
 
 /// Line/column within a single source. Column is 1-based, line is 0-based.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -385,8 +375,8 @@ pub struct Dimension {
 }
 
 /// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the
-/// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` (gated) since they
-/// depend on `serializer::*` and `generics`.
+/// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` since they depend on
+/// `serializer::*` and `generics`.
 // Every `&'static [u8]` payload actually borrows the parser arena/source text and
 // must not outlive the arena; `&'static` is the crate-wide placeholder until the
 // bumpalo arena lifetime is plumbed through.

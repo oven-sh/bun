@@ -185,9 +185,8 @@ JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObje
 } // namespace JSC
 
 // Shared tail for the FFI_Callback_* entry points: call back into JS and leave any exception
-// pending on the VM, like any other host function. Clearing + re-throwing it (the old NakedPtr
-// dance) violated VM::setException's precondition for worker.terminate()'s TerminationException
-// once the outermost VMEntryScope had already retired the termination request.
+// pending on the VM, like any other host function. Never clear and re-throw here: re-installing
+// the TerminationException once the termination request is retired trips VM::setException.
 static JSC::EncodedJSValue invokeFFICallback(Zig::GlobalObject* globalObject, JSC::JSFunction* function, JSC::MarkedArgumentBuffer& arguments)
 {
     auto& vm = JSC::getVM(globalObject);

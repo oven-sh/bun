@@ -1,7 +1,8 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv } from "harness";
+import { bunEnv, tls } from "harness";
 import { bunExe } from "js/bun/shell/test_builder";
+import { X509Certificate } from "node:crypto";
 import { join } from "path";
 function jscSerializeRoundtrip(value: any) {
   const serialized = serialize(value);
@@ -461,13 +462,27 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
   });
 }
 
-describe("structuredClone object pool back-references after platform objects", () => {
-  test("a duplicated object after a CryptoKey keeps its identity", async () => {
-    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt", "decrypt"]);
-    const o = { x: 1 };
-    const c = structuredClone([key, o, o]);
-    expect(c[0]).toBeInstanceOf(CryptoKey);
-    expect(c[1]).toEqual({ x: 1 });
-    expect(c[2]).toBe(c[1]);
+// CryptoKey and X509Certificate are the platform objects the deserializer appends to
+// m_gcBuffer for GC protection without the serializer having recorded them.
+for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSerializeRoundtripCrossProcess]) {
+  describe(`${structuredCloneFn.name}: object pool back-references after platform objects`, () => {
+    test("a duplicated object after a CryptoKey keeps its identity", async () => {
+      const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt", "decrypt"]);
+      const o = { x: 1 };
+      const c = structuredCloneFn([key, o, o]);
+      expect(c[0]).toBeInstanceOf(CryptoKey);
+      expect(c[1]).toEqual({ x: 1 });
+      expect(c[2]).toBe(c[1]);
+    });
+
+    test("a duplicated object after an X509Certificate keeps its identity", () => {
+      const cert = new X509Certificate(tls.cert);
+      const o = { x: 1 };
+      const c = structuredCloneFn([cert, o, o]);
+      expect(c[0]).toBeInstanceOf(X509Certificate);
+      expect(c[0].subject).toBe(cert.subject);
+      expect(c[1]).toEqual({ x: 1 });
+      expect(c[2]).toBe(c[1]);
+    });
   });
-});
+}

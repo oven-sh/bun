@@ -345,17 +345,7 @@ pub fn render_to_html(
 
     let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
 
-    // HtmlRenderer never returns JSError/JSTerminated, and InputTooLarge is
-    // only produced by `Parser::init` (already propagated above), so
-    // OutOfMemory and StackOverflow are the only possible errors.
-    match parser.process_doc() {
-        Ok(()) => {}
-        Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
-        Err(ParserError::JSError)
-        | Err(ParserError::JSTerminated)
-        | Err(ParserError::InputTooLarge) => unreachable!(),
-        Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
-    }
+    parser.process_doc()?;
     drop(parser);
 
     Ok(html_renderer.to_owned_slice()?)

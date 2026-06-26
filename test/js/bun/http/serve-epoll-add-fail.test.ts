@@ -225,7 +225,11 @@ test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL
         return line;
       }
       const { value, done } = await reader.read();
-      if (done) return buffered.length ? buffered : null;
+      if (done) {
+        const tail = buffered;
+        buffered = "";
+        return tail.length ? tail : null;
+      }
       buffered += decoder.decode(value, { stream: true });
     }
   }

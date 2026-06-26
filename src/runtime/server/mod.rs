@@ -1756,10 +1756,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     return;
                 }
                 if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
-                    // bind()/listen() failures other than "port in use" — e.g.
-                    // ENOSPC from epoll_ctl(EPOLL_CTL_ADD) when
-                    // fs.epoll.max_user_watches is exhausted. Surface the real
-                    // errno instead of misreporting EADDRINUSE.
+                    // bind()/listen() failures other than "port in use", e.g. ENOSPC
+                    // from epoll_ctl(EPOLL_CTL_ADD). Surface the real errno instead
+                    // of misreporting EADDRINUSE.
                     jsc::SystemError::from(
                         bun_sys::Error::from_code(errno, bun_sys::Tag::listen).to_system_error(),
                     )

@@ -593,6 +593,10 @@ impl ValkeyClient {
             return Ok(());
         }
         self.flags.failed = true;
+        // A failed client is terminal until the next explicit `connect()`.
+        // A stale `is_reconnecting` would keep the event loop referenced via
+        // `update_poll_ref` and let a pending reconnect timer resurrect it.
+        self.flags.is_reconnecting = false;
         let val = Self::reject_all_pending_commands(
             &mut self.in_flight,
             &mut self.queue,
@@ -639,6 +643,12 @@ impl ValkeyClient {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
 
+        // The socket is gone, so the session can no longer be authenticated.
+        // Every branch below must observe `connection_ready() == false`, or a
+        // later `connect()` + `enqueue()` sees a Disconnected-but-"ready" client.
+        self.flags.is_authenticated = false;
+        self.flags.is_selecting_db_internal = false;
+
         // If manually closing, don't attempt to reconnect
         if self.flags.is_manually_closed {
             debug!("skip reconnecting since the connection is manually closed");
@@ -675,8 +685,6 @@ impl ValkeyClient {
         );
 
         self.flags.is_reconnecting = true;
-        self.flags.is_authenticated = false;
-        self.flags.is_selecting_db_internal = false;
 
         // Signal reconnect timer should be started
         self.on_valkey_reconnect();
@@ -1344,8 +1352,12 @@ impl ValkeyClient {
             && self.queue.readable_length() > 0;
 
         if
-        // If there are any pending commands, queue this one
-        self.queue.readable_length() > 0
+        // Only an established, authenticated connection may take the
+        // direct-write path below. `connection_ready()` alone is not enough:
+        // a disconnected or still-connecting socket must go to the queue.
+        self.status != Status::Connected
+            // If there are any pending commands, queue this one
+            || self.queue.readable_length() > 0
             // With auto pipelining, we can accept commands regardless of in_flight commands
             || (!can_pipeline && self.in_flight.readable_length() > 0)
             // We need authentication before processing commands
@@ -1367,15 +1379,10 @@ impl ValkeyClient {
             return Ok(());
         }
 
-        match self.status {
-            Status::Connecting | Status::Connected => {
-                if command.write(self.writer()).is_err() {
-                    let global = self.global_object();
-                    let _ = promise.reject(&global, Ok(global.create_out_of_memory_error()));
-                    return Ok(());
-                }
-            }
-            _ => unreachable!(),
+        if command.write(self.writer()).is_err() {
+            let global = self.global_object();
+            let _ = promise.reject(&global, Ok(global.create_out_of_memory_error()));
+            return Ok(());
         }
 
         let cmd_pair = command::PromisePair {

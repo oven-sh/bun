@@ -1231,16 +1231,13 @@ impl JSValkeyClient {
             r.ref_(vm_event_loop_ctx());
         });
 
-        if let Err(err) = self.connect() {
-            self.fail_with_js_value(
-                self.global_object
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!("{} reconnecting", err.name()),
-                    )
-                    .to_js(),
-            );
-            self.poll_ref.with_mut(|r| r.disable());
+        if self.connect().is_err() {
+            // Same state machine as an async connect failure (`on_connect_error`):
+            // retry with backoff, or fail and settle the connection promise.
+            // `connect()` released its own ref; `on_close()` releases one, so balance.
+            self.ref_();
+            let _ = self.client_mut().on_close();
+            self.update_poll_ref();
             return;
         }
 
@@ -1463,19 +1460,6 @@ impl JSValkeyClient {
 
     pub fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsTerminatedResult<()> {
         narrow_terminated(self.client_mut().fail(message, err))
-    }
-
-    pub fn fail_with_js_value(&self, value: JSValue) {
-        let Some(this_value) = self.this_value.get().try_get() else {
-            return;
-        };
-        let global_object = self.global_object;
-        if let Some(on_close) = Js::onclose_get_cached(this_value) {
-            let _exit = self.vm().enter_event_loop_scope();
-            if let Err(e) = on_close.call(&global_object, this_value, &[value]) {
-                global_object.report_active_exception_as_unhandled(e);
-            }
-        }
     }
 
     fn close_socket_next_tick(&self) {

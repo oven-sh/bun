@@ -114,13 +114,6 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     // `JSNodeHTTPServerSocket.write` on the same socket, which would alias a long-lived
     // `&mut *socket` / `&mut *buffer` under Stacked Borrows, so raw pointers with
     // no uniqueness assertion are used throughout.
-
-    // Convert `data`/`encoding` BEFORE materializing the stream buffer into an owning
-    // `Vec<u8>`: the conversion can run arbitrary JS (toString/Symbol.toPrimitive,
-    // Request/Response body coercion) which can re-enter this function on the same
-    // socket. Taking the buffer first would leave two owning `Vec`s over the same
-    // `list_ptr`; the inner call's realloc would free the allocation out from under
-    // the outer frame (use-after-free).
     let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
         BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
     } else {

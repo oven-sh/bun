@@ -849,16 +849,18 @@ it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #
 // buffer, which only AEAD modes treat as "discard the output". Runs in a subprocess so
 // the segfault on an unfixed build doesn't take out the test runner.
 it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE", async () => {
+  const cases = [
+    ["createCipheriv", "aes-128-cbc", 16, 16],
+    ["createDecipheriv", "aes-128-cbc", 16, 16],
+    ["createCipheriv", "aes-256-ctr", 32, 16],
+    ["createDecipheriv", "aes-256-ctr", 32, 16],
+    ["createCipheriv", "aes-128-ecb", 16, 0],
+    ["createDecipheriv", "aes-128-ecb", 16, 0],
+  ];
   const script = `
     const crypto = require("node:crypto");
     const aad = Buffer.alloc(64);
-    const cases = [
-      ["createCipheriv", "aes-128-cbc", 16, 16],
-      ["createDecipheriv", "aes-128-cbc", 16, 16],
-      ["createCipheriv", "aes-256-ctr", 32, 16],
-      ["createCipheriv", "aes-128-ecb", 16, 0],
-    ];
-    for (const [fn, algorithm, keyLen, ivLen] of cases) {
+    for (const [fn, algorithm, keyLen, ivLen] of ${JSON.stringify(cases)}) {
       const cipher = crypto[fn](algorithm, Buffer.alloc(keyLen), ivLen ? Buffer.alloc(ivLen) : null);
       try {
         cipher.setAAD(aad);
@@ -870,13 +872,11 @@ it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE"
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe(
-    "createCipheriv aes-128-cbc: ERR_CRYPTO_INVALID_STATE\n" +
-      "createDecipheriv aes-128-cbc: ERR_CRYPTO_INVALID_STATE\n" +
-      "createCipheriv aes-256-ctr: ERR_CRYPTO_INVALID_STATE\n" +
-      "createCipheriv aes-128-ecb: ERR_CRYPTO_INVALID_STATE\n",
-  );
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: cases.map(([fn, algorithm]) => `${fn} ${algorithm}: ERR_CRYPTO_INVALID_STATE\n`).join(""),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {

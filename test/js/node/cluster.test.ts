@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -159,4 +159,30 @@ process.send("regular message");
   });
   const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+});
+
+test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
+  // `new cluster.Worker({ process })` accepts any object (Node's tests mock
+  // workers this way). `Worker.prototype.disconnect` in the primary routes
+  // through `sendHelper(worker.process[kHandle], ...)`, and `kHandle` is a
+  // private symbol that only `cluster.fork()` sets, so the native binding is
+  // handed `undefined`. It used to unwrap that into a process abort; Node's
+  // sendHelper just returns false and disconnect() returns the worker.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const cluster = require("node:cluster");
+        const fake = { on() {}, disconnect() {}, kill() {}, send() { return false; } };
+        const worker = new cluster.Worker({ process: fake });
+        const returned = worker.disconnect();
+        console.log("returned self:", returned === worker);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });

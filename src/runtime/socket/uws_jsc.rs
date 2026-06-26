@@ -163,7 +163,9 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
         // that AsyncSocket::write buffers the remainder natively).
         unsafe { (*buffer).wrote(data_slice.len()) };
         // SAFETY: data_slice is a live &[u8]; ptr valid for len bytes.
-        unsafe { uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), data_slice.len()) }
+        unsafe {
+            uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), data_slice.len())
+        }
     } else {
         false
     };

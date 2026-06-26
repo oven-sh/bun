@@ -1070,7 +1070,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   [kEnableStreaming](enable: boolean) {
-    this[kIsTunnel] = enable;
+    // kIsTunnel latches: once a socket is detached into CONNECT/upgrade tunnel
+    // mode it never returns to normal request handling, and #onClose relies on
+    // it to emit 'close' on native close.
+    if (enable) this[kIsTunnel] = true;
     const handle = this[kHandle];
     if (handle) {
       if (enable) {

@@ -53,13 +53,9 @@ test("indexOfLine", () => {
   }
 });
 
-// The non-ASCII arm of the scan loop advanced `offset` by the code-point
-// width from the previous search start rather than from the match index,
-// so a single byte >=0x80 late in the buffer was re-discovered O(n) times,
-// each time re-scanning O(n) bytes. 500KB with one multi-byte character
-// near the end took >2 minutes in a debug build; the linear scan finishes
-// in well under a second. Size is chosen so the quadratic loop cannot
-// complete inside the spawn timeout.
+// A single byte >=0x80 late in the buffer used to trigger an O(n^2) rescan.
+// Size chosen so the quadratic loop cannot complete inside the spawn timeout
+// while the linear scan finishes in well under a second.
 test("indexOfLine is linear on large input with a non-ASCII byte", async () => {
   const n = 500_000;
   const fixture = `

@@ -939,16 +939,15 @@ impl Lockfile {
             return;
         }
 
-        let workspace_package_id =
-            manager.root_package_id.get(old, manager.workspace_name_hash) as usize;
+        let workspace_package_id = manager
+            .root_package_id
+            .get(old, manager.workspace_name_hash) as usize;
         if workspace_package_id >= old.packages.len() {
             return;
         }
 
-        let dep_slice: DependencySlice =
-            old.packages.items_dependencies()[workspace_package_id];
-        let res_slice: PackageIDSlice =
-            old.packages.items_resolutions()[workspace_package_id];
+        let dep_slice: DependencySlice = old.packages.items_dependencies()[workspace_package_id];
+        let res_slice: PackageIDSlice = old.packages.items_resolutions()[workspace_package_id];
         let n = dep_slice.len as usize;
         if n < 2
             || dep_slice.off as usize + n > old.buffers.dependencies.len()
@@ -1035,12 +1034,10 @@ impl Lockfile {
         }
 
         let new_len = (n - removed) as u32;
-        old.packages
-            .items_mut::<"dependencies", DependencySlice>()[workspace_package_id]
-            .len = new_len;
-        old.packages
-            .items_mut::<"resolutions", PackageIDSlice>()[workspace_package_id]
-            .len = new_len;
+        old.packages.items_mut::<"dependencies", DependencySlice>()[workspace_package_id].len =
+            new_len;
+        old.packages.items_mut::<"resolutions", PackageIDSlice>()[workspace_package_id].len =
+            new_len;
     }
 
     pub fn clean(

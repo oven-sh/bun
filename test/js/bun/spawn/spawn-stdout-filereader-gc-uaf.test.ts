@@ -28,20 +28,25 @@ test.skipIf(isWindows)(
   async () => {
     using dir = tempDir("fr-gc-uaf", {});
     const flag = join(String(dir), "go");
+    const started = join(String(dir), "started");
 
     const script = /* js */ `
       const { heapStats } = require("bun:jsc");
-      const { writeFileSync } = require("node:fs");
+      const { writeFileSync, readdirSync } = require("node:fs");
       const ITERS = 4;
       const flag = ${JSON.stringify(flag)};
+      const startedDir = ${JSON.stringify(started)};
+      require("node:fs").mkdirSync(startedDir, { recursive: true });
 
       // The direct child spawns a detached shell that inherits stdout and
       // waits for a flag file, keeping the pipe's write end open past the
       // child's exit so the FileReader's poll is still armed while we GC.
-      // The loop is bounded so a fixture crash cannot leak the helper.
+      // The loop is bounded so a fixture crash cannot leak the helper. Each
+      // grandchild touches a file in startedDir so the fixture can tell how
+      // many actually came up.
       const childScript =
         "const { spawn } = require('child_process');" +
-        "spawn('sh', ['-c', 'n=0; while [ ! -e " + JSON.stringify(flag) + " ] && [ $n -lt 1500 ]; do sleep 0.02; n=$((n+1)); done; echo x']," +
+        "spawn('sh', ['-c', ': > " + JSON.stringify(startedDir) + "/$$; n=0; while [ ! -e " + JSON.stringify(flag) + " ] && [ $n -lt 1500 ]; do sleep 0.02; n=$((n+1)); done; echo x']," +
         "  { stdio: ['ignore', 'inherit', 'ignore'], detached: true }).unref();";
 
       const count = () =>
@@ -71,9 +76,16 @@ test.skipIf(isWindows)(
       await Promise.all(Array.from({ length: ITERS }, once));
       const afterSpawn = count() - base;
 
+      // Synchronous full GC with no event-loop yield: if the wrappers survive
+      // here they are Strong-rooted (fix engaged); if they are swept only
+      // after the sleep loop below, the pipes reached EOF in between.
+      Bun.gc(true); Bun.gc(true);
+      const afterSyncGC = count() - base;
+
       // Direct children have exited; grandchildren still hold the write end.
       for (let i = 0; i < 20; i++) { Bun.gc(true); await Bun.sleep(1); }
       const duringLivePipe = count() - base;
+      const grandchildrenStarted = readdirSync(startedDir).length;
 
       // Release the grandchildren (including the warmup one).
       writeFileSync(flag, "");
@@ -87,7 +99,8 @@ test.skipIf(isWindows)(
       }
 
       console.log(JSON.stringify({
-        iters: ITERS, duringLivePipe, afterEof, base, afterSpawn, streams,
+        iters: ITERS, duringLivePipe, afterEof,
+        base, afterSpawn, afterSyncGC, streams, grandchildrenStarted,
       }));
     `;
 

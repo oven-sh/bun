@@ -43,59 +43,22 @@ pub struct PatchFile<'a> {
     pub parts: Vec<PatchFilePart<'a>>,
 }
 
-struct ApplyState {
-    pathbuf: PathBuffer,
-    patch_dir_abs_path: Option<usize>,
-}
-
-impl ApplyState {
-    fn new() -> Self {
-        Self {
-            pathbuf: PathBuffer::uninit(),
-            patch_dir_abs_path: None,
-        }
-    }
-
-    fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
-        if let Some(len) = self.patch_dir_abs_path {
-            // pathbuf[len] == 0 was written below on a previous call.
-            return sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len));
-        }
-        match sys::get_fd_path(fd, &mut self.pathbuf) {
-            sys::Result::Ok(p) => {
-                // reshaped for borrowck — capture len, drop `p`,
-                // then re-borrow `self.pathbuf` to write the sentinel.
-                let len = p.len();
-                // On Linux `readlink(2)` does not NUL-terminate, so write the
-                // sentinel explicitly (the buffer is zero-initialized but be
-                // defensive).
-                self.pathbuf.0[len] = 0;
-                self.patch_dir_abs_path = Some(len);
-                sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len))
-            }
-            sys::Result::Err(e) => sys::Result::Err(e.with_fd(fd)),
-        }
-    }
-}
-
 impl<'a> PatchFile<'a> {
     pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
-        let mut state = ApplyState::new();
-
         for part in &self.parts {
             match part {
                 PatchFilePart::FileDeletion(file_deletion) => {
                     if !is_safe_patch_path(file_deletion.path) {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink));
                     }
-                    let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
-                    if let Err(e) =
-                        verify_parent_beneath_patch_dir(patch_dir, pathz.as_bytes(), &mut state)
-                    {
-                        return Some(e.without_path());
-                    }
+                    let parent = match open_parent_beneath(patch_dir, file_deletion.path, None) {
+                        Ok(p) => p,
+                        Err(e) => return Some(e.without_path()),
+                    };
+                    let base =
+                        ZBox::from_vec_with_nul(basename_simple(file_deletion.path).to_vec());
 
-                    if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
+                    if let Err(e) = sys::unlinkat(parent.fd, &base) {
                         return Some(e.without_path());
                     }
                 }
@@ -105,31 +68,25 @@ impl<'a> PatchFile<'a> {
                     {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename));
                     }
-                    let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
-                    let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
+                    let from_parent =
+                        match open_parent_beneath(patch_dir, file_rename.from_path, None) {
+                            Ok(p) => p,
+                            Err(e) => return Some(e.without_path()),
+                        };
+                    // A rename destination directory has no mode in the
+                    // patch; missing ones are created 0o755.
+                    let to_parent =
+                        match open_parent_beneath(patch_dir, file_rename.to_path, Some(0o755)) {
+                            Ok(p) => p,
+                            Err(e) => return Some(e.without_path()),
+                        };
+                    let from_base =
+                        ZBox::from_vec_with_nul(basename_simple(file_rename.from_path).to_vec());
+                    let to_base =
+                        ZBox::from_vec_with_nul(basename_simple(file_rename.to_path).to_vec());
 
                     if let Err(e) =
-                        verify_parent_beneath_patch_dir(patch_dir, from_path.as_bytes(), &mut state)
-                    {
-                        return Some(e.without_path());
-                    }
-                    if let Err(e) =
-                        verify_parent_beneath_patch_dir(patch_dir, to_path.as_bytes(), &mut state)
-                    {
-                        return Some(e.without_path());
-                    }
-
-                    let todir = paths::dirname_simple(to_path.as_bytes());
-                    if !todir.is_empty() {
-                        if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at_mode(patch_dir, todir, 0o755)
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    if let sys::Result::Err(e) =
-                        sys::renameat(patch_dir, &from_path, patch_dir, &to_path)
+                        sys::renameat(from_parent.fd, &from_base, to_parent.fd, &to_base)
                     {
                         return Some(e.without_path());
                     }
@@ -138,42 +95,34 @@ impl<'a> PatchFile<'a> {
                     if !is_safe_patch_path(file_creation.path) {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
                     }
-                    let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
-                    let filedir = paths::dirname_simple(filepath_z.as_bytes());
                     let mode = file_creation.mode;
-
-                    if let Err(e) = verify_parent_beneath_patch_dir(
+                    let parent = match open_parent_beneath(
                         patch_dir,
-                        filepath_z.as_bytes(),
-                        &mut state,
+                        file_creation.path,
+                        Some(mode.to_bun_mode()),
                     ) {
-                        return Some(e.without_path());
-                    }
+                        Ok(p) => p,
+                        Err(e) => return Some(e.without_path()),
+                    };
+                    let base =
+                        ZBox::from_vec_with_nul(basename_simple(file_creation.path).to_vec());
 
-                    if !filedir.is_empty() {
-                        // Create the directory under `patch_dir` so the
-                        // subsequent `openat` against `patch_dir` succeeds
-                        // (resolving `filedir` against the process CWD would be
-                        // inconsistent when `patch_dir != cwd`).
-                        if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at_mode(patch_dir, filedir, mode.to_bun_mode())
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    let newfile_fd = match open_beneath(
-                        patch_dir,
-                        &filepath_z,
+                    let newfile_fd = match open_target_file(
+                        parent.fd,
+                        &base,
                         sys::O::CREAT | sys::O::RDWR,
                         mode.to_bun_mode(),
-                        true,
-                        &mut state,
                     ) {
-                        sys::Result::Ok(fd) => fd,
-                        sys::Result::Err(e) => return Some(e.without_path()),
+                        Ok((fd, _)) => fd,
+                        Err(e) => return Some(e.without_path()),
                     };
                     let _close_newfile = scopeguard::guard(newfile_fd, |fd| fd.close());
+                    // Truncation is deferred until after the target is
+                    // verified (no `O_TRUNC`), so a rejected target is
+                    // never destroyed.
+                    if let Err(e) = sys::ftruncate(newfile_fd, 0) {
+                        return Some(e.without_path());
+                    }
 
                     let Some(hunk) = &file_creation.hunk else {
                         continue;
@@ -229,7 +178,7 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
                     }
                     // TODO: should we compute the hash of the original file and check it against the on in the patch?
-                    if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir, &mut state) {
+                    if let Err(e) = apply_patch(file_patch, patch_dir) {
                         return Some(e.without_path());
                     }
                 }
@@ -238,28 +187,26 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat));
                     }
                     let newmode = file_mode_change.new_mode;
-                    let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
-                    let fd = match open_beneath(
-                        patch_dir,
-                        &filepath,
-                        sys::O::RDONLY,
-                        0,
-                        false,
-                        &mut state,
-                    ) {
-                        sys::Result::Err(e) => return Some(e.without_path()),
-                        sys::Result::Ok(f) => f,
+                    let parent = match open_parent_beneath(patch_dir, file_mode_change.path, None) {
+                        Ok(p) => p,
+                        Err(e) => return Some(e.without_path()),
                     };
+                    let base =
+                        ZBox::from_vec_with_nul(basename_simple(file_mode_change.path).to_vec());
+                    let fd = match open_target_file(parent.fd, &base, sys::O::RDONLY, 0) {
+                        Ok((fd, _)) => fd,
+                        Err(e) => return Some(e.without_path()),
+                    };
+                    let _close = scopeguard::guard(fd, |fd| fd.close());
                     // On Windows `sys::fchmod` routes through libuv and panics
                     // on the HANDLE-backed fd returned by `openat`; use the
-                    // path-based `fchmodat` there once containment is verified.
+                    // path-based `fchmodat` against the verified parent there.
                     let r = if cfg!(windows) {
-                        sys::fchmodat(patch_dir, &filepath, newmode.to_bun_mode(), 0)
+                        sys::fchmodat(parent.fd, &base, newmode.to_bun_mode(), 0)
                     } else {
                         sys::fchmod(fd, newmode.to_bun_mode())
                     };
-                    fd.close();
-                    if let sys::Result::Err(e) = r {
+                    if let Err(e) = r {
                         return Some(e.without_path());
                     }
                 }
@@ -278,38 +225,32 @@ impl<'a> PatchFile<'a> {
 /// we can speed it up by:
 /// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
 /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
-fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
-    let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
+fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd) -> sys::Result<()> {
+    let file_path = patch.path;
 
-    if let Err(e) = verify_parent_beneath_patch_dir(patch_dir, file_path.as_bytes(), state) {
-        return sys::Result::Err(e.with_path(file_path.as_bytes()));
-    }
-
-    // Need to get the mode of the original file
-    // And also get the size to read file into memory
-    let stat = match sys::lstatat(patch_dir, &file_path) {
-        sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-        sys::Result::Ok(stat) => stat,
+    let parent = match open_parent_beneath(patch_dir, file_path, None) {
+        Ok(p) => p,
+        Err(e) => return Err(e.with_path(file_path)),
     };
-    if sys::S::ISLNK(stat.st_mode as u32) {
-        return sys::Result::Err(
-            sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).with_path(file_path.as_bytes()),
-        );
-    }
+    let base = ZBox::from_vec_with_nul(basename_simple(file_path).to_vec());
 
-    // Purposefully use `bun.default_allocator` here because if the file size is big like
-    // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
-    //
-    // But if the file size is small, like less than a single page, it's probably ok
-    // to use the arena
-    let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
-    let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
+    // One fd is used for the read and the write-back, so nothing can be
+    // swapped in for the target in between them.
+    let (file_fd, stat) = match open_target_file(parent.fd, &base, sys::O::RDWR, 0) {
+        Ok(r) => r,
+        Err(e) => return Err(e.with_path(file_path)),
+    };
+    let _close_file = scopeguard::guard(file_fd, |fd| fd.close());
+
+    // Error past the cap so a pathological target errors instead of
+    // allocating unboundedly. (Surfaces as `.INVAL` either way.)
+    if stat.st_size as u64 > MAX_PATCH_TARGET_BYTES {
+        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).with_path(file_path));
+    }
+    let filebuf: Vec<u8> = match sys::File::borrow(&file_fd).read_to_end() {
         Ok(b) => b,
         Err(_) => {
-            return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::read)
-                    .with_path(file_path.as_bytes()),
-            );
+            return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).with_path(file_path));
         }
     };
 
@@ -362,9 +303,8 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
         // Validate hunk start position is within bounds
         if line_cursor > lines.len() {
-            return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                    .with_path(file_path.as_bytes()),
+            return Err(
+                sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat).with_path(file_path)
             );
         }
 
@@ -376,10 +316,8 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
                     // Validate context lines exist
                     if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
+                        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
+                            .with_path(file_path));
                     }
 
                     line_cursor += part.lines.len();
@@ -387,10 +325,8 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
                 PartType::Insertion => {
                     // Validate insertion position is within bounds
                     if line_cursor > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
+                        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
+                            .with_path(file_path));
                     }
 
                     lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
@@ -404,10 +340,8 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
                     // Validate deletion range is within bounds
                     if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
+                        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
+                            .with_path(file_path));
                     }
 
                     lines.drain(line_cursor..line_cursor + part.lines.len());
@@ -420,139 +354,193 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         }
     }
 
-    let file_fd = match open_beneath(
-        patch_dir,
-        &file_path,
-        sys::O::CREAT | sys::O::RDWR,
-        stat.st_mode as sys::Mode,
-        true,
-        state,
-    ) {
-        sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-        sys::Result::Ok(fd) => fd,
-    };
-    let _close_file = scopeguard::guard(file_fd, |fd| fd.close());
+    // Write the patched contents back through the same verified fd.
+    if let Err(e) = sys::ftruncate(file_fd, 0) {
+        return Err(e.with_path(file_path));
+    }
+    // `read_to_end` advanced the cursor on Windows (POSIX reads use `pread`);
+    // rewind so the write lands at offset 0 instead of leaving a hole.
+    if let Err(e) = sys::set_file_offset(file_fd, 0) {
+        return Err(e.with_path(file_path));
+    }
 
     let contents = join_bytes(b"\n", &lines);
 
     let mut written: usize = 0;
     while written < contents.len() {
         match sys::write(file_fd, &contents[written..]) {
-            sys::Result::Ok(w) => written += w,
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
+            Ok(w) => written += w,
+            Err(e) => return Err(e.with_path(file_path)),
         }
     }
 
-    sys::Result::Ok(())
+    Ok(())
 }
 
-fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
-    // Allocate `min(size, max)` and error past `max`, so a pathological
-    // multi-GiB target file errors instead of allocating unboundedly. (The
-    // too-big error would surface as `.INVAL` at the only call site anyway,
-    // so we map it to EINVAL here.)
-    let stat = sys::fstatat(dir, path)?;
-    if stat.st_size as u64 > max as u64 {
-        return sys::Result::Err(
-            sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).with_path(path.as_bytes()),
-        );
-    }
-    sys::File::read_from(dir, path)
+/// 4 GiB cap on a patch target read into memory, so a pathological
+/// `st_size` errors instead of allocating unboundedly.
+const MAX_PATCH_TARGET_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Directory handle returned by [`open_parent_beneath`]: `patch_dir` itself
+/// for single-component paths (not closed), an owned fd otherwise.
+struct ParentDir {
+    fd: Fd,
+    owned: bool,
 }
 
-/// Open `path` under `patch_dir` without following symlinks, verifying both
-/// the parent directory and the opened file resolve to canonical paths
-/// inside `patch_dir`. Truncation is deferred until after the containment
-/// check so a path that escapes via a symlink is rejected before any file is
-/// created or truncated.
-fn open_beneath(
-    patch_dir: Fd,
-    path: &ZStr,
-    flags: i32,
-    mode: sys::Mode,
-    truncate: bool,
-    state: &mut ApplyState,
-) -> sys::Result<Fd> {
-    // Verify the parent directory first so `O_CREAT` below cannot create an
-    // empty file outside `patch_dir` via an intermediate directory symlink.
-    if let Err(e) = verify_parent_beneath_patch_dir(patch_dir, path.as_bytes(), state) {
-        return sys::Result::Err(e.with_path(path.as_bytes()));
+impl Drop for ParentDir {
+    fn drop(&mut self) {
+        if self.owned {
+            self.fd.close();
+        }
     }
-
-    // The Windows NtCreateFile path drops FILE_SYNCHRONOUS_IO_NONALERT when
-    // O::NOFOLLOW is set, which makes subsequent synchronous WriteFile fail.
-    // Reject a final-component symlink via lstatat so the open below cannot
-    // touch the link target, then rely on `verify_fd_beneath_patch_dir` for
-    // the remaining containment on Windows.
-    let nofollow = if cfg!(windows) { 0 } else { sys::O::NOFOLLOW };
-    if cfg!(windows)
-        && let sys::Result::Ok(st) = sys::lstatat(patch_dir, path)
-        && sys::S::ISLNK(st.st_mode as u32)
-    {
-        return sys::Result::Err(
-            sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).with_path(path.as_bytes()),
-        );
-    }
-    let fd = sys::openat(patch_dir, path, flags | nofollow, mode)?;
-    if let Err(e) = verify_fd_beneath_patch_dir(patch_dir, fd, state) {
-        fd.close();
-        return sys::Result::Err(e.with_path(path.as_bytes()));
-    }
-    if truncate && let Err(e) = sys::ftruncate(fd, 0) {
-        fd.close();
-        return sys::Result::Err(e.with_path(path.as_bytes()));
-    }
-    sys::Result::Ok(fd)
 }
 
-/// Verify the deepest existing ancestor directory of `path` resolves to a
-/// canonical path inside `patch_dir`. Called before any filesystem
-/// modification so intermediate directory symlinks are rejected up front.
-fn verify_parent_beneath_patch_dir(
+fn is_path_sep(c: u8) -> bool {
+    c == b'/' || (cfg!(windows) && c == b'\\')
+}
+
+/// Final component of `path` as split by [`paths::dirname_simple`], so the
+/// (parent dir, basename) pair passed to the `*at` syscalls always
+/// reassembles `path`.
+fn basename_simple(path: &[u8]) -> &[u8] {
+    let dir = paths::dirname_simple(path);
+    if dir.is_empty() {
+        path
+    } else {
+        &path[dir.len() + 1..]
+    }
+}
+
+/// Opens the parent directory of `path` by walking one component at a time
+/// from `patch_dir`, never traversing a symlink. Missing components are
+/// created when `create_mode` is given. Every subsequent syscall is made
+/// relative to the returned fd, so no path is ever re-resolved through a
+/// component an attacker could have swapped for a symlink.
+fn open_parent_beneath(
     patch_dir: Fd,
     path: &[u8],
-    state: &mut ApplyState,
-) -> sys::Result<()> {
-    let mut dirname = paths::dirname_simple(path);
-    loop {
-        if dirname.is_empty() || dirname == b"." {
-            return sys::Result::Ok(());
+    create_mode: Option<sys::Mode>,
+) -> sys::Result<ParentDir> {
+    let mut cur = ParentDir {
+        fd: patch_dir,
+        owned: false,
+    };
+    for component in paths::dirname_simple(path).split(|&c| is_path_sep(c)) {
+        if component.is_empty() || component == b"." {
+            continue;
         }
-        let parent_z = ZBox::from_vec_with_nul(dirname.to_vec());
-        match sys::openat(patch_dir, &parent_z, sys::O::RDONLY | sys::O::DIRECTORY, 0) {
-            sys::Result::Ok(pfd) => {
-                let r = verify_fd_beneath_patch_dir(patch_dir, pfd, state);
-                pfd.close();
-                return r;
-            }
-            sys::Result::Err(e) => match e.get_errno() {
-                sys::E::ENOENT | sys::E::ENOTDIR => {
-                    dirname = paths::dirname_simple(dirname);
-                }
-                _ => return sys::Result::Err(e),
-            },
+        // `is_safe_patch_path` already rejected `..`; refuse it here too so
+        // this helper cannot ascend regardless of its caller.
+        if component == b".." {
+            return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).with_path(path));
         }
+        let component_z = ZBox::from_vec_with_nul(component.to_vec());
+        cur = ParentDir {
+            fd: open_dir_component(cur.fd, &component_z, create_mode)?,
+            owned: true,
+        };
+    }
+    Ok(cur)
+}
+
+/// On Windows `O_NOFOLLOW` (`FILE_OPEN_REPARSE_POINT`) opens a reparse point
+/// itself instead of failing, and later opens resolve through its target, so
+/// reject the entry by its own attributes first. This is a path-based check:
+/// Windows containment is best-effort against a concurrent swap.
+#[cfg(windows)]
+fn reject_reparse_point(dir: Fd, name: &ZStr) -> sys::Result<()> {
+    match sys::get_file_attributes_at(dir, name) {
+        Ok(attrs) if attrs.is_reparse_point => {
+            Err(sys::Error::from_code(sys::E::ELOOP, sys::Tag::open).with_path(name.as_bytes()))
+        }
+        // Nonexistent (about to be created) or unreadable: the open that
+        // follows reports the real error.
+        _ => Ok(()),
     }
 }
 
-fn verify_fd_beneath_patch_dir(patch_dir: Fd, fd: Fd, state: &mut ApplyState) -> sys::Result<()> {
-    let dir_path = state.patch_dir_abs_path(patch_dir)?.as_bytes();
-    let mut dir_len = dir_path.len();
-    while dir_len > 0 && paths::is_sep_native(dir_path[dir_len - 1]) {
-        dir_len -= 1;
+/// One step of the walk: opens `component` under `dir` as a directory
+/// without following a symlink, creating it first on ENOENT when
+/// `create_mode` is given.
+fn open_dir_component(
+    dir: Fd,
+    component: &ZStr,
+    create_mode: Option<sys::Mode>,
+) -> sys::Result<Fd> {
+    #[cfg(windows)]
+    reject_reparse_point(dir, component)?;
+    // `O_NOFOLLOW | O_DIRECTORY` makes the kernel refuse a symlink component.
+    let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::NOFOLLOW;
+    match sys::openat(dir, component, flags, 0) {
+        Ok(fd) => Ok(fd),
+        Err(e) if e.get_errno() == sys::E::ENOENT && create_mode.is_some() => {
+            match sys::mkdirat(dir, component, create_mode.unwrap_or(0o755)) {
+                Ok(()) => {}
+                // Lost a creation race; the open below verifies whatever is
+                // there now.
+                Err(e2) if e2.get_errno() == sys::E::EEXIST => {}
+                Err(e2) => return Err(e2),
+            }
+            sys::openat(dir, component, flags, 0)
+                .map_err(|e| symlink_component_err(dir, component, e))
+        }
+        Err(e) => Err(symlink_component_err(dir, component, e)),
     }
-    let dir_path = &dir_path[..dir_len];
+}
 
-    let mut buf = paths::path_buffer_pool::get();
-    let fd_path = sys::get_fd_path(fd, &mut buf)?;
-
-    if fd_path.len() > dir_path.len()
-        && paths::is_sep_native(fd_path[dir_path.len()])
-        && strings::starts_with(fd_path, dir_path)
+/// `O_NOFOLLOW | O_DIRECTORY` on a symlink reports ENOTDIR on Linux but
+/// ELOOP on Darwin; report the symlink case as ELOOP everywhere. (Only the
+/// errno depends on this lstat, never whether the open was refused.)
+fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error {
+    if matches!(e.get_errno(), sys::E::ENOTDIR | sys::E::ELOOP)
+        && let Ok(st) = sys::lstatat(dir, component)
+        && sys::S::ISLNK(st.st_mode as u32)
     {
-        return sys::Result::Ok(());
+        return sys::Error::from_code(sys::E::ELOOP, sys::Tag::open)
+            .with_path(component.as_bytes());
     }
-    sys::Result::Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open))
+    e
+}
+
+/// Opens `base` (a single component) under an already-verified parent
+/// directory without following a final-component symlink, then requires the
+/// opened inode to be a regular file with a single hard link: a second link
+/// means the same inode is reachable from a path outside the patch dir, so
+/// writing through it would corrupt that file.
+fn open_target_file(
+    parent: Fd,
+    base: &ZStr,
+    flags: i32,
+    mode: sys::Mode,
+) -> sys::Result<(Fd, sys::Stat)> {
+    // The Windows NtCreateFile path drops FILE_SYNCHRONOUS_IO_NONALERT when
+    // O::NOFOLLOW is set, which makes subsequent synchronous I/O fail, so
+    // the reparse-point check is the final-component guard there instead.
+    #[cfg(windows)]
+    reject_reparse_point(parent, base)?;
+    let nofollow = if cfg!(windows) { 0 } else { sys::O::NOFOLLOW };
+    let fd = sys::openat(parent, base, flags | nofollow, mode)?;
+    let stat = match sys::fstat(fd) {
+        Ok(st) => st,
+        Err(e) => {
+            fd.close();
+            return Err(e);
+        }
+    };
+    if !sys::S::ISREG(stat.st_mode as u32) {
+        fd.close();
+        return Err(
+            sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).with_path(base.as_bytes())
+        );
+    }
+    if stat.st_nlink > 1 {
+        fd.close();
+        return Err(
+            sys::Error::from_code(sys::E::EMLINK, sys::Tag::open).with_path(base.as_bytes())
+        );
+    }
+    Ok((fd, stat))
 }
 
 /// Joins byte slices with a separator.

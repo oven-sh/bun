@@ -637,8 +637,8 @@ impl<'a> State<'a> {
         self.remaining_scripts -= 1;
 
         // Pane mode writes nothing here: the pane footer carries the exit
-        // status and `flush_redraw` repaints after this tick (and once more
-        // after the event loop exits, so the final exit is never missed).
+        // status, and the main loop's `flush_redraw` repaints once this
+        // tick returns.
         #[cfg(unix)]
         if let Some(panes) = &mut self.panes {
             panes.needs_redraw = true;
@@ -1623,13 +1623,12 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
         unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
         // Pane mode: at most one repaint per tick, however many reads landed.
+        // This is the final frame too: the last `process_exit` fires inside
+        // `tick_once`, so its repaint lands here before the loop condition
+        // sees `is_done`.
         #[cfg(unix)]
         state.flush_redraw()?;
     }
-    // The final `process_exit` sets `is_done` and exits the loop before
-    // `flush_redraw` runs, so paint the last frame here.
-    #[cfg(unix)]
-    state.flush_redraw()?;
 
     let status = state.finalize();
     Global::exit(status as u32);

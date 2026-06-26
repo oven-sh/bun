@@ -423,9 +423,11 @@ pub(crate) fn execute_query<Context: WriterContext>(
     query: &[u8],
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
+    // A simple Query ('Q') is its own sync point: the backend always answers it
+    // with exactly one ReadyForQuery. Appending a Sync made it send a second,
+    // unaccounted ReadyForQuery that re-armed advance() mid-prepare.
     protocol::write_query(query, &mut writer)?;
     writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
     Ok(())
 }
 

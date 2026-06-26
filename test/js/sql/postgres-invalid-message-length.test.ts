@@ -71,13 +71,16 @@ async function queryError(frames: Buffer[]): Promise<any> {
   }
 }
 
-// Each entry drives a different backend-message decoder with a length field
-// smaller than the 4 bytes the field itself occupies. All of them must fail
-// the connection with the same protocol error.
+// Each entry drives a backend-message decoder with a length field that cannot
+// be valid: below the 4 bytes the field itself occupies, or negative (the
+// field is a signed Int32). All of them must fail the connection with the
+// same protocol error.
 const malformed: { name: string; frame: Buffer }[] = [
   // ReadyForQuery is Byte1('Z') Int32(5) Byte1(status); only the length lies.
   { name: "ReadyForQuery declaring length 3", frame: pgRaw("Z", Buffer.from("I"), 3) },
   { name: "ReadyForQuery declaring length 0", frame: pgRaw("Z", Buffer.from("I"), 0) },
+  // writeInt32BE(-1) puts 0xFFFFFFFF on the wire, the signed high half.
+  { name: "ReadyForQuery declaring length -1", frame: pgRaw("Z", Buffer.from("I"), -1) },
   { name: "ParameterStatus declaring length 3", frame: pgRaw("S", Buffer.alloc(0), 3) },
   { name: "NotificationResponse declaring length 3", frame: pgRaw("A", Buffer.alloc(0), 3) },
   // NoticeResponse is not exempt: an unframeable length is fatal even for a notice.

@@ -156,10 +156,10 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
     pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
         let expected = self.int::<PostgresInt32>()?;
-        // The length of every Postgres v3 message includes the 4 bytes of the
-        // length field itself, so anything smaller is malformed wire data that
-        // also makes the stream unframeable. `expected` is server-controlled.
-        if expected < 4 {
+        // The length of every Postgres v3 message is a signed Int32 that
+        // includes its own 4 bytes, so a value below 4 (or negative, i.e. the
+        // sign bit set on the wire) is malformed. `expected` is server-controlled.
+        if expected < 4 || expected > i32::MAX as u32 {
             return Err(AnyPostgresError::InvalidMessageLength);
         }
         self.ensure_capacity((expected - 4) as usize)?;

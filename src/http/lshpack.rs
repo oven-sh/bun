@@ -130,6 +130,14 @@ impl HPACK {
         lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
 
+    /// Adjust the decoder's maximum dynamic-table capacity after init: the
+    /// SETTINGS_HEADER_TABLE_SIZE we advertised, once the peer has ACKed it.
+    /// Bounds the value a peer's RFC 7541 §6.3 Dynamic Table Size Update may
+    /// carry; a shrink evicts entries in lockstep with the peer's encoder.
+    pub fn set_decoder_max_capacity(&mut self, max_capacity: u32) {
+        lshpack_wrapper_dec_set_max_capacity(self, max_capacity as c_uint);
+    }
+
     // Raw `*mut HPACK` teardown is subsumed by the
     // safe [`HpackHandle`] RAII wrapper below — every owner holds an
     // `HpackHandle`, so the raw destructor is private to `HpackHandle::drop`.
@@ -212,6 +220,7 @@ unsafe extern "C" {
     // Only precondition is a valid non-null `*HPACK`; `&mut HPACK` (ABI-identical
     // thin pointer) discharges it at the type level, so this is `safe fn`.
     safe fn lshpack_wrapper_enc_set_max_capacity(self_: &mut HPACK, max_capacity: c_uint);
+    safe fn lshpack_wrapper_dec_set_max_capacity(self_: &mut HPACK, max_capacity: c_uint);
     // Frees `self_` (lshpack_{enc,dec}_cleanup + mi_free) — ownership transfer,
     // so this keeps its raw-pointer signature and caller-side safety obligation.
     fn lshpack_wrapper_deinit(self_: *mut HPACK);

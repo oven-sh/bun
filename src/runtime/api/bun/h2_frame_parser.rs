@@ -1319,9 +1319,9 @@ pub struct H2FrameParser {
     /// Same bridge per stream: (stream id, bytes) pairs drained into the engine's per-stream send
     /// windows in rewrite_read.
     pending_stream_send_consumed: JsCell<Vec<(u32, u64)>>,
-    /// INITIAL_WINDOW_SIZE of each SETTINGS frame the legacy encoder sent, in send order, drained
-    /// into the engine's per-SETTINGS ack queue in rewrite_read (§6.5.3: ACKs apply in order).
-    pending_settings_window_submissions: JsCell<Vec<u32>>,
+    /// Snapshot of each SETTINGS frame the legacy encoder sent, in send order, drained into the
+    /// engine's per-SETTINGS ack queue in rewrite_read (§6.5.3: ACKs apply in order).
+    pending_settings_submissions: JsCell<Vec<crate::api::h2::settings::Settings>>,
     /// Stream ids whose legacy-side lifecycle finished while a dispatch held the engine
     /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
     /// Drained into Connection::close_stream on the next rewrite_read batch.
@@ -2399,10 +2399,10 @@ impl H2FrameParser {
             .set(self.outstanding_settings.get() + 1);
 
         self.local_settings.set(settings);
-        // Remember which INITIAL_WINDOW_SIZE this submission carries so the engine can attribute
-        // the peer's ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
-        self.pending_settings_window_submissions
-            .with_mut(|v| v.push(settings.initial_window_size));
+        // Remember the values this submission carries so the engine can attribute the peer's ACK
+        // to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
+        self.pending_settings_submissions
+            .with_mut(|v| v.push(self.rewrite_local_settings()));
         let _ = self.local_settings.get().write(&mut stream);
         let _ = self.write(&buffer);
         true
@@ -2633,8 +2633,8 @@ impl H2FrameParser {
         };
         self.outstanding_settings
             .set(self.outstanding_settings.get() + 1);
-        self.pending_settings_window_submissions
-            .with_mut(|v| v.push(self.local_settings.get().initial_window_size));
+        self.pending_settings_submissions
+            .with_mut(|v| v.push(self.rewrite_local_settings()));
         let _ = settings_header.write(&mut preface_stream);
         let _ = self.local_settings.get().write(&mut preface_stream);
         let _ = self.write(&preface_buffer);
@@ -5433,10 +5433,10 @@ impl H2FrameParser {
                 });
             });
             // Register SETTINGS submissions the legacy encoder sent since the last batch, so the
-            // engine attributes each inbound ACK to the right INITIAL_WINDOW_SIZE (§6.5.3).
-            self.pending_settings_window_submissions.with_mut(|v| {
-                for w in v.drain(..) {
-                    engine.pending_local_window_acks.push_back(w);
+            // engine attributes each inbound ACK to the right submission's values (§6.5.3).
+            self.pending_settings_submissions.with_mut(|v| {
+                for s in v.drain(..) {
+                    engine.pending_local_settings_acks.push_back(s);
                 }
             });
             // Streams whose legacy lifecycle finished since the last batch: evict the engine
@@ -9219,7 +9219,7 @@ impl H2FrameParser {
             pending_stream_send_consumed: JsCell::new(Vec::new()),
             pending_engine_stream_closes: JsCell::new(Vec::new()),
             dispatch_depth: Cell::new(0),
-            pending_settings_window_submissions: JsCell::new(Vec::new()),
+            pending_settings_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
             max_outstanding_settings: Cell::new(10),

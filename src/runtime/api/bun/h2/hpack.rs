@@ -16,6 +16,9 @@ pub const MAX_SIZE_UPDATE_BYTES: usize = 6;
 pub struct Coder {
     hpack: HpackHandle,
     enc_capacity: u32,
+    /// The maximum the decoder accepts in a §6.3 Dynamic Table Size Update: the
+    /// SETTINGS_HEADER_TABLE_SIZE we last advertised and the peer has ACKed (§6.5.3).
+    dec_capacity: u32,
     /// A capacity change requested by the peer's SETTINGS_HEADER_TABLE_SIZE, applied + announced at
     /// the start of the next encoded header block. `None` = nothing pending.
     pending_enc_capacity: Option<u32>,
@@ -26,6 +29,7 @@ impl Coder {
         Coder {
             hpack: HpackHandle::new(max_capacity),
             enc_capacity: max_capacity,
+            dec_capacity: max_capacity,
             pending_enc_capacity: None,
         }
     }
@@ -37,6 +41,19 @@ impl Coder {
             return;
         }
         self.pending_enc_capacity = Some(capacity);
+    }
+
+    /// Apply OUR SETTINGS_HEADER_TABLE_SIZE to the decoder once the peer has ACKed it. The value
+    /// we advertise bounds the peer encoder's §6.3 Dynamic Table Size Update (RFC 7541 §6.3), so a
+    /// decoder left at its construction-time capacity rejects a conforming peer that grows up to
+    /// the new max. No-op when unchanged: re-applying would reset the table size the peer's
+    /// encoder last chose via a size update.
+    pub fn set_decoder_capacity(&mut self, capacity: u32) {
+        if capacity == self.dec_capacity {
+            return;
+        }
+        self.hpack.set_decoder_max_capacity(capacity);
+        self.dec_capacity = capacity;
     }
 
     /// If a capacity change is pending, apply it and write the §6.3 size-update opcode into `dst` at

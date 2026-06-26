@@ -650,20 +650,28 @@ describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
     });
   });
 
-  // napi_create_double takes the double from the addon verbatim, so it is the
-  // same boundary. cc()-compiled C resolves napi_* from the host process; that
-  // lookup is only exercised on POSIX today (see cc-fixture.c).
-  it.skipIf(isWindows)("impure NaNs through napi_create_double are purified", async () => {
+  // napi_create_double and napi_create_date take the double from the addon
+  // verbatim, so they are the same boundary. cc()-compiled C resolves napi_*
+  // from the host process; that lookup is only exercised on POSIX today (see
+  // cc-fixture.c).
+  it.skipIf(isWindows)("impure NaNs through napi_create_double and napi_create_date are purified", async () => {
     using dir = tempDir("bun-ffi-impure-nan-napi", {
       "impure_napi.c": /* c */ `
         typedef struct napi_env_fake* napi_env_t;
         typedef struct napi_value_fake* napi_value_t;
         union caster { unsigned long long u; double d; };
         extern int napi_create_double(napi_env_t env, double value, napi_value_t* result);
+        extern int napi_create_date(napi_env_t env, double time, napi_value_t* result);
         napi_value_t impure_from_napi(napi_env_t env) {
           union caster c; c.u = 0xfffe000000000007ULL;
           napi_value_t result;
           napi_create_double(env, c.d, &result);
+          return result;
+        }
+        napi_value_t impure_date_from_napi(napi_env_t env) {
+          union caster c; c.u = 0xfffe000000000007ULL;
+          napi_value_t result;
+          napi_create_date(env, c.d, &result);
           return result;
         }
       `,
@@ -675,11 +683,20 @@ describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
           source: path.join(import.meta.dir, "impure_napi.c"),
           symbols: {
             impure_from_napi: { args: ["napi_env"], returns: "napi_value" },
+            impure_date_from_napi: { args: ["napi_env"], returns: "napi_value" },
           },
         });
 
         const value = symbols.impure_from_napi();
-        console.log(JSON.stringify([typeof value, String(value)]));
+        // Unpurified, the Date constructor receives JSValue(true) and
+        // produces new Date(1) instead of an Invalid Date.
+        const date = symbols.impure_date_from_napi();
+        console.log(
+          JSON.stringify({
+            double: [typeof value, String(value)],
+            date: [date instanceof Date, String(date.getTime())],
+          }),
+        );
       `,
     });
 
@@ -692,9 +709,12 @@ describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const result = stdout.startsWith("[") ? JSON.parse(stdout) : stdout;
-    expect({ result, stderr, exitCode }).toMatchObject({
-      result: ["number", "NaN"],
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        double: ["number", "NaN"],
+        date: [true, "NaN"],
+      },
       exitCode: 0,
     });
   });

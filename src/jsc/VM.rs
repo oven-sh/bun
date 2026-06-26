@@ -58,6 +58,8 @@ impl VM {
         JSC__VM__setControlFlowProfiler(self, enabled)
     }
 
+    /// Whether a `node:vm` evaluation with the `timeout` option is currently
+    /// running on this VM.
     pub fn has_execution_time_limit(&self) -> bool {
         JSC__VM__hasExecutionTimeLimit(self)
     }
@@ -114,7 +116,7 @@ impl VM {
         JSC__VM__executionForbidden(self)
     }
 
-    // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
+    // These functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
     // These may be called concurrently from another thread.
 
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.

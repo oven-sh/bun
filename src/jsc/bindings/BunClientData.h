@@ -127,6 +127,10 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Number of live `node:vm` evaluation deadlines (Bun::NodeVMEvalTimeout)
+    // on this VM. Read by JSC__VM__hasExecutionTimeLimit.
+    unsigned nodeVMEvalTimeoutDepth { 0 };
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class

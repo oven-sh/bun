@@ -144,12 +144,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // `const x = 1` / `let y = [1]` are replayable; re-declare
                     // them as `var` so the printed source persists onto a vm
                     // context just like the REPL evaluation itself does.
-                    if self.repl_local_is_serializable(&local, &admitted_refs) {
-                        for decl in hoisted_decl_list.iter() {
-                            if let B::B::BIdentifier(ident) = decl.binding.data {
-                                admitted_refs.push(self.repl_follow_ref(ident.r#ref));
-                            }
-                        }
+                    // On success its bindings are admitted for later reads.
+                    if self.repl_local_is_serializable(&local, &mut admitted_refs) {
                         let decls: &mut [G::Decl] = bump.alloc_slice_copy(local.decls.slice());
                         serializable_stmts.push(self.s(
                             S::Local {
@@ -435,6 +431,65 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             },
                             stmt.loc,
                         ));
+
+                        // import X, * as ns from 'mod' -> var X; X = ns.default
+                        // (the namespace was just assigned above)
+                        if let Some(default_name) = import_data.default_name {
+                            let default_ref = default_name.ref_;
+                            hoisted_stmts.push(self.s(
+                                S::Local {
+                                    kind: S::Kind::KVar,
+                                    decls: repl_one_decl(
+                                        bump,
+                                        Binding::alloc(
+                                            bump,
+                                            B::Identifier { r#ref: default_ref },
+                                            default_name.loc,
+                                        ),
+                                    ),
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            ));
+                            let ns_ref_expr = self.new_expr(
+                                E::Identifier {
+                                    ref_: import_data.namespace_ref,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            );
+                            let dot_default = self.new_expr(
+                                E::Dot {
+                                    target: ns_ref_expr,
+                                    name: b"default".into(),
+                                    name_loc: stmt.loc,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            );
+                            let left = self.new_expr(
+                                E::Identifier {
+                                    ref_: default_ref,
+                                    ..Default::default()
+                                },
+                                default_name.loc,
+                            );
+                            let assign = self.new_expr(
+                                E::Binary {
+                                    op: js_ast::OpCode::BinAssign,
+                                    left,
+                                    right: dot_default,
+                                },
+                                stmt.loc,
+                            );
+                            inner_stmts.push(self.s(
+                                S::SExpr {
+                                    value: assign,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            ));
+                        }
                     } else if let Some(default_name) = import_data.default_name {
                         // import X from 'mod' -> var X = (await import('mod')).default
                         // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
@@ -873,26 +928,85 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Whether a `var`/`let`/`const` statement can be re-run on a fresh VM:
     /// not a `using` declaration (replaying one as `var` would drop its
     /// disposal semantics), every binding and initializer is free of side
-    /// effects, and everything the initializers read eagerly is declared by
-    /// the serialized source itself (`admitted`).
-    fn repl_local_is_serializable(&mut self, local: &S::Local, admitted: &[Ref]) -> bool {
+    /// effects, and everything it reads eagerly (initializers, destructuring
+    /// defaults, computed pattern keys) is declared by the serialized source
+    /// itself (`admitted`).
+    ///
+    /// Declarators are checked left to right and admit their bindings as they
+    /// go, so `const a = 1, b = a` is replayable. On success the statement's
+    /// bindings stay in `admitted`; on failure `admitted` is rolled back and
+    /// the whole statement is dropped (declaration statements are kept atomic
+    /// rather than split per declarator).
+    fn repl_local_is_serializable<'bump>(
+        &mut self,
+        local: &S::Local,
+        admitted: &mut BumpVec<'bump, Ref>,
+    ) -> bool {
         if local.kind.is_using() {
             return false;
         }
+        let admitted_before = admitted.len();
         for decl in local.decls.slice() {
-            if !self.binding_can_be_removed_if_unused_without_dce_check(decl.binding) {
+            if !self.binding_can_be_removed_if_unused_without_dce_check(decl.binding)
+                || !self.repl_binding_eager_refs_are_admitted(decl.binding, admitted)
+            {
+                admitted.truncate(admitted_before);
                 return false;
             }
             if let Some(value) = &decl.value {
-                if !self.expr_can_be_removed_if_unused_without_dce_check(value) {
-                    return false;
-                }
-                if !self.repl_eager_refs_are_admitted(value, admitted) {
+                if !self.expr_can_be_removed_if_unused_without_dce_check(value)
+                    || !self.repl_eager_refs_are_admitted(value, admitted)
+                {
+                    admitted.truncate(admitted_before);
                     return false;
                 }
             }
+            // Later declarators in this statement may read this one.
+            self.repl_admit_binding_refs(decl.binding, admitted);
         }
         true
+    }
+
+    /// Record every name a binding pattern declares as admitted.
+    fn repl_admit_binding_refs<'bump>(&self, binding: Binding, admitted: &mut BumpVec<'bump, Ref>) {
+        match binding.data {
+            B::B::BIdentifier(ident) => {
+                admitted.push(self.repl_follow_ref(ident.r#ref));
+            }
+            B::B::BArray(array) => {
+                for item in array.items.slice() {
+                    self.repl_admit_binding_refs(item.binding, admitted);
+                }
+            }
+            B::B::BObject(object) => {
+                for property in object.properties.slice() {
+                    self.repl_admit_binding_refs(property.value, admitted);
+                }
+            }
+            B::B::BMissing(_) => {}
+        }
+    }
+
+    /// `repl_eager_refs_are_admitted` for a binding pattern: destructuring
+    /// evaluates computed keys and default values when the declaration runs.
+    fn repl_binding_eager_refs_are_admitted(&self, binding: Binding, admitted: &[Ref]) -> bool {
+        match binding.data {
+            B::B::BIdentifier(_) | B::B::BMissing(_) => true,
+            B::B::BArray(array) => array.items.slice().iter().all(|item| {
+                self.repl_binding_eager_refs_are_admitted(item.binding, admitted)
+                    && item
+                        .default_value
+                        .is_none_or(|value| self.repl_eager_refs_are_admitted(&value, admitted))
+            }),
+            B::B::BObject(object) => object.properties.slice().iter().all(|property| {
+                (property.flags.contains(flags::Property::IsSpread)
+                    || self.repl_eager_refs_are_admitted(&property.key, admitted))
+                    && self.repl_binding_eager_refs_are_admitted(property.value, admitted)
+                    && property
+                        .default_value
+                        .is_none_or(|value| self.repl_eager_refs_are_admitted(&value, admitted))
+            }),
+        }
     }
 
     /// Follow symbol links (e.g. merged `var` redeclarations) to the
@@ -1008,24 +1122,43 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// `repl_eager_refs_are_admitted` for a class body: `extends`, computed
-    /// keys, and field initializers all run when the declaration is evaluated.
+    /// keys, field initializers, and static blocks all run when the
+    /// declaration is evaluated.
     fn repl_class_eager_refs_are_admitted(&self, class: &G::Class, admitted: &[Ref]) -> bool {
         if let Some(extends) = &class.extends {
             if !self.repl_eager_refs_are_admitted(extends, admitted) {
                 return false;
             }
         }
-        class.properties.iter().all(|property| {
-            property
-                .key
-                .is_none_or(|key| self.repl_eager_refs_are_admitted(&key, admitted))
-                && property
-                    .value
-                    .is_none_or(|value| self.repl_eager_refs_are_admitted(&value, admitted))
-                && property
-                    .initializer
-                    .is_none_or(|init| self.repl_eager_refs_are_admitted(&init, admitted))
-        })
+        for property in class.properties.iter() {
+            if property.kind == G::PropertyKind::ClassStaticBlock {
+                // A static block body is a statement list; rather than walk it
+                // for admitted refs, only accept the trivially empty case.
+                let is_empty = property
+                    .class_static_block_ref()
+                    .is_none_or(|block| block.stmts.slice().is_empty());
+                if !is_empty {
+                    return false;
+                }
+                continue;
+            }
+            if let Some(key) = &property.key {
+                if !self.repl_eager_refs_are_admitted(key, admitted) {
+                    return false;
+                }
+            }
+            if let Some(value) = &property.value {
+                if !self.repl_eager_refs_are_admitted(value, admitted) {
+                    return false;
+                }
+            }
+            if let Some(initializer) = &property.initializer {
+                if !self.repl_eager_refs_are_admitted(initializer, admitted) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Create the `{ __proto__: null, value, variables, functions }` result

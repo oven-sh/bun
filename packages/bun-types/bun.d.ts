@@ -2504,11 +2504,12 @@ declare module "bun" {
      *   - `value`: the completion value of the snippet (always an own property, even when undefined)
      *   - `variables`: names declared by the snippet (`var`/`let`/`const`/`function`/`class`/import bindings), as an array of strings
      *   - `functions`: printed source of the snippet's replayable declarations: function
-     *     declarations, plus classes and `var`/`let`/`const` declarations whose initializers have
-     *     no side effects and only read bindings the string itself declares. Everything is
-     *     re-declared as `var`, so evaluating the string in a fresh `node:vm` context re-creates
-     *     them (for resuming a session on a new VM). Function bodies are not analyzed: a replayed
-     *     function that closed over non-replayable state throws when called, not when defined.
+     *     declarations, plus only those classes and `var`/`let`/`const` declarations that have no
+     *     side effects when evaluated and only read bindings the string itself declares.
+     *     Everything is re-declared as `var`, so evaluating the string in a fresh `node:vm`
+     *     context re-creates them (for resuming a session on a new VM). Function bodies are not
+     *     analyzed: a replayed function that closed over non-replayable state throws when called,
+     *     not when defined.
      *
      * @example
      * ```js

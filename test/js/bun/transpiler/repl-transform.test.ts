@@ -331,6 +331,10 @@ describe("Bun.Transpiler replMode", () => {
       test("default + namespace import lists names in source order", () => {
         const code = transpiler.transformSync('import def, * as ns from "mod"');
         expect(code).toMatch(/variables: \["def",\s*"ns"\]/);
+        // Both bindings are hoisted and assigned: the default comes off the
+        // namespace that was just awaited.
+        expect(code).toContain("var def");
+        expect(code).toContain("def = ns.default");
       });
 
       test("expression statements declare nothing", async () => {
@@ -395,6 +399,36 @@ describe("Bun.Transpiler replMode", () => {
         const fresh = vm.createContext({});
         vm.runInContext(result.functions, fresh);
         expect(vm.runInContext("copy", fresh)).toBe(1);
+      });
+
+      test("later declarators may read earlier ones in the same statement", async () => {
+        const result = await runRepl("const a = 1, b = a, c = [a, b]; c");
+        expect(result.functions).toContain("var a = 1, b = a, c = [a, b]");
+
+        const fresh = vm.createContext({});
+        vm.runInContext(result.functions, fresh);
+        expect(vm.runInContext("[a, b, c]", fresh)).toEqual([1, 1, [1, 1]]);
+      });
+
+      test("destructuring defaults reading an excluded binding are excluded", async () => {
+        const ctx = vm.createContext({ effect: () => 41 });
+        // `[x = a] = []` evaluates `a` (not replayable) when replayed.
+        const code = transpiler.transformSync("let a = effect(); const [x = a] = []; x");
+        const result = await vm.runInContext(code, ctx);
+        expect(result.value).toBe(41);
+        expect(result.variables).toEqual(["a", "x"]);
+        expect(result.functions).toBe("");
+      });
+
+      test("classes with non-empty static blocks are not serialized", async () => {
+        // A static block body runs when the class is evaluated; it is not
+        // analyzed for references (here it reads `a`, which is not
+        // replayable), so such a class is never replayed.
+        const ctx = vm.createContext({ effect: () => 41 });
+        const code = transpiler.transformSync("let a = effect(); class S { static { a } }");
+        const result = await vm.runInContext(code, ctx);
+        expect(result.variables).toEqual(["a", "S"]);
+        expect(result.functions).toBe("");
       });
 
       test("using declarations are never serialized", () => {

@@ -104,6 +104,11 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   uv_poll_start(p->uv_p, events, poll_cb);
 }
 
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  us_poll_start(p, loop, events);
+  return 0;
+}
+
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   if(!p->uv_p) return;
   if (us_poll_events(p) != events) {

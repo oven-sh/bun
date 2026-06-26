@@ -501,6 +501,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.debug) {
     rustflags.push("--cfg=bun_codegen_embed");
   }
+  // `socket_fault_injection`: usockets bsd_* fault-injection hooks compiled
+  // in (LIBUS_SOCKET_FAULT_INJECTION=1 on the C side). The Rust FFI for
+  // us_fault_set/us_fault_clear_all and the JS control surface gate on this
+  // so the C symbol and the Rust extern are either both present or both
+  // absent regardless of profile.
+  rustflags.push("--check-cfg=cfg(socket_fault_injection)");
+  if (cfg.socketFaultInjection) {
+    rustflags.push("--cfg=socket_fault_injection");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string

@@ -554,11 +554,7 @@ test.each(["Request", "Response"])(
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
       stdout: ["caught TypeError: ReadableStream is locked", "done"],

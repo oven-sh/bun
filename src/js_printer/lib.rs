@@ -7820,7 +7820,7 @@ fn print_repl_functions_source<'a, const ASCII_ONLY: bool>(
     // until this renamer (and the `Printer` borrowing it) is gone; the alias
     // is never dropped, so the buffers are freed exactly once, by the main
     // pass's renamer.
-    let shadow: js_ast::symbol::Map = unsafe { core::ptr::read(&symbols) };
+    let shadow: js_ast::symbol::Map = unsafe { core::ptr::read(&raw const symbols) };
     let mut sub_renamer = core::mem::ManuallyDrop::new(rename::NoOpRenamer::init(shadow, source));
     // Only formatting-relevant options carry over: no source maps, module
     // info, or transpiler cache for this pass.

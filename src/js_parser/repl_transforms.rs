@@ -1072,7 +1072,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 /// order without duplicates (e.g. `var x = 1; var x = 2`).
 #[inline]
 fn repl_push_unique_name<'bump>(names: &mut BumpVec<'bump, &'static [u8]>, name: &'static [u8]) {
-    if !names.iter().any(|existing| *existing == name) {
+    if !names.contains(&name) {
         names.push(name);
     }
 }

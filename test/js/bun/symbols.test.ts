@@ -247,14 +247,19 @@ if (process.platform === "win32") {
       // parent's ("Path"); mergeWindowEnvs collapses the casings so exactly
       // one PATH reaches the child instead of a conflicting Path + PATH pair.
       env: mergeWindowEnvs([bunEnv, { PATH: `${String(plantDir)};${process.env.PATH || process.env.Path || ""}` }]),
+      stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // An unhardened bun resolves the bare name through the PATH leg of the
     // default search, so the load succeeds and the message is the later
-    // "Symbol ... not found" instead, which fails this assertion.
-    expect(stdout).toContain(`Failed to open library "${PROBE}"`);
-    expect(exitCode).toBe(0);
+    // "Symbol ... not found" instead, which fails this assertion. stderr is
+    // in the received object so a failure diff shows it, but it is never
+    // asserted empty (debug/ASAN builds emit benign warnings there).
+    expect({ exitCode, stderr, stdout }).toMatchObject({
+      exitCode: 0,
+      stdout: expect.stringContaining(`Failed to open library "${PROBE}"`),
+    });
   });
 }

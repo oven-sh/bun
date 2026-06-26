@@ -987,11 +987,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // Surface the ASAN report when it fires so the failing test is diagnosable.
       expect({ stdout, stderr, exitCode }).toEqual({
         stdout: JSON.stringify({ status: 200, body: "abc" }) + "\n",

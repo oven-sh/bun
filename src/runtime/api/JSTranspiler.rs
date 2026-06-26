@@ -901,7 +901,7 @@ impl<'a> TransformTask<'a> {
                 self.output_code = BunString::clone_utf8(buffer_writer.buffer.list.as_slice());
             }
             api::SourceMapMode::Linked => {
-                let mut map_name_buf = bun_paths::PathBuffer::uninit();
+                let mut map_name_buf = [0u8; 32];
                 let map_name = source_map_url_for(source_path, &mut map_name_buf);
                 bun_core::handle_oom(buffer_writer.buffer.append(b"\n//# sourceMappingURL="));
                 bun_core::handle_oom(buffer_writer.buffer.append(map_name));
@@ -1772,7 +1772,7 @@ fn build_transform_result(
             // Append a `//# sourceMappingURL=<source>.map` comment so the
             // emitted code references a sibling `.map` file the caller is
             // expected to write.
-            let mut map_name_buf = bun_paths::PathBuffer::uninit();
+            let mut map_name_buf = [0u8; 32];
             let map_name = source_map_url_for(source_path, &mut map_name_buf);
             bun_core::handle_oom(buffer_writer.buffer.append(b"\n//# sourceMappingURL="));
             bun_core::handle_oom(buffer_writer.buffer.append(map_name));
@@ -1848,10 +1848,11 @@ impl JSPrinter::OnSourceMapChunk for SourceMapCapture {
 /// `source_path` is the virtual file name we gave the parser (e.g.
 /// `input.ts`); we just append `.map` — the caller knows what to do with
 /// it. Falls back to `input.map` if we're handed an empty path.
-fn source_map_url_for<'buf>(
-    source_path: &[u8],
-    buf: &'buf mut bun_paths::PathBuffer,
-) -> &'buf [u8] {
+///
+/// `source_path` is always `Loader::stdin_name()` (longest: `input.json5`),
+/// so the output never exceeds 15 bytes — callers pass a small fixed buffer,
+/// not a `PathBuffer`.
+fn source_map_url_for<'buf>(source_path: &[u8], buf: &'buf mut [u8]) -> &'buf [u8] {
     let base: &[u8] = if source_path.is_empty() {
         b"input"
     } else {
@@ -1859,11 +1860,10 @@ fn source_map_url_for<'buf>(
     };
     const SUFFIX: &[u8] = b".map";
     let total = base.len() + SUFFIX.len();
-    let slot = buf.as_mut_slice();
-    debug_assert!(total <= slot.len());
-    slot[..base.len()].copy_from_slice(base);
-    slot[base.len()..total].copy_from_slice(SUFFIX);
-    &slot[..total]
+    debug_assert!(total <= buf.len());
+    buf[..base.len()].copy_from_slice(base);
+    buf[base.len()..total].copy_from_slice(SUFFIX);
+    &buf[..total]
 }
 
 /// Append `\n//# sourceMappingURL=data:application/json;base64,<base64>\n`

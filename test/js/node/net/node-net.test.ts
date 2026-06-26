@@ -3,6 +3,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
 import {
   BlockList,
@@ -704,6 +705,34 @@ it("socket should keep process alive if unref is not called", async () => {
     env: bunEnv,
   });
   expect(await process.exited).toBe(1);
+});
+
+// Node never resumes a socket on the user's behalf: afterConnect only calls
+// read(0) (lib/net.js), so bytes that arrive before a 'data' listener is
+// attached stay buffered instead of being emitted to nobody and lost.
+it("a connected socket is not flowing until the user reads from it", async () => {
+  const { promise: received, resolve: onClose, reject } = Promise.withResolvers<string>();
+  const server = createServer(c => {
+    c.on("error", reject);
+    c.end("early-data");
+  });
+  let client: Socket | undefined;
+  try {
+    // events.once rejects these awaits if 'error' is emitted instead.
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    client = createConnection(server.address().port, "127.0.0.1");
+    await once(client, "connect");
+    client.on("error", reject);
+    expect(client.readableFlowing).toBeNull();
+    client.setEncoding("utf8");
+    let data = "";
+    client.on("data", chunk => (data += chunk));
+    client.on("close", () => onClose(data));
+    expect(await received).toBe("early-data");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
 });
 
 it("should not hang after FIN", async () => {

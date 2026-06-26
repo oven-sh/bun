@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/29118
 
 import { expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -357,4 +357,63 @@ test("relative `cwd` is resolved against the process cwd, not `/`", async () => 
   } finally {
     process.chdir(prev_cwd);
   }
+});
+
+// The `cwd` option and image `src` are arbitrary-length user strings fed
+// into fixed-size path buffers. Without length/overflow guards they abort
+// the process (SIGABRT) instead of degrading gracefully. Run in a
+// subprocess since a panic would take down the test runner itself.
+test("pathological long relative `cwd` does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdout.write(Bun.markdown.ansi("hi\\n", { colors: false, cwd: "a/".repeat(3000) }))`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Over-long cwd is dropped; the text still renders normally.
+  expect(stdout).toBe("hi\n");
+  expect(exitCode).toBe(0);
+});
+
+test("pathological long absolute `cwd` with kittyGraphics does not crash", async () => {
+  // colors:true + kittyGraphics:true is the only config that reaches the
+  // local-image path resolution (and thus the path-buffer join).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdout.write(Bun.markdown.ansi("![alt](x.png)\\n", { colors: true, kittyGraphics: true, cwd: "/" + "a".repeat(5000) }))`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Over-long cwd is dropped; the image falls back to the camera marker + alt.
+  expect(stdout).toContain("📷");
+  expect(stdout).toContain("alt");
+  expect(exitCode).toBe(0);
+});
+
+test("pathological long image `src` with kittyGraphics does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdout.write(Bun.markdown.ansi("![alt](" + "a/".repeat(3000) + "x.png)\\n", { colors: true, kittyGraphics: true }))`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The base+src join overflows the path buffer → falls back to the marker.
+  expect(stdout).toContain("📷");
+  expect(stdout).toContain("alt");
+  expect(exitCode).toBe(0);
 });

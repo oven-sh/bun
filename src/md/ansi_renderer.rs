@@ -2932,7 +2932,10 @@ fn read_png_dims(abs_path: &[u8]) -> Option<PngDims> {
         bun_sys::Result::Err(_) => return None,
     };
     let mut buf = [0u8; 24];
-    let read_result = file.read(&mut buf);
+    // read_all loops over short reads until the buffer is full or EOF, so a
+    // PNG on a FUSE/network mount that returns a partial read still fills the
+    // 24-byte IHDR window instead of falling back to alt-text.
+    let read_result = file.read_all(&mut buf);
     // Always close — File::close consumes self, so we must be sure it runs
     // on every path out.
     let _ = file.close();

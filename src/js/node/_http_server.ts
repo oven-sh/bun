@@ -1068,15 +1068,15 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
     this.#nativeBackpressure = false;
     const callback = this.#pendingCallback;
-    // When the deferred chunk was >= highWaterMark the Writable already set
-    // needDrain and will emit 'drain' from afterWrite(); skip the explicit
-    // emit then so it fires exactly once like Node.js's net.Socket.
+    // Only a _write that actually deferred (callback set) has something
+    // waiting; skip the explicit emit when the Writable already set
+    // needDrain (afterWrite() emits 'drain' itself for >= HWM chunks).
     const writableWillDrain = this._writableState?.needDrain;
     if (callback) {
       this.#pendingCallback = null;
       (callback as Function)();
+      if (!this.#nativeBackpressure && !writableWillDrain) this.emit("drain");
     }
-    if (!this.#nativeBackpressure && !writableWillDrain) this.emit("drain");
   }
   #onData(chunk, last) {
     if (chunk) {

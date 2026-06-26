@@ -39,39 +39,41 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
         return true;
     }
 
-    if (abortSignal.aborted())
-        return false;
-
-    if (abortSignal.isFollowingSignal()) {
-        if (reason) [[unlikely]]
-            *reason = "Is Following Signal"_s;
-        return true;
-    }
-
-    if (abortSignal.hasAbortEventListener()) {
-        if (abortSignal.hasActiveTimeoutTimer()) {
+    if (!abortSignal.aborted()) {
+        if (abortSignal.isFollowingSignal()) {
             if (reason) [[unlikely]]
-                *reason = "Has Timeout And Abort Event Listener"_s;
+                *reason = "Is Following Signal"_s;
             return true;
         }
-        if (abortSignal.isDependent()) {
-            // This runs on GC marker threads, so it must not mutate the signal:
-            // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.
-            if (abortSignal.hasAliveSourceSignals()) {
+
+        if (abortSignal.hasAbortEventListener()) {
+            if (abortSignal.hasActiveTimeoutTimer()) {
                 if (reason) [[unlikely]]
-                    *reason = "Has Source Signals And Abort Event Listener"_s;
+                    *reason = "Has Timeout And Abort Event Listener"_s;
+                return true;
+            }
+            if (abortSignal.isDependent()) {
+                // This runs on GC marker threads, so it must not mutate the signal:
+                // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.
+                if (abortSignal.hasAliveSourceSignals()) {
+                    if (reason) [[unlikely]]
+                        *reason = "Has Source Signals And Abort Event Listener"_s;
+                    return true;
+                }
+            }
+
+            // https://github.com/oven-sh/bun/issues/4517
+            if (abortSignal.hasPendingActivity()) {
+                if (reason) [[unlikely]]
+                    *reason = "Has Pending Activity"_s;
                 return true;
             }
         }
-
-        // https://github.com/oven-sh/bun/issues/4517
-        if (abortSignal.hasPendingActivity()) {
-            if (reason) [[unlikely]]
-                *reason = "Has Pending Activity"_s;
-            return true;
-        }
     }
 
+    // Even when aborted, the wrapper must stay alive while an opaque root (e.g. the wrapper of
+    // the AbortController that owns the signal) keeps it reachable: the JS listener functions
+    // registered on the native signal are only kept alive through it (JSEventListener::m_wrapper).
     return visitor.containsOpaqueRoot(&abortSignal);
 }
 

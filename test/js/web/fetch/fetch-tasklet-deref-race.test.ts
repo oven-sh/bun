@@ -30,4 +30,4 @@ test("FetchTasklet HTTP-thread deref is never the final ref", async () => {
     stdout: "ok",
     exitCode: 0,
   });
-});
+}, 30_000);

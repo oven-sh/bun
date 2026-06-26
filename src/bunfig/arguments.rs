@@ -283,13 +283,14 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        // An error in an auto-discovered bunfig is non-fatal for `bun run`:
-        // keep going so a stray/broken bunfig.toml up the tree doesn't abort
-        // the script. The accumulated log is flushed later on the normal path,
-        // so the diagnostic still reaches stderr. (Pre-existing behavior:
-        // run_command swallowed these.) Explicit `--config` (!auto_loaded) and
-        // config-required commands (test/build/install) still abort.
-        if !(auto_loaded && cmd == CommandTag::RunCommand) {
+        // An error in an auto-discovered bunfig is non-fatal when running a
+        // script (`bun file.ts` / `bun run file.ts`): keep going so a
+        // stray/broken bunfig.toml up the tree doesn't abort the script. The
+        // accumulated log is flushed later on the normal path, so the
+        // diagnostic still reaches stderr. Explicit `--config` (!auto_loaded)
+        // and config-required commands (test/build/install) still abort.
+        let run_like = cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand;
+        if !(auto_loaded && run_like) {
             report_bunfig_load_failure(ctx.log, err);
         }
     }

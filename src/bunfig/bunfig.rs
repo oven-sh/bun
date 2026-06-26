@@ -259,7 +259,15 @@ impl<'a> Parser<'a> {
                 let items = array.items.slice();
                 let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(items.len() + existing.len());
                 for item in items {
-                    self.expect_string(item)?;
+                    if let Err(e) = self.expect_string(item) {
+                        // A non-string entry is an error, but don't drop what
+                        // was already in ctx.preloads (CLI --preload flags /
+                        // an earlier bunfig): keep the valid entries parsed so
+                        // far, then the existing ones, before propagating.
+                        preloads.extend(existing);
+                        self.ctx.preloads = preloads;
+                        return Err(e);
+                    }
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
                             let raw = estring_to_owned(s, self.bump);

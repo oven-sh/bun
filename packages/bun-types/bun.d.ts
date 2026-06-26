@@ -2503,9 +2503,12 @@ declare module "bun" {
      * - The IIFE returns a `{ __proto__: null, value, variables, functions }` result object:
      *   - `value`: the completion value of the snippet (always an own property, even when undefined)
      *   - `variables`: names declared by the snippet (`var`/`let`/`const`/`function`/`class`/import bindings), as an array of strings
-     *   - `functions`: printed source of the snippet's function declarations and side-effect-free
-     *     top-level declarations, re-declared as `var` so running the string in a fresh `node:vm`
-     *     context re-creates them (for persisting evaluations across VMs)
+     *   - `functions`: printed source of the snippet's replayable declarations: function
+     *     declarations, plus classes and `var`/`let`/`const` declarations whose initializers have
+     *     no side effects and only read bindings the string itself declares. Everything is
+     *     re-declared as `var`, so evaluating the string in a fresh `node:vm` context re-creates
+     *     them (for resuming a session on a new VM). Function bodies are not analyzed: a replayed
+     *     function that closed over non-replayable state throws when called, not when defined.
      *
      * @example
      * ```js

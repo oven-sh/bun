@@ -375,6 +375,37 @@ describe("Bun.Transpiler replMode", () => {
         expect(result.functions).not.toContain("impure");
       });
 
+      test("declarations reading an excluded binding are excluded too", async () => {
+        const ctx = vm.createContext({ effect: () => 41 });
+        // `a` has a side effect, so `b` (which reads `a` when evaluated) and
+        // `c` (which reads `b`) cannot be replayed; `copy` only reads `ok`.
+        const code = transpiler.transformSync(
+          "const ok = 1; let a = effect(); let b = a; let c = [b]; const copy = ok; b",
+        );
+        const result = await vm.runInContext(code, ctx);
+        expect(result.value).toBe(41);
+        expect(result.variables).toEqual(["ok", "a", "b", "c", "copy"]);
+        expect(result.functions).toContain("var ok = 1");
+        expect(result.functions).toContain("var copy = ok");
+        expect(result.functions).not.toContain("var a =");
+        expect(result.functions).not.toContain("var b =");
+        expect(result.functions).not.toContain("var c =");
+
+        // The whole string evaluates on an empty context.
+        const fresh = vm.createContext({});
+        vm.runInContext(result.functions, fresh);
+        expect(vm.runInContext("copy", fresh)).toBe(1);
+      });
+
+      test("using declarations are never serialized", () => {
+        // With `target: "bun"` a non-null `using` reaches the REPL transform
+        // unlowered; replaying it as a plain `var` would drop its disposal
+        // semantics, so it must not be captured even with a pure initializer.
+        const bunTarget = new Bun.Transpiler({ loader: "tsx", replMode: true, target: "bun" });
+        const code = bunTarget.transformSync("using res = { d: 1 }; 1");
+        expect(code).toContain('functions: ""');
+      });
+
       test("declaration-only input still returns the wrapper", async () => {
         const result = await runRepl("function later() { return 7 }");
         // No completion value, but `value` stays an own property and the

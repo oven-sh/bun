@@ -100,6 +100,19 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         // effects. Printed into the wrapper's `functions` string. Everything is
         // emitted in `var`-persistable form so the string can be replayed as-is.
         let mut serializable_stmts = BumpVec::<Stmt>::new_in(bump);
+        // Symbols the `functions` string itself declares. An initializer is
+        // only replayable if every binding it reads eagerly is in this set;
+        // otherwise the printed source would throw a ReferenceError on a
+        // fresh VM (e.g. `let a = effect(); let b = a` must not emit
+        // `var b = a`). Function declarations are hoisted, so seed them all.
+        let mut admitted_refs = BumpVec::<Ref>::new_in(bump);
+        for stmt in all_stmts.iter() {
+            if let StmtData::SFunction(func) = stmt.data {
+                if let Some(name_loc) = func.func.name {
+                    admitted_refs.push(self.repl_follow_ref(name_loc.ref_));
+                }
+            }
+        }
 
         // Process each statement - hoist all declarations for REPL persistence
         for stmt in all_stmts.iter() {
@@ -131,7 +144,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // `const x = 1` / `let y = [1]` are replayable; re-declare
                     // them as `var` so the printed source persists onto a vm
                     // context just like the REPL evaluation itself does.
-                    if self.repl_local_is_serializable(&local) {
+                    if self.repl_local_is_serializable(&local, &admitted_refs) {
+                        for decl in hoisted_decl_list.iter() {
+                            if let B::B::BIdentifier(ident) = decl.binding.data {
+                                admitted_refs.push(self.repl_follow_ref(ident.r#ref));
+                            }
+                        }
                         let decls: &mut [G::Decl] = bump.alloc_slice_copy(local.decls.slice());
                         serializable_stmts.push(self.s(
                             S::Local {
@@ -247,7 +265,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         let name_ref = name_loc.ref_;
                         repl_push_unique_name(&mut declared_names, self.repl_symbol_name(name_ref));
                         // Must be checked before `class.class` is moved out below.
-                        let is_serializable = self.class_can_be_removed_if_unused(&class.class);
+                        let is_serializable = self.class_can_be_removed_if_unused(&class.class)
+                            && self
+                                .repl_class_eager_refs_are_admitted(&class.class, &admitted_refs);
+                        if is_serializable {
+                            admitted_refs.push(self.repl_follow_ref(name_ref));
+                        }
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -847,10 +870,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             .slice()
     }
 
-    /// Whether every binding and initializer of a `var`/`let`/`const`
-    /// statement is free of side effects, so re-evaluating its printed source
-    /// on a fresh VM is safe.
-    fn repl_local_is_serializable(&mut self, local: &S::Local) -> bool {
+    /// Whether a `var`/`let`/`const` statement can be re-run on a fresh VM:
+    /// not a `using` declaration (replaying one as `var` would drop its
+    /// disposal semantics), every binding and initializer is free of side
+    /// effects, and everything the initializers read eagerly is declared by
+    /// the serialized source itself (`admitted`).
+    fn repl_local_is_serializable(&mut self, local: &S::Local, admitted: &[Ref]) -> bool {
+        if local.kind.is_using() {
+            return false;
+        }
         for decl in local.decls.slice() {
             if !self.binding_can_be_removed_if_unused_without_dce_check(decl.binding) {
                 return false;
@@ -859,9 +887,145 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 if !self.expr_can_be_removed_if_unused_without_dce_check(value) {
                     return false;
                 }
+                if !self.repl_eager_refs_are_admitted(value, admitted) {
+                    return false;
+                }
             }
         }
         true
+    }
+
+    /// Follow symbol links (e.g. merged `var` redeclarations) to the
+    /// canonical `Ref`.
+    fn repl_follow_ref(&self, r#ref: Ref) -> Ref {
+        let mut r#ref = r#ref;
+        let mut symbol = &self.symbols[r#ref.inner_index() as usize];
+        while symbol.has_link() {
+            r#ref = symbol.link.get();
+            symbol = &self.symbols[r#ref.inner_index() as usize];
+        }
+        r#ref
+    }
+
+    /// Whether every identifier `expr` reads when evaluated refers to a
+    /// binding the serialized `functions` source declares itself (`admitted`)
+    /// or to a global, which the replaying context provides. Without this, a
+    /// pure initializer like `let b = a` could reference a sibling that was
+    /// excluded for having side effects and throw a ReferenceError on replay.
+    ///
+    /// Only called on expressions that already passed
+    /// `expr_can_be_removed_if_unused_without_dce_check`, so the variant
+    /// space is the side-effect-free subset; anything else is rejected.
+    /// Function and arrow bodies are skipped: the declaration does not
+    /// evaluate them.
+    fn repl_eager_refs_are_admitted(&self, expr: &Expr, admitted: &[Ref]) -> bool {
+        use js_ast::ExprData;
+        match &expr.data {
+            // No eager identifier reads.
+            ExprData::ENull(_)
+            | ExprData::EUndefined(_)
+            | ExprData::EMissing(_)
+            | ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENumber(_)
+            | ExprData::EBigInt(_)
+            | ExprData::EString(_)
+            | ExprData::EThis(_)
+            | ExprData::ERegExp(_)
+            | ExprData::EImportMeta(_)
+            // Function bodies are deferred, not evaluated by the declaration.
+            | ExprData::EFunction(_)
+            | ExprData::EArrow(_)
+            // Import bindings resolve through the module namespace.
+            | ExprData::EImportIdentifier(_)
+            | ExprData::ECommonjsExportIdentifier(_) => true,
+            ExprData::EIdentifier(ex) => {
+                // Unbound identifiers resolve against the replaying context's
+                // globals, the same way the original evaluation did.
+                self.symbols[ex.ref_.inner_index() as usize].kind
+                    == js_ast::symbol::Kind::Unbound
+                    || admitted.contains(&self.repl_follow_ref(ex.ref_))
+            }
+            ExprData::EInlinedEnum(ex) => self.repl_eager_refs_are_admitted(&ex.value, admitted),
+            ExprData::EDot(ex) => self.repl_eager_refs_are_admitted(&ex.target, admitted),
+            ExprData::ESpread(ex) => self.repl_eager_refs_are_admitted(&ex.value, admitted),
+            ExprData::EClass(ex) => self.repl_class_eager_refs_are_admitted(ex, admitted),
+            ExprData::EIf(ex) => {
+                self.repl_eager_refs_are_admitted(&ex.test_, admitted)
+                    && self.repl_eager_refs_are_admitted(&ex.yes, admitted)
+                    && self.repl_eager_refs_are_admitted(&ex.no, admitted)
+            }
+            ExprData::EArray(ex) => ex
+                .items
+                .slice()
+                .iter()
+                .all(|item| self.repl_eager_refs_are_admitted(item, admitted)),
+            ExprData::EObject(ex) => ex.properties.slice().iter().all(|property| {
+                property
+                    .key
+                    .is_none_or(|key| self.repl_eager_refs_are_admitted(&key, admitted))
+                    && property
+                        .value
+                        .is_none_or(|value| self.repl_eager_refs_are_admitted(&value, admitted))
+            }),
+            ExprData::ETemplate(ex) => {
+                ex.tag.is_none()
+                    && ex
+                        .parts()
+                        .iter()
+                        .all(|part| self.repl_eager_refs_are_admitted(&part.value, admitted))
+            }
+            ExprData::EUnary(ex) => {
+                // `typeof x` never throws, even for an undeclared `x`.
+                (ex.op == js_ast::OpCode::UnTypeof
+                    && matches!(ex.value.data, ExprData::EIdentifier(_)))
+                    || self.repl_eager_refs_are_admitted(&ex.value, admitted)
+            }
+            ExprData::EBinary(ex) => {
+                self.repl_eager_refs_are_admitted(&ex.left, admitted)
+                    && self.repl_eager_refs_are_admitted(&ex.right, admitted)
+            }
+            // `/* @__PURE__ */ f(x)`: the target and arguments are still
+            // evaluated when the declaration runs.
+            ExprData::ECall(ex) => {
+                self.repl_eager_refs_are_admitted(&ex.target, admitted)
+                    && ex
+                        .args
+                        .slice()
+                        .iter()
+                        .all(|arg| self.repl_eager_refs_are_admitted(arg, admitted))
+            }
+            ExprData::ENew(ex) => {
+                self.repl_eager_refs_are_admitted(&ex.target, admitted)
+                    && ex
+                        .args
+                        .slice()
+                        .iter()
+                        .all(|arg| self.repl_eager_refs_are_admitted(arg, admitted))
+            }
+            _ => false,
+        }
+    }
+
+    /// `repl_eager_refs_are_admitted` for a class body: `extends`, computed
+    /// keys, and field initializers all run when the declaration is evaluated.
+    fn repl_class_eager_refs_are_admitted(&self, class: &G::Class, admitted: &[Ref]) -> bool {
+        if let Some(extends) = &class.extends {
+            if !self.repl_eager_refs_are_admitted(extends, admitted) {
+                return false;
+            }
+        }
+        class.properties.iter().all(|property| {
+            property
+                .key
+                .is_none_or(|key| self.repl_eager_refs_are_admitted(&key, admitted))
+                && property
+                    .value
+                    .is_none_or(|value| self.repl_eager_refs_are_admitted(&value, admitted))
+                && property
+                    .initializer
+                    .is_none_or(|init| self.repl_eager_refs_are_admitted(&init, admitted))
+        })
     }
 
     /// Create the `{ __proto__: null, value, variables, functions }` result

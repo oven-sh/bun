@@ -66,9 +66,10 @@ pub struct Ast<'a> {
 
     /// REPL mode only (`ParserOptions.repl_mode`): the statements whose printed
     /// source becomes the `functions` string of the REPL result wrapper, plus
-    /// the `E::String` slot inside that wrapper to write it into. Filled in by
-    /// `js_printer::print_ast` right before the main print pass, because only
-    /// the printer owns a renamer over the symbol table.
+    /// the `E::String` slot inside that wrapper to write it into. Set by the
+    /// parser's REPL transform (`P::to_ast`); `js_printer::print_ast` then
+    /// prints `stmts` into the `string_expr` slot right before the main print
+    /// pass, because only the printer has a renamer over the symbol table.
     pub repl_functions: Option<ReplFunctions>,
 
     // `hashbang`/`directive` are slices into source text. `StoreStr` records

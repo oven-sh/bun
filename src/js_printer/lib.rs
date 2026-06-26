@@ -7798,7 +7798,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 /// parser's REPL transform) and store the source in the `functions` string of
 /// the REPL result wrapper, so the tree's own print pass emits it as a string
 /// literal. Borrows `symbols` through its own short-lived `NoOpRenamer` and
-/// hands them back for the main pass. On error the literal stays empty.
+/// hands them back for the main pass.
 fn print_repl_functions_source<'a, const ASCII_ONLY: bool>(
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
@@ -7806,9 +7806,9 @@ fn print_repl_functions_source<'a, const ASCII_ONLY: bool>(
     source: &'a bun_ast::Source,
     opts: &Options<'a>,
     repl_functions: &bun_ast::ast_result::ReplFunctions,
-) -> js_ast::symbol::Map {
+) -> Result<js_ast::symbol::Map, bun_core::Error> {
     let Some(mut slot) = repl_functions.string_expr.data.e_string() else {
-        return symbols;
+        return Ok(symbols);
     };
     // `NoOpRenamer` owns its `Map` and a `Printer` pins that borrow, so the
     // map could not be handed back for the main pass. Instead the sub-pass
@@ -7842,7 +7842,6 @@ fn print_repl_functions_source<'a, const ASCII_ONLY: bool>(
         tree,
     );
     let mut buffer_printer = BufferPrinter::init(BufferWriter::init());
-    let mut printed = true;
     {
         let mut printer =
             Printer::<&mut BufferPrinter, ASCII_ONLY, false, ASCII_ONLY, false, false>::init(
@@ -7854,24 +7853,14 @@ fn print_repl_functions_source<'a, const ASCII_ONLY: bool>(
                 source_map_builder,
             );
         for stmt in repl_functions.stmts.slice() {
-            if printer
-                .print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))
-                .is_err()
-                || printer.writer.get_error().is_err()
-            {
-                printed = false;
-                break;
-            }
+            printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
+            printer.writer.get_error()?;
             printer.print_semicolon_if_needed();
         }
-        if printed && printer.writer.done().is_err() {
-            printed = false;
-        }
+        printer.writer.done()?;
     }
-    if printed {
-        slot.data = bun_ast::StoreStr::new(bump.alloc_slice_copy(buffer_printer.ctx.get_written()));
-    }
-    symbols
+    slot.data = bun_ast::StoreStr::new(bump.alloc_slice_copy(buffer_printer.ctx.get_written()));
+    Ok(symbols)
 }
 
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
@@ -7897,7 +7886,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             source,
             &opts,
             repl_functions,
-        ),
+        )?,
         None => symbols,
     };
 

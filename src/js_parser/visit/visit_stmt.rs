@@ -455,7 +455,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if data.default_name.ref_.is_source_contents_slice() {
+                if !data.default_name.ref_.is_symbol() {
                     data.default_name = p.create_default_name(expr.loc).expect("unreachable");
                 }
 
@@ -611,7 +611,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Ok(());
                         }
 
-                        if data.default_name.ref_.is_source_contents_slice() {
+                        if !data.default_name.ref_.is_symbol() {
                             data.default_name =
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
@@ -806,7 +806,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        if data.default_name.ref_.is_source_contents_slice() {
+                        if !data.default_name.ref_.is_symbol() {
                             data.default_name =
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }

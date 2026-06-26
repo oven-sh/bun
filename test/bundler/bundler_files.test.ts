@@ -583,10 +583,8 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
-  // The debug assertion that file-namespace paths are absolute does not apply
-  // to FileMap keys, which are user-supplied lookup identities and may be
-  // relative. Run in a subprocess so a regression (assertion panic in the
-  // bundle thread) fails this test instead of taking down the runner.
+  // FileMap keys are user-supplied identities and may be relative; run in a
+  // subprocess so an assertion panic fails the test instead of killing the runner.
   test.each(["./e.js", "e.js", "./src/e.js"])(
     "relative key %j as entry point does not trip the absolute-path assertion",
     async key => {

@@ -382,8 +382,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
         }
     case POLL_TYPE_SEMI_SOCKET: {
             /* Both connect and listen sockets are semi-sockets
-             * but they poll for different events */
-            if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
+             * but they poll for different events. A connecting socket starts
+             * out polling WRITABLE only, but a write issued before the connect
+             * completes (the kernel buffers it) can partial-write and call
+             * us_poll_change(R|W) from us_socket_write*. Test the WRITABLE bit
+             * rather than exact equality so the connect-complete is still
+             * recognized; listen sockets only ever poll READABLE. */
+            if (us_poll_events(p) & LIBUS_SOCKET_WRITABLE) {
                 /* The connecting fd became writable with an error/HUP flag also
                  * set: the handshake may have completed and then been reset
                  * before we collected the event. Report the kernel's actual
@@ -698,8 +703,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (error && s) {
                 /* Peer-initiated error event — same rationale as the recv-error
                  * branch above: bypass us_internal_ssl_close so on_handshake
-                 * isn't fired for a passive close. */
-                s = us_internal_socket_close_raw(s, error, NULL);
+                 * isn't fired for a passive close. The poll flag only says THAT
+                 * the socket failed; fetch the real errno (like the connect-error
+                 * path) so the close code is ECONNRESET and not a poll bit that
+                 * callers would either misread as an errno or drop entirely.
+                 * Values 0..2 collide with the libus CloseCode enum that JS
+                 * filters out as self-initiated; SO_ERROR can't be EPERM/ENOENT
+                 * for an established TCP socket, so clamp them defensively. */
+                int socket_error = us_socket_get_error(s);
+                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : ECONNRESET, NULL);
                 return;
             }
             break;

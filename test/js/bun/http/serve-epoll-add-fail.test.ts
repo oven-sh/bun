@@ -117,7 +117,7 @@ try {
   console.log(JSON.stringify({ settled: "resolved" }));
   sock.end();
 } catch (e) {
-  console.log(JSON.stringify({ settled: "rejected", code: e?.code, errno: e?.errno, message: String(e?.message ?? e) }));
+  console.log(JSON.stringify({ settled: "rejected", code: e?.code, errno: e?.errno, syscall: e?.syscall, message: String(e?.message ?? e) }));
 } finally {
   server.stop(true);
 }
@@ -282,7 +282,15 @@ test.skipIf(!isLinux || !cc)(
     const line = stdout.trim().split("\n").pop() ?? "";
     expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
     const result = JSON.parse(line);
-    expect(result.settled).toBe("rejected");
+    // Synchronous NULL from us_socket_group_connect → do_connect() Err →
+    // handle_connect_error remaps the errno and rejects with syscall "connect".
+    expect(result).toEqual({
+      settled: "rejected",
+      code: "ECONNREFUSED",
+      errno: -111,
+      syscall: "connect",
+      message: expect.any(String),
+    });
     expect(exitCode).toBe(0);
   },
 );

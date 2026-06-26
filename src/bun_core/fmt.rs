@@ -1319,10 +1319,15 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
             let i = i as usize;
             let byte = self_[i];
             if byte > 0x7F {
-                let seq_len = (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
-                let next = (i + seq_len).min(end as usize);
-                write_bytes(writer, &self_[offset..next])?;
-                offset = next;
+                let seq_len = strings::wtf8_byte_sequence_length(byte) as usize;
+                if i + seq_len > end as usize {
+                    // Truncated trailing sequence; emit the pending ASCII and stop
+                    // rather than hand an invalid slice to from_utf8_unchecked.
+                    write_bytes(writer, &self_[offset..i])?;
+                    break;
+                }
+                write_bytes(writer, &self_[offset..i + seq_len])?;
+                offset = i + seq_len;
                 continue;
             }
             if i > 0 {

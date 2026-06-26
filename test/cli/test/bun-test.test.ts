@@ -620,7 +620,8 @@ describe("bun test", () => {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: hello é world::/m);
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(/^::error file=.*,line=\d+,col=\d+,title=error: hello é world::%0A {6}at /);
     });
     test("should annotate an error message containing emoji and newlines", () => {
       const stderr = runTest({
@@ -635,7 +636,10 @@ describe("bun test", () => {
           GITHUB_ACTIONS: "true",
         },
       });
-      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::/m);
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(
+        /^::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::second 😋 line%0A {6}at /,
+      );
     });
     test("should annotate a test timeout", () => {
       const stderr = runTest({

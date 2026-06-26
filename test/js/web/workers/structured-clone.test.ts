@@ -426,6 +426,21 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       expect(d[1].self).toBe(d[1]);
     });
 
+    // https://github.com/oven-sh/bun/issues/16547
+    test("a TypedArray and DataView sharing an ArrayBuffer, after a BigInt", () => {
+      const bf = new ArrayBuffer(128);
+      const typed = new Int32Array(bf);
+      typed[0] = 0x1234;
+      const dataview = new DataView(bf);
+      const c = structuredCloneFn({ bigint: 123456789n, bf, typed, dataview });
+      expect(c.bigint).toBe(123456789n);
+      expect(c.typed).toBeInstanceOf(Int32Array);
+      expect(c.typed[0]).toBe(0x1234);
+      expect(c.typed.length).toBe(32);
+      expect(c.typed.buffer).toBe(c.bf);
+      expect(c.dataview.buffer).toBe(c.bf);
+    });
+
     test("a duplicated BigInt object keeps its identity", () => {
       const b = Object(5n);
       const c = structuredCloneFn([b, b]);

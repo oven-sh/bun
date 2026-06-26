@@ -88,6 +88,15 @@ describe("Bun.file in serve routes", () => {
         return new Response(f);
       },
       "/slice-escape": () => new Response(Bun.file(join(tempDir, "bytes256.bin")).slice(0, 100)),
+      // A Bun.file().slice() returned from a function route is the whole HTTP
+      // entity: GET must be a 200 whose Content-Length is the slice's length
+      // (no server-invented 206 / Content-Range), and HEAD must report the
+      // same framing as GET.
+      "/slice-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10)),
+      "/slice-zero-offset-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(0, 4)),
+      "/slice-open-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(5)),
+      "/slice-past-eof-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(12, 99)),
+      "/slice-empty-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 5)),
       "/range-custom-headers": () =>
         new Response(Bun.file(join(tempDir, "partial.txt")), {
           headers: { "Cache-Control": "max-age=3600", "X-Custom": "abc" },
@@ -755,11 +764,63 @@ describe("Bun.file in serve routes", () => {
     it("Range header cannot escape a Bun.file().slice(0, n) window via fetch handler", async () => {
       const res = await fetch(new URL("/slice-escape", server.url), { headers: { Range: "bytes=200-220" } });
       const bytes = new Uint8Array(await res.arrayBuffer());
-      // Range must be ignored for sliced blobs: serve the 100-byte slice, never bytes 200-220.
+      // Range is ignored for sliced blobs: the slice is the whole entity, so
+      // serve it as a plain 200, never bytes 200-220 and never a
+      // server-invented 206 + Content-Range.
       expect(bytes.length).toBe(100);
       expect(bytes[0]).toBe(0);
       expect(bytes[99]).toBe(99);
-      expect(res.headers.get("content-range")).not.toContain("/256");
+      expect(res.headers.get("content-range")).toBeNull();
+      expect(res.status).toBe(200);
+    });
+  });
+
+  // RFC 9110: without a client Range header the response is a 200 whose
+  // entity is the body the handler returned. A Bun.file().slice() body must
+  // not leak its internal offset as a 206 + Content-Range, and HEAD (§9.3.2)
+  // must report the same status and Content-Length that GET would.
+  describe.concurrent("Bun.file().slice() via fetch handler is the entity", () => {
+    it.each([
+      ["/slice-handler", "56789"],
+      ["/slice-zero-offset-handler", "0123"],
+      ["/slice-open-handler", "56789ABCDEF"],
+      ["/slice-past-eof-handler", "CDEF"],
+    ])("GET and HEAD agree on %s", async (path, body) => {
+      const expected = {
+        status: 200,
+        contentLength: String(body.length),
+        contentRange: null,
+      };
+
+      const get = await fetch(new URL(path, server.url));
+      const text = await get.text();
+      expect({
+        status: get.status,
+        contentLength: get.headers.get("content-length"),
+        contentRange: get.headers.get("content-range"),
+        body: text,
+      }).toEqual({ ...expected, body });
+
+      const head = await fetch(new URL(path, server.url), { method: "HEAD" });
+      expect(await head.text()).toBe("");
+      expect({
+        status: head.status,
+        contentLength: head.headers.get("content-length"),
+        contentRange: head.headers.get("content-range"),
+      }).toEqual(expected);
+    });
+
+    it("empty slice: GET is a 204 with no Content-Range", async () => {
+      const res = await fetch(new URL("/slice-empty-handler", server.url));
+      expect(await res.text()).toBe("");
+      expect(res.headers.get("content-range")).toBeNull();
+      expect(res.status).toBe(204);
+    });
+
+    it("empty slice: HEAD reports Content-Length 0", async () => {
+      const res = await fetch(new URL("/slice-empty-handler", server.url), { method: "HEAD" });
+      expect(res.headers.get("content-length")).toBe("0");
+      expect(res.headers.get("content-range")).toBeNull();
     });
   });
 });

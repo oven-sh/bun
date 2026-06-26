@@ -1764,30 +1764,18 @@ where
             AnyBlob::Blob(b) => b.size.get(),
             _ => unreachable!(),
         };
-        let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
-        if let AnyBlob::Blob(b) = &mut self.blob {
-            b.size.set(if is_regular {
-                stat_size
-            } else {
-                original_size.min(stat_size)
-            });
-        }
-
-        self.flags.set_needs_content_length(true);
         let blob_offset = match &self.blob {
             AnyBlob::Blob(b) => b.offset.get(),
             _ => unreachable!(),
         };
+        let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
+
+        self.flags.set_needs_content_length(true);
         self.sendfile = SendfileContext {
             remain: blob_offset + original_size,
             offset: blob_offset,
             total: 0,
         };
-        if is_regular && auto_close {
-            self.flags.set_needs_content_range(
-                self.sendfile.remain.saturating_sub(self.sendfile.offset) != stat_size,
-            );
-        }
         if is_regular {
             self.sendfile.offset = self.sendfile.offset.min(stat_size);
             self.sendfile.remain = self
@@ -1797,17 +1785,31 @@ where
                 .min(stat_size)
                 .saturating_sub(self.sendfile.offset);
         }
+        // Resolve the blob's size now that the file is stat'd. For a regular
+        // file the clamped `sendfile.remain` is exactly the byte count we will
+        // send, which is the HTTP entity length. In particular a `.slice()`
+        // keeps its own length rather than inheriting the whole file's, so
+        // `render_metadata` frames it as a plain 200 instead of inventing a
+        // 206 + Content-Range the client never asked for.
+        if let AnyBlob::Blob(b) = &mut self.blob {
+            b.size.set(if is_regular {
+                self.sendfile.remain
+            } else {
+                original_size.min(stat_size)
+            });
+        }
 
         // Honor an incoming Range: header for whole-file responses. We
         // don't compose Range with a user-supplied .slice() because the
-        // Content-Range arithmetic gets ambiguous; the slice path keeps
-        // its existing slice-as-range behavior. `offset == 0` alone is
-        // insufficient — `Bun.file(p).slice(0, n)` has offset 0 — so we
-        // also check the size: an unsliced blob has either the unset-size
-        // sentinel or, if JS already read `.size`, the stat'd size; a
-        // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
-        // already set Content-Range or a non-200 status — they're
-        // managing partial responses themselves.
+        // Content-Range arithmetic gets ambiguous; a sliced body ignores
+        // the Range header and is served as a plain 200 whose entity is
+        // the slice. `offset == 0` alone is insufficient —
+        // `Bun.file(p).slice(0, n)` has offset 0 — so we also check the
+        // size: an unsliced blob has either the unset-size sentinel or,
+        // if JS already read `.size`, the stat'd size; a `.slice(0, n)`
+        // blob has `n < stat_size`. Skip if the user already set
+        // Content-Range or a non-200 status — they're managing partial
+        // responses themselves.
         let user_handles_range = if let Some(r) = self.response_weakref.get() {
             r.status_code() != 200
                 || r.get_init_headers_mut()
@@ -3486,14 +3488,21 @@ where
         // an async hop keep the Response rooted via response_protected.
         let response: &mut Response = self.response_weakref.get().unwrap();
         let mut status = response.status_code();
-        let mut needs_content_range = self.flags.needs_content_range()
-            && (self.sendfile.total > 0 || self.sendfile.remain < self.blob.size());
+        // Set only when `do_sendfile` resolved an incoming `Range:` header to
+        // a satisfiable range. A `.slice()` body is never a partial response:
+        // the slice is the whole entity, and `do_sendfile` resolves the blob
+        // size to the slice's length so Content-Length describes it directly.
+        let needs_content_range = self.flags.needs_content_range();
 
         let size = if needs_content_range {
             self.sendfile.remain
         } else {
             self.blob.size()
         };
+
+        if needs_content_range {
+            status = 206;
+        }
 
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), &self.blob);
@@ -3503,32 +3512,20 @@ where
             // Drop of `content_type` (moved into closure capture below would
             // change borrow lifetimes); rely on natural end-of-scope drop.
         });
+        // Take the headers out before `do_write_status` borrows `self` so the
+        // `response` reference (which also borrows `self`) is no longer live.
+        // The status line must still hit the wire before any header.
+        let headers = response.swap_init_headers();
+        self.do_write_status(status);
         let mut has_content_disposition = false;
-        let mut has_content_range = false;
-        if let Some(mut headers_) = response.swap_init_headers() {
+        if let Some(mut headers_) = headers {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
-            has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
-            // For .slice()-driven ranges, only promote to 206 if the user
-            // also set Content-Range (preserves the old contract). For an
-            // incoming Range: header (sendfile.total > 0) we always 206.
-            needs_content_range =
-                needs_content_range && (self.sendfile.total > 0 || has_content_range);
-            if needs_content_range {
-                status = 206;
-            }
-
-            self.do_write_status(status);
             self.do_write_headers(&mut headers_);
             // `HeadersRef` is RAII — its Drop
             // already calls `WebCore__FetchHeaders__deref`, so an explicit
             // `.deref()` here would resolve (via DerefMut) to the inherent
             // `FetchHeaders::deref` and double-free the C++ object.
             drop(headers_);
-        } else if needs_content_range {
-            status = 206;
-            self.do_write_status(status);
-        } else {
-            self.do_write_status(status);
         }
 
         if let Some(mut cookies) = self.cookies.take() {
@@ -3604,25 +3601,21 @@ where
             self.flags.set_needs_content_length(false);
         }
 
-        if needs_content_range && !has_content_range {
+        if needs_content_range {
             let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
             let end = self.sendfile.offset + self.sendfile.remain.saturating_sub(1);
-            // `total > 0` ⇒ we resolved an incoming Range header against the
-            // stat'd size, so the full size is meaningful. Otherwise this is a
-            // `.slice()`-driven range — omit the full size (it can change
-            // between requests and may leak PII).
+            // `sendfile.total` is the stat'd size the incoming Range header
+            // was resolved against, so the full size is always meaningful.
             let header_value = RangeRequest::format_content_range(
                 &mut crbuf,
                 RangeRequest::Result::Satisfiable {
                     start: self.sendfile.offset,
                     end,
                 },
-                (self.sendfile.total > 0).then_some(self.sendfile.total),
+                Some(self.sendfile.total),
             );
             resp.write_header(b"content-range", header_value);
-            if self.sendfile.total > 0 {
-                resp.write_header(b"accept-ranges", b"bytes");
-            }
+            resp.write_header(b"accept-ranges", b"bytes");
             self.flags.set_needs_content_range(false);
         }
     }

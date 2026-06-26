@@ -1,6 +1,7 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import path from "node:path";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -145,6 +146,30 @@ describe("structuredClone with Blob and File", () => {
       const roundTripped = deserialize(serialize(slice));
       expect(roundTripped.size).toBe(7);
       expect(await roundTripped.text()).toBe("PAYLOAD");
+    });
+
+    // File-backed sibling of the test above. The wire format carries the
+    // file path and the slice's offset; without the slice's length the clone
+    // widens to the rest of the file (156 of the 256 bytes below).
+    test("sliced Bun.file() round-trips its offset and length", async () => {
+      // byte[i] === i, so an out-of-window read is distinguishable from a length bug.
+      using dir = tempDir("structured-clone-file-slice", {
+        "f.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
+      });
+      const expected = new Uint8Array(Array.from({ length: 100 }, (_, i) => 100 + i));
+      const slice = Bun.file(path.join(String(dir), "f.bin")).slice(100, 200);
+
+      const cloned = structuredClone(slice);
+      expect(cloned.size).toBe(100);
+      expect(new Uint8Array(await cloned.arrayBuffer())).toEqual(expected);
+
+      const roundTripped = deserialize(serialize(slice));
+      expect(roundTripped.size).toBe(100);
+      expect(new Uint8Array(await roundTripped.arrayBuffer())).toEqual(expected);
+
+      // Serializing must not mutate the live source slice.
+      expect(slice.size).toBe(100);
+      expect(new Uint8Array(await slice.arrayBuffer())).toEqual(expected);
     });
   });
 

@@ -133,6 +133,40 @@ test
     });
   });
 
+// do_connect's other connect path: once a client has connected (so
+// needs_to_open_socket is false), a later .connect() routes through
+// reconnect(). Its synchronous connect() failure used to be swallowed into the
+// onclose callback, leaving the cached connectionPromise pending forever, so
+// .connect() hung and every later .connect() returned the same stale promise.
+test.skipIf(isWindows).concurrent("connect() rejects when a synchronous reconnect attempt fails", async () => {
+  const { stdout, exitCode, signalCode } = await run(
+    "vk-reconnect",
+    /* ts */ `
+        import { RedisClient } from "bun";
+        import { join } from "node:path";
+        import { listenRespOk } from "./server.ts";
+        const sock = join(import.meta.dir, "s");
+        // Connect successfully first so the next connect() takes the
+        // reconnect() path rather than the needs_to_open_socket one.
+        const server = listenRespOk(sock);
+        const client = new RedisClient(\`redis+unix://\${sock}\`, { autoReconnect: false });
+        const first = await client.connect().then((v) => v, (e) => e?.code);
+        // Drop the server and wait for the client to observe the close.
+        server.stop(true);
+        while (client.connected) await new Promise((r) => setImmediate(r));
+        // Nothing listens at \`sock\` anymore: connect(2) fails synchronously
+        // inside reconnect(), and the promise must still settle.
+        const second = await client.connect().then(() => "resolved", (e) => e?.code);
+        console.log(JSON.stringify({ first, second }));
+      `,
+  );
+  expect({ stdout, exitCode, signalCode }).toEqual({
+    stdout: JSON.stringify({ first: "OK", second: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION" }),
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // on_valkey_close also re-reads the cached connectionPromise. close() while a
 // later attempt is still mid-connect rejects the stale promise a second time
 // (the JSC__JSPromise__reject half of the assertion).

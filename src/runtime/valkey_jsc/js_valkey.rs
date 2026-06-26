@@ -998,19 +998,7 @@ impl JSValkeyClient {
 
             if let Err(err) = self.connect() {
                 self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
-                self.client_mut().flags.needs_to_open_socket = true;
-                // Clear the cached slot before settling, like on_valkey_connect and
-                // on_valkey_close do. A stale settled promise here gets settled again
-                // by those paths, and a later connect() returns it instead of retrying.
-                Js::connection_promise_set_cached(this_value, global_object, JSValue::ZERO);
-                let err_value = global_object
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!(" {} connecting to Valkey", err.name()),
-                    )
-                    .to_js();
-                let _exit = self.vm().enter_event_loop_scope();
-                promise_ptr.reject(global_object, Ok(err_value))?;
+                self.reject_connection_promise(global_object, this_value, &mut *promise_ptr, err)?;
                 return Ok(promise);
             }
 
@@ -1022,12 +1010,40 @@ impl JSValkeyClient {
             valkey::Status::Disconnected => {
                 self.client_mut().flags.is_reconnecting = true;
                 self.client_mut().retry_attempts = 0;
-                self.reconnect();
+                if let Err(err) = self.reconnect() {
+                    // reconnect() reported the failure through the onclose callback but
+                    // never started a socket, so no event would ever settle the promise.
+                    self.client_mut().flags.is_reconnecting = false;
+                    self.reject_connection_promise(global_object, this_value, promise_ptr, err)?;
+                }
             }
             _ => {}
         }
 
         Ok(promise)
+    }
+
+    /// A synchronous connect() failure inside do_connect means no socket event
+    /// will ever settle the promise it just cached; clear the slot and reject
+    /// here, the same way on_valkey_connect and on_valkey_close settle it.
+    fn reject_connection_promise(
+        &self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        promise_ptr: &mut JSPromise,
+        err: bun_core::Error,
+    ) -> JsResult<()> {
+        self.client_mut().flags.needs_to_open_socket = true;
+        Js::connection_promise_set_cached(this_value, global_object, JSValue::ZERO);
+        let err_value = global_object
+            .err(
+                jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
+                format_args!(" {} connecting to Valkey", err.name()),
+            )
+            .to_js();
+        let _exit = self.vm().enter_event_loop_scope();
+        promise_ptr.reject(global_object, Ok(err_value))?;
+        Ok(())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1210,18 +1226,21 @@ impl JSValkeyClient {
         // remains live past this call.
         unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
 
-        // Execute reconnection logic
-        self.reconnect();
+        // Execute reconnection logic. The onclose callback already fired inside
+        // reconnect(); there is no promise to settle on the timer path.
+        let _ = self.reconnect();
     }
 
-    pub fn reconnect(&self) {
+    /// Returns the error when `connect()` fails synchronously, so `do_connect`
+    /// can settle the connection promise it cached (nothing else will).
+    pub fn reconnect(&self) -> Result<(), bun_core::Error> {
         if !self.client.get().flags.is_reconnecting {
-            return;
+            return Ok(());
         }
 
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
-            return;
+            return Ok(());
         }
 
         // Ref to keep this alive during the reconnection
@@ -1245,11 +1264,12 @@ impl JSValkeyClient {
                     .to_js(),
             );
             self.poll_ref.with_mut(|r| r.disable());
-            return;
+            return Err(err);
         }
 
         // Reset the socket timeout
         self.reset_connection_timeout();
+        Ok(())
     }
 
     // Callback for when Valkey client connects

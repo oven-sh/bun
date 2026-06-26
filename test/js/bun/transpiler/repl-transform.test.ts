@@ -328,6 +328,11 @@ describe("Bun.Transpiler replMode", () => {
         expect(code).toMatch(/variables: \["def",\s*"a",\s*"c",\s*"ns"\]/);
       });
 
+      test("default + namespace import lists names in source order", () => {
+        const code = transpiler.transformSync('import def, * as ns from "mod"');
+        expect(code).toMatch(/variables: \["def",\s*"ns"\]/);
+      });
+
       test("expression statements declare nothing", async () => {
         const result = await runRepl("1 + 2");
         expect(result).toEqual({ value: 3, variables: [], functions: "" });

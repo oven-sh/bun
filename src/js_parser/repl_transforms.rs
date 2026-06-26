@@ -347,19 +347,21 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[bun_ast::ClauseItem] = import_data.items.slice();
 
-                    // Record the names this import binds in the REPL context.
-                    // The synthesized namespace ref for named imports is
-                    // internal, so only `import * as X` reports `namespace_ref`.
-                    if !import_data.star_name_loc.is_empty() {
-                        repl_push_unique_name(
-                            &mut declared_names,
-                            self.repl_symbol_name(import_data.namespace_ref),
-                        );
-                    }
+                    // Record the names this import binds in the REPL context,
+                    // in grammar order: the default binding always precedes a
+                    // namespace or named clause. The synthesized namespace ref
+                    // for named imports is internal, so only `import * as X`
+                    // reports `namespace_ref`.
                     if let Some(default_name) = import_data.default_name {
                         repl_push_unique_name(
                             &mut declared_names,
                             self.repl_symbol_name(default_name.ref_),
+                        );
+                    }
+                    if !import_data.star_name_loc.is_empty() {
+                        repl_push_unique_name(
+                            &mut declared_names,
+                            self.repl_symbol_name(import_data.namespace_ref),
                         );
                     }
                     for item in import_items {

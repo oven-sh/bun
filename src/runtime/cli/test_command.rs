@@ -3048,6 +3048,41 @@ impl TestCommand {
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
+    /// `--bail` threshold reached on a file that failed to load (rejected, or
+    /// a top-level await that can never settle): print the summary, write the
+    /// JUnit report if requested, release per-file runner state, and exit.
+    fn bail_after_load_failure(
+        reporter: &mut CommandLineReporter,
+        vm: &mut VirtualMachine,
+        bun_test_root_ptr: *mut bun_test::BunTestRoot,
+    ) -> ! {
+        reporter.print_summary();
+        pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            reporter.jest.bail,
+            if reporter.jest.bail == 1 { "" } else { "s" }
+        );
+        reporter.write_junit_report_if_needed();
+
+        vm.exit_handler.exit_code = 1;
+        vm.is_shutting_down = true;
+        // `global_exit()` diverges, so the caller's `exit_file()` defer never
+        // fires. Release the active file's `Strong`s and the preload-hook
+        // scope here so `destructOnExit()`'s `collectNow()` can reclaim them,
+        // then clear `RUNNER` so finalizers can't observe a partially-torn-down
+        // `TestRunner`.
+        // SAFETY: single-threaded; raw-ptr reborrow mirrors the caller's
+        // `exit_file()` defer escape.
+        unsafe {
+            (*bun_test_root_ptr).deinit_for_exit();
+            jest::Jest::RUNNER.write(None);
+        }
+        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
+        // SAFETY: global_exit diverges; `vm_ptr` is a fresh raw-ptr reborrow
+        // of the exclusive `vm` borrow.
+        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) }
+    }
+
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
@@ -3173,32 +3208,7 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                        Self::bail_after_load_failure(reporter, vm, bun_test_root_ptr);
                     }
 
                     return Ok(());
@@ -3229,32 +3239,7 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                        Self::bail_after_load_failure(reporter, vm, bun_test_root_ptr);
                     }
 
                     return Ok(());

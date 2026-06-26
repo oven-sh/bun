@@ -1389,8 +1389,9 @@ where
 
         // if have sink, call onAborted on sink
         if let Some(sink_ptr) = this.sink {
-            // Aborting the sink fires the stream's JS onClose through its signal.
-            any_js_calls.set(true);
+            // Do not set `any_js_calls` here: draining microtasks from inside the
+            // uWS abort/timeout callback runs arbitrary JS while uSockets iterates
+            // its socket lists; the sink's teardown drains at the next checkpoint.
             // SAFETY: `sink_ptr` is the live JSSink allocated by do_render_stream
             // (repr(transparent) over the sink). `abort` takes the raw pointer
             // because the teardown it can re-enter frees the sink.

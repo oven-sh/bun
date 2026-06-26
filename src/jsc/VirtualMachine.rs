@@ -6247,14 +6247,11 @@ impl VirtualMachine {
             let message_slice = message.to_utf8();
             let msg = message_slice.slice();
             let mut cursor: u32 = 0;
-            let mut printed_first_line = false;
             if let Some(i) = bun_core::strings::index_of_char(msg, b'\n') {
                 cursor = i + 1;
                 let first_line = bun_core::String::borrow_utf8(&msg[..i as usize]);
                 let _ = write!(writer, ": {}::", first_line.github_action());
-                printed_first_line = true;
-            }
-            if !printed_first_line {
+            } else {
                 let _ = write!(writer, ": {}::", message.github_action());
             }
             // Skip past the next newline.

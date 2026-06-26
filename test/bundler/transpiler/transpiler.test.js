@@ -305,11 +305,9 @@ describe("Bun.Transpiler", () => {
     });
 
     it("reports a parse error for a truncated class-in-extends without tripping the scope-order assert", async () => {
-      // lexer.expect() logs and continues on a token mismatch, so an unterminated
-      // class expression in the extends clause and the outer class both push a
-      // ClassBody scope at the same EOF location during error recovery. Run in a
-      // subprocess so the debug-only scope-order assert surfaces as a test failure
-      // instead of taking down the runner.
+      // An unterminated class-in-extends pushes two ClassBody scopes at the same
+      // EOF loc during error recovery. Run in a subprocess so the debug-only
+      // scope-order assert surfaces as a test failure instead of killing the runner.
       const cases = {
         "class o extends class": 'Expected "{" but found end of file',
         "(class extends class": 'Expected "{" but found end of file',

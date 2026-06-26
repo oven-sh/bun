@@ -2204,6 +2204,20 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
     });
 
+    it("import with separator-only or trailing-separator path", () => {
+      // PathName::init used to leave the full input in `base` when the path was
+      // entirely separators (or had only trailing separators after the basename),
+      // tripping a debug assertion when deriving the namespace symbol name.
+      expectPrinted_(`import "/"`, `import"/"`);
+      expectPrinted_(`import "//"`, `import"//"`);
+      expectPrinted_(`import "///"`, `import"///"`);
+      expectPrinted_(`import "foo//"`, `import"foo//"`);
+      expectPrinted_(`import "foo///"`, `import"foo///"`);
+      expectPrinted_(`export * from "/"`, `export * from "/"`);
+      expectPrinted_(`export * from "foo//"`, `export * from "foo//"`);
+      expectPrinted_(`export { a } from "/"`, `export { a } from "/"`);
+    });
+
     it("string quote selection", () => {
       expectPrinted_(`console.log("\\n")`, "console.log(`\n`)");
       expectPrinted_(`console.log("\\"")`, `console.log('"')`);

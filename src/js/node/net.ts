@@ -731,8 +731,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const handle = self._handle || socket.listener;
     if (handle && typeof handle.onconnection === "function") {
       handle.onconnection(0, socket);
+    } else {
+      // Only the standalone wrap lands here, where `self` is the wrapping
+      // Socket (never a Server) and so the only receiver that can hold this.
+      self[kflushPendingDuplexTLS]?.();
     }
-    self[kflushPendingDuplexTLS]?.();
   },
   handshake(socket, success, verifyError) {
     const self = socket.data;

@@ -2230,17 +2230,18 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
     });
     // A frame taller than the terminal would scroll its top out of the
     // cursor-up erase's reach on every repaint. On a 12-row terminal the
-    // one pane's header, elided line, and footer take 3 rows, so its
-    // height shrinks from the default 10 to 9.
+    // one pane's header, elided line, and footer take 3 rows, and the
+    // frame's trailing newline needs a resting row, so its height
+    // shrinks from the default 10 to 8 (12 - 1 - 3).
     const { raw, exitCode } = await runOnPty(["run", "--parallel", "many"], String(dir), allDone(1), {
       cols: 100,
       rows: 12,
     });
     const frame = lastFrame(raw);
-    // 20 lines into a 9-row pty: the bottom row holds the resting
-    // cursor, so 8 lines are visible and 12 are in scrollback.
-    expect(frame).toContain("│ [12 lines elided]");
-    expect(frame.match(/^│ row-\d+$/gm)).toEqual(Array.from({ length: 8 }, (_, i) => `│ row-${i + 12}`));
+    // 20 lines into an 8-row pty: the bottom row holds the resting
+    // cursor, so 7 lines are visible and 13 are in scrollback.
+    expect(frame).toContain("│ [13 lines elided]");
+    expect(frame.match(/^│ row-\d+$/gm)).toEqual(Array.from({ length: 7 }, (_, i) => `│ row-${i + 13}`));
     expect(exitCode).toBe(0);
   });
 

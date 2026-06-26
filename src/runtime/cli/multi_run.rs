@@ -445,6 +445,9 @@ impl Panes {
         // tasks even 1-row panes cannot fit; `last_lines_written` is then
         // capped to the reachable height in `redraw`.
         let fits = usize::from(winsize.row)
+            // A frame of exactly `term_rows` newline-terminated lines still
+            // scrolls once: the last `\n` needs a resting row below it.
+            .saturating_sub(1)
             .saturating_sub(task_count.saturating_mul(Self::CHROME_ROWS))
             .checked_div(task_count)
             .unwrap_or(usize::MAX);
@@ -753,7 +756,7 @@ impl<'a> State<'a> {
 #[cfg(unix)]
 impl<'a> State<'a> {
     /// Repaint the pane UI if anything changed since the last frame.
-    /// Called once per event-loop tick and once after the loop exits.
+    /// Called once per event-loop tick.
     fn flush_redraw(&mut self) -> Result<(), Error> {
         if self.panes.as_ref().is_some_and(|p| p.needs_redraw) {
             self.redraw()?;

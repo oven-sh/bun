@@ -33,8 +33,9 @@ export const ghosttyVt: Dependency = {
   // Upstream's `zig build -Demit-lib-vt` still constructs the whole Ghostty
   // app's build graph, which lazily fetches ~30 packages (GTK, fonts,
   // renderers) the VT library never uses. The patch returns right after
-  // installing the VT static lib + headers, shrinking the dependency set to
-  // the two packages below.
+  // installing the VT static lib + headers (shrinking the dependency set to
+  // the two packages below) and splits the lib into one section per symbol
+  // so bun's --gc-sections link can drop the unused parts of the C API.
   patches: ["patches/ghostty-vt/lib-vt-only.patch"],
 
   build: () => ({
@@ -47,10 +48,13 @@ export const ghosttyVt: Dependency = {
       "-Dsimd=false",
       "-Dapp-runtime=none",
       "-Demit-xcframework=false",
-      // Always, even for debug bun builds: a Debug Zig library bundles
-      // Zig's UBSan runtime, which collides with the `__ubsan_*` symbols
-      // clang's sanitizer runtime provides in bun's ASAN profiles.
-      "-Doptimize=ReleaseFast",
+      // A release mode always, even for debug bun builds: a Debug Zig
+      // library bundles Zig's UBSan runtime, which collides with the
+      // `__ubsan_*` symbols clang provides in bun's ASAN profiles.
+      // ReleaseSmall over ReleaseFast: the pane renderer runs at human
+      // output rates, and Small halves this library's contribution to
+      // the linked bun binary (~0.6 MB vs ~1.2 MB after --gc-sections).
+      "-Doptimize=ReleaseSmall",
     ],
     packages: [
       {

@@ -30,3 +30,18 @@
      // All our steps which we'll hook up later. The steps are shown
      // up here just so that they are more self-documenting.
      const run_step = b.step("run", "Run the app");
+--- a/src/build/GhosttyLibVt.zig
++++ b/src/build/GhosttyLibVt.zig
+@@ -222,6 +222,12 @@
+         lib.bundle_compiler_rt = true;
+         lib.bundle_ubsan_rt = true;
+ 
++        // One section per function/data symbol so a consumer linking with
++        // --gc-sections / -dead_strip can drop the parts of the C API it
++        // does not call.
++        lib.link_function_sections = true;
++        lib.link_data_sections = true;
++
+         // Enable PIC so the static library can be linked into PIE
+         // executables, which is the default on most Linux distributions.
+         lib.root_module.pic = true;

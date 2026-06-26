@@ -117,9 +117,7 @@ extern "C" fn select_alpn_callback(
             let buffer = match JSValue::create_buffer_from_length(&global, wire_len) {
                 Ok(b) => b,
                 Err(_) => {
-                    if scope.exit() {
-                        this.handlers.set(None);
-                    }
+                    this.exit_scope(scope, handlers);
                     return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
                 }
             };
@@ -160,17 +158,13 @@ extern "C" fn select_alpn_callback(
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                     saved_loop_state.as_mut_ptr(),
                 );
-                if scope.exit() {
-                    this.handlers.set(None);
-                }
+                this.exit_scope(scope, handlers);
                 return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
             }
             tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                 saved_loop_state.as_mut_ptr(),
             );
-            if scope.exit() {
-                this.handlers.set(None);
-            }
+            this.exit_scope(scope, handlers);
             if !result.is_boolean() || result.to_boolean() {
                 // The server has an ALPNCallback and it answered: a string
                 // selects that protocol for this connection; anything else
@@ -689,13 +683,28 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn set_type_of_service(
         this: &Self,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         let args = callframe.arguments_old::<1>();
         let tos: i32 = if args.len >= 1 {
-            args.ptr[0].to_int32()
+            let arg = args.ptr[0];
+            // validate_integer_range maps NaN to the default; node:net rejects
+            // it with ERR_INVALID_ARG_TYPE, so do that explicitly here.
+            if arg.is_number() && arg.as_number().is_nan() {
+                return Err(global.throw_invalid_property_type_value(b"tos", b"integer", arg));
+            }
+            global.validate_integer_range(
+                arg,
+                0i32,
+                bun_sql_jsc::jsc::IntegerRange {
+                    min: 0,
+                    max: 255,
+                    field_name: b"tos",
+                    ..Default::default()
+                },
+            )?
         } else {
             0
         };
@@ -763,9 +772,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
         let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
-        if scope.exit() {
-            self.handlers.set(None);
-        }
+        self.exit_scope(scope, handlers);
     }
 
     /// Noalias re-entrancy: takes `this: *mut Self`, NOT
@@ -840,9 +847,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         this.deref();
     }
 
@@ -890,9 +895,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
     }
 
     /// Returns the raw, freely-aliased
@@ -919,6 +922,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get()
             .expect("No handlers set on Socket")
             .into()
+    }
+
+    /// `scope.exit()` drains microtasks, during which a synchronous
+    /// reconnect may repoint `self.handlers` at a fresh allocation; only
+    /// null the cell when it still holds the `Handlers` that `exit` freed.
+    #[inline]
+    fn exit_scope(&self, scope: super::handlers::Scope, entered: bun_ptr::BackRef<Handlers>) {
+        let captured = entered.as_ptr();
+        if scope.exit() && self.handlers.get().map(|n| n.as_ptr()) == Some(captured) {
+            self.handlers.set(None);
+        }
     }
 
     /// `*mut Self` for the same noalias-reentry reason as `on_writable` —
@@ -1201,6 +1215,44 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket.close(code);
     }
 
+    /// Discard a still-live native socket so this wrapper can be reused for a
+    /// fresh connect. `node:net` permits `socket.connect()` on an
+    /// already-connected socket; without this the previous `us_socket_t`'s
+    /// ext slot keeps pointing at `self` while `do_connect` overwrites
+    /// `self.socket`, aliasing two native sockets onto one wrapper. The ext
+    /// slot is nulled before closing so the synchronous `on_close` /
+    /// `on_connecting_error` dispatch early-returns and no JS callback fires;
+    /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
+    /// took. Caller must hold an independent +1 across this call. Only
+    /// handles Connected/Connecting; Pipe/UpgradedDuplex back-pointers do
+    /// not live in the ext slot so those are left for the caller's existing
+    /// `debug_assert!` to catch.
+    pub fn detach_for_reconnect(&self) {
+        let old = self.socket.get();
+        let Some(ext) = old.ext::<*mut c_void>() else {
+            return;
+        };
+        // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
+        unsafe { *ext = core::ptr::null_mut() };
+        self.socket.set(SocketHandler::<SSL>::DETACHED);
+        self.buffered_data_for_node_net
+            .with_mut(|b| b.clear_and_free());
+        self.detach_native_callback();
+        old.close(uws::CloseCode::Failure);
+        self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        if self.flags.get().contains(Flags::IS_ACTIVE) {
+            self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+            if let Some(h) = self.handlers.get() {
+                // SAFETY: `h` is the live client-mode `Handlers` box; see
+                // `Handlers::mark_inactive` contract.
+                if unsafe { Handlers::mark_inactive(h.as_ptr()) } {
+                    self.handlers.set(None);
+                }
+            }
+        }
+        self.deref();
+    }
+
     pub fn mark_inactive(&self) {
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             // we have to close the socket before the socket context is closed
@@ -1463,9 +1515,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             }
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         this.deref();
     }
 
@@ -1535,9 +1585,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         this.deref();
     }
 
@@ -1662,9 +1710,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     Err(e) => {
                         // `Scope` has no Drop — balance event_loop().enter() and
                         // active_connections before propagating.
-                        if scope.exit() {
-                            this.handlers.set(None);
-                        }
+                        this.exit_scope(scope, handlers);
                         return Err(e);
                     }
                 }
@@ -1683,9 +1729,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         Ok(())
     }
 
@@ -1723,9 +1767,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let buffer = match JSValue::create_buffer_from_length(&global, session.len()) {
             Ok(b) => b,
             Err(e) => {
-                if scope.exit() {
-                    this.handlers.set(None);
-                }
+                this.exit_scope(scope, handlers);
                 return Err(e);
             }
         };
@@ -1743,9 +1785,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         Ok(())
     }
 
@@ -1779,9 +1819,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let buffer = match JSValue::create_buffer_from_length(&global, line.len()) {
             Ok(b) => b,
             Err(e) => {
-                if scope.exit() {
-                    this.handlers.set(None);
-                }
+                this.exit_scope(scope, handlers);
                 return Err(e);
             }
         };
@@ -1799,9 +1837,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         Ok(())
     }
 
@@ -2022,9 +2058,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2983,7 +3017,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
         // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
         // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
-        // buffer, which `destroy()` after `write()` must not do.
+        // buffer, which `destroy()` after `write()` must not do. The SSL layer may
+        // briefly defer this close behind its own ciphertext write spill
+        // (`ssl_close_after_spill`); that waits only on our fd, not the peer.
         socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;

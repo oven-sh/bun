@@ -945,19 +945,21 @@ impl NodeHTTPResponse {
             js_value
         };
         if let Some(on_aborted) = js::on_aborted_get_cached(js_this) {
-            let vm = vm_get();
-            let global_this = vm.global();
-            let event_loop = vm.event_loop_ref();
+            if on_aborted.is_cell() {
+                let vm = vm_get();
+                let global_this = vm.global();
+                let event_loop = vm.event_loop_ref();
 
-            event_loop.run_callback(
-                on_aborted,
-                global_this,
-                js_this,
-                &[JSValue::js_number_from_int32(EVENT as u8 as i32)],
-            );
+                event_loop.run_callback(
+                    on_aborted,
+                    global_this,
+                    js_this,
+                    &[JSValue::js_number_from_int32(EVENT as u8 as i32)],
+                );
 
-            if EVENT == AbortEvent::Abort {
-                js::on_aborted_set_cached(js_this, global_this, JSValue::ZERO);
+                if EVENT == AbortEvent::Abort {
+                    js::on_aborted_set_cached(js_this, global_this, JSValue::ZERO);
+                }
             }
         }
 
@@ -1292,7 +1294,7 @@ impl NodeHTTPResponse {
         // defer { if last { ... } } — moved to tail.
 
         if let Some(callback) = js::on_data_get_cached(this_value) {
-            if !callback.is_undefined() {
+            if callback.is_cell() {
                 let vm = vm_get();
                 let global_this = vm.global();
                 let event_loop = vm.event_loop_ref();
@@ -1343,7 +1345,10 @@ impl NodeHTTPResponse {
             self.deref();
             return;
         };
-        if on_writable.is_undefined() {
+        // Slot may hold UNDEFINED (WantMore) or anything the `.onwritable`
+        // setter stored; non-cells can't be callable or AsyncContextFrame,
+        // so skip instead of surfacing a spurious "not a function" uncaught.
+        if !on_writable.is_cell() {
             self.deref();
             return;
         }
@@ -1608,8 +1613,8 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) {
-        if self.is_done() || value.is_undefined() {
-            js::on_writable_set_cached(this_value, global_object, JSValue::UNDEFINED);
+        if self.is_done() || value.is_undefined_or_null() {
+            js::on_writable_set_cached(this_value, global_object, JSValue::ZERO);
         } else {
             js::on_writable_set_cached(
                 this_value,
@@ -1642,7 +1647,7 @@ impl NodeHTTPResponse {
             return;
         }
 
-        if self.is_requested_completed_or_ended() || value.is_undefined() {
+        if self.is_requested_completed_or_ended() || value.is_undefined_or_null() {
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         } else {
             js::on_aborted_set_cached(
@@ -1698,7 +1703,7 @@ impl NodeHTTPResponse {
         // previously cleared `ondata` (which already called clearOnData()); either way, there is no
         // more body to read, so don't re-register with uSockets or churn refs.
         let flags = self.flags.get();
-        if value.is_undefined()
+        if value.is_undefined_or_null()
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || self.body_read_state.get() != BodyReadState::Pending

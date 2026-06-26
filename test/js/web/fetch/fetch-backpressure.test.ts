@@ -330,6 +330,47 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
     expect(nb).toBe(TOTAL);
   });
 
+  // The peer dying while the transport is receive-paused is only observable
+  // once the read poll is re-armed: the resume after the first pull must
+  // surface it instead of silently dropping a socket that already has an
+  // error latched (which left reader.read() pending forever).
+  for (const [name, kill] of [
+    ["terminate (RST)", (s: import("bun").Socket) => s.terminate()],
+    ["end (FIN)", (s: import("bun").Socket) => s.end()],
+  ] as const) {
+    test(`peer ${name} while receive is paused rejects the body`, async () => {
+      const { promise, resolve } = Promise.withResolvers<import("bun").Socket>();
+      using listener = Bun.listen({
+        port: 0,
+        hostname: "127.0.0.1",
+        socket: {
+          open(s) {
+            // Declared length far exceeds what is sent, so the client parks
+            // in the body stage (and pauses) right after this first chunk.
+            s.write(`HTTP/1.1 200 OK\r\nContent-Length: ${TOTAL}\r\n\r\n` + Buffer.alloc(CHUNK, 65).toString());
+            s.flush();
+            resolve(s);
+          },
+          data() {},
+        },
+      });
+      // By the time fetch() resolves, the first body chunk was delivered with
+      // more expected, so the transport is paused; nothing re-arms it until
+      // the body is pulled.
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`);
+      kill(await promise);
+      const reader = res.body!.getReader();
+      let total = 0;
+      const err = await (async () => {
+        for (let r; !(r = await reader.read()).done; ) total += r.value.byteLength;
+      })().then(
+        () => null,
+        e => e,
+      );
+      expect({ code: err?.code, partial: total < TOTAL }).toEqual({ code: "ECONNRESET", partial: true });
+    });
+  }
+
   test("two sequential keep-alive responses each drain fully", async () => {
     await using server = await serve("h1");
     for (let i = 0; i < 2; i++) {

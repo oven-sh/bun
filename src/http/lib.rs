@@ -3810,6 +3810,7 @@ impl<'a> HTTPClient<'a> {
         self.state.flags.receive_paused = true;
         socket.set_timeout(0);
         let _ = socket.pause_stream();
+        bun_core::scoped_log!(fetch, "pause receive {}", self.async_http_id);
     }
 
     pub fn resume_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -3817,10 +3818,16 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         self.state.flags.receive_paused = false;
-        if socket.is_closed_or_has_error() {
+        if socket.is_closed() {
             return;
         }
+        // A FIN/RST/error that landed while the read poll was paused is only
+        // observable through the poll. Re-arm even when the socket already has
+        // an error or shutdown latched so the regular readable/EOF/error
+        // dispatch surfaces it; bailing here would strand the request with its
+        // timeout disabled and the body promise pending forever.
         let _ = socket.resume_stream();
+        bun_core::scoped_log!(fetch, "resume receive {}", self.async_http_id);
         self.set_timeout(&socket);
     }
 

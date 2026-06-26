@@ -1150,17 +1150,25 @@ where
         }
     }
 
-    /// `end_stream()` for a response the JS sink already fully ended
-    /// (`HTTPServerWritable::ended_response`). uWS `markDone()` drops its
-    /// `onAborted` on end, so nothing nulls `self.resp` if the peer closes
-    /// afterwards: by the time the parked stream-resolution microtask runs,
-    /// uSockets may already have freed the socket
+    /// HTTP/1 only: `end_stream()` for a response the JS sink already fully
+    /// ended (`HTTPServerWritable::ended_response`). HTTP/1's uWS `markDone()`
+    /// drops its `onAborted` on end, so nothing nulls `self.resp` if the peer
+    /// closes afterwards: by the time the parked stream-resolution microtask
+    /// runs, uSockets may already have freed the socket
     /// (`us_internal_free_closed_sockets`) or recycled it onto the next
     /// keep-alive request. Release the handle without dereferencing it. The
     /// `clear_on_data()`/`clear_aborted()`/`clear_timeout()` calls
     /// `detach_response()` would make are already covered by `markDone()`.
+    ///
+    /// HTTP/3 must never reach this. `Http3Response::markDone()` deliberately
+    /// leaves `onAborted` armed so `on_stream_close` can notify the holder,
+    /// which also proves `resp` is still alive here (`on_abort` nulls it
+    /// first). H3 therefore needs `end_stream()`'s `detach_response()` to
+    /// disarm that callback before the context is released, or lsquic's later
+    /// `on_stream_close` invokes it on a freed pool slot.
     pub fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
+        debug_assert!(!HTTP3);
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
@@ -2768,12 +2776,14 @@ where
         }
 
         stream_log!("onResolve({})", wrote_anything);
-        // The sink already fully ended the response; `resp` can no longer be
-        // dereferenced (see `end_already_responded_stream`). This resolution
-        // can run arbitrarily later than the end: e.g. a direct stream whose
-        // `pull()` calls `controller.end()` and then awaits a promise the user
-        // only settles after the client has disconnected.
-        if ended_response {
+        // HTTP/1 only: the sink already fully ended the response, so `resp`
+        // can no longer be dereferenced (see `end_already_responded_stream`).
+        // This resolution can run arbitrarily later than the end: e.g. a
+        // direct stream whose `pull()` calls `controller.end()` and then
+        // awaits a promise the user only settles after the client has
+        // disconnected. H3 keeps the end_stream() path: its `resp` is still
+        // alive here and its still-armed onAborted must be disarmed.
+        if !HTTP3 && ended_response {
             req.end_already_responded_stream();
             return;
         }
@@ -2932,9 +2942,11 @@ where
                 }
             }
         }
-        // The sink already fully ended the response; `resp` can no longer be
-        // dereferenced (see `end_already_responded_stream`).
-        if ended_response {
+        // HTTP/1 only: the sink already fully ended the response, so `resp`
+        // can no longer be dereferenced (see `end_already_responded_stream`).
+        // H3 keeps the end_stream() path: its `resp` is still alive here and
+        // its still-armed onAborted must be disarmed.
+        if !HTTP3 && ended_response {
             req.end_already_responded_stream();
             return;
         }

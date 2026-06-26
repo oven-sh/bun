@@ -289,6 +289,84 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
+// The HTTP/3 sibling must NOT take the ended_response short-circuit.
+// Http3Response::markDone() deliberately leaves onAborted armed (unlike
+// HTTP/1's markDone()) so that Http3Context's on_stream_close can notify the
+// holder; end_stream() -> detach_response() -> clear_aborted() is what disarms
+// it. Skipping that leaves the callback pointing at a RequestContext the
+// stream-resolution microtask has already released, and lsquic's later
+// on_stream_close invokes it on the freed slot.
+test.skipIf(!isASAN)(
+  "h3: controller.end() from a parked pull() disarms onAborted before the context is released",
+  async () => {
+    const fixture = `
+    const tls = ${JSON.stringify(tls)};
+    const gate = Promise.withResolvers();
+
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("hello");
+              controller.flush();
+              // Suspend so assignToStream sees a pending promise. The
+              // resolution then runs as an on_resolve_stream microtask AFTER
+              // controller.end() has markDone()d the H3 stream, before
+              // lsquic can fire on_stream_close.
+              await gate.promise;
+              controller.end();
+            },
+          }),
+        );
+      },
+    });
+
+    const res = await fetch("https://" + server.hostname + ":" + server.port + "/", {
+      protocol: "http3",
+      tls: { rejectUnauthorized: false },
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    // First chunk received => pull() is parked at the gate.
+    while (!body.includes("hello")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      body += decoder.decode(value, { stream: true });
+    }
+    gate.resolve();
+    // Drain to completion; both sides have FINned, so lsquic's next ticks
+    // run on_stream_close for this stream.
+    while (!(await reader.read()).done);
+    for (let i = 0; i < 20; i++) await Bun.sleep(5);
+    server.stop(true);
+    console.log("ok");
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  60_000,
+);
+
 // https://github.com/oven-sh/bun/issues/32137
 // react-dom/server.bun's renderToReadableStream returns a direct ReadableStream
 // whose pull() writes the shell, captures the controller, and returns

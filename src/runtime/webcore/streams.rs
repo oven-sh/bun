@@ -1068,13 +1068,15 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub end_len: usize,
     pub aborted: bool,
     /// This sink fully ended the uWS response (`res.end()` / a completed
-    /// `res.try_end()`). uWS `markDone()` drops `onAborted` at that point, so
-    /// the owning `RequestContext` is never told if the peer closes afterwards
-    /// and its `resp` must not be dereferenced again: by the time the parked
-    /// stream-resolution microtask runs, uSockets may already have freed the
-    /// socket (`us_internal_free_closed_sockets`) or recycled it onto the next
-    /// keep-alive request. `handle_resolve_stream` / `handle_reject_stream`
-    /// consult this instead of reading the response's state.
+    /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
+    /// point, so the owning `RequestContext` is never told if the peer closes
+    /// afterwards and its `resp` must not be dereferenced again: by the time
+    /// the parked stream-resolution microtask runs, uSockets may already have
+    /// freed the socket (`us_internal_free_closed_sockets`) or recycled it
+    /// onto the next keep-alive request. `handle_resolve_stream` /
+    /// `handle_reject_stream` consult this instead of reading the response's
+    /// state. HTTP/1 only; see `end_already_responded_stream` for why
+    /// `Http3Response::markDone()` makes the H3 `resp` still safe to use.
     pub ended_response: bool,
 
     pub on_first_write: Option<fn(Option<*mut c_void>)>,

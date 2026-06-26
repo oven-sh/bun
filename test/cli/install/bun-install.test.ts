@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
-import { readlinkSync } from "fs";
+import { readlinkSync, realpathSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -18,7 +18,6 @@ import {
   toHaveBins,
 } from "harness";
 import { join, resolve, sep } from "path";
-import { realpathSync } from "fs";
 import {
   createTestContext,
   destroyTestContext,

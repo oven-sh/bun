@@ -108,9 +108,15 @@ describe("Bun.unsafe.gcDefer / gcAllow", () => {
     Bun.gc(true);
     const afterCapacity = heapStats().heapCapacity;
     const afterSize = heapSize();
-    // Capacity must have dropped well below the in-bracket peak — proves
-    // the deferral was released and a collection actually ran.
-    expect(afterCapacity).toBeLessThan(insideCapacity / 2);
+    // Capacity must have dropped from the in-bracket peak by at least
+    // half the in-bracket growth — proves the deferral was released and
+    // a collection actually ran. (Bounding the *drop* relative to the
+    // *growth* is robust to whatever baselineCapacity the test process
+    // started with; an absolute or insideCapacity/2 bound implicitly
+    // assumes baselineCapacity < G, which isn't guaranteed across lanes.)
+    const grew = insideCapacity - baselineCapacity;
+    const dropped = insideCapacity - afterCapacity;
+    expect(dropped).toBeGreaterThan(grew / 2);
     // And size returned near baseline (live set from this test ≈ 0).
     expect(afterSize).toBeLessThan(baselineSize * 4 + 64 * 1024 * 1024);
   });

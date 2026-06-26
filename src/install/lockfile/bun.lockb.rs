@@ -853,13 +853,14 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
 
     // `bin` is a tagged union; the `Map` arm is an `(off, len)` window into
     // `extern_strings` (the tag byte itself is validated by the package
-    // deserializer).
+    // deserializer). The window holds `[name, target]` pairs and every
+    // consumer walks it two at a time, so its length must also be even.
     let extern_strings_len = buffers.extern_strings.len();
     for package_bin in lockfile.packages.items_bin() {
         if package_bin.tag == bin::Tag::Map {
             // SAFETY: `tag == Map` discriminates the active union field.
             let map = unsafe { package_bin.value.map };
-            if !slice_in_bounds(map.off, map.len, extern_strings_len) {
+            if !slice_in_bounds(map.off, map.len, extern_strings_len) || map.len % 2 != 0 {
                 return Err(bun_core::err!("InvalidLockfile"));
             }
         }
@@ -881,12 +882,15 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
     let trees_len = buffers.trees.len();
     let hoisted_len = buffers.hoisted_dependencies.len();
     for (tree_index, tree) in buffers.trees.iter().enumerate() {
-        // `invalid_dependency_id` is the only sentinel the consumers handle
-        // (`Tree::folder_name`); `ROOT_DEP_ID` is only ever written on the
-        // root node, which nothing takes the folder name of.
+        // Only the root node carries a sentinel (`ROOT_DEP_ID`, or
+        // `invalid_dependency_id` from `Tree::default`). Every other node was
+        // created for a dependency, and the consumers (`Tree::folder_name`,
+        // `Lockfile::is_workspace_tree_id`) index `buffers.dependencies`
+        // with its id.
         let dependency_id_valid = (tree.dependency_id as usize) < dependencies_len
-            || tree.dependency_id == invalid_dependency_id
-            || (tree_index == 0 && tree.dependency_id == Tree::ROOT_DEP_ID);
+            || (tree_index == 0
+                && (tree.dependency_id == Tree::ROOT_DEP_ID
+                    || tree.dependency_id == invalid_dependency_id));
         if !dependency_id_valid
             || (tree.parent != Tree::INVALID_ID && tree.parent as usize >= trees_len)
             || !slice_in_bounds(tree.dependencies.off, tree.dependencies.len, hoisted_len)

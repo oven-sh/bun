@@ -183,7 +183,7 @@ describe("Bun.Archive", () => {
       });
 
       const archive = new Bun.Archive({
-        "test.txt": Bun.file(`${dir}/input.txt`),
+        "test.txt": Bun.file(join(String(dir), "input.txt")),
       });
 
       const files = await archive.files();
@@ -200,8 +200,8 @@ describe("Bun.Archive", () => {
       });
 
       const archive = new Bun.Archive({
-        "a.txt": Bun.file(`${dir}/a.txt`),
-        "b.txt": Bun.file(`${dir}/b.txt`),
+        "a.txt": Bun.file(join(String(dir), "a.txt")),
+        "b.txt": Bun.file(join(String(dir), "b.txt")),
         "c.txt": "inline content",
       });
 
@@ -219,12 +219,12 @@ describe("Bun.Archive", () => {
       });
 
       const archive = new Bun.Archive({
-        "dest.txt": Bun.file(`${dir}/source.txt`),
+        "dest.txt": Bun.file(join(String(dir), "source.txt")),
       });
 
-      await Bun.write(`${dir}/output.tar`, archive);
+      await Bun.write(join(String(dir), "output.tar"), archive);
 
-      const loaded = new Bun.Archive(await Bun.file(`${dir}/output.tar`).bytes());
+      const loaded = new Bun.Archive(await Bun.file(join(String(dir), "output.tar")).bytes());
       const files = await loaded.files();
       expect(await files.get("dest.txt")!.text()).toBe(content);
     });
@@ -237,7 +237,7 @@ describe("Bun.Archive", () => {
       });
 
       const archive = new Bun.Archive({
-        "sliced.txt": Bun.file(`${dir}/data.txt`).slice(5, 10),
+        "sliced.txt": Bun.file(join(String(dir), "data.txt")).slice(5, 10),
       });
 
       const files = await archive.files();

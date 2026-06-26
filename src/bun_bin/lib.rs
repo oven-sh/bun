@@ -154,10 +154,17 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     // Restrict the default DLL search path to System32 before anything can
     // LoadLibrary (delay-load resolution, dbghelp, WIC, bcryptprimitives).
     // Explicit-path loads (`process.dlopen` of `.node` addons) are unaffected.
+    // The call cannot fail on supported Windows; the debug assert surfaces a
+    // regression on CI, and release degrades to the default (pre-hardening)
+    // search order rather than refusing to start over a defense-in-depth knob.
     #[cfg(windows)]
     {
-        let _ = bun_sys::windows::kernel32::SetDefaultDllDirectories(
+        let _hardened = bun_sys::windows::kernel32::SetDefaultDllDirectories(
             bun_sys::windows::kernel32::LOAD_LIBRARY_SEARCH_SYSTEM32,
+        ) != 0;
+        debug_assert!(
+            _hardened,
+            "SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) failed"
         );
     }
 

@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunExe } from "harness";
+import { copyFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { bunEnv, bunExe, isArm64, mergeWindowEnvs, tempDir } from "harness";
 
 const BUN_EXE = bunExe();
 
@@ -205,5 +207,54 @@ if (process.platform === "win32") {
     }
 
     expect(Number(match[1])).toBe(0x800);
+  });
+
+  // Runtime counterpart to the load-config assertion above: proves that
+  // SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) in main()
+  // (src/bun_bin/lib.rs) actually took effect for the whole process.
+  //
+  // A real System32 DLL is copied under a synthetic name into a directory that
+  // is then prepended to a child bun's PATH. `bun:ffi`'s dlopen() first does a
+  // plain default-search-order LoadLibrary on the bare name. Without the
+  // hardening, the PATH leg of the default search finds the copy, the library
+  // loads, and dlopen() gets as far as the bogus symbol lookup ("Symbol ... not
+  // found"). With it, only System32 is searched, the synthetic name is not
+  // there, dlopen()'s cwd-relative fallback also misses (the child's cwd is a
+  // separate empty directory), and it throws "Failed to open library".
+  //
+  // bun:ffi is not built on windows-arm64 (tinycc has no arm64-coff backend).
+  test.skipIf(isArm64)("SetDefaultDllDirectories removes PATH from the default DLL search order", async () => {
+    // version.dll: tiny, dependency-free beyond KnownDlls, no DllMain side
+    // effects, so a byte-for-byte copy under another name loads cleanly.
+    const source = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "version.dll");
+    expect(existsSync(source)).toBe(true);
+
+    const PROBE = "bun-dll-search-probe.dll";
+    using plantDir = tempDir("dll-search-plant", {});
+    using cwdDir = tempDir("dll-search-cwd", {});
+    copyFileSync(source, join(String(plantDir), PROBE));
+
+    const script =
+      `try {` +
+      `  require("bun:ffi").dlopen(${JSON.stringify(PROBE)}, { bun_dll_search_probe_symbol: { args: [], returns: "int" } });` +
+      `  console.log("LOADED");` +
+      `} catch (e) { console.log(String(e && e.message)); }`;
+
+    await using proc = Bun.spawn({
+      cmd: [BUN_EXE, "-e", script],
+      cwd: String(cwdDir),
+      // Windows env var names are case-insensitive and bunEnv inherits the
+      // parent's ("Path"); mergeWindowEnvs collapses the casings so exactly
+      // one PATH reaches the child instead of a conflicting Path + PATH pair.
+      env: mergeWindowEnvs([bunEnv, { PATH: `${String(plantDir)};${process.env.PATH || process.env.Path || ""}` }]),
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    // An unhardened bun resolves the bare name through the PATH leg of the
+    // default search, so the load succeeds and the message is the later
+    // "Symbol ... not found" instead, which fails this assertion.
+    expect(stdout).toContain(`Failed to open library "${PROBE}"`);
+    expect(exitCode).toBe(0);
   });
 }

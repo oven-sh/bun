@@ -321,8 +321,18 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       "threw ERR_INVALID_STATE: Write already in progress",
     ],
-    // init() that creates the native state but then fails on a bad parameter
-    // key tears the Context down; the handle has to reject further use.
+    // init() that fails partway (zlib: deflateInit2_ rejects the arguments;
+    // brotli/zstd: a bad parameter key after the state was created) tears the
+    // Context down; the handle has to reject further use.
+    [
+      "zlib: a handle whose init() arguments were rejected is closed",
+      `const C = zlib.createDeflate()._handle.constructor;
+       const h = new C(1);
+       h.init(100, 6, 8, 0, new Uint32Array(2), () => {}, undefined);
+       try { h.init(15, 6, 8, 0, new Uint32Array(2), () => {}, undefined); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
     [
       "brotli: a handle whose init() parameters were rejected is closed",
       `const C = zlib.createBrotliCompress()._handle.constructor;

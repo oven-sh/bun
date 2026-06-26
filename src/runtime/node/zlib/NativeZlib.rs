@@ -210,6 +210,12 @@ mod _impl {
 
             self.stream
                 .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
+            // `Context::init` leaves `mode` at `NONE` when `deflateInit2_` /
+            // `inflateInit2_` rejects its arguments; mark the wrapper closed so
+            // the next operation is rejected instead of re-entering `NONE`.
+            if self.stream.with_mut(|s| s.mode == c::NodeMode::NONE) {
+                self.closed.set(true);
+            }
 
             Ok(JSValue::UNDEFINED)
         }

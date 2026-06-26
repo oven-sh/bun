@@ -213,22 +213,24 @@ Bun.serve({
   system call when possible, enabling zero-copy file transfers in the kernel—the fastest way to send files.
 </Info>
 
-To send part of a file, use the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. Bun sets the `Content-Range` and `Content-Length` headers on the `Response` object automatically.
+To send part of a file, use the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. The slice is the response body, so Bun sets `Content-Length` to the slice's length.
 
 ```ts
 Bun.serve({
   fetch(req) {
-    // parse `Range` header
-    const [start = 0, end = Infinity] = req.headers
-      .get("Range") // Range: bytes=0-100
-      .split("=") // ["Range: bytes", "0-100"]
-      .at(-1) // "0-100"
-      .split("-") // ["0", "100"]
-      .map(Number); // [0, 100]
+    // send the first megabyte of a file
+    return new Response(Bun.file("./big-video.mp4").slice(0, 1024 * 1024));
+  },
+});
+```
 
-    // return a slice of the file
-    const bigFile = Bun.file("./big-video.mp4");
-    return new Response(bigFile.slice(start, end));
+To support HTTP [`Range` requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests), return the whole file. Bun resolves the client's `Range` header against it and responds with `206 Partial Content` and the matching `Content-Range` header automatically.
+
+```ts
+Bun.serve({
+  fetch(req) {
+    // `Range: bytes=0-100` → `206` with `Content-Range: bytes 0-100/<size>`
+    return new Response(Bun.file("./big-video.mp4"));
   },
 });
 ```

@@ -567,7 +567,7 @@ describe("structuredClone with Blob and File", () => {
         afterContentType + 2, // store_tag + bytes_len partially read
         afterBytes, // bytes + Store allocated, stored_name len read fails
         afterStoredName, // heap *Blob allocated, is_jsdom_file read fails
-        full.length - 1, // v3 File name read fails (last byte missing)
+        full.length - 1, // v4 size (u64) read fails (last byte missing)
       ];
       const payloads = cuts.map(n => full.slice(0, n));
       // All of these must hit the error path; if one accidentally succeeds

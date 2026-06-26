@@ -1409,7 +1409,13 @@ it("should support multiple Set-Cookie headers", async () => {
   );
 });
 
-describe("should support Content-Range with Bun.file()", () => {
+// `new Response(Bun.file(f).slice(start, end))` is a plain 200 whose entity
+// is the slice: Content-Length is the slice's length and there is no
+// server-invented 206 / Content-Range for a request that sent no Range
+// header (RFC 9110). Incoming Range headers are resolved natively against
+// whole-file bodies instead (see bun-serve-file.test.ts). A user-supplied
+// Content-Range header passes through untouched.
+describe("should serve Bun.file().slice() as the entity", () => {
   // this must be a big file so we can test potentially multiple chunks
   // more than 65 KB
   const full = (function () {
@@ -1466,8 +1472,11 @@ describe("should support Content-Range with Bun.file()", () => {
         const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`, {
           verbose: true,
         });
-        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
-        expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
+        const body = await response.arrayBuffer();
+        expect(body).toEqual(full.buffer.slice(start, end));
+        expect(response.headers.get("Content-Length")).toBe(String(body.byteLength));
+        expect(response.headers.get("Content-Range")).toBeNull();
+        expect(response.status).toBe(200);
       });
     });
   }
@@ -1480,7 +1489,8 @@ describe("should support Content-Range with Bun.file()", () => {
         });
         expect(parseInt(response.headers.get("Content-Range")?.split("/")[1])).toEqual(full.byteLength);
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
-        expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
+        // The user-set Content-Range does not change the user-set status.
+        expect(response.status).toBe(200);
       });
     });
   }
@@ -1497,17 +1507,6 @@ describe("should support Content-Range with Bun.file()", () => {
     [full.byteLength - 1, full.byteLength - 1],
   ];
 
-  for (const [start, end] of emptyRanges) {
-    it(`empty range: ${start} - ${end}`, async () => {
-      await getServer(async server => {
-        const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`);
-        const out = await response.arrayBuffer();
-        expect(out).toEqual(new ArrayBuffer(0));
-        expect(response.status).toBe(206);
-      });
-    });
-  }
-
   const badRanges = [
     [10, NaN],
     [10, -Infinity],
@@ -1519,15 +1518,23 @@ describe("should support Content-Range with Bun.file()", () => {
     [full.byteLength + 100, -full.byteLength],
   ];
 
-  for (const [start, end] of badRanges) {
-    it(`bad range: ${start} - ${end}`, async () => {
-      await getServer(async server => {
-        const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`);
-        const out = await response.arrayBuffer();
-        expect(out).toEqual(new ArrayBuffer(0));
-        expect(response.status).toBe(206);
+  // Every slice here normalizes to zero bytes; a 0-byte body with the
+  // default 200 status is promoted to 204, never a 0-byte 206.
+  for (const [kind, ranges] of [
+    ["empty", emptyRanges],
+    ["bad", badRanges],
+  ] as const) {
+    for (const [start, end] of ranges) {
+      it(`${kind} range: ${start} - ${end}`, async () => {
+        await getServer(async server => {
+          const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`);
+          const out = await response.arrayBuffer();
+          expect(out).toEqual(new ArrayBuffer(0));
+          expect(response.headers.get("Content-Range")).toBeNull();
+          expect(response.status).toBe(204);
+        });
       });
-    });
+    }
   }
 });
 

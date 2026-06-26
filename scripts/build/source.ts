@@ -910,6 +910,8 @@ export function resolveDep(
       sourceStamp,
       provides,
       fetchDepStamps,
+      // Local-mode source edits aren't tracked by the `build.zig` stamp.
+      alwaysBuild: source.kind === "local",
     });
     libs = result.libs;
     outputs = result.libs;
@@ -1409,6 +1411,12 @@ interface EmitNestedZigInput {
   provides: Provides;
   /** Cross-dep build outputs; implicit inputs so they're built first. */
   fetchDepStamps: string[];
+  /**
+   * Always re-invoke `zig build`. For `local` mode deps, whose source
+   * edits we cannot track (the stamp is only `build.zig`). Zig's own
+   * incremental build makes the no-op fast; restat=1 prunes downstream.
+   */
+  alwaysBuild: boolean;
 }
 
 /**
@@ -1429,7 +1437,7 @@ function emitNestedZig(
   input: EmitNestedZigInput,
 ): { libs: string[] } {
   const hostWin = cfg.host.os === "windows";
-  const { srcDir, sourceStamp, provides, fetchDepStamps } = input;
+  const { srcDir, sourceStamp, provides, fetchDepStamps, alwaysBuild } = input;
   const buildDir = depBuildDir(cfg, name);
 
   // `zig build --prefix` installs libraries under `<prefix>/lib/` and
@@ -1448,11 +1456,14 @@ function emitNestedZig(
   const env: Record<string, string> = {};
   if (cfg.androidNdk !== undefined) env.ANDROID_NDK_HOME = cfg.androidNdk;
 
+  const implicitInputs = [sourceStamp, zigBuildCliPath, ...fetchDepStamps];
+  if (alwaysBuild) implicitInputs.push(n.always());
+
   n.build({
     outputs: libs,
     rule: "dep_zig_build",
     inputs: [],
-    implicitInputs: [sourceStamp, zigBuildCliPath, ...fetchDepStamps],
+    implicitInputs,
     vars: {
       name,
       srcdir: srcDir,

@@ -167,6 +167,17 @@ impl<'a> ProcessHandle<'a> {
         } else {
             None
         };
+        // Close both fds if anything between here and the hand-off below
+        // fails, so they never outlive an error. (Every `Err` from `start`
+        // is fatal to the whole run today, but the cleanup contract should
+        // not depend on that.)
+        #[cfg(unix)]
+        let pty_guard = scopeguard::guard(pty_fds, |fds| {
+            if let Some((read_fd, slave)) = fds {
+                read_fd.close();
+                slave.close();
+            }
+        });
 
         // Null-terminated argv array, as required by spawnProcess.
         let argv: [*const c_char; 4] = [
@@ -246,6 +257,12 @@ impl<'a> ProcessHandle<'a> {
             }
         }
 
+        // The spawn succeeded, so the hand-off is now explicit: `slave` is
+        // closed unconditionally below and `read_fd` is owned by the reader
+        // (or closed on the reader's own error path). Disarm the guard so
+        // neither fd can be closed twice.
+        #[cfg(unix)]
+        let pty_fds = scopeguard::ScopeGuard::into_inner(pty_guard);
         #[cfg(unix)]
         if let Some((read_fd, slave)) = pty_fds {
             // Close the parent's only copy of the pty slave so the master
@@ -257,10 +274,10 @@ impl<'a> ProcessHandle<'a> {
             self.options.stderr = spawn::Stdio::Ignore;
             // stdout and stderr are merged by the pty, so only one reader
             // runs; `stderr_reader` stays idle.
-            self.stdout_reader
-                .reader
-                .start(read_fd, true)
-                .map_err(Error::from)?;
+            if let Err(err) = self.stdout_reader.reader.start(read_fd, true) {
+                read_fd.close();
+                return Err(Error::from(err));
+            }
         } else {
             if let Some(stdout_fd) = stdout_fd {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
@@ -367,16 +384,20 @@ struct Panes {
     /// Pane interior width in cells: the terminal's width minus the `│ `
     /// gutter. Also the width each task's pty reports.
     cols: u16,
-    /// Pane height in rows (`--elide-lines`, default 10). Also the height
-    /// each task's pty reports.
+    /// Pane height in rows (`--elide-lines`, default 10, shrunk so the
+    /// whole frame fits the terminal). Also the height each task's pty
+    /// reports.
     rows: u16,
+    /// Terminal height in rows at startup. Bounds how many lines of the
+    /// previous frame the cursor-up erase can still reach.
+    term_rows: u16,
     /// Accumulates a whole frame, then is written to stdout in one shot
     /// inside a synchronized-update bracket so the repaint never tears.
     draw_buf: Vec<u8>,
     /// Scratch for one formatted terminal row.
     row_buf: Vec<u8>,
-    /// `\n` count of the previous frame: how many lines to cursor-up over
-    /// before painting the next one.
+    /// Lines of the previous frame to cursor-up over before painting the
+    /// next one: its `\n` count, capped to what is still on screen.
     last_lines_written: usize,
     /// Set on every read and every exit; drained once per event-loop tick
     /// by `flush_redraw` so a chatty task can't force a repaint per chunk.
@@ -389,23 +410,40 @@ impl Panes {
     const DEFAULT_ROWS: usize = 10;
     /// Cell width of the `│ ` gutter prefixed to every pane row.
     const GUTTER_COLS: u16 = 2;
+    /// Lines a pane occupies beyond its content rows: the header, the
+    /// `[N lines elided]` line, and the `└─` footer.
+    const CHROME_ROWS: usize = 3;
     /// Per-task scrollback retention, in bytes. Rows that scroll off the
     /// top of a pane land here and surface as the `[N lines elided]` count.
     const SCROLLBACK_BYTES: usize = 2 * 1024 * 1024;
 
     /// `Some` only when stdout is an ANSI-capable interactive terminal
-    /// whose width is readable, on a platform where ptys can be created.
+    /// whose size is readable, on a platform where ptys can be created.
     /// Anything else keeps the prefix renderer, so piped/CI output is
     /// byte-for-byte what it was before panes existed.
-    fn init(elide_lines: Option<usize>) -> Option<Self> {
+    fn init(elide_lines: Option<usize>, task_count: usize) -> Option<Self> {
         if !Output::enable_ansi_colors_stdout() || !Output::is_stdout_tty() {
             return None;
         }
-        let width = Output::File::from(bun_core::Fd::stdout()).winsize()?.col;
-        let cols = width.checked_sub(Self::GUTTER_COLS).filter(|c| *c > 0)?;
+        let winsize = Output::File::from(bun_core::Fd::stdout()).winsize()?;
+        let cols = winsize
+            .col
+            .checked_sub(Self::GUTTER_COLS)
+            .filter(|c| *c > 0)?;
+        // Shrink the pane height so the whole frame fits the terminal
+        // whenever that is possible. A frame taller than the terminal
+        // scrolls its top into scrollback, which the next frame's
+        // cursor-up erase (clamped at row 1) can never reach. With enough
+        // tasks even 1-row panes cannot fit; `last_lines_written` is then
+        // capped to the reachable height in `redraw`.
+        let fits = usize::from(winsize.row)
+            .saturating_sub(task_count.saturating_mul(Self::CHROME_ROWS))
+            .checked_div(task_count)
+            .unwrap_or(usize::MAX);
         let rows = elide_lines
             .filter(|n| *n > 0)
             .unwrap_or(Self::DEFAULT_ROWS)
+            .min(fits.max(1))
             .min(usize::from(u16::MAX)) as u16;
         // Every task is about to be given a pty; prove one can be created
         // before committing to the pane renderer, so an environment with
@@ -419,6 +457,7 @@ impl Panes {
         Some(Self {
             cols,
             rows,
+            term_rows: winsize.row,
             draw_buf: Vec::new(),
             row_buf: Vec::new(),
             last_lines_written: 0,
@@ -722,7 +761,9 @@ impl<'a> State<'a> {
     /// instead of soft-wrapping; the frame's `\n` count is then exactly the
     /// number of terminal lines it occupies, which is what the next frame's
     /// cursor-up erase relies on. Pane rows can never exceed the terminal
-    /// width by construction (`Panes::cols` plus the 2-cell gutter).
+    /// width by construction (`Panes::cols` plus the 2-cell gutter), and
+    /// the erase count is capped to the terminal height, past which a
+    /// scrolled-off line is out of the cursor's reach anyway.
     fn redraw(&mut self) -> Result<(), Error> {
         // `draw_buf`/`row_buf` (inside `panes`) and each handle's `vt` are
         // mutated in the same loop; destructuring keeps the two `&mut`
@@ -862,7 +903,15 @@ impl<'a> State<'a> {
         panes
             .draw_buf
             .extend_from_slice(Output::SYNCHRONIZED_END.as_bytes());
-        panes.last_lines_written = panes.draw_buf.iter().filter(|&&c| c == b'\n').count();
+        // A frame taller than the terminal scrolled its top out of the
+        // cursor's reach; only the visible lines can (and need to) be
+        // erased, so don't emit more cursor-ups than the screen has rows.
+        panes.last_lines_written = panes
+            .draw_buf
+            .iter()
+            .filter(|&&c| c == b'\n')
+            .count()
+            .min(usize::from(panes.term_rows).saturating_sub(1));
         let _ = bun_sys::File::stdout().write_all(&panes.draw_buf);
         Ok(())
     }
@@ -1452,7 +1501,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         env: env_ptr,
         use_colors,
         #[cfg(unix)]
-        panes: Panes::init(ctx.bundler_options.elide_lines),
+        panes: Panes::init(ctx.bundler_options.elide_lines, configs.len()),
     };
 
     // Initialize handles

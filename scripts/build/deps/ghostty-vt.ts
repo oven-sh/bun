@@ -8,39 +8,13 @@
  * `src/ghostty_vt_sys/`; no C/C++ in bun includes the headers.
  *
  * Ghostty only ships libghostty-vt from its main branch (no tagged release
- * includes the C API yet), so this pins a main commit.
- *
- * ## Build
- *
- * This is the only `nested-zig` dep: libghostty-vt is pure Zig. The
- * `dep_zig_build` ninja edge runs `scripts/build/zig-build-cli.ts`, which
- * finds a Zig 0.15 toolchain ($BUN_ZIG → $PATH → a sha256-pinned download
- * into the build cache) and runs `zig build`. That and the two `packages`
- * below are the entire toolchain footprint — see `NestedZigBuild` in
- * `../source.ts`.
- *
- * `-Dsimd=false` matters: without it Ghostty vendors its own highway and
- * simdutf into the archive, both of which bun already links, and the
- * duplicate C++ definitions would be an ODR violation. With it the library
- * is pure Zig — the only bundled object is Zig's compiler_rt, whose
- * symbols are all weak.
- *
- * `-Doptimize=ReleaseFast` is intentional even for debug bun builds: a
- * Debug Zig library bundles Zig's UBSan runtime, which would collide with
- * the `__ubsan_*` symbols clang's sanitizer runtime provides in bun's
- * ASAN profiles. The VT library is a leaf with its own test suite
- * upstream; bun gains nothing from a checked build of it.
- *
- * ## Bumping the commit
- *
- * 1. Update `GHOSTTY_COMMIT`.
- * 2. Re-derive the two `packages` hashes from the new commit's
- *    `build.zig.zon` (`uucode`) and `pkg/zlib/build.zig.zon` (`zlib`).
- *    Ghostty mirrors both on `deps.files.ghostty.org`; the URLs here are
- *    the upstreams they mirror, which hash to the same content
- *    (zig package hashes are content-addressed, not URL-addressed).
- *    A stale hash fails the build naming this file.
- * 3. Re-check `patches/ghostty-vt/lib-vt-only.patch` still applies.
+ * includes the C API yet), so this pins a main commit. Bumping it means
+ * re-deriving the two `packages` hashes below from the new commit's
+ * `build.zig.zon` (uucode) and `pkg/zlib/build.zig.zon` (zlib) — both are
+ * content-addressed, so the GitHub upstream URLs used here hash the same
+ * as the `deps.files.ghostty.org` mirrors they point at, and a stale hash
+ * fails the build naming this file — and re-checking that the patch still
+ * applies. The build mechanism is `NestedZigBuild` in `../source.ts`.
  */
 
 import type { Dependency } from "../source.ts";
@@ -65,7 +39,19 @@ export const ghosttyVt: Dependency = {
 
   build: () => ({
     kind: "nested-zig",
-    args: ["-Demit-lib-vt", "-Dsimd=false", "-Dapp-runtime=none", "-Demit-xcframework=false", "-Doptimize=ReleaseFast"],
+    args: [
+      "-Demit-lib-vt",
+      // Without this Ghostty vendors its own highway and simdutf into the
+      // archive; bun already links both, and the duplicate C++ definitions
+      // would be an ODR violation. With it the library is pure Zig.
+      "-Dsimd=false",
+      "-Dapp-runtime=none",
+      "-Demit-xcframework=false",
+      // Always, even for debug bun builds: a Debug Zig library bundles
+      // Zig's UBSan runtime, which collides with the `__ubsan_*` symbols
+      // clang's sanitizer runtime provides in bun's ASAN profiles.
+      "-Doptimize=ReleaseFast",
+    ],
     packages: [
       {
         // jacobsandlund/uucode — Unicode tables (grapheme/width data).

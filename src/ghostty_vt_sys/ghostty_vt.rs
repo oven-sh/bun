@@ -426,11 +426,12 @@ impl VirtualTerminal {
         // SAFETY: `formatter` was created above and is freed exactly once here.
         let _free = scopeguard::guard(formatter, |f| unsafe { ghostty_formatter_free(f) });
 
-        // First attempt reuses whatever capacity a previous format left;
-        // GHOSTTY_OUT_OF_SPACE hands back the exact size for the retry.
+        // First attempt reuses whatever capacity a previous format left; a
+        // new buffer starts at a one-row estimate (up to 4 UTF-8 bytes per
+        // cell plus SGR escapes), and GHOSTTY_OUT_OF_SPACE hands back the
+        // exact required size for the retry.
         if self.fmt_buf.capacity() == 0 {
-            self.fmt_buf
-                .reserve((usize::from(self.cols) + 1) * usize::from(self.rows) * 4);
+            self.fmt_buf.reserve((usize::from(self.cols) + 1) * 8);
         }
         loop {
             let cap = self.fmt_buf.capacity();

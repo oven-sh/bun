@@ -337,10 +337,10 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)"
     ),
     parse_param!(
-        "--parallel                        Run multiple scripts concurrently: a pane per script on a terminal, `label | line` prefixes otherwise"
+        "--parallel                        Run multiple scripts concurrently: a pane per script on an interactive terminal (macOS and Linux), `label | line` prefixes otherwise"
     ),
     parse_param!(
-        "--sequential                      Run multiple scripts sequentially: a pane per script on a terminal, `label | line` prefixes otherwise"
+        "--sequential                      Run multiple scripts sequentially: a pane per script on an interactive terminal (macOS and Linux), `label | line` prefixes otherwise"
     ),
     parse_param!(
         "--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"

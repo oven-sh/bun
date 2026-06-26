@@ -26,7 +26,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rename, rm } from "node:fs/promises";
 import { delimiter, join, resolve } from "node:path";
 import { downloadWithRetry } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
@@ -83,8 +83,8 @@ function hostZigPlatform(): string {
  *  2. `zig` on `$PATH` whose `zig version` reports `major.minor` matching
  *     `ZIG_VERSION`. A mismatched system Zig is skipped, not fatal.
  *  3. Download the official `ZIG_VERSION` release into
- *     `<cacheDir>/zig/<version>/`, verifying its sha256 against the pinned
- *     table above. Cached per machine like the other toolchain downloads.
+ *     `<cacheDir>/zig/<version>/<arch-os>/`, verifying its sha256 against
+ *     the pinned table above. Cached like the other toolchain downloads.
  */
 async function resolveZig(cacheDir: string): Promise<string> {
   const fromEnv = process.env.BUN_ZIG;
@@ -113,7 +113,7 @@ async function resolveZig(cacheDir: string): Promise<string> {
     hint: "Add it to ZIG_TARBALL_SHA256 in zig-build-cli.ts (from ziglang.org/download/index.json), or set BUN_ZIG",
   });
 
-  const installDir = resolve(cacheDir, "zig", ZIG_VERSION);
+  const installDir = resolve(cacheDir, "zig", ZIG_VERSION, platform);
   const zigExe = join(installDir, "zig");
   if (existsSync(zigExe)) return zigExe;
 
@@ -143,13 +143,16 @@ async function resolveZig(cacheDir: string): Promise<string> {
     });
 
     // Publish atomically: the rename is the single step that makes a
-    // complete toolchain visible at installDir. A concurrent build that
-    // won the race already produced the same content.
+    // complete toolchain visible at installDir. A concurrent build may
+    // have published a complete install while this one was downloading;
+    // use it instead of replacing it. The rm below only clears a crashed,
+    // incomplete extract (a directory rename cannot overwrite a non-empty
+    // target on any platform).
+    if (existsSync(zigExe)) return zigExe;
     await rm(installDir, { recursive: true, force: true });
     await rm(tarball, { force: true });
-    const fs = await import("node:fs/promises");
     try {
-      await fs.rename(staging, installDir);
+      await rename(staging, installDir);
     } catch (err) {
       if (!existsSync(zigExe)) throw err;
     }

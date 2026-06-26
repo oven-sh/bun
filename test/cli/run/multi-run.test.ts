@@ -2071,6 +2071,16 @@ describe.skipIf(isWindows)("parallel: pane renderer", () => {
         raw += decoder.decode(chunk, { stream: true });
         if (until(raw)) done.resolve();
       },
+      // The pty's read side ends once the child has exited and closed the
+      // slave, so no more bytes can arrive. If `until` never held by then,
+      // fail with what did arrive instead of hanging until the test
+      // timeout. (This also fires when `await using` disposes the
+      // terminal after a successful run; `done` is settled by then.)
+      exit() {
+        if (!until(raw)) {
+          done.reject(new Error(`pty stream ended before the expected output arrived; got:\n${raw}`));
+        }
+      },
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
@@ -2198,6 +2208,58 @@ describe.skipIf(isWindows)("parallel: pane renderer", () => {
     // resting cursor, so 2 lines are visible and 12 are in scrollback.
     expect(frame).toContain("│ [12 lines elided]");
     expect(frame.match(/^│ row-\d+$/gm)).toEqual(["│ row-12", "│ row-13"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the pane height shrinks so the whole frame fits a short terminal", async () => {
+    using dir = tempDir("mr-pane-short-term", {
+      "package.json": JSON.stringify({
+        scripts: {
+          many: `${bunExe()} -e "for (let i = 0; i < 20; i++) console.log('row-' + i)"`,
+        },
+      }),
+    });
+    // A frame taller than the terminal would scroll its top out of the
+    // cursor-up erase's reach on every repaint. On a 12-row terminal the
+    // one pane's header, elided line, and footer take 3 rows, so its
+    // height shrinks from the default 10 to 9.
+    const { raw, exitCode } = await runOnPty(["run", "--parallel", "many"], String(dir), allDone(1), {
+      cols: 100,
+      rows: 12,
+    });
+    const frame = lastFrame(raw);
+    // 20 lines into a 9-row pty: the bottom row holds the resting
+    // cursor, so 8 lines are visible and 12 are in scrollback.
+    expect(frame).toContain("│ [12 lines elided]");
+    expect(frame.match(/^│ row-\d+$/gm)).toEqual(Array.from({ length: 8 }, (_, i) => `│ row-${i + 12}`));
+    expect(exitCode).toBe(0);
+  });
+
+  test("the erase never cursor-ups past the top of the terminal", async () => {
+    using dir = tempDir("mr-pane-tall-frame", {
+      "package.json": JSON.stringify({
+        scripts: {
+          t1: "echo one",
+          t2: "echo two",
+          t3: "echo three",
+        },
+      }),
+    });
+    // Three panes cannot fit an 8-row terminal even at a 1-row height,
+    // so every frame scrolls. Lines that scrolled into scrollback are
+    // out of the cursor's reach, so the next frame's erase must never
+    // emit more cursor-ups than the terminal has rows.
+    const rows = 8;
+    const { raw, exitCode } = await runOnPty(["run", "--parallel", "t1", "t2", "t3"], String(dir), allDone(3), {
+      cols: 100,
+      rows,
+    });
+    const frames = completeFrames(raw);
+    // The initial all-Running frame plus at least one repaint.
+    expect(frames.length).toBeGreaterThan(1);
+    for (const frame of frames) {
+      expect((frame.match(/\x1b\[1A/g) ?? []).length).toBeLessThan(rows);
+    }
     expect(exitCode).toBe(0);
   });
 

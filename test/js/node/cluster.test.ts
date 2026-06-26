@@ -181,7 +181,9 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
       `,
     ],
     env: bunEnv,
-    stderr: "pipe",
+    // Inherited so that on regression the child's abort output reaches the
+    // runner log instead of filling an unread pipe.
+    stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });

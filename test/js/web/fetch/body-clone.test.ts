@@ -520,11 +520,9 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
   expect(text).toContain("Здравствуй, мир!");
 });
 
-// clone() on a body whose stream is locked must throw a single, catchable
-// TypeError. It must not also report the same error as an uncaught exception:
-// that sets the process exit code to 1 even though the user handled the throw,
-// and the swallowed exception made clone() surface a bogus "Value is not a
-// sequence" instead.
+// clone() on a locked-stream body must throw a single catchable TypeError.
+// It must not also report the error as uncaught: that sets exit code 1 and
+// clears the pending exception even though the user handled the throw.
 test.each(["Request", "Response"])(
   "%s.clone() on a locked stream body throws a catchable TypeError and does not fail the process",
   async kind => {

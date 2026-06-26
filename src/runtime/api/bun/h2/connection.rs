@@ -2466,7 +2466,12 @@ mod tests {
             ));
         }
         // Push 4 was refused; its response still arrives from the server.
-        bytes.extend_from_slice(&frame(FrameType::Headers, wire::flags::END_HEADERS, 4, &resp));
+        bytes.extend_from_slice(&frame(
+            FrameType::Headers,
+            wire::flags::END_HEADERS,
+            4,
+            &resp,
+        ));
         let fed = c.receive(&sink, &bytes);
         assert!(!fed.fatal);
         assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
@@ -2476,10 +2481,7 @@ mod tests {
         // The refused reservation answered CANCEL, the raced response STREAM_CLOSED.
         assert_eq!(
             rst_codes_for(&sink.out.borrow(), 4),
-            vec![
-                ErrorCode::Cancel.as_u32(),
-                ErrorCode::StreamClosed.as_u32()
-            ]
+            vec![ErrorCode::Cancel.as_u32(), ErrorCode::StreamClosed.as_u32()]
         );
         assert!(sink.goaway.get().is_none());
     }

@@ -1388,8 +1388,15 @@ where
         }
 
         // if have sink, call onAborted on sink
-        if let Some(wrapper) = this.sink_mut() {
-            wrapper.sink.abort();
+        if let Some(sink_ptr) = this.sink {
+            // SAFETY: `sink_ptr` is the live JSSink allocated by do_render_stream
+            // (repr(transparent) over the sink). `abort` takes the raw pointer
+            // because the teardown it can re-enter frees the sink.
+            unsafe {
+                ResponseStream::<SSL_ENABLED, HTTP3>::abort(
+                    sink_ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
+                );
+            }
             return;
         }
 

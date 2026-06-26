@@ -2048,7 +2048,7 @@ describe("workspace integration", () => {
 // this file exercises through a pipe.
 //
 // These tests give `bun run --parallel` a real pty via `Bun.Terminal`.
-describe.skipIf(isWindows)("parallel: pane renderer", () => {
+describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
   /**
    * Run `bun <args>` with its stdio on a fresh pty. `until(raw)` decides
    * when every byte we intend to assert on has arrived — the pty read side

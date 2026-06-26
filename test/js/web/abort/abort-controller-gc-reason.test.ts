@@ -99,11 +99,9 @@ describe("AbortController GC", () => {
     expect(exitCode).toBe(0);
   });
 
-  // AbortSignal.any(): JSAbortSignalOwner::isReachableFromOpaqueRoots probed the dependent
-  // signal's source set with WeakListHashSet::isEmptyIgnoringNullReferences(), which prunes
-  // dead entries. It runs on JSC's parallel marker threads, so once every source controller
-  // had been collected, a HeapHelper thread destroyed WeakPtrImpls owned by the JS thread
-  // ("ASSERTION FAILED: m_creationThread == currentThreadID()"; a data race in release).
+  // JSAbortSignalOwner::isReachableFromOpaqueRoots runs on JSC's parallel marker threads and
+  // must not prune the dependent signal's source set there: doing so destroys WeakPtrImpls
+  // owned by the JS thread once every source controller has been collected.
   test("AbortSignal.any() dependent signals survive parallel GC after their sources are collected", async () => {
     await using proc = Bun.spawn({
       cmd: [

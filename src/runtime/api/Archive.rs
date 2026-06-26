@@ -449,7 +449,9 @@ fn read_file_backed_blob(global: &JSGlobalObject, blob: &Blob) -> JsResult<ZigSt
     if offset == 0 && size == file_data.len() {
         return Ok(ZigStringSlice::init_owned(file_data));
     }
-    Ok(ZigStringSlice::init_owned(file_data[offset..offset + size].to_vec()))
+    Ok(ZigStringSlice::init_owned(
+        file_data[offset..offset + size].to_vec(),
+    ))
 }
 
 /// Static method: Archive.write(path, data, options?)

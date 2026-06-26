@@ -43,9 +43,10 @@ bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JS
 // `globalObject`'s realm) and returns true. A termination requested by
 // anything else (e.g. Worker.terminate()) is left in place so it keeps
 // propagating, and false is returned.
-// `evaluationGlobalObject` is the global whose still-queued microtasks are
-// discarded on termination. Pass null for a module evaluated without its own
-// context so the caller's unrelated microtasks are not dropped.
+// `evaluationGlobalObject` is the vm context global whose still-queued
+// microtasks are discarded on termination. Pass null when the evaluation ran
+// in the caller's own global (runInThisContext, or a module without its own
+// context) so the caller's unrelated microtasks are not dropped.
 // `deadline` must already be disarmed.
 bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSGlobalObject* evaluationGlobalObject, JSC::ThrowScope& scope, SigintReceiver* receiver, NodeVMEvalTimeout* deadline);
 

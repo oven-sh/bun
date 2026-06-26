@@ -400,7 +400,10 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         deadline->disarm();
     }
 
-    if (checkForTermination(vm, globalObject, globalObject, scope, script, deadline ? &*deadline : nullptr)) {
+    // runInThisContext evaluates in the caller's own global: there is no
+    // separate context whose microtasks could be discarded without also
+    // dropping the caller's, so pass null for evaluationGlobalObject.
+    if (checkForTermination(vm, globalObject, nullptr, scope, script, deadline ? &*deadline : nullptr)) {
         return {};
     }
 

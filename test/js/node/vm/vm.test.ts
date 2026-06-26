@@ -1224,6 +1224,20 @@ describe("node:vm timeout option", () => {
     });
   });
 
+  // runInThisContext evaluates in the caller's own global, so timing out must
+  // not discard microtasks the caller queued before the call.
+  test("a timed-out runInThisContext does not cancel the caller's microtasks", async () => {
+    let survived = false;
+    Promise.resolve().then(() => {
+      survived = true;
+    });
+    expect(() => runInThisContext("while (true) {}", { timeout: 100 })).toThrow(
+      "Script execution timed out after 100ms",
+    );
+    await Promise.resolve();
+    expect(survived).toBe(true);
+  });
+
   test("nested: the inner deadline fires first and propagates out", () => {
     const context = createContext({
       runInVM: (timeout: number) => runInNewContext("while (true) {}", context, { timeout }),

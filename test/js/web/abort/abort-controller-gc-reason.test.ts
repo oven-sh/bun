@@ -10,12 +10,9 @@ describe("AbortController GC", () => {
   test.skipIf(isWindows)(
     "reason is marked across concurrent GC (write barrier / output constraint)",
     async () => {
-      // verifyGC re-marks the world single-threaded at the end of each cycle
-      // and asserts on any reachable cell the real concurrent collector left
-      // unmarked. Before the fix, the abort reason was stored via setWeakly()
-      // with no write barrier and JSAbortController had no visitOutputConstraints,
-      // so a controller.abort(err) that ran after the controller was already
-      // scanned left the Error unmarked.
+      // verifyGC asserts on reachable cells the concurrent collector missed.
+      // Before the fix, abort() after the controller was scanned stored the
+      // reason with no write barrier / output constraint, leaving it unmarked.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),

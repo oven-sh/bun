@@ -979,7 +979,11 @@ impl Lockfile {
                                     | dependency::Tag::Github
                             )
                         {
-                            superseding.push((dep.name_hash, dep.behavior.is_dev(), resolutions[i]));
+                            superseding.push((
+                                dep.name_hash,
+                                dep.behavior.is_dev(),
+                                resolutions[i],
+                            ));
                         }
                         break;
                     }

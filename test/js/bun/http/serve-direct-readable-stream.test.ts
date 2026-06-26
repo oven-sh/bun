@@ -117,6 +117,178 @@ test.skipIf(!isASAN)(
   30_000,
 );
 
+// Once controller.end() fully ends the response, uWS markDone() drops its
+// onAborted handler, so a peer that closes the plain-TCP socket afterwards
+// never reaches RequestContext::on_abort. uSockets frees the socket at the
+// end of that loop tick (us_internal_free_closed_sockets), but resp was never
+// detached; the stream-resolution microtask for the still parked pull() then
+// dereferenced the freed us_socket_t:
+//   AddressSanitizer: heap-use-after-free (READ of size 1)
+//     uws_res_state <- AnyResponse::should_close_connection
+//     <- RequestContext::should_close_connection
+//     <- RequestContext::handle_resolve_stream
+test.skipIf(!isASAN)(
+  "client disconnect after controller.end() with a parked pull() does not use the socket after free",
+  async () => {
+    const fixture = `
+    const { connect } = require("node:net");
+    const CRLF = "\\r\\n";
+
+    let release1, release2;
+    const gate1 = new Promise(r => (release1 = r));
+    const gate2 = new Promise(r => (release2 = r));
+
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/probe") return new Response("probe");
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("hello");
+              // Suspend so assignToStream sees a pending promise and the
+              // resolution goes through the on_resolve_stream microtask.
+              await gate1;
+              // Fully ends the uWS response: markDone() drops onAborted.
+              controller.end();
+              // Parks the resolution microtask past the socket close.
+              await gate2;
+            },
+          }),
+        );
+      },
+    });
+
+    // Raw TCP so this side controls exactly when the connection closes.
+    await new Promise((resolve, reject) => {
+      let buf = "";
+      let sawBody = false;
+      const sock = connect(server.port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1" + CRLF + "Host: a" + CRLF + CRLF);
+      });
+      sock.on("error", reject);
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        if (!sawBody && buf.includes("hello")) {
+          sawBody = true;
+          release1();
+        }
+        // Terminating chunk: controller.end() has fully responded server-side.
+        if (sawBody && buf.endsWith("0" + CRLF + CRLF)) sock.destroy();
+      });
+      sock.on("close", resolve);
+    });
+
+    // A round-trip through the server proves its event loop finished the
+    // iteration that closed the first socket; the matching
+    // us_internal_free_closed_sockets ran at the end of that iteration.
+    await (await fetch(server.url + "probe")).text();
+
+    release2();
+    await Bun.sleep(0);
+    server.stop(true);
+    console.log("ok");
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
+// Same setup, but the parked pull() rejects after controller.end(). The
+// rejection goes through handle_reject_stream, which had the same stale
+// `resp` dereference on its tail (`end_stream(should_close_connection())`).
+test.skipIf(!isASAN)(
+  "client disconnect after controller.end() with a parked rejecting pull() does not use the socket after free",
+  async () => {
+    const fixture = `
+    const { connect } = require("node:net");
+    const CRLF = "\\r\\n";
+
+    let release1, release2;
+    const gate1 = new Promise(r => (release1 = r));
+    const gate2 = new Promise(r => (release2 = r));
+
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      // development:false keeps the late rejection out of stderr; the dev
+      // reporter is irrelevant to the lifetime bug under test.
+      development: false,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/probe") return new Response("probe");
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("hello");
+              await gate1;
+              controller.end();
+              await gate2;
+              throw new Error("late stream failure");
+            },
+          }),
+        );
+      },
+    });
+
+    await new Promise((resolve, reject) => {
+      let buf = "";
+      let sawBody = false;
+      const sock = connect(server.port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1" + CRLF + "Host: a" + CRLF + CRLF);
+      });
+      sock.on("error", reject);
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        if (!sawBody && buf.includes("hello")) {
+          sawBody = true;
+          release1();
+        }
+        if (sawBody && buf.endsWith("0" + CRLF + CRLF)) sock.destroy();
+      });
+      sock.on("close", resolve);
+    });
+
+    await (await fetch(server.url + "probe")).text();
+
+    release2();
+    await Bun.sleep(0);
+    server.stop(true);
+    console.log("ok");
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
 // https://github.com/oven-sh/bun/issues/32137
 // react-dom/server.bun's renderToReadableStream returns a direct ReadableStream
 // whose pull() writes the shell, captures the controller, and returns

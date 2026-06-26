@@ -1067,6 +1067,15 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub has_backpressure: bool,
     pub end_len: usize,
     pub aborted: bool,
+    /// This sink fully ended the uWS response (`res.end()` / a completed
+    /// `res.try_end()`). uWS `markDone()` drops `onAborted` at that point, so
+    /// the owning `RequestContext` is never told if the peer closes afterwards
+    /// and its `resp` must not be dereferenced again: by the time the parked
+    /// stream-resolution microtask runs, uSockets may already have freed the
+    /// socket (`us_internal_free_closed_sockets`) or recycled it onto the next
+    /// keep-alive request. `handle_resolve_stream` / `handle_reject_stream`
+    /// consult this instead of reading the response's state.
+    pub ended_response: bool,
 
     pub on_first_write: Option<fn(Option<*mut c_void>)>,
     pub ctx: Option<*mut c_void>,
@@ -1093,6 +1102,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             has_backpressure: false,
             end_len: 0,
             aborted: false,
+            ended_response: false,
             on_first_write: None,
             ctx: None,
             auto_flusher: AutoFlusher::default(),
@@ -1466,6 +1476,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
                 }
+                // `send_readable` drained the parked `try_end`, so uWS has
+                // `markDone()`d the response and dropped its `onAborted`.
+                self.ended_response = true;
                 self.signal.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards
                 self.finalize();
@@ -1831,6 +1844,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         }
 
+        // Both branches above fully ended the response through uWS, which
+        // `markDone()`s it and drops its `onAborted`.
+        self.ended_response = true;
         self.mark_done();
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
         self.signal.close(None);

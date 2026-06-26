@@ -1529,7 +1529,8 @@ pub(crate) fn index_of_line(
         if let Some(i) = strings::index_of_newline_or_non_ascii(bytes, current_offset as u32) {
             let byte = bytes[i as usize];
             if byte > 0x7F {
-                current_offset += (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
+                current_offset =
+                    i as usize + (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
                 continue;
             }
 

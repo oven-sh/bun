@@ -44,6 +44,18 @@ void JSHmac::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSHmac::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSHmac* thisObject = uncheckedDowncast<JSHmac>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSHmac);
+
 template<typename, JSC::SubspaceAccess mode>
 JSC::GCClient::IsoSubspace* JSHmac::subspaceFor(JSC::VM& vm)
 {
@@ -88,6 +100,9 @@ void JSHmac::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const St
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize HMAC context"_s);
         return;
     }
+
+    m_sizeForGC = sizeof(HMAC_CTX);
+    globalObject->vm().heap.reportExtraMemoryAllocated(this, m_sizeForGC);
 }
 
 bool JSHmac::update(std::span<const uint8_t> input)
@@ -219,10 +234,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     if (hmac->m_ctx) {
         if (!hmac->m_ctx.digestInto(&mdBuffer)) {
             hmac->m_ctx.reset();
+            hmac->m_sizeForGC = 0;
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to digest HMAC"_s);
             return {};
         }
         hmac->m_ctx.reset();
+        hmac->m_sizeForGC = 0;
     }
 
     // We shouldn't set finalized if coming from _flush, but this

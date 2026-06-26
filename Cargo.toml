@@ -186,10 +186,11 @@ overflow-checks = false
 # back to "warn" (their priority 0 beats the group's -1) where a warning level
 # is intentional.
 warnings = { level = "deny", priority = -1 }
-# `bun_asan` / `bun_debug` are set via RUSTFLAGS (`--cfg=bun_*` +
-# `--check-cfg=cfg(bun_*)`) by scripts/build/rust.ts; register them here so a
-# plain `cargo build` / `cargo check` (without those flags) doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)'] }
+# `bun_asan` / `bun_debug` / `socket_fault_injection` are set via RUSTFLAGS
+# (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
+# them here so a plain `cargo build` / `cargo check` (without those flags)
+# doesn't warn.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself

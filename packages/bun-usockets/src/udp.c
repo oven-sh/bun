@@ -169,6 +169,14 @@ struct us_udp_socket_t *us_create_udp_socket(
 
     struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
     us_poll_init(p, fd, POLL_TYPE_UDP);
+    if (us_poll_start_rc(p, loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        bsd_close_socket(fd);
+        us_poll_free(p, loop);
+        if (err) *err = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
 
     struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
 
@@ -189,8 +197,6 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->on_close = close_cb;
     udp->on_recv_error = recv_error_cb;
     udp->next = NULL;
-
-    us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
 
     return (struct us_udp_socket_t *) udp;
 }

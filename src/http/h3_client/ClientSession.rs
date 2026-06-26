@@ -143,6 +143,25 @@ impl ClientSession {
         }
     }
 
+    pub fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
+        for &stream_ptr in self.pending.iter() {
+            let stream = stream_mut(stream_ptr);
+            let Some(client) = stream.client else {
+                continue;
+            };
+            if client_mut(client).async_http_id != async_http_id {
+                continue;
+            }
+            if core::mem::take(&mut stream.read_paused) {
+                if let Some(qs) = stream.qstream_mut() {
+                    qs.want_read(true);
+                }
+            }
+            return true;
+        }
+        false
+    }
+
     pub(super) fn detach(&mut self, stream: *mut Stream) {
         let st = stream_mut(stream);
         if let Some(cl) = st.client {

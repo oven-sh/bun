@@ -117,9 +117,7 @@ extern "C" fn select_alpn_callback(
             let buffer = match JSValue::create_buffer_from_length(&global, wire_len) {
                 Ok(b) => b,
                 Err(_) => {
-                    if scope.exit() {
-                        this.handlers.set(None);
-                    }
+                    this.exit_scope(scope, handlers);
                     return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
                 }
             };
@@ -160,17 +158,13 @@ extern "C" fn select_alpn_callback(
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                     saved_loop_state.as_mut_ptr(),
                 );
-                if scope.exit() {
-                    this.handlers.set(None);
-                }
+                this.exit_scope(scope, handlers);
                 return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
             }
             tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
                 saved_loop_state.as_mut_ptr(),
             );
-            if scope.exit() {
-                this.handlers.set(None);
-            }
+            this.exit_scope(scope, handlers);
             if !result.is_boolean() || result.to_boolean() {
                 // The server has an ALPNCallback and it answered: a string
                 // selects that protocol for this connection; anything else
@@ -689,13 +683,28 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn set_type_of_service(
         this: &Self,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         let args = callframe.arguments_old::<1>();
         let tos: i32 = if args.len >= 1 {
-            args.ptr[0].to_int32()
+            let arg = args.ptr[0];
+            // validate_integer_range maps NaN to the default; node:net rejects
+            // it with ERR_INVALID_ARG_TYPE, so do that explicitly here.
+            if arg.is_number() && arg.as_number().is_nan() {
+                return Err(global.throw_invalid_property_type_value(b"tos", b"integer", arg));
+            }
+            global.validate_integer_range(
+                arg,
+                0i32,
+                bun_sql_jsc::jsc::IntegerRange {
+                    min: 0,
+                    max: 255,
+                    field_name: b"tos",
+                    ..Default::default()
+                },
+            )?
         } else {
             0
         };
@@ -763,9 +772,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
         let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
-        if scope.exit() {
-            self.handlers.set(None);
-        }
+        self.exit_scope(scope, handlers);
     }
 
     /// Noalias re-entrancy: takes `this: *mut Self`, NOT
@@ -840,9 +847,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         this.deref();
     }
 
@@ -890,9 +895,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
     }
 
     /// Returns the raw, freely-aliased
@@ -919,6 +922,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get()
             .expect("No handlers set on Socket")
             .into()
+    }
+
+    /// `scope.exit()` drains microtasks, during which a synchronous
+    /// reconnect may repoint `self.handlers` at a fresh allocation; only
+    /// null the cell when it still holds the `Handlers` that `exit` freed.
+    #[inline]
+    fn exit_scope(&self, scope: super::handlers::Scope, entered: bun_ptr::BackRef<Handlers>) {
+        let captured = entered.as_ptr();
+        if scope.exit() && self.handlers.get().map(|n| n.as_ptr()) == Some(captured) {
+            self.handlers.set(None);
+        }
     }
 
     /// `*mut Self` for the same noalias-reentry reason as `on_writable` —
@@ -1201,6 +1215,44 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket.close(code);
     }
 
+    /// Discard a still-live native socket so this wrapper can be reused for a
+    /// fresh connect. `node:net` permits `socket.connect()` on an
+    /// already-connected socket; without this the previous `us_socket_t`'s
+    /// ext slot keeps pointing at `self` while `do_connect` overwrites
+    /// `self.socket`, aliasing two native sockets onto one wrapper. The ext
+    /// slot is nulled before closing so the synchronous `on_close` /
+    /// `on_connecting_error` dispatch early-returns and no JS callback fires;
+    /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
+    /// took. Caller must hold an independent +1 across this call. Only
+    /// handles Connected/Connecting; Pipe/UpgradedDuplex back-pointers do
+    /// not live in the ext slot so those are left for the caller's existing
+    /// `debug_assert!` to catch.
+    pub fn detach_for_reconnect(&self) {
+        let old = self.socket.get();
+        let Some(ext) = old.ext::<*mut c_void>() else {
+            return;
+        };
+        // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
+        unsafe { *ext = core::ptr::null_mut() };
+        self.socket.set(SocketHandler::<SSL>::DETACHED);
+        self.buffered_data_for_node_net
+            .with_mut(|b| b.clear_and_free());
+        self.detach_native_callback();
+        old.close(uws::CloseCode::Failure);
+        self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        if self.flags.get().contains(Flags::IS_ACTIVE) {
+            self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+            if let Some(h) = self.handlers.get() {
+                // SAFETY: `h` is the live client-mode `Handlers` box; see
+                // `Handlers::mark_inactive` contract.
+                if unsafe { Handlers::mark_inactive(h.as_ptr()) } {
+                    self.handlers.set(None);
+                }
+            }
+        }
+        self.deref();
+    }
+
     pub fn mark_inactive(&self) {
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             // we have to close the socket before the socket context is closed
@@ -1463,9 +1515,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             }
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         this.deref();
     }
 
@@ -1535,9 +1585,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         this.deref();
     }
 
@@ -1662,9 +1710,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     Err(e) => {
                         // `Scope` has no Drop — balance event_loop().enter() and
                         // active_connections before propagating.
-                        if scope.exit() {
-                            this.handlers.set(None);
-                        }
+                        this.exit_scope(scope, handlers);
                         return Err(e);
                     }
                 }
@@ -1683,9 +1729,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         Ok(())
     }
 
@@ -1723,9 +1767,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let buffer = match JSValue::create_buffer_from_length(&global, session.len()) {
             Ok(b) => b,
             Err(e) => {
-                if scope.exit() {
-                    this.handlers.set(None);
-                }
+                this.exit_scope(scope, handlers);
                 return Err(e);
             }
         };
@@ -1743,9 +1785,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         Ok(())
     }
 
@@ -1779,9 +1819,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let buffer = match JSValue::create_buffer_from_length(&global, line.len()) {
             Ok(b) => b,
             Err(e) => {
-                if scope.exit() {
-                    this.handlers.set(None);
-                }
+                this.exit_scope(scope, handlers);
                 return Err(e);
             }
         };
@@ -1799,9 +1837,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(err_value) = result.to_error() {
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
         Ok(())
     }
 
@@ -1930,8 +1966,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         let mut js_error: JSValue = JSValue::UNDEFINED;
-        if err != 0 {
-            // errors here are always a read error
+        // `err` is overloaded: when WE closed the socket it's a libus
+        // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
+        // close was driven by a recv() failure (loop.c:664) or a poll error
+        // (loop.c's EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the
+        // actual errno. Neither producer can yield EPERM(1)/ENOENT(2) — recv
+        // never returns them and the poll-error branch clamps them away — so
+        // values >2 are real read errnos and 0/1/2 are self-initiated closes
+        // that must not surface as a JS read error (matching Node's
+        // onStreamRead, which only sees errors that came from uv_read_cb).
+        if err > 2 {
             js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
                 &sys::Error::from_code_int(err, sys::Tag::read),
                 &global,
@@ -2014,9 +2058,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.exit_scope(scope, handlers);
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -4733,3 +4775,223 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
 
     Ok(JSValue::UNDEFINED)
 }
+
+pub mod testing_apis {
+    use super::*;
+
+    #[bun_jsc::host_fn]
+    pub fn js_socket_fault_injection_available(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::from(cfg!(socket_fault_injection)))
+    }
+
+    #[bun_jsc::host_fn]
+    pub fn js_clear_socket_faults(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(socket_fault_injection)]
+        {
+            let _ = global;
+            bun_uws_sys::fault_inject::us_fault_clear_all();
+            Ok(JSValue::UNDEFINED)
+        }
+        #[cfg(not(socket_fault_injection))]
+        Err(global.throw(format_args!(
+            "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
+        )))
+    }
+
+    #[bun_jsc::host_fn]
+    pub fn js_set_socket_fault(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        jsc::mark_binding!();
+        #[cfg(not(socket_fault_injection))]
+        {
+            let _ = frame;
+            return Err(global.throw(format_args!(
+                "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
+            )));
+        }
+        #[cfg(socket_fault_injection)]
+        {
+            use bun_uws_sys::fault_inject as fi;
+
+            let [opts] = frame.arguments_as_array::<1>();
+            if !opts.is_object() {
+                return Err(global.throw_invalid_argument_type_value("rule", "object", opts));
+            }
+
+            let syscall_str =
+                bun_core::OwnedString::new(match opts.get_truthy(global, "syscall")? {
+                    Some(v) => v.to_bun_string(global)?,
+                    None => {
+                        return Err(global.throw_invalid_argument_type_value(
+                            "rule.syscall",
+                            "string",
+                            JSValue::UNDEFINED,
+                        ));
+                    }
+                });
+            let syscall: c_int = if syscall_str.eql_comptime(b"recv") {
+                fi::RECV
+            } else if syscall_str.eql_comptime(b"send") {
+                fi::SEND
+            } else if syscall_str.eql_comptime(b"writev") {
+                fi::WRITEV
+            } else if syscall_str.eql_comptime(b"sendmsg") {
+                fi::SENDMSG
+            } else if syscall_str.eql_comptime(b"recvmsg") {
+                fi::RECVMSG
+            } else if syscall_str.eql_comptime(b"connect") {
+                fi::CONNECT
+            } else if syscall_str.eql_comptime(b"accept") {
+                fi::ACCEPT
+            } else {
+                // socket/close/shutdown have enum slots but no bsd.c hooks;
+                // accepting them would arm rules that can never fire.
+                return Err(global.throw(format_args!(
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept"
+                )));
+            };
+
+            let action_str =
+                bun_core::OwnedString::new(match opts.get_truthy(global, "action")? {
+                    Some(v) => v.to_bun_string(global)?,
+                    None => {
+                        return Err(global.throw_invalid_argument_type_value(
+                            "rule.action",
+                            "string",
+                            JSValue::UNDEFINED,
+                        ));
+                    }
+                });
+            let action: c_int = if action_str.eql_comptime(b"errno") {
+                fi::ACTION_ERRNO
+            } else if action_str.eql_comptime(b"short") {
+                fi::ACTION_SHORT
+            } else if action_str.eql_comptime(b"zero") {
+                fi::ACTION_ZERO
+            } else if action_str.eql_comptime(b"none") {
+                fi::ACTION_NONE
+            } else {
+                return Err(global.throw(format_args!(
+                    "rule.action must be one of: errno, short, zero, none"
+                )));
+            };
+
+            // "short" clamps a byte count, which only recv/send have; arming it
+            // on any other syscall would silently never fire.
+            if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
+                return Err(global.throw(format_args!(
+                    "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
+                )));
+            }
+
+            // "zero" only has meaning where the wrapper returns a byte count
+            // (EOF / backpressure); connect returns errno and accept returns a
+            // descriptor, so a zero there is stale errno or nonsense.
+            if action == fi::ACTION_ZERO
+                && !matches!(
+                    syscall,
+                    fi::RECV | fi::SEND | fi::WRITEV | fi::SENDMSG | fi::RECVMSG
+                )
+            {
+                return Err(global.throw(format_args!(
+                    "rule.action \"zero\" is only supported for syscall \"recv\", \"send\", \"writev\", \"sendmsg\" or \"recvmsg\""
+                )));
+            }
+
+            let errno_value: c_int = match opts.get_truthy(global, "errno")? {
+                None if action == fi::ACTION_ERRNO => {
+                    return Err(global.throw(format_args!(
+                        "rule.errno is required when action is \"errno\""
+                    )));
+                }
+                None => 0,
+                Some(v) if v.is_number() => v.coerce_to_i32(global)?,
+                Some(v) => {
+                    let name = bun_core::OwnedString::new(v.to_bun_string(global)?);
+                    parse_errno_name(&name).ok_or_else(|| {
+                        global.throw(format_args!(
+                            "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH)"
+                        ))
+                    })?
+                }
+            };
+
+            let get_i32 = |key: &str, default: i32| -> JsResult<i32> {
+                match opts.get_truthy(global, key)? {
+                    Some(v) => v.coerce_to_i32(global),
+                    None => Ok(default),
+                }
+            };
+
+            let clamp_bytes = get_i32("bytes", 0)?;
+            // A 0-byte clamp makes recv()/send() length-0 syscalls, which read
+            // back as EOF/backpressure — silently aliasing action "zero".
+            if action == fi::ACTION_SHORT && clamp_bytes <= 0 {
+                return Err(global.throw(format_args!(
+                    "rule.bytes must be > 0 when action is \"short\""
+                )));
+            }
+
+            let rule = fi::UsFaultRule {
+                action,
+                errno_value,
+                clamp_bytes,
+                after_n_calls: get_i32("after", 0)?,
+                repeat: get_i32("repeat", 1)?,
+                target_fd: get_i32("fd", -1)?,
+            };
+
+            // SAFETY: rule is a valid stack pointer for the duration of the call.
+            unsafe { fi::us_fault_set(syscall, &rule) };
+            Ok(JSValue::TRUE)
+        }
+    }
+
+    #[cfg(socket_fault_injection)]
+    fn parse_errno_name(name: &bun_core::OwnedString) -> Option<c_int> {
+        macro_rules! map {
+            ($($s:literal => $v:expr,)*) => {
+                $(if name.eql_comptime($s) { return Some($v as c_int); })*
+            };
+        }
+        #[cfg(unix)]
+        map! {
+            b"ECONNRESET" => libc::ECONNRESET,
+            b"EPIPE" => libc::EPIPE,
+            b"ETIMEDOUT" => libc::ETIMEDOUT,
+            b"ECONNREFUSED" => libc::ECONNREFUSED,
+            b"EAGAIN" => libc::EAGAIN,
+            b"EWOULDBLOCK" => libc::EWOULDBLOCK,
+            b"EINTR" => libc::EINTR,
+            b"ENOBUFS" => libc::ENOBUFS,
+            b"ENOMEM" => libc::ENOMEM,
+            b"EBADF" => libc::EBADF,
+            b"EINVAL" => libc::EINVAL,
+            b"ENETUNREACH" => libc::ENETUNREACH,
+            b"EHOSTUNREACH" => libc::EHOSTUNREACH,
+        }
+        #[cfg(windows)]
+        map! {
+            b"ECONNRESET" => 10054,
+            b"EPIPE" => 10054,
+            b"ETIMEDOUT" => 10060,
+            b"ECONNREFUSED" => 10061,
+            b"EAGAIN" => 10035,
+            b"EWOULDBLOCK" => 10035,
+            b"EINTR" => 10004,
+            b"ENOBUFS" => 10055,
+            b"ENOMEM" => 10055,
+            b"EBADF" => 10009,
+            b"EINVAL" => 10022,
+            b"ENETUNREACH" => 10051,
+            b"EHOSTUNREACH" => 10065,
+        }
+        None
+    }
+}
+pub use testing_apis as testing_ap_is;

@@ -3067,7 +3067,9 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::Body => {
                 bun_core::scoped_log!(fetch, "send body");
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 match &mut self.state.original_request_body {
                     HTTPRequestBody::Bytes(_) => {
@@ -3612,7 +3614,9 @@ impl<'a> HTTPClient<'a> {
                 self.handle_on_data_headers::<IS_SSL>(incoming_data, ctx, socket);
             }
             ResponseStage::Body => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 let report_progress = match self.handle_response_body(incoming_data, false) {
                     Ok(b) => b,
@@ -3628,7 +3632,9 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             ResponseStage::BodyChunk => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 let report_progress =
                     match self.handle_response_body_chunked_encoding(incoming_data) {
@@ -3792,6 +3798,39 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(idle_timeout_seconds());
     }
 
+    fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if self.state.flags.receive_paused
+            || self.proxy_tunnel.is_some()
+            || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
+            || !self.signals.is_receive_paused()
+            || socket.is_closed_or_has_error()
+        {
+            return;
+        }
+        self.state.flags.receive_paused = true;
+        socket.set_timeout(0);
+        let _ = socket.pause_stream();
+        bun_core::scoped_log!(fetch, "pause receive {}", self.async_http_id);
+    }
+
+    pub fn resume_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if !self.state.flags.receive_paused || self.signals.is_receive_paused() {
+            return;
+        }
+        self.state.flags.receive_paused = false;
+        if socket.is_closed() {
+            return;
+        }
+        // A FIN/RST/error that landed while the read poll was paused is only
+        // observable through the poll. Re-arm even when the socket already has
+        // an error or shutdown latched so the regular readable/EOF/error
+        // dispatch surfaces it; bailing here would strand the request with its
+        // timeout disabled and the body promise pending forever.
+        let _ = socket.resume_stream();
+        bun_core::scoped_log!(fetch, "resume receive {}", self.async_http_id);
+        self.set_timeout(&socket);
+    }
+
     pub fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         // Find out if we should not send any update.
         match self.state.stage {
@@ -3891,7 +3930,9 @@ impl<'a> HTTPClient<'a> {
                     && t.write_buffer.is_empty()
                     && t.wrapper
                         .as_ref()
-                        .map(|w| !w.is_shutdown())
+                        .map(|w| {
+                            !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data()
+                        })
                         .unwrap_or(false)
             } else {
                 true
@@ -3915,6 +3956,14 @@ impl<'a> HTTPClient<'a> {
                 HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
                 _ => true,
             };
+
+            // The uSockets paused bit survives `state.reset()`; never hand a
+            // paused socket back to the pool.
+            if core::mem::take(&mut self.state.flags.receive_paused)
+                && !socket.is_closed_or_has_error()
+            {
+                let _ = socket.resume_stream();
+            }
 
             if self.is_keep_alive_possible()
                 && !socket.is_closed_or_has_error()
@@ -3992,6 +4041,10 @@ impl<'a> HTTPClient<'a> {
             certificate_info,
         };
         callback.run(async_http, result);
+
+        if has_more {
+            self.maybe_pause_receive(socket);
+        }
 
         if PRINT_EVERY != 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
@@ -4365,6 +4418,7 @@ impl<'a> HTTPClient<'a> {
         if is_done
             || self.signals.get(signals::Field::ResponseBodyStreaming)
             || content_length.is_none()
+            || self.signals.body_receive_mode.is_some()
         {
             let is_final_chunk = is_done;
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
@@ -4449,7 +4503,9 @@ impl<'a> HTTPClient<'a> {
             -2 => {
                 self.report_progress(buffer_len);
                 // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming) {
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.signals.body_receive_mode.is_some()
+                {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
                     // Move the
@@ -4535,7 +4591,9 @@ impl<'a> HTTPClient<'a> {
                 self.state.get_body_buffer().append_slice_exact(buffer)?;
 
                 // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming) {
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.signals.body_receive_mode.is_some()
+                {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 
@@ -4543,7 +4601,7 @@ impl<'a> HTTPClient<'a> {
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/body_out_str).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, true);
+                    return self.state.process_body_buffer(buffer_snap, false);
                 }
 
                 Ok(false)

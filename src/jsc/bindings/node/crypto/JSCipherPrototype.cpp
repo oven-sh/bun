@@ -186,6 +186,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
     }
 
     cipher->m_ctx.reset();
+    cipher->m_sizeForGC = 0;
 
     if (!ok) {
         throwCryptoErrorWithAuth(lexicalGlobalObject, scope);

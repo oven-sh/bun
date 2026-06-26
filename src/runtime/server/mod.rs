@@ -1736,23 +1736,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Rust's `target_os = "linux"` excludes
                 // Android, so match both explicitly.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                if bun_sys::get_errno(-1i32) == bun_sys::E::EACCES {
-                    let host = _hostname
-                        .as_ref()
-                        .map(|h| h.as_bytes())
-                        .unwrap_or(b"0.0.0.0");
-                    let err = jsc::SystemError {
-                        message: bun_core::String::create_format(format_args!(
-                            "permission denied {}:{}",
-                            bstr::BStr::new(host),
-                            port
-                        )),
-                        code: bun_core::String::static_("EACCES"),
-                        syscall: bun_core::String::static_("listen"),
-                        ..Default::default()
-                    };
-                    let _ = global.throw_value(err.to_error_instance(global));
-                    return;
+                {
+                    let errno = bun_sys::get_errno(-1i32);
+                    if errno == bun_sys::E::EACCES {
+                        let host = _hostname
+                            .as_ref()
+                            .map(|h| h.as_bytes())
+                            .unwrap_or(b"0.0.0.0");
+                        let err = jsc::SystemError {
+                            message: bun_core::String::create_format(format_args!(
+                                "permission denied {}:{}",
+                                bstr::BStr::new(host),
+                                port
+                            )),
+                            code: bun_core::String::static_("EACCES"),
+                            syscall: bun_core::String::static_("listen"),
+                            ..Default::default()
+                        };
+                        let _ = global.throw_value(err.to_error_instance(global));
+                        return;
+                    }
+                    // e.g. ENOSPC from epoll_ctl(EPOLL_CTL_ADD). Linux-only because
+                    // on other platforms errno is not reliably preserved through
+                    // the C++/callback chain to here; see PR #30364.
+                    if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
+                        let err = jsc::SystemError::from(
+                            bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
+                                .to_system_error(),
+                        );
+                        let _ = global.throw_value(err.to_error_instance(global));
+                        return;
+                    }
                 }
                 jsc::SystemError {
                     message: bun_core::String::create_format(format_args!(

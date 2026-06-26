@@ -27,11 +27,6 @@ pub struct Cmd {
     pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
     pub exit_code: Option<ExitCode>,
-    /// There is no spawn arena to free (argv is heap-allocated as
-    /// `Vec<Vec<u8>>`), but the flag is kept to preserve
-    /// `bufferedOutputClose`'s control-flow split (post-spawn vs pre-spawn
-    /// completion).
-    pub spawn_arena_freed: bool,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -221,7 +216,6 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
-            spawn_arena_freed: false,
         }))
     }
 
@@ -661,9 +655,7 @@ impl Cmd {
         // pointer into `*child_out` (== `sub.child`); valid until `Cmd::deinit`
         // reclaims the box. Single-threaded.
         let subproc = unsafe { &mut *child };
-        // Ordering: `subproc.ref()` precedes `spawn_arena_freed = true`.
         subproc.r#ref();
-        interp.as_cmd_mut(this).spawn_arena_freed = true;
         drop(arena);
 
         if did_exit_immediately {
@@ -913,8 +905,7 @@ impl Cmd {
             // subprocess box was returned. Nothing to tear down.
             Exec::Subproc(_) => {}
         }
-        // Argv/env are heap-owned `Vec`s; there is no spawn arena to free (see
-        // `spawn_arena_freed`).
+        // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
         // `Pipeline::child_done` before this runs) — never freed here.
         me.base.end_scope();
@@ -980,12 +971,6 @@ impl Cmd {
             if interp.is_null() {
                 return Yield::suspended();
             }
-            // The `!spawn_arena_freed` arm
-            // (`ShellAsyncSubprocessDone::enqueue`) is unreachable here in
-            // practice — `initSubproc` sets `spawn_arena_freed = true` before
-            // any pipe can close. Kept as the same `Yield::Next` since the
-            // task body (`runFromMainThread`) is identical.
-            let _ = self.spawn_arena_freed;
             return Yield::Next(this_id);
         }
         Yield::suspended()

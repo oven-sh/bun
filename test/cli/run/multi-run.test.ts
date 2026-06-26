@@ -2048,7 +2048,12 @@ describe("workspace integration", () => {
 // this file exercises through a pipe.
 //
 // These tests give `bun run --parallel` a real pty via `Bun.Terminal`.
-describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
+//
+// Deliberately NOT `describe.concurrent`: each test is a pty plus a process
+// tree (an outer `bun run` and its task children), so running all twelve at
+// once puts ~40 simultaneous processes on the runner's machine. On CI that
+// load was measurable in the files that happen to run right after this one.
+describe.skipIf(isWindows)("parallel: pane renderer", () => {
   /**
    * Run `bun <args>` with its stdio on a fresh pty, wait for it to exit,
    * and return everything it wrote. `until(raw)` asserts that the bytes

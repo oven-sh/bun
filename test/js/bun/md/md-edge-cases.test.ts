@@ -1189,3 +1189,45 @@ describe("pathological autolink opener inputs", () => {
     );
   }, 90_000);
 });
+
+describe("inputs of 2^32 bytes or more", () => {
+  // The parser addresses its input with u32 offsets, so a 2^32-byte input
+  // cannot be represented and must be rejected with a catchable RangeError.
+  // Run in a subprocess so a crash cannot take down the test runner; the
+  // buffer is virtual-only (never written), so RSS stays small. The SKIP
+  // branch covers runners that cannot reserve 4 GiB at all.
+  test.each([
+    ["html", "Bun.markdown.html(big)"],
+    ["ansi", "Bun.markdown.ansi(big)"],
+    ["render", "Bun.markdown.render(big, {})"],
+    ["react", "Bun.markdown.react(big, undefined, { reactVersion: 18 })"],
+  ])("%s rejects a 2^32-byte input", async (_name, expr) => {
+    const script = `
+      let big;
+      try {
+        big = new Uint8Array(2 ** 32);
+      } catch {
+        console.log("SKIP");
+        process.exit(0);
+      }
+      try {
+        ${expr};
+        console.log("UNEXPECTED_SUCCESS");
+      } catch (e) {
+        console.log([e.constructor.name, e.code, e.message].join(" | "));
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect([
+      'RangeError | ERR_OUT_OF_RANGE | The value of "input.byteLength" is out of range. It must be <= 4294967295. Received 4294967296',
+      "SKIP",
+    ]).toContain(stdout.trim());
+    expect(exitCode).toBe(0);
+  });
+});

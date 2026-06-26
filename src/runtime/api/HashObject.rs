@@ -252,8 +252,9 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
 
     let mut input: &[u8] = b"";
     let input_slice: ZigStringSlice;
-    // Hoisted so `array_buffer` outlives the borrow stored in `input`.
-    let array_buffer;
+    // Hoisted to outlive the borrow stored in `input`: snapshots a shared /
+    // resizable buffer, or borrows an ordinary one (see `ArrayBuffer::stable_bytes`).
+    let stable_bytes;
     if let Some(arg) = args.next_eat() {
         if let Some(blob) = arg.as_class_ref::<Blob>() {
             // TODO: files
@@ -274,7 +275,7 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 | jsc::JSType::BigInt64Array
                 | jsc::JSType::BigUint64Array
                 | jsc::JSType::DataView => {
-                    array_buffer = match arg.as_array_buffer(global) {
+                    let array_buffer = match arg.as_array_buffer(global) {
                         Some(ab) => ab,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -282,7 +283,8 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
                             )));
                         }
                     };
-                    input = array_buffer.byte_slice();
+                    stable_bytes = array_buffer.stable_bytes(global)?;
+                    input = stable_bytes.as_slice();
                 }
                 _ => {
                     input_slice = arg.to_slice(global)?;

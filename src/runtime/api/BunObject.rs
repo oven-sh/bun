@@ -1511,9 +1511,11 @@ pub(crate) fn index_of_line(
         return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
+    // Preserve the existing ordering: a non-buffer first argument returns -1
+    // before the offset is coerced.
+    if arguments[0].as_array_buffer(global_this).is_none() {
         return Ok(JSValue::js_number_from_int32(-1));
-    };
+    }
 
     let mut offset: usize = 0;
     if arguments.len() > 1 {
@@ -1521,7 +1523,16 @@ pub(crate) fn index_of_line(
         offset = offset_value.max(0) as usize;
     }
 
-    let bytes = buffer.byte_slice();
+    // Re-read after offset coercion: coercion can run JS and detach/resize arg0,
+    // leaving a buffer descriptor captured before coercion stale.
+    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
+        return Ok(JSValue::js_number_from_int32(-1));
+    };
+
+    // Snapshot SharedArrayBuffer / resizable inputs before scanning — a worker
+    // can mutate shared bytes underneath the SIMD newline scanner otherwise.
+    let stable = buffer.stable_bytes(global_this)?;
+    let bytes = stable.as_slice();
     let mut current_offset = offset;
     let end = bytes.len() as u32;
 

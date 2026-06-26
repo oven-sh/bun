@@ -306,13 +306,11 @@ static void callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* pro
     }
 }
 
-static bool processIsExiting = false;
-
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-    if (processIsExiting)
+    if (process->m_isExiting)
         return;
-    processIsExiting = true;
+    process->m_isExiting = true;
     auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
@@ -889,7 +887,7 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     auto* process = globalObject->processObject();
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
-    bool alreadyExiting = processIsExiting;
+    bool alreadyExiting = process->m_isExiting;
     dispatchExitInternal(globalObject, process, exitCode);
 
     // Natural-shutdown path only: drain Promise microtasks once after

@@ -1395,6 +1395,12 @@ impl WebWorker {
         if vm_log.msgs.is_empty() {
             return;
         }
+        // A worker being torn down cannot build or deliver the report: every
+        // JS entry either trips JSC's `assertNoException` on the stale
+        // termination exception or throws a fresh one. Drop the pending log.
+        if self.has_requested_terminate() {
+            return;
+        }
         let global = vm.global();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
             let err = vm_log.to_js(global, "Error in worker")?;
@@ -1404,7 +1410,17 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
+            // Building or stringifying the report threw (or termination raced
+            // in after the check above): the error reporter must never
+            // rethrow. Fall back to the raw log text, keeping the diagnostic.
+            Err(JsError::Thrown | JsError::Terminated) => {
+                if !global.clear_exception_except_termination() {
+                    return;
+                }
+                let mut text = std::string::String::new();
+                let _ = vm_log.print_with_enable_ansi_colors::<false>(&mut text);
+                (JSValue::UNDEFINED, BunString::clone_utf8(text.as_bytes()))
+            }
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {

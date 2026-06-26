@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -412,5 +412,86 @@ describe("worker_threads", () => {
     });
     await p;
     expect(message).toEqual("hello");
+  });
+});
+
+// `WebWorker::flush_logs` used to `panic!("unhandled exception")` (aborting the
+// whole process) whenever wrapping or stringifying the worker's pending log
+// messages failed. Both arms are reachable from the public Worker API: a
+// resolver warning emitted while resolving the worker entry point stays in the
+// worker VM's log, and the post-startup and post-event-loop flushes both
+// stringify it inside the worker's JS context.
+describe("web worker error flush", () => {
+  test("terminate() racing the post-event-loop flush does not abort the process", async () => {
+    using dir = tempDir("worker-flush-terminated", {
+      "main.ts": `
+        const w = new Worker(new URL("./pkg/worker.ts", import.meta.url).href);
+        // The startup flush dispatches the resolver warning as an error event.
+        w.addEventListener("error", () => {});
+        const closed = new Promise<void>(r => w.addEventListener("close", () => r(), { once: true }));
+        // Once "spinning" arrives the worker is inside for(;;), so its only way
+        // out of JS is the termination trap armed by terminate() below. That
+        // guarantees the post-loop flush observes the terminated VM.
+        await new Promise<void>(r => w.addEventListener("message", () => r(), { once: true }));
+        w.terminate();
+        await closed;
+        console.log("done");
+      `,
+      // A non-string "type" is a resolver *warning*: it lands in the worker
+      // VM's log without failing the resolve, so the worker still starts.
+      "pkg/package.json": `{ "name": "x", "type": "bogus" }`,
+      "pkg/worker.ts": `setTimeout(() => { postMessage("spinning"); for (;;); }, 0);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(normalizeBunSnapshot(stdout)).toBe("done");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a throwing stringification of the pending log falls back to the raw log text", async () => {
+    using dir = tempDir("worker-flush-thrown", {
+      "main.ts": `
+        const w = new Worker(new URL("./pkg/worker.ts", import.meta.url).href);
+        w.addEventListener("error", e => console.log("error event:", e.message));
+        await new Promise<void>(r => w.addEventListener("close", () => r(), { once: true }));
+        console.log("done");
+      `,
+      // Two warnings so the flush wraps them in an AggregateError, whose
+      // stringification goes through the worker-replaceable Error.prototype.toString.
+      "pkg/package.json": `{ "name": "x", "type": "bogus", "browser": { "a": 42 } }`,
+      "pkg/worker.ts": `
+        Error.prototype.toString = function () {
+          throw new Error("poisoned");
+        };
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    // The parent still learns what went wrong: the fallback message is the
+    // rendered log carrying every diagnostic, not a generic placeholder.
+    expect(stdout).toContain('is not a valid value for "type" field');
+    expect(stdout).toContain('Each "browser" mapping must be a string or boolean');
+    expect(stdout).toContain("done");
+    expect(exitCode).toBe(0);
   });
 });

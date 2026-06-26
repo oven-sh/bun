@@ -129,8 +129,8 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser`'s error type: the union
-/// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
+/// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
+/// with the parser-specific `{ StackOverflow, InputTooLarge }`.
 // (`bun_jsc::JsError` covers the first three, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;
@@ -141,6 +141,9 @@ pub enum ParserError {
     JSError,
     JSTerminated,
     StackOverflow,
+    /// The input is longer than `OFF::MAX` bytes, so its offsets cannot be
+    /// represented by the parser's `u32` offset type.
+    InputTooLarge,
 }
 
 bun_core::oom_from_alloc!(ParserError);
@@ -149,6 +152,14 @@ impl From<ParserError> for bun_core::Error {
     fn from(e: ParserError) -> Self {
         bun_core::err!(from e)
     }
+}
+
+/// Every offset, mark and span boundary in the parser is an `OFF` (u32), so an
+/// input of 2^32 bytes or more cannot be indexed. Callers that size anything
+/// from the input length must reject it with this before allocating.
+#[inline]
+pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
+    OFF::try_from(text.len()).map_err(|_| ParserError::InputTooLarge)
 }
 
 impl<'a> Parser<'a> {
@@ -174,8 +185,8 @@ impl<'a> Parser<'a> {
         self.get_block_header_at(off)
     }
 
-    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Parser<'a> {
-        let size: OFF = OFF::try_from(text.len()).expect("int cast");
+    fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
+        let size = input_size(text)?;
         let mut p = Parser {
             text,
             size,
@@ -218,7 +229,7 @@ impl<'a> Parser<'a> {
             stack_check: StackCheck::init(),
         };
         p.build_mark_char_map();
-        p
+        Ok(p)
     }
 
     // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
@@ -335,15 +346,9 @@ pub fn render_to_html(
 
     let mut html_renderer = HtmlRenderer::init(input, render_opts);
 
-    let mut parser = Parser::init(input, flags, html_renderer.renderer());
+    let mut parser = Parser::init(input, flags, html_renderer.renderer())?;
 
-    // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
-    match parser.process_doc() {
-        Ok(()) => {}
-        Err(ParserError::OutOfMemory) => return Err(ParserError::OutOfMemory),
-        Err(ParserError::JSError) | Err(ParserError::JSTerminated) => unreachable!(),
-        Err(ParserError::StackOverflow) => return Err(ParserError::StackOverflow),
-    }
+    parser.process_doc()?;
     drop(parser);
 
     Ok(html_renderer.to_owned_slice()?)
@@ -362,7 +367,7 @@ pub fn render_with_renderer<'a>(
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
     let input = helpers::skip_utf8_bom(text);
 
-    let mut p = Parser::init(input, flags, rend);
+    let mut p = Parser::init(input, flags, rend)?;
 
     p.process_doc()
 }

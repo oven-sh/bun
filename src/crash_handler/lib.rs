@@ -645,6 +645,29 @@ mod draft {
         OutOfMemory,
     }
 
+    impl CrashReason {
+        /// Signal to terminate the process with after the crash report has
+        /// been printed. Signal-originated crashes re-raise the original
+        /// fault so the parent process (and core-dump analyzers) see the
+        /// real cause instead of a misleading SIGILL/SIGTRAP from a trap
+        /// instruction; everything else (panics, OOM) uses SIGABRT.
+        #[cfg(unix)]
+        fn terminal_signal(&self) -> c_int {
+            match self {
+                CrashReason::SegmentationFault(_) => libc::SIGSEGV,
+                CrashReason::IllegalInstruction(_) => libc::SIGILL,
+                CrashReason::BusError(_) => libc::SIGBUS,
+                CrashReason::FloatingPointError(_) => libc::SIGFPE,
+                CrashReason::Panic(_)
+                | CrashReason::Unreachable
+                | CrashReason::DatatypeMisalignment
+                | CrashReason::StackOverflow
+                | CrashReason::ZigError(_)
+                | CrashReason::OutOfMemory => libc::SIGABRT,
+            }
+        }
+    }
+
     impl fmt::Display for CrashReason {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
@@ -1302,7 +1325,7 @@ mod draft {
             }
         }
 
-        crash();
+        crash(reason);
     }
 
     /// This is called when `main` returns an error.
@@ -1913,7 +1936,7 @@ mod draft {
         // A Rust `panic!` is a bug. The process must not continue — with
         // `panic = "abort"` no unwind starts, so `catch_unwind` boundaries are
         // unreachable for Rust panics.
-        crash();
+        crash(reason);
     }
 
     /// Adapter for non-fatal `bun_core::dump_current_stack_trace` callers
@@ -2887,11 +2910,15 @@ mod draft {
     }
 
     /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.
-    /// This causes a segfault on posix systems to try to get a core dump.
-    fn crash() -> ! {
+    /// On POSIX this re-raises the signal that caused the crash (or SIGABRT
+    /// for panics) so the parent sees the real fault and core dumps are
+    /// attributed correctly.
+    fn crash(reason: CrashReason) -> ! {
         #[cfg(not(windows))]
         {
-            // Install default handler so that the tkill below will terminate.
+            let sig = reason.terminal_signal();
+
+            // Install default handler so that the raise below will terminate.
             // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
             // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
             let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
@@ -2900,7 +2927,7 @@ mod draft {
             unsafe {
                 libc::sigemptyset(&raw mut sigact.sa_mask);
             }
-            for sig in [
+            for s in [
                 libc::SIGSEGV,
                 libc::SIGILL,
                 libc::SIGBUS,
@@ -2908,28 +2935,42 @@ mod draft {
                 libc::SIGFPE,
                 libc::SIGHUP,
                 libc::SIGTERM,
-                // The trap below raises SIGTRAP on aarch64 (`brk`), not the
-                // SIGILL of x86_64's `ud2`. If JS registered a SIGTRAP
-                // listener (`process.on("SIGTRAP")` — npm's `signal-exit`
-                // package does), the forwarding sigaction returns after
-                // enqueueing, the trap instruction re-executes, and the
-                // process spins in signal delivery forever instead of dying.
-                // Reset it so the first trap is lethal.
+                // Keep SIGTRAP reset so the `core::intrinsics::abort()`
+                // fallback (brk on aarch64) is lethal even when JS installed
+                // a SIGTRAP listener via `process.on("SIGTRAP")` (npm's
+                // `signal-exit` package does).
                 libc::SIGTRAP,
             ] {
                 // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
                 unsafe {
-                    libc::sigaction(sig, &raw const sigact, core::ptr::null_mut());
+                    libc::sigaction(s, &raw const sigact, core::ptr::null_mut());
                 }
             }
-            // `core::intrinsics::abort()` lowers to a trap instruction —
-            // ud2 (x86_64 → SIGILL) / brk (aarch64 → SIGTRAP).
-            // Do NOT use `libc::abort()` here — that raises SIGABRT
-            // (exit 134), which is the *Windows* path's behaviour.
+
+            // We may be running inside the signal handler for `sig`, in which
+            // case the kernel added it to this thread's mask and a re-raise
+            // would sit pending forever. Unblock it (and SIGABRT for the
+            // fallback below). pthread_sigmask is async-signal-safe.
+            // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
+            unsafe {
+                let mut set: libc::sigset_t = bun_core::ffi::zeroed();
+                libc::sigemptyset(&raw mut set);
+                libc::sigaddset(&raw mut set, sig);
+                libc::sigaddset(&raw mut set, libc::SIGABRT);
+                libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
+            }
+
+            // SAFETY: raise has no preconditions; with SIG_DFL installed and
+            // the signal unblocked this terminates the process.
+            unsafe {
+                libc::raise(sig);
+            }
+            // If we somehow get here, fall through to a guaranteed-fatal trap.
             core::intrinsics::abort();
         }
         #[cfg(windows)]
         {
+            let _ = reason;
             // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it
             // includes a breakpoint which makes crashes easier to debug.
             //

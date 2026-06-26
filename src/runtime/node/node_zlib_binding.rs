@@ -280,8 +280,8 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
 
 impl<T: CompressionStreamImpl> CompressionStream<T> {
     /// Rejects a call on a handle whose `Context` was already torn down by
-    /// `close()`. A closed `Context` is in `NodeMode::NONE` with its native
-    /// state freed, which none of its `mode` matches handle.
+    /// `close()`: its native state is freed and its `mode` is `NodeMode::NONE`,
+    /// which `Context::do_work` and `Context::init` have no arm for.
     pub(crate) fn throw_if_closed(this: &T, global_this: &JSGlobalObject) -> JsResult<()> {
         if this.closed().get() {
             return Err(global_this

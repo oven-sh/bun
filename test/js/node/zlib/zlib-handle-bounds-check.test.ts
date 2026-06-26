@@ -163,7 +163,9 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // stderr is drained so a large diagnostic can't fill the pipe and block
+    // the child, but it isn't asserted on (debug/ASAN builds write to it).
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim(), exitCode };
   }
 

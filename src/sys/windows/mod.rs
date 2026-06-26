@@ -376,8 +376,8 @@ unsafe extern "system" {
 
 pub fn GetFileType(hFile: HANDLE) -> DWORD {
     let rc = GetFileType_raw(hFile);
-    // `syslog!` self-gates on `cfg!(debug_assertions)` (see lib.rs); no extra
-    // feature flag needed (there is no `debug_logs` feature in bun_sys).
+    // `syslog!` self-gates on `env::IS_DEBUG` (see lib.rs); no extra feature
+    // flag needed (there is no `debug_logs` feature in bun_sys).
     bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
     rc
 }
@@ -435,10 +435,10 @@ impl Win32ErrorUnwrap for Win32Error {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DEAD: full 1188-variant MS-ERREF const table. Kept gated for
-// reference; move individual consts up into `bun_windows_sys::Win32Error`
+// DEAD: full 1188-variant MS-ERREF const table. Kept behind `#[cfg(any())]`
+// for reference; move individual consts up into `bun_windows_sys::Win32Error`
 // if a new caller needs one. (Inherent impl on a foreign type is illegal,
-// so this block cannot be un-gated as-is.)
+// so this block cannot be enabled as-is.)
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _win32error_full_table {
@@ -3885,6 +3885,12 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
             rc
         );
+    }
+    // Another handle already set the delete disposition; the file is on its
+    // way out, which is what the caller asked for. Checked here so it covers
+    // both the FileDispositionInformationEx result and the legacy fallback.
+    if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED {
+        return bun_sys::Result::success();
     }
     if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::NtSetInformationFile) {
         return err;

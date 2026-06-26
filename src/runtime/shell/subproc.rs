@@ -1103,6 +1103,10 @@ impl Writable {
                 Stdio::Ipc | Stdio::Capture(_) => {
                     return Ok(Writable::Ignore);
                 }
+                Stdio::SocketFd => {
+                    // The shell never uses this; rejected at i < 3 anyway.
+                    panic!("Unimplemented stdin socket-fd");
+                }
             }
         }
         #[cfg(not(windows))]
@@ -1162,6 +1166,10 @@ impl Writable {
                 Stdio::ReadableStream(_) => {
                     // The shell never uses this
                     panic!("Unimplemented stdin readable_stream");
+                }
+                Stdio::SocketFd => {
+                    // The shell never uses this; rejected at i < 3 anyway.
+                    panic!("Unimplemented stdin socket-fd");
                 }
             }
         }
@@ -1320,6 +1328,8 @@ impl Readable {
                     event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+                // The shell never uses this; rejected at i < 3 anyway.
+                Stdio::SocketFd => Readable::Ignore,
             };
         }
 
@@ -1363,6 +1373,8 @@ impl Readable {
                     event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+                // The shell never uses this; rejected at i < 3 anyway.
+                Stdio::SocketFd => Readable::Ignore,
             }
         }
     }

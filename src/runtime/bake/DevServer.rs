@@ -190,7 +190,7 @@ pub struct Options<'a> {
 // (see `bake_body.rs::UserOptions::into_dev_server_options`).
 impl<'a> Options<'a> {
     /// Debug builds dump bundled sources to `.bake-debug` by default.
-    pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if cfg!(debug_assertions) {
+    pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if bun_core::env::IS_DEBUG {
         Some(b".bake-debug")
     } else {
         None
@@ -619,7 +619,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             assume_perfect_incremental_bundling,
             bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
                 .get()
-                .unwrap_or(cfg!(debug_assertions))
+                .unwrap_or(bun_core::env::IS_DEBUG)
         );
         w!(testing_batch_events, TestingBatchEvents::Disabled);
         w!(
@@ -859,7 +859,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     dev.configuration_hash_key = 'hash_key: {
         let mut h = Wyhash::init(128);
 
-        if cfg!(debug_assertions) {
+        if bun_core::env::IS_DEBUG {
             let stat = match sys::stat(
                 bun_core::self_exe_path()
                     .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
@@ -5900,7 +5900,6 @@ impl DevServer {
                     .zip(g.bundled_files.values())
                     .enumerate()
                 {
-                    // Note: un-gated `incremental_graph::File` is unpacked already.
                     let file = v;
                     let mut buf = paths::path_buffer_pool::get();
                     let normalized_key = self.relative_path(&mut *buf, k);

@@ -368,7 +368,7 @@ fn generate_client_reference_proxy(
                 value: StmtOrExpr::Expr(value),
                 default_name: LocRef {
                     loc: Loc::EMPTY,
-                    ref_: Some(ref_),
+                    ref_,
                 },
             })?;
         } else {

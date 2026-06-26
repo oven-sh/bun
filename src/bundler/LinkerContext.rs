@@ -114,10 +114,7 @@ pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
 
 // Re-exports from sibling modules in `linker_context/`.
-// `LinkerGraph` SoA accessors are real now (`` on
-// `JSAst`/`JSMeta`/`File`); the submodule bodies un-gate against those. Module
-// declarations live in `lib.rs::linker_context` — each re-export below is
-// gated alongside its module declaration so partial un-gates compile.
+// Module declarations live in `lib.rs::linker_context`.
 pub use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
 
 pub use crate::linker_context::compute_chunks::compute_chunks;
@@ -2253,9 +2250,6 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
-    // runtime_function: moved to the un-gated forward-decl impl block
-    // (see "Forward-decl shims for scanImportsAndExports.rs callees" below).
-
     pub fn print_code_for_file_in_chunk_js(
         &mut self,
         r: renamer::Renamer,
@@ -3658,17 +3652,15 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref)
                         .unwrap();
 
-                    if let Some(namespace_ref) = named_import.namespace_ref
-                        && namespace_ref.is_valid()
-                    {
+                    if named_import.namespace_ref.is_valid() {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
-                            result.namespace_ref = namespace_ref;
+                            result.namespace_ref = named_import.namespace_ref;
                             result.alias = named_import.alias.expect("infallible: alias present");
                         } else {
                             result = MatchImport {
                                 kind: MatchImportKind::Namespace,
-                                namespace_ref,
+                                namespace_ref: named_import.namespace_ref,
                                 alias: named_import.alias.expect("infallible: alias present"),
                                 ..Default::default()
                             };
@@ -3687,7 +3679,7 @@ impl<'a> LinkerContext<'a> {
                         // `log_disjoint` returns the disjoint `Transpiler.log` backref.
                         self.log_disjoint().add_range_warning_fmt(
                             Some(source),
-                            source.range_of_identifier(named_import.alias_loc.expect("infallible: alias present")),
+                            source.range_of_identifier(named_import.alias_loc),
                             format_args!(
                                 "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
                                 bstr::BStr::new(alias),
@@ -3706,12 +3698,7 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref)
                         .unwrap();
 
-                    if named_import.namespace_ref.is_some()
-                        && named_import
-                            .namespace_ref
-                            .expect("infallible: checked is_some")
-                            .is_valid()
-                    {
+                    if named_import.namespace_ref.is_valid() {
                         // SAFETY: `named_import` borrows `graph.ast`; the symbol slot is a
                         // disjoint allocation, so no aliasing with this `&mut`.
                         let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
@@ -3719,7 +3706,7 @@ impl<'a> LinkerContext<'a> {
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.expect("infallible: alias present");
-                        result.name_loc = named_import.alias_loc.unwrap_or(Loc::EMPTY);
+                        result.name_loc = named_import.alias_loc;
                     }
                 }
 
@@ -3729,12 +3716,7 @@ impl<'a> LinkerContext<'a> {
                         [prev_source_index as usize]
                         .get(&tracker.import_ref)
                         .unwrap();
-                    if named_import.namespace_ref.is_some()
-                        && named_import
-                            .namespace_ref
-                            .expect("infallible: checked is_some")
-                            .is_valid()
-                    {
+                    if named_import.namespace_ref.is_valid() {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
                             result.namespace_ref = next_tracker.import_ref;
@@ -3762,9 +3744,7 @@ impl<'a> LinkerContext<'a> {
                     let source = self.get_source(prev_source_index);
 
                     let next_source = self.get_source(next_tracker.source_index.get());
-                    let r = source.range_of_identifier(
-                        named_import.alias_loc.expect("infallible: alias present"),
-                    );
+                    let r = source.range_of_identifier(named_import.alias_loc);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
@@ -4013,11 +3993,11 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
                     // (graph.ast SoA) and `result` (stack local).
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(G::NamespaceAlias {
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
                             ..Default::default()
-                        });
+                        }));
                 }
                 MatchImportKind::NormalAndNamespace => {
                     imports_to_bind
@@ -4037,18 +4017,15 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
                     // map) has fully returned; no other live borrow aliases this symbol slot.
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(G::NamespaceAlias {
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
                             ..Default::default()
-                        });
+                        }));
                 }
                 MatchImportKind::Cycle => {
                     let source = self.get_source(source_index);
-                    let r = lex::range_of_identifier(
-                        source,
-                        named_import.alias_loc.unwrap_or_default(),
-                    );
+                    let r = lex::range_of_identifier(source, named_import.alias_loc);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
@@ -4072,10 +4049,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 MatchImportKind::Ambiguous => {
                     let source = self.get_source(source_index);
-                    let r = lex::range_of_identifier(
-                        source,
-                        named_import.alias_loc.unwrap_or_default(),
-                    );
+                    let r = lex::range_of_identifier(source, named_import.alias_loc);
 
                     // TODO: log locations of the ambiguous exports
 

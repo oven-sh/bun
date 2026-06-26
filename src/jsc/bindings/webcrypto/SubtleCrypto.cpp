@@ -1197,6 +1197,14 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
                     CString jwkUTF8String = jwkString.utf8(StrictConversion);
                     bytes.append(jwkUTF8String.span());
+
+                    // AES-KW (RFC 3394) can only wrap plaintext whose length is a multiple of
+                    // 8 bytes. A serialized JWK usually isn't, so pad it with trailing spaces,
+                    // which JSON.parse ignores when the key is unwrapped. This matches Node.js.
+                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW) {
+                        while (bytes.size() % 8)
+                            bytes.append(' ');
+                    }
                 }
                 }
 

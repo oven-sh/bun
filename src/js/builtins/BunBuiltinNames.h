@@ -214,6 +214,7 @@ using namespace JSC;
     macro(underlyingSource) \
     macro(url) \
     macro(view) \
+    macro(vmErrorDecorated) \
     macro(warning) \
     macro(writable) \
     macro(write) \

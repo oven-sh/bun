@@ -353,7 +353,7 @@ impl<'a> Snapshots<'a> {
         let list = self
             .inline_snapshots_to_write
             .entry(file_id)
-            .or_insert_with(Vec::new);
+            .or_default();
         list.push(value);
         Ok(())
     }

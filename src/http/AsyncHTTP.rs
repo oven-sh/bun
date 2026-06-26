@@ -213,6 +213,9 @@ fn make_client<'a>(
         async_http_id,
         hostname,
         unix_socket_path: ZigStringSlice::EMPTY,
+        compress: None,
+        compressed_request_body: Vec::new(),
+        compressed_body_len: 0,
     }
 }
 
@@ -270,6 +273,7 @@ pub struct Options<'a> {
     pub max_redirects: Option<u8>,
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
+    pub compress: Option<crate::compress_body::CompressOption>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -530,6 +534,7 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(val) = options.tls_props {
             this.client.tls_props = Some(val);
         }
+        this.client.compress = options.compress;
 
         if let Some(proxy) = &this.http_proxy {
             if let Some(auth) = build_proxy_authorization(proxy) {
@@ -768,6 +773,7 @@ impl<'a> AsyncHTTP<'a> {
                     // Clone-owned (allocated after `ptr::read`).
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));
+                    drop(core::mem::take(&mut client.compressed_request_body));
                     if let Some(tunnel) = client.proxy_tunnel.take() {
                         // SAFETY: tunnel was created by ProxyTunnel::start
                         // (heap::alloc) and is refcounted; detach the socket

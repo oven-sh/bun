@@ -158,7 +158,15 @@ impl ByteStream {
         });
     }
 
-    pub(crate) fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
+    #[inline]
+    fn signal_drained(&self) {
+        let source = self.parent_const();
+        if let Some(handler) = source.drain_handler.get() {
+            handler(source.drain_ctx.get());
+        }
+    }
+
+    pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -183,11 +191,13 @@ impl ByteStream {
             (p.ctx, p.on_pipe)
         };
         if let Some(ctx) = pipe_ctx {
+            self.signal_drained();
             (pipe_fn.unwrap())(ctx, stream);
             return Ok(());
         }
 
         if self.buffer_action.get().is_some() {
+            self.signal_drained();
             if let streams::Result::Err(err) = &stream {
                 // Explicit post-reject cleanup; runs after `action.reject`
                 // (`?` would skip it).
@@ -285,6 +295,7 @@ impl ByteStream {
             let pending_buffer_len = pending_buf.len();
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
             pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
+            let has_remaining = chunk.len() > to_copy_len;
             self.pending_buffer.set(Self::empty_pending_buffer());
 
             let is_really_done =
@@ -294,9 +305,9 @@ impl ByteStream {
                 self.done.set(true);
 
                 if to_copy_len == 0 {
-                    if let streams::Result::Err(err) = &stream {
-                        self.pending
-                            .with_mut(|p| p.result = streams::Result::Err(err.clone()));
+                    if matches!(stream, streams::Result::Err(_)) {
+                        let err = core::mem::replace(&mut stream, streams::Result::Done);
+                        self.pending.with_mut(|p| p.result = err);
                     } else {
                         self.pending.with_mut(|p| p.result = streams::Result::Done);
                     }
@@ -319,15 +330,14 @@ impl ByteStream {
                 });
             }
 
-            let remaining = &chunk[to_copy_len..];
-            if !remaining.is_empty() && !chunk.is_empty() {
-                // `chunk` borrows `stream`; passing both requires re-slicing inside
-                // `append`.
+            if has_remaining {
                 self.append(stream, to_copy_len)
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
             }
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
+
+            self.signal_drained();
 
             // R-2: `Pending::run` resolves a JS promise (re-enters JS); the
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
@@ -427,6 +437,10 @@ impl ByteStream {
                 }
                 (to_write, remaining_in_buffer_len)
             });
+
+            if self.buffer.get().is_empty() {
+                self.signal_drained();
+            }
 
             if self.has_received_last_chunk.get() && remaining_in_buffer_len == 0 {
                 self.buffer.with_mut(|b| {
@@ -544,6 +558,7 @@ impl ByteStream {
 
     pub(crate) fn drain(&self) -> Vec<u8> {
         if !self.buffer.get().is_empty() {
+            self.signal_drained();
             return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         }
         Vec::<u8>::default()
@@ -577,8 +592,9 @@ impl ByteStream {
         }
 
         if let streams::Result::Err(err) = &self.pending.get().result {
-            let (err_js, _) = err.to_js_weak(global_this);
-            self.pending.with_mut(|p| p.result.release());
+            let err_js = err.to_js(global_this);
+            err_js.ensure_still_alive();
+            self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.done.set(true);
             self.buffer.with_mut(|b| {
                 b.clear();
@@ -597,6 +613,7 @@ impl ByteStream {
             return Ok(blob.to_promise(global_this, action)?);
         }
 
+        self.signal_drained();
         self.buffer_action
             .set(Some(BufferAction::new(action, global_this)));
 

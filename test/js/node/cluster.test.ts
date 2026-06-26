@@ -162,12 +162,9 @@ process.send("regular message");
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
-  // `new cluster.Worker({ process })` accepts any object (Node's tests mock
-  // workers this way). `Worker.prototype.disconnect` in the primary routes
-  // through `sendHelper(worker.process[kHandle], ...)`, and `kHandle` is a
-  // private symbol that only `cluster.fork()` sets, so the native binding is
-  // handed `undefined`. It used to unwrap that into a process abort; Node's
-  // sendHelper just returns false and disconnect() returns the worker.
+  // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
+  // `cluster.Worker({ process })` built around a plain object (how Node's own
+  // tests mock workers) hands `undefined` to the native `sendHelper` binding.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

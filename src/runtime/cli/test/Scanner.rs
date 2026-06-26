@@ -28,8 +28,8 @@ pub struct Scanner<'a> {
     /// Whether `path_ignore_patterns` are the built-in defaults (see
     /// `DEFAULT_PATH_IGNORE_PATTERNS`) vs a list configured by the user via
     /// `--path-ignore-patterns` or `bunfig.toml`. When true, explicit file/directory
-    /// arguments bypass the patterns — otherwise running `bun test build/foo.test.ts`
-    /// would silently match nothing.
+    /// arguments bypass the matching defaults — otherwise running
+    /// `bun test ./build/foo.test.ts` would silently match nothing.
     pub path_ignore_patterns_are_defaults: bool,
     pub dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
@@ -143,10 +143,11 @@ impl<'a> Scanner<'a> {
     }
 
     /// Like `scan`, but the path came from an explicit command-line argument
-    /// (`bun test ./build/foo.test.ts`). When the only patterns in play are the
-    /// Scanner's built-in defaults, skip them for this invocation — the user
-    /// pointed at this file/directory, so silently dropping it would be
-    /// surprising. Any patterns the user configured themselves still apply.
+    /// (`bun test ./build/foo.test.ts`). When the patterns in play are the
+    /// Scanner's built-in defaults, drop only the ones matching the explicit
+    /// root for this invocation (see `scan_internal`) — the user pointed at
+    /// this file/directory, so silently dropping it would be surprising. Any
+    /// patterns the user configured themselves still apply.
     pub fn scan_explicit(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         self.scan_internal(path_literal, ScanMode::ExplicitPath)
     }
@@ -166,15 +167,15 @@ impl<'a> Scanner<'a> {
         let narrowed: Option<Box<[&'static [u8]]>> = if matches!(mode, ScanMode::ExplicitPath)
             && self.path_ignore_patterns_are_defaults
         {
+            // Match each default against the root's project-relative path. An
+            // empty `rel_path` means the explicit arg *is* the project root, so
+            // no default matches it (keep them all) — matching the raw absolute
+            // `path_literal` would wrongly drop `**/build/**` for a project that
+            // merely lives under a `build`/`dist` ancestor (e.g. `/opt/build/app`).
             let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path_literal);
-            let rel_source: &[u8] = if rel_path.is_empty() {
-                path_literal
-            } else {
-                rel_path
-            };
             let mut kept: Vec<&'static [u8]> = Vec::with_capacity(self.path_ignore_patterns.len());
             for &pattern in self.path_ignore_patterns {
-                if !pattern_matches_path(pattern, rel_source) {
+                if !pattern_matches_path(pattern, rel_path) {
                     // SAFETY: all entries in DEFAULT_PATH_IGNORE_PATTERNS are
                     // &'static [u8] byte-string literals; the `_are_defaults`
                     // flag guarantees that's the slice we're iterating.

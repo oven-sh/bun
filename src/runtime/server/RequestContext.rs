@@ -1150,6 +1150,37 @@ where
         }
     }
 
+    /// HTTP/1 only: `end_stream()` for a response the JS sink already fully
+    /// ended (`HTTPServerWritable::ended_response`). HTTP/1's uWS `markDone()`
+    /// drops its `onAborted` on end, so nothing nulls `self.resp` if the peer
+    /// closes afterwards: by the time the parked stream-resolution microtask
+    /// runs, uSockets may already have freed the socket
+    /// (`us_internal_free_closed_sockets`) or recycled it onto the next
+    /// keep-alive request. Release the handle without dereferencing it. The
+    /// `clear_on_data()`/`clear_aborted()`/`clear_timeout()` calls
+    /// `detach_response()` would make are already covered by `markDone()`.
+    ///
+    /// HTTP/3 must never reach this. `Http3Response::markDone()` deliberately
+    /// leaves `onAborted` armed so `on_stream_close` can notify the holder,
+    /// which also proves `resp` is still alive here (`on_abort` nulls it
+    /// first). H3 therefore needs `end_stream()`'s `detach_response()` to
+    /// disarm that callback before the context is released, or lsquic's later
+    /// `on_stream_close` invokes it on a freed pool slot.
+    pub fn end_already_responded_stream(&mut self) {
+        ctx_log!("endAlreadyRespondedStream");
+        debug_assert!(!HTTP3);
+        if self.resp.take().is_some() {
+            self.flags.set_is_waiting_for_request_body(false);
+            self.flags.set_has_abort_handler(false);
+            self.flags.set_has_timeout_handler(false);
+            self.request_body_buf = Vec::new();
+            self.end_request_streaming_and_drain();
+            // No early returns above; explicit deref instead of a scopeguard
+            // that would alias `&mut self` through a captured raw pointer.
+            self.deref();
+        }
+    }
+
     pub fn end_without_body(&mut self, close_connection: bool) {
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp {
@@ -2705,11 +2736,13 @@ where
         }
 
         let mut wrote_anything = false;
+        let mut ended_response = false;
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
             let aborted = req.flags.aborted() || wrapper.sink.aborted;
             req.flags.set_aborted(aborted);
             wrote_anything = wrapper.sink.wrote > 0;
+            ended_response = wrapper.sink.ended_response;
 
             wrapper.sink.finalize();
             let sink_global = wrapper
@@ -2743,6 +2776,17 @@ where
         }
 
         stream_log!("onResolve({})", wrote_anything);
+        // HTTP/1 only: the sink already fully ended the response, so `resp`
+        // can no longer be dereferenced (see `end_already_responded_stream`).
+        // This resolution can run arbitrarily later than the end: e.g. a
+        // direct stream whose `pull()` calls `controller.end()` and then
+        // awaits a promise the user only settles after the client has
+        // disconnected. H3 keeps the end_stream() path: its `resp` is still
+        // alive here and its still-armed onAborted must be disarmed.
+        if !HTTP3 && ended_response {
+            req.end_already_responded_stream();
+            return;
+        }
         if !req.flags.has_written_status() {
             req.render_metadata();
         }
@@ -2779,8 +2823,10 @@ where
     pub fn handle_reject_stream(req: &mut Self, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
+        let mut ended_response = false;
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");
+            ended_response = wrapper.sink.ended_response;
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
                 // assigned (flushFromJS / endFromJS). Drop that root before
@@ -2826,7 +2872,9 @@ where
 
         stream_log!("onReject()");
 
-        if !req.flags.has_written_status() {
+        // `resp` must not be dereferenced once the sink has already ended the
+        // response (see `end_already_responded_stream`).
+        if !ended_response && !req.flags.has_written_status() {
             req.render_metadata();
         }
 
@@ -2843,7 +2891,10 @@ where
                     }
                     let exception_list = jsc_exceptions_to_api(exception_list);
 
-                    if let Some(_dev_server) = server.dev_server() {
+                    // The fallback page below writes into `resp`, which must
+                    // not be dereferenced once the sink has already ended the
+                    // response (see `end_already_responded_stream`).
+                    if !ended_response && server.dev_server().is_some() {
                         // Render the error fallback HTML page like renderDefaultError does
                         if !req.flags.has_written_status() {
                             req.flags.set_has_written_status(true);
@@ -2890,6 +2941,14 @@ where
                     }
                 }
             }
+        }
+        // HTTP/1 only: the sink already fully ended the response, so `resp`
+        // can no longer be dereferenced (see `end_already_responded_stream`).
+        // H3 keeps the end_stream() path: its `resp` is still alive here and
+        // its still-armed onAborted must be disarmed.
+        if !HTTP3 && ended_response {
+            req.end_already_responded_stream();
+            return;
         }
         req.end_stream(req.should_close_connection());
     }

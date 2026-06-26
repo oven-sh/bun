@@ -35,7 +35,7 @@ test("node:http upgrade socket emits 'close' when the WebSocket peer closes", as
     client = new WebSocket(`ws://127.0.0.1:${port}/`);
     client.addEventListener("error", () => {
       const err = new Error("client WebSocket error");
-      echoed.reject(err), wsClosed.reject(err), rawSocketClosed.reject(err);
+      (echoed.reject(err), wsClosed.reject(err), rawSocketClosed.reject(err));
     });
     client.addEventListener("message", e => {
       if (String(e.data).startsWith("protocol:")) client!.send("hello");

@@ -69,3 +69,48 @@ describe("Bun.cron.parse — weekday 7 = Sunday in ranges", () => {
     expect(parse("0 0 * * 7", "2026-01-01T00:00:00Z")).toBe("2026-01-04T00:00:00.000Z");
   });
 });
+
+describe("Bun.cron.parse — invalid `from` argument", () => {
+  // Values outside the ECMAScript Date range (±8.64e15 ms) used to reach
+  // WTF::msToGregorianDateTime's undefined int casts and panic in next().
+  test.each([
+    1e300,
+    -1e300,
+    4e18,
+    8.7e15,
+    -8.7e15,
+    8.64e15 + 1,
+    -8.64e15 - 1,
+    Number.MAX_VALUE,
+    Infinity,
+    -Infinity,
+    NaN,
+  ])("throws for out-of-range/non-finite ms: %p", from => {
+    expect(() => Bun.cron.parse("* * * * *", from)).toThrow("Invalid date value");
+    expect(() => Bun.cron.parse("* * * * *", new Date(from))).toThrow("Invalid date value");
+  });
+
+  test("accepts the Date range boundary", () => {
+    // from = +8.64e15 is +275760-09-13T00:00:00Z; the next occurrence falls
+    // past the representable range → null, not an Invalid Date.
+    expect(Bun.cron.parse("* * * * *", 8.64e15)).toBeNull();
+    // from = -8.64e15 is -271821-04-20T00:00:00Z; next minute is in range.
+    expect(Bun.cron.parse("* * * * *", -8.64e15)?.toISOString()).toBe("-271821-04-20T00:01:00.000Z");
+    // Just inside the upper boundary: next minute lands exactly on 8.64e15.
+    expect(Bun.cron.parse("* * * * *", 8.64e15 - 60_000)?.getTime()).toBe(8.64e15);
+  });
+
+  test("does not crash the process on 1e300", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { Bun.cron.parse("* * * * *", 1e300); } catch (e) { process.stdout.write(e.message); }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "Invalid date value", exitCode: 0 });
+  });
+});

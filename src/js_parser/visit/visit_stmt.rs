@@ -369,11 +369,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::ExportDefault,
     ) -> Result<(), Error> {
         // scopeguard can't borrow `p` across the body; restructured to a tail
-        // closure invoked at every return site below.
+        // closure invoked at every return site below. Guard on `is_symbol()`
+        // because early returns can reach this before the parse-time name
+        // ref (SourceContentsSlice/AllocatedName) has been rewritten.
         macro_rules! record_on_exit {
             () => {
-                if let Some(ref_) = data.default_name.ref_.to_nullable() {
-                    p.record_declared_symbol(ref_);
+                if data.default_name.ref_.is_symbol() {
+                    p.record_declared_symbol(data.default_name.ref_);
                 }
             };
         }

@@ -279,6 +279,14 @@ describe("Bun.Transpiler", () => {
       const js = new Bun.Transpiler({ loader: "js" });
       expect(js.transformSync("export default \\u{66}")).toBe("export default f;\n");
       expect(js.transformSync("export default \\u0066oo")).toBe("export default foo;\n");
+
+      // exports.eliminate marks the default export dead and returns early before
+      // the default_name ref is rewritten to a symbol. record_on_exit must not
+      // feed that parse-time ref to record_declared_symbol.
+      const elim = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ["default"] } });
+      expect(elim.transformSync("export default foo")).toBe("");
+      expect(elim.transformSync("export default \\u{66}")).toBe("");
+      expect(elim.transformSync("export default \\u{66}oo")).toBe("");
     });
 
     it("rejects export clauses inside a non-declare namespace", () => {

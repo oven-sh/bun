@@ -607,6 +607,36 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: Oops!::/m);
     });
+    test("should annotate an error message containing non-ASCII bytes", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            throw "hello é world";
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: hello é world::/m);
+    });
+    test("should annotate an error message containing emoji and newlines", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            throw "before 😋 after\\nsecond 😋 line";
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: before 😋 after::/m);
+    });
     test("should annotate a test timeout", () => {
       const stderr = runTest({
         input: `

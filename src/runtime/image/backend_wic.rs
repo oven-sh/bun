@@ -899,8 +899,8 @@ fn factory() -> Result<ComPtr<IWICImagingFactory>, BackendError> {
 fn load_factory() {
     // Resolve the one flat C export first; if windowscodecs.dll isn't present
     // we never attempt CoCreateInstance and the whole backend stays disabled.
-    // LOAD_LIBRARY_SEARCH_SYSTEM32 pins the load to %windir%\System32 even if
-    // this ever runs before main() sets the process-wide default.
+    // LOAD_LIBRARY_SEARCH_SYSTEM32 pins the load to %windir%\System32, so a
+    // same-named DLL planted in the application directory / CWD is ignored.
     // SAFETY: literal C string, null reserved handle; safe from any thread.
     let dll = unsafe {
         windows::LoadLibraryExA(

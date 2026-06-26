@@ -585,7 +585,7 @@ describe("bundler files option", () => {
 
   // FileMap keys are user-supplied identities and may be relative; run in a
   // subprocess so an assertion panic fails the test instead of killing the runner.
-  test.each(["./e.js", "e.js", "./src/e.js"])(
+  test.concurrent.each(["./e.js", "e.js", "./src/e.js"])(
     "relative key %j as entry point does not trip the absolute-path assertion",
     async key => {
       const script = `
@@ -621,7 +621,7 @@ describe("bundler files option", () => {
     },
   );
 
-  test("relative key as entry point surfaces parse errors without crashing", async () => {
+  test.concurrent("relative key as entry point surfaces parse errors without crashing", async () => {
     const script = `
       const r = await Bun.build({
         entrypoints: ["./e.js"],

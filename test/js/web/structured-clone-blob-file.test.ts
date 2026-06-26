@@ -171,6 +171,22 @@ describe("structuredClone with Blob and File", () => {
       expect(slice.size).toBe(100);
       expect(new Uint8Array(await slice.arrayBuffer())).toEqual(expected);
     });
+
+    // Only a slice's *concrete* length is carried on the wire. An unresolved
+    // `Bun.file(p)` keeps its unknown-size sentinel: the receiving side must
+    // resolve it lazily against its own path (or fd, which can refer to a
+    // different file or nothing at all in another process). Pinning the
+    // serialize-time stat would freeze a stale size into the clone.
+    test("serializing an unresolved Bun.file() does not pin its size", async () => {
+      using dir = tempDir("structured-clone-lazy-size", { "f.bin": Buffer.alloc(4, 1) });
+      const p = path.join(String(dir), "f.bin");
+      // The blob's size is never read before serializing, so it is unresolved.
+      const wire = serialize(Bun.file(p));
+      await Bun.write(p, Buffer.alloc(10, 2));
+      // The clone reflects the file as it is now, not as it was at serialize time.
+      expect(deserialize(wire).size).toBe(10);
+      expect(structuredClone(Bun.file(p)).size).toBe(10);
+    });
   });
 
   describe("File structured clone", () => {

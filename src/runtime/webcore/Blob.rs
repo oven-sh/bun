@@ -114,7 +114,8 @@ pub type Ref = bun_ptr::ExternalShared<Blob>;
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` (u64). `offset` alone cannot reconstruct a
 ///    file-backed `.slice(start, end)`: without the length the clone widens
-///    to the rest of the file.
+///    to the rest of the file. `MAX_SIZE` on the wire means "unresolved": the
+///    receiver resolves it lazily against its own path / fd.
 const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
@@ -729,6 +730,15 @@ impl BlobExt for Blob {
         } else {
             false
         };
+        // Version 4: the blob's `size`, written at the very end. Capture it
+        // before the `resolve_size()` below mutates it: a slice's concrete
+        // length must survive the round-trip (`offset` alone widens the clone
+        // to the rest of the file), but an unresolved file blob must keep the
+        // `MAX_SIZE` unknown-size sentinel so the receiving side resolves it
+        // lazily against its own path / fd. Resolving here and pinning the
+        // result would serialize e.g. the 0 that `resolve_size()` reports for
+        // an fd that does not stat in *this* process.
+        let size = self.size.get();
 
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
         writer.write_int_le::<u64>(if is_memory_backed {
@@ -784,12 +794,7 @@ impl BlobExt for Blob {
             }
         }
 
-        // Version 4: the blob's `size`. For a memory-backed blob the payload
-        // above already is the `(offset, size)` view; for a file-backed one
-        // only the path and `offset` are serialized, and `resolve_size()`
-        // (called before `store.serialize` above) just clamped `size` to the
-        // file, so this is the slice's concrete length.
-        writer.write_int_le::<u64>(self.size.get())?;
+        writer.write_int_le::<u64>(size)?;
         Ok(())
     }
 
@@ -4334,7 +4339,10 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
         // Version 4: the blob's `size`. Required to reconstruct a file-backed
         // `.slice(start, end)`: `offset` alone widens the view to the rest of
-        // the file. Version 3 payloads fall back to that older behavior.
+        // the file. `MAX_SIZE` means the sender never resolved it (an unsliced
+        // `Bun.file(p)` / `Bun.file(fd)`), so it stays lazy and resolves here
+        // against this process's own path / fd. Version 3 payloads fall back
+        // to the older (size-less, always lazy) behavior.
         blob.size.set(reader.read_int_le::<u64>()? as SizeType);
 
         if version == 4 {

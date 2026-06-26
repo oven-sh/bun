@@ -1394,6 +1394,7 @@ function Socket(options?) {
   this._parentWrap = null;
   this[kpendingRead] = undefined;
   this[kupgraded] = null;
+  this[kflushPendingDuplexTLS] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);

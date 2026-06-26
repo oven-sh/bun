@@ -226,23 +226,68 @@ test("AbortController during 1MB upload", async () => {
   }
 });
 
+// RFC 9110 §15.2 / RFC 9114 §4.1: an interim (1xx) response does not occupy
+// the final-response slot. Bun.serve's HTTP/3 context answers
+// `expect: 100-continue` with an informational HEADERS before routing, so the
+// second fetch's stream carries HEADERS(100) → HEADERS(200) → DATA("body") →
+// FIN and the client must surface only the final response. This is the
+// positive counterpart to the DATA-after-1xx rejection below: it pins the 1xx
+// skip in on_stream_headers, without which the fetch resolves with status 100.
+//
+// The warm-up request is load-bearing. Bun.serve's HTTP/3 server only
+// sequences an informational response followed by a final response correctly
+// on a reused connection: on a connection's first response lsquic is still
+// holding the informational header block when the final HEADERS is written,
+// the stream dies, and the fetch rejects. That is a server-side bug
+// independent of the client behavior under test here; connection reuse is the
+// common case and keeps this deterministic (0/30 cold vs 30/30 warm).
+test("a 1xx interim response is skipped and the final response is delivered", async () => {
+  using upstream = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    async fetch(req) {
+      return new Response("body", { headers: { "x-recv-len": String((await req.bytes()).length) } });
+    },
+  });
+  const url = `https://127.0.0.1:${upstream.port}/`;
+
+  // Establishes the QUIC connection the interim-response request below reuses.
+  const warmup = await fetch(url, { ...h3, method: "POST", body: "warmup" });
+  expect({ status: warmup.status, body: await warmup.text() }).toEqual({ status: 200, body: "body" });
+
+  const res = await fetch(url, {
+    ...h3,
+    method: "POST",
+    headers: { expect: "100-continue" },
+    body: "request-content",
+  });
+  expect({
+    status: res.status,
+    body: await res.text(),
+    received: res.headers.get("x-recv-len"),
+  }).toEqual({ status: 200, body: "body", received: "15" });
+});
+
 // RFC 9114 §4.1 / RFC 9110 §15.2: response content may only follow the final
 // (non-1xx) HEADERS frame. lsquic's client-side frame filter only checks that
 // *some* HEADERS preceded DATA, so a peer that sends HEADERS(:status 1xx)
 // followed by DATA reaches on_stream_data with status_code still 0. Before
 // this was guarded, deliver() returned without draining body_buffer and the
 // peer could grow it without bound. A conformant server cannot emit this
-// sequence, so the debug-only x-bun-test-100-then-data server hook in
-// Http3Context.h writes HEADERS(100) then the header's value as DATA then
-// FIN, without ever sending a final response. The hook is compiled out of
-// release builds, so this test only runs against debug builds.
+// sequence, so in debug builds `on_h3_request` answers a request carrying
+// x-bun-test-100-then-data with HEADERS(100), then the header's value as
+// DATA, then FIN, without ever sending a final response
+// (Response::test_end_after_informational in src/uws_sys/h3.rs). The hook is
+// compiled out of release builds, so this test only runs against debug builds.
 test.skipIf(!isDebug)("DATA after only a 1xx HEADERS is rejected (RFC 9114 §4.1)", async () => {
   using upstream = Bun.serve({
     port: 0,
     tls,
     http3: true,
     http1: false,
-    // Unreached: the test hook short-circuits before routing.
+    // Unreached: the test hook short-circuits before the handler is invoked.
     fetch: () => new Response("handler-ran", { status: 200 }),
   });
   const origin = `https://127.0.0.1:${upstream.port}`;

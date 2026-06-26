@@ -140,6 +140,21 @@ void uws_h3_res_pause(uws_h3_res_t* res) { ((Http3Response*)res)->pause(); }
 void uws_h3_res_resume(uws_h3_res_t* res) { ((Http3Response*)res)->resume(); }
 void uws_h3_res_write_continue(uws_h3_res_t* res) { ((Http3Response*)res)->writeContinue(); }
 
+#ifdef BUN_DEBUG
+/* Test-only: DATA + FIN with no final HEADERS, a sequence a conformant
+ * handler cannot produce (RFC 9114 §4.1). Queued via backpressure so the
+ * bytes flush after lsquic's stashed 1xx header block (stream writes are
+ * refused until STREAM_HEADERS_SENT). */
+void uws_h3_res_test_end_after_informational(uws_h3_res_t* res, const char* data, size_t length)
+{
+    Http3ResponseData* d = ((Http3Response*)res)->getHttpResponseData();
+    d->state |= Http3ResponseData::HTTP_STATUS_CALLED | Http3ResponseData::HTTP_WRITE_CALLED;
+    d->backpressure.append(data, length);
+    d->endAfterDrain = true;
+    us_quic_stream_want_write((us_quic_stream_t*)res, 1);
+}
+#endif
+
 void uws_h3_res_write_status(uws_h3_res_t* res, const char* status, size_t length)
 {
     ((Http3Response*)res)->writeStatus(sv(status, length));

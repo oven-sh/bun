@@ -182,6 +182,15 @@ impl Response {
     pub fn write_continue(&mut self) {
         c::uws_h3_res_write_continue(self)
     }
+    /// Test-only: queue `data` as a DATA frame followed by FIN without ever
+    /// sending the final response HEADERS. Exists so
+    /// `fetch-http3-adversarial.test.ts` can exercise the client's
+    /// DATA-before-final-HEADERS guard; unreachable from user code.
+    #[cfg(bun_debug)]
+    pub fn test_end_after_informational(&mut self, data: &[u8]) {
+        // SAFETY: self is a live FFI handle; data ptr/len valid for read
+        unsafe { c::uws_h3_res_test_end_after_informational(self, data.as_ptr(), data.len()) }
+    }
     pub fn flush_headers(&mut self, immediate: bool) {
         c::uws_h3_res_flush_headers(self, immediate)
     }
@@ -603,6 +612,12 @@ mod c {
             opts: BunSocketContextOptions,
         ) -> bool;
         pub(super) safe fn uws_h3_res_write_continue(res: &mut Response);
+        #[cfg(bun_debug)]
+        pub(super) fn uws_h3_res_test_end_after_informational(
+            res: *mut Response,
+            p: *const u8,
+            n: usize,
+        );
         pub(super) fn uws_h3_app_get(
             app: *mut App,
             p: *const u8,

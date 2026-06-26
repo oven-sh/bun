@@ -58,19 +58,6 @@ struct Http3Response {
         return this;
     }
 
-#ifdef BUN_DEBUG
-    /* h3 client adversarial test hook: DATA + FIN with no final HEADERS.
-     * Queued via backpressure so the bytes flush after lsquic's stashed
-     * 1xx header block (writes are refused until STREAM_HEADERS_SENT). */
-    void endAfterInformational(std::string_view data) {
-        Http3ResponseData *d = getHttpResponseData();
-        d->state |= Http3ResponseData::HTTP_STATUS_CALLED | Http3ResponseData::HTTP_WRITE_CALLED;
-        d->backpressure.append(data.data(), data.length());
-        d->endAfterDrain = true;
-        us_quic_stream_want_write((us_quic_stream_t *) this, 1);
-    }
-#endif
-
     void flushHeaders(bool /*immediately*/ = false) {
         Http3ResponseData *d = getHttpResponseData();
         if (!(d->state & Http3ResponseData::HTTP_WRITE_CALLED)) {

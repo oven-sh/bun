@@ -2706,6 +2706,17 @@ where
         if !Self::HAS_H3 {
             unreachable!();
         }
+        #[cfg(bun_debug)]
+        {
+            // Test hook: HEADERS(100) + DATA + FIN with no final response, a
+            // sequence no conformant handler can produce (RFC 9114 §4.1).
+            // Exercised by fetch-http3-adversarial.test.ts on debug builds.
+            if let Some(body) = req.header(b"x-bun-test-100-then-data") {
+                resp.write_continue();
+                resp.test_end_after_informational(body);
+                return;
+            }
+        }
         if self.config.on_request.is_none() {
             return Self::on_h3_404(self, req, resp);
         }

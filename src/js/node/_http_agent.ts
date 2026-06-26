@@ -209,14 +209,17 @@ function handleSocketAfterProxy(err, req) {
 // https-proxy-agent & co keep their constructor options on `agent.connectOpts`:
 // https://github.com/TooTallNate/proxy-agents/blob/main/packages/https-proxy-agent/src/index.ts#L110-L117
 // Node.js only uses those for the connection to the proxy. Bun has always also
-// honored the TLS trust options for the CONNECT-tunneled connection itself
-// (`new HttpsProxyAgent(url, { ca })` is widely relied on), so addRequest seeds
-// exactly those at the lowest priority. Options describing the connection to
-// the proxy (host, port, servername, ALPNProtocols, ...) are not forwarded.
+// honored the TLS trust and client-identity options for the CONNECT-tunneled
+// connection itself (`new HttpsProxyAgent(url, { ca })` is widely relied on),
+// so addRequest seeds exactly those at the lowest priority; `pfx` is the
+// PKCS#12 spelling of cert/key and is treated the same. Options describing the
+// connection to the proxy (host, port, servername, ALPNProtocols, ...) are not
+// forwarded.
 const kTunneledTLSOptions = [
   "ca",
   "cert",
   "key",
+  "pfx",
   "passphrase",
   "rejectUnauthorized",
   "ciphers",

@@ -699,7 +699,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // validate_integer_range maps NaN to the default; node:net rejects
             // it with ERR_INVALID_ARG_TYPE, so do that explicitly here.
             if arg.is_number() && arg.as_number().is_nan() {
-                return Err(global.throw_invalid_property_type_value(b"tos", b"number", arg));
+                return Err(global.throw_invalid_property_type_value(b"tos", b"integer", arg));
             }
             global.validate_integer_range(
                 arg,

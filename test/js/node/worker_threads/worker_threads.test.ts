@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -280,19 +280,26 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test("eval does not leak source code", async () => {
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "eval-source-leak-fixture.js"],
-    env: bunEnv,
-    cwd: __dirname,
-    stderr: "pipe",
-    stdout: "ignore",
-  });
-  await proc.exited;
-  const errors = await proc.stderr.text();
-  if (errors.length > 0) throw new Error(errors);
-  expect(proc.exitCode).toBe(0);
-});
+// The fixture creates and tears down six workers each with 100 MiB of
+// source; under debug and/or ASAN, worker VM startup/teardown is much
+// slower (~30s on CI), so the default 5s timeout reliably trips. Scale the
+// timeout the same way worker-terminate-lifetime.test.ts does.
+test(
+  "eval does not leak source code",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "eval-source-leak-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    const [errors] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  },
+  isDebug || isASAN ? 60_000 : undefined,
+);
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {

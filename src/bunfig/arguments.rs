@@ -133,6 +133,7 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     Global::crash();
 }
 
+
 pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
@@ -283,7 +284,15 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+        // An error in an auto-discovered bunfig is non-fatal for `bun run`:
+        // keep going so a stray/broken bunfig.toml up the tree doesn't abort
+        // the script. The accumulated log is flushed later on the normal path,
+        // so the diagnostic still reaches stderr. (Pre-existing behavior:
+        // run_command swallowed these.) Explicit `--config` (!auto_loaded) and
+        // config-required commands (test/build/install) still abort.
+        if !(auto_loaded && cmd == CommandTag::RunCommand) {
+            report_bunfig_load_failure(ctx.log, err);
+        }
     }
     Ok(())
 }

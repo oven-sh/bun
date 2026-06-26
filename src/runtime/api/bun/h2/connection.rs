@@ -242,12 +242,9 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
-    /// `Some(code)` when the block's stream was refused before any state was allocated: still
-    /// decoded for HPACK sync (§4.3), then answered with RST_STREAM(code), and
-    /// on_stream_open/on_push_promise never fire. REFUSED_STREAM for a HEADERS past
-    /// SETTINGS_MAX_CONCURRENT_STREAMS (§5.1.2); CANCEL for a PUSH_PROMISE past
-    /// maxReservedRemoteStreams (the code node/nghttp2 answer, which the JS layer treats as
-    /// a clean abort rather than a stream error).
+    /// `Some(code)` when the block's stream was refused before any state was allocated: decoded
+    /// for HPACK sync (§4.3) only, then answered RST_STREAM(code) without on_stream_open /
+    /// on_push_promise. The admission path picks the code (REFUSED_STREAM/CANCEL/STREAM_CLOSED).
     header_refused: Option<ErrorCode>,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
@@ -2438,6 +2435,39 @@ mod tests {
             vec![ErrorCode::Cancel.as_u32()]
         );
         assert!(sink.goaway.get().is_none());
+    }
+
+    #[test]
+    fn close_stream_on_a_reserved_push_releases_its_reservation_slot() {
+        // An admitted push the embedder cancels before its response never gets the HEADERS
+        // that would move it out of ReservedRemote, so the embedder's close_stream (reached
+        // from the rstStream host fn's no-legacy-entry branch) is the only thing that can
+        // release its slot. Without that, each early cancel permanently consumes one
+        // maxReservedRemoteStreams slot and the engine eventually refuses every push.
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        c.max_reserved_remote_streams = 1;
+        let req = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        for id in [2u32, 4, 6] {
+            let mut payload = Vec::with_capacity(4 + req.len());
+            payload.extend_from_slice(&id.to_be_bytes());
+            payload.extend_from_slice(&req);
+            let fed = c.receive(
+                &sink,
+                &frame(FrameType::PushPromise, wire::flags::END_HEADERS, 1, &payload),
+            );
+            assert!(!fed.fatal);
+            assert_eq!(c.peer_reserved_count, 1, "push {id} was admitted");
+            // The embedder cancelled the push before any response arrived.
+            c.close_stream(id);
+            assert_eq!(c.peer_reserved_count, 0, "push {id} released its slot");
+        }
+        // Every push reached on_push_promise; none was refused by a leaked slot.
+        assert_eq!(
+            sink.pushes.borrow().iter().map(|(_, p)| *p).collect::<Vec<_>>(),
+            vec![2, 4, 6]
+        );
+        assert!(sink.rejected.borrow().is_empty());
     }
 
     #[test]

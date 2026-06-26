@@ -749,6 +749,7 @@ describe("maxReservedRemoteStreams (client option)", () => {
       raw.close();
     }
   });
+
 });
 
 describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {

@@ -6764,6 +6764,12 @@ impl H2FrameParser {
             // built here rather than through the engine so this stays callable from inside an
             // engine dispatch (the engine cell may already be borrowed).
             //
+            // The engine may still hold the stream entry (an admitted PUSH_PROMISE the JS layer
+            // is cancelling before any response arrived sits in the engine as ReservedRemote
+            // with no legacy entry). Queue its release the same way `free_resources` does for
+            // legacy streams, or the entry - and the `peer_reserved_count` slot it occupies -
+            // leaks for the life of the connection.
+            this.pending_engine_stream_closes.with_mut(|v| v.push(stream_id));
             // A NO_ERROR reset for an unknown id is always a no-op: it reaches here from the
             // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed
             // stream's entry has been evicted. Node sends no RST for cleanly-closed streams;

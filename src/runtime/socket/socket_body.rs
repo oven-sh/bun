@@ -2975,7 +2975,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // synchronously (with `.normal` the SSL layer defers waiting for the peer, but we
         // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
         // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
-        // buffer, which `destroy()` after `write()` must not do.
+        // buffer, which `destroy()` after `write()` must not do. The SSL layer may
+        // briefly defer this close behind its own ciphertext write spill
+        // (`ssl_close_after_spill`); that waits only on our fd, not the peer.
         socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;

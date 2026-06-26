@@ -1861,18 +1861,36 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         Sink::init(self)
     }
 
-    pub fn abort(&mut self) {
+    /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
+    /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
+    /// sink. A `&mut self` argument protector must not be live across that free.
+    ///
+    /// # Safety
+    /// `this` must point at the live sink owned by the `RequestContext`.
+    pub unsafe fn abort(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
-        self.done = true;
-        self.res = None;
-        self.unregister_auto_flusher();
+        // SAFETY: caller contract — `this` is live, and every borrow formed here
+        // ends before the signal close below, which may free `*this`.
+        let sink = unsafe { &mut *this };
+        sink.done = true;
+        sink.res = None;
+        sink.unregister_auto_flusher();
 
-        self.aborted = true;
+        sink.aborted = true;
 
-        self.signal.close(None);
+        // Only JsTerminated escapes flush_promise; there is no JS caller to
+        // surface it to from a socket-close callback, so teardown continues.
+        let _ = sink.flush_promise();
+        sink.finalize();
 
-        let _ = self.flush_promise(); // TODO: properly propagate exception upwards
-        self.finalize();
+        // Close the signal last and through a stack copy: the close fires the JS
+        // onClose callback, and the teardown it can re-enter frees this sink, so
+        // no reference into the allocation may be live across the call.
+        let mut signal = Signal {
+            ptr: sink.signal.ptr,
+            vtable: sink.signal.vtable,
+        };
+        signal.close(None);
     }
 
     fn unregister_auto_flusher(&mut self) {

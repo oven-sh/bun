@@ -475,6 +475,171 @@ describe("inbound stream flood (maxSessionMemory)", () => {
       srv.close();
     }
   });
+
+  // The other flood test trips the budget through queued response DATA; a peer sending only
+  // HEADERS with END_STREAM never queues a byte, so the per-stream charge (the Strong-pinned
+  // JS Http2Stream each accepted stream holds) is the only term that can refuse it.
+  test("a HEADERS+END_STREAM flood with no body is refused from the stream count alone", async () => {
+    const srv = http2.createServer({ maxSessionMemory: 1, maxSessionRejectedStreams: 5 });
+    // Never respond: every accepted stream parks in half-closed (remote) and nothing enters
+    // queued_data_size or the write buffer.
+    srv.on("stream", stream => stream.on("error", () => {}));
+    srv.on("sessionError", () => {});
+    srv.on("session", session => session.on("error", () => {}));
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 1);
+
+      // Static-table-only request block (:method GET, :scheme http, :path /, :authority "a"):
+      // no dynamic-table inserts, so every stream decodes identically.
+      const block = Buffer.from([0x82, 0x86, 0x84, 0x01, 0x01, 0x61]);
+      const FLOOD = 700;
+      const frames: Buffer[] = [];
+      for (let i = 0; i < FLOOD; i++) {
+        frames.push(encodeFrame(FrameType.HEADERS, 0x5, i * 2 + 1, block));
+      }
+      c.send(Buffer.concat(frames));
+
+      const rst = await c.waitFor(
+        f => f.type === FrameType.RST_STREAM && f.payload.readUInt32BE(0) === ErrorCode.REFUSED_STREAM,
+        20_000,
+      );
+      expect(rst.streamId % 2).toBe(1);
+      // Hundreds of streams must be accepted before the budget trips: a trip within the first
+      // few would mean a data term fired, not the per-stream one this test exists to exercise.
+      const refusedOrdinal = (rst.streamId + 1) / 2;
+      expect(refusedOrdinal).toBeGreaterThan(100);
+      expect(refusedOrdinal).toBeLessThan(FLOOD);
+      const goaway = await c.waitForGoaway(20_000);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  // RFC 9113 §4.3: a refused stream's header block must still be fed through the connection's
+  // HPACK decoder - the dynamic table is connection-scoped, so skipping the block desyncs it
+  // and the next accepted stream that references a dynamic entry dies with a COMPRESSION_ERROR.
+  test("a refused stream's header block still advances the HPACK dynamic table", async () => {
+    const srv = http2.createServer({ maxSessionMemory: 1, maxSessionRejectedStreams: 1000 });
+    const probed = Promise.withResolvers<void>();
+    srv.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers["x-probe"] === "1") {
+        // Only the final stream carries x-probe; seeing it here proves its indexed reference
+        // into the dynamic table decoded, i.e. the refused insert was not skipped.
+        probed.resolve();
+        stream.respond({ ":status": 200 }, { endStream: true });
+      }
+      // Everything else stays half-closed (remote) so the session cannot recover its budget
+      // until the raw client resets them.
+    });
+    srv.on("sessionError", () => {});
+    srv.on("session", session => session.on("error", () => {}));
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 1);
+
+      const staticBlock = Buffer.from([0x82, 0x86, 0x84, 0x01, 0x01, 0x61]);
+      const FLOOD = 700;
+      const parts: Buffer[] = [];
+      // 1. Flood past the budget with streams whose blocks never touch the dynamic table.
+      for (let i = 0; i < FLOOD; i++) {
+        parts.push(encodeFrame(FrameType.HEADERS, 0x5, i * 2 + 1, staticBlock));
+      }
+      // 2. One more stream - refused (still over budget) - whose block INSERTS x-probe:1 into
+      //    the connection's dynamic table (index 62, the first slot past the static table).
+      const insertStreamId = FLOOD * 2 + 1;
+      parts.push(
+        encodeFrame(FrameType.HEADERS, 0x5, insertStreamId, Buffer.concat([staticBlock, hpackInsert("x-probe", "1")])),
+      );
+      // 3. Reset enough accepted streams to bring the session back under its budget.
+      for (let i = 0; i < 500; i++) {
+        const code = Buffer.alloc(4);
+        code.writeUInt32BE(ErrorCode.CANCEL, 0);
+        parts.push(encodeFrame(FrameType.RST_STREAM, 0, i * 2 + 1, code));
+      }
+      // 4. A stream that is accepted again and whose block is just an indexed reference to
+      //    the entry the REFUSED block inserted. It only decodes if step 2 fed the decoder.
+      const refStreamId = insertStreamId + 2;
+      parts.push(encodeFrame(FrameType.HEADERS, 0x5, refStreamId, Buffer.concat([staticBlock, HPACK_INDEX_62])));
+      c.send(Buffer.concat(parts));
+
+      // The insert stream must actually have been refused; if it were accepted the insert
+      // would reach the decoder through the normal path and this test would prove nothing.
+      const insertRst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === insertStreamId, 20_000);
+      expect(insertRst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      // The referencing stream reaches the handler with x-probe intact and is answered.
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === refStreamId, 20_000);
+      await probed.promise;
+      // No COMPRESSION_ERROR tore the connection down and the referencing stream was not reset.
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(c.frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === refStreamId)).toBeUndefined();
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+});
+
+describe("HEADERS on a closed stream (RFC 9113 §4.3/§5.1)", () => {
+  // §5.1: HEADERS on a half-closed (remote) stream is a STREAM_CLOSED stream error, but §4.3
+  // still requires the block to be decompressed - it carries connection-scoped HPACK state.
+  test("the discarded block still advances the HPACK dynamic table", async () => {
+    const srv = http2.createServer();
+    const probed = Promise.withResolvers<void>();
+    srv.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers["x-probe"] === "1") {
+        probed.resolve();
+        stream.respond({ ":status": 200 }, { endStream: true });
+      }
+      // Stream 1 is never responded to so it stays half-closed (remote) in the engine.
+    });
+    srv.on("sessionError", () => {});
+    srv.on("session", session => session.on("error", () => {}));
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 1);
+
+      const staticBlock = Buffer.from([0x82, 0x86, 0x84, 0x01, 0x01, 0x61]);
+      const parts: Buffer[] = [
+        // Stream 1 ends -> half-closed (remote).
+        encodeFrame(FrameType.HEADERS, 0x5, 1, staticBlock),
+        // HEADERS on it again is discarded with RST_STREAM(STREAM_CLOSED), but its block
+        // inserts x-probe:1 into the connection's dynamic table (index 62).
+        encodeFrame(FrameType.HEADERS, 0x4, 1, Buffer.concat([staticBlock, hpackInsert("x-probe", "1")])),
+        // Stream 3's block is just an indexed reference to that entry.
+        encodeFrame(FrameType.HEADERS, 0x5, 3, Buffer.concat([staticBlock, HPACK_INDEX_62])),
+      ];
+      c.send(Buffer.concat(parts));
+
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.STREAM_CLOSED);
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      await probed.promise;
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
 });
 
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`
@@ -534,8 +699,11 @@ class RawH2Server {
     }
   }
 
+  send(buf: Buffer) {
+    this.socket!.write(buf);
+  }
   sendFrame(type: number, flags: number, streamId: number, payload?: Buffer) {
-    this.socket!.write(encodeFrame(type, flags, streamId, payload));
+    this.send(encodeFrame(type, flags, streamId, payload));
   }
 
   waitFor(pred: (f: Frame) => boolean, timeoutMs = 2000): Promise<Frame> {
@@ -569,6 +737,20 @@ function hpackLiteral(str: string): Buffer {
   return Buffer.concat([Buffer.from([bytes.length]), bytes]);
 }
 
+/**
+ * HPACK literal field with incremental indexing and a new name (RFC 7541 §6.2.1, the 0x40
+ * opcode): inserts the field into the connection-scoped dynamic table as it decodes.
+ */
+function hpackInsert(name: string, value: string): Buffer {
+  return Buffer.concat([Buffer.from([0x40]), hpackLiteral(name), hpackLiteral(value)]);
+}
+
+/**
+ * HPACK indexed field for the newest dynamic-table entry (RFC 7541 §2.3.3: index 62 is the
+ * first slot past the 61-entry static table). Only decodes if that entry exists.
+ */
+const HPACK_INDEX_62 = Buffer.from([0x80 | 62]);
+
 describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   test("DATA on a promised stream before its response HEADERS is refused, not delivered", async () => {
     const raw = await RawH2Server.listen();
@@ -600,6 +782,57 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
       await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
       expect(Buffer.concat(pushedData).length).toBe(0);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
+describe("PUSH_PROMISE flood (maxSessionMemory)", () => {
+  // A PUSH_PROMISE reserves a peer-initiated stream exactly like an inbound HEADERS opens one,
+  // so a server flooding reservations is the same DoS and must hit the same maxSessionMemory
+  // gate: RST_STREAM(REFUSED_STREAM) on the promised id, no stream ever surfaced, and a
+  // GOAWAY(ENHANCE_YOUR_CALM) once the rejection budget is spent.
+  test("a client refuses promised streams past maxSessionMemory", async () => {
+    const raw = await RawH2Server.listen();
+    // maxReservedRemoteStreams is raised past the flood so the JS-level reserved-stream cap
+    // (which cancels with CANCEL, not REFUSED_STREAM) can never be the thing that refuses.
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, {
+      maxSessionMemory: 1,
+      maxReservedRemoteStreams: 100000,
+      maxSessionRejectedStreams: 5,
+    });
+    client.on("error", () => {});
+    client.on("stream", pushed => pushed.on("error", () => {}));
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
+      // Static-table-only promised request block, so every reservation decodes identically.
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("a")]);
+      const FLOOD = 700;
+      const parts: Buffer[] = [];
+      for (let i = 0; i < FLOOD; i++) {
+        const promised = Buffer.alloc(4);
+        promised.writeUInt32BE((i + 1) * 2, 0);
+        parts.push(encodeFrame(FrameType.PUSH_PROMISE, 0x4, 1, Buffer.concat([promised, block])));
+      }
+      raw.send(Buffer.concat(parts));
+
+      const rst = await raw.waitFor(
+        f => f.type === FrameType.RST_STREAM && f.payload.readUInt32BE(0) === ErrorCode.REFUSED_STREAM,
+        20_000,
+      );
+      // The refused id is even (a promised id), and it comes only after hundreds of accepted
+      // reservations: each one pins a ClientHttp2Stream that counts against the budget.
+      expect(rst.streamId % 2).toBe(0);
+      expect(rst.streamId / 2).toBeGreaterThan(100);
+      expect(rst.streamId / 2).toBeLessThanOrEqual(FLOOD);
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY, 20_000);
+      expect(goaway.payload.readUInt32BE(4)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
     } finally {
       client.destroy();
       raw.close();

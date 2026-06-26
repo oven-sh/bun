@@ -111,10 +111,11 @@ pub trait Sink {
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
     }
-    /// Called before allocating state for a new peer-initiated stream. `false` refuses the
-    /// stream with RST_STREAM(REFUSED_STREAM): no engine entry is inserted and `on_stream_open`
-    /// is never invoked. The header block is still decoded for HPACK-table sync (§4.3) and the
-    /// refusal is budgeted via `on_stream_rejected`.
+    /// Called before allocating state for a new peer-initiated stream (an inbound HEADERS the
+    /// embedder did not originate, or the promised id of a PUSH_PROMISE). `false` refuses the
+    /// stream with RST_STREAM(REFUSED_STREAM): no engine entry is inserted and neither
+    /// `on_stream_open` nor `on_push_promise` is invoked. The header block is still decoded for
+    /// HPACK-table sync (§4.3) and the refusal is budgeted via `on_stream_rejected`.
     fn accept_stream(&self, _stream_id: u32) -> bool {
         true
     }
@@ -175,8 +176,9 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
-    /// `Sink::accept_stream` declined a new peer-initiated stream: the block is decoded for
-    /// HPACK sync only, then answered with RST_STREAM(REFUSED_STREAM) and `on_stream_rejected`.
+    /// `Sink::accept_stream` declined a new peer-initiated stream (inbound HEADERS or the
+    /// promised id of a PUSH_PROMISE): the block is decoded for HPACK sync only, then answered
+    /// with RST_STREAM(REFUSED_STREAM) and `on_stream_rejected`.
     header_refused: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
@@ -736,11 +738,14 @@ impl Connection {
             return true;
         }
         // Bound peer-initiated streams before allocating: a peer flooding HEADERS with fresh
-        // odd ids would otherwise grow `streams` (and, via on_stream_open, any per-stream state
-        // the sink owns) without limit. Declined streams are answered with
-        // RST_STREAM(REFUSED_STREAM) after the block is decoded for HPACK-table sync (§4.3);
-        // on_stream_open is never invoked for them.
-        let refused = is_new && self.is_server && !sink.accept_stream(hdr.stream_id);
+        // ids would otherwise grow `streams` (and, via on_stream_open, any per-stream state the
+        // sink owns) without limit. A stream the embedder initiated locally (is_local_stream:
+        // the legacy outbound already sent its HEADERS) is not peer-initiated and is never
+        // consulted - a client over budget must not refuse its own responses. Declined streams
+        // are answered with RST_STREAM(REFUSED_STREAM) after the block is decoded for
+        // HPACK-table sync (§4.3); on_stream_open is never invoked for them.
+        let refused =
+            is_new && !sink.is_local_stream(hdr.stream_id) && !sink.accept_stream(hdr.stream_id);
         let mut stream_closed = false;
         if refused {
             if hdr.stream_id > self.last_stream_id {
@@ -831,14 +836,15 @@ impl Connection {
         self.continuation_stream = 0;
         let target = self.header_target;
         let push_parent = self.header_push_parent;
+        let stream_closed = std::mem::take(&mut self.header_stream_closed);
+        let refused = std::mem::take(&mut self.header_refused);
         // Surface the push reservation before its request headers so the embedder can create the
-        // pushed stream object that the on_header calls populate.
-        if push_parent != 0 {
+        // pushed stream object that the on_header calls populate. A refused reservation never
+        // reaches the embedder: its block is decoded below for HPACK-table sync only.
+        if push_parent != 0 && !refused {
             sink.on_push_promise(push_parent, target);
         }
         let block = std::mem::take(&mut self.header_block);
-        let stream_closed = std::mem::take(&mut self.header_stream_closed);
-        let refused = std::mem::take(&mut self.header_refused);
         let mut off = 0usize;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
@@ -939,9 +945,10 @@ impl Connection {
             return true;
         }
         if refused {
-            // The sink declined this peer-initiated stream (e.g. maxSessionMemory). No engine
-            // entry was inserted and on_stream_open was never called, so there is nothing to
-            // tear down beyond answering the peer and budgeting the rejection.
+            // The sink declined this peer-initiated stream (an inbound HEADERS or a PUSH_PROMISE
+            // reservation, e.g. over maxSessionMemory). No engine entry was inserted and neither
+            // on_stream_open nor on_push_promise was called, so there is nothing to tear down
+            // beyond answering the peer and budgeting the rejection.
             self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
             sink.on_stream_rejected(target);
             return false;
@@ -1324,14 +1331,25 @@ impl Connection {
             return true;
         }
 
-        // Reserve the promised (even) stream.
-        let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
-        let entry = self
-            .streams
-            .entry(promised)
-            .or_insert_with(|| Stream::new(send_init, recv_init));
-        entry.state = State::ReservedRemote;
+        // A PUSH_PROMISE reserves a peer-initiated stream exactly like an inbound HEADERS opens
+        // one, so it goes through the same gate: a server flooding fresh promised ids would
+        // otherwise grow `streams` (and the embedder's per-stream state) without limit. A
+        // declined reservation inserts nothing and never fires on_push_promise; its block is
+        // still decoded for HPACK-table sync (§4.3/§6.6) and the promised id is answered with
+        // RST_STREAM(REFUSED_STREAM) via on_stream_rejected in finish_header_block.
+        let refused = !sink.accept_stream(promised);
+        if !refused {
+            // Reserve the promised (even) stream.
+            let send_init = self.remote_settings.initial_window_size;
+            let recv_init = self.local_settings.initial_window_size;
+            let entry = self
+                .streams
+                .entry(promised)
+                .or_insert_with(|| Stream::new(send_init, recv_init));
+            entry.state = State::ReservedRemote;
+        }
+        // §5.1.1: ids at or below the highest one the peer promised are no longer idle, refused
+        // or not - a later RST_STREAM on a refused promised id must be tolerated, not a GOAWAY.
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
@@ -1344,7 +1362,7 @@ impl Connection {
         self.header_target = promised;
         self.header_push_parent = hdr.stream_id;
         self.header_stream_closed = false;
-        self.header_refused = false;
+        self.header_refused = refused;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -1611,9 +1629,12 @@ mod tests {
         data: RefCell<Vec<(u32, Vec<u8>)>>,
         ended: RefCell<Vec<u32>>,
         resets: RefCell<Vec<(u32, u32)>>,
+        rejected: RefCell<Vec<u32>>,
         pushes: RefCell<Vec<(u32, u32)>>,
         altsvc: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         origins: RefCell<Vec<Vec<u8>>>,
+        /// When set, `accept_stream` declines every new peer-initiated stream.
+        refuse: Cell<bool>,
     }
     impl Sink for CaptureSink {
         fn write(&self, bytes: &[u8]) -> WriteResult {
@@ -1655,8 +1676,14 @@ mod tests {
         fn on_stream_reset(&self, id: u32, code: u32) {
             self.resets.borrow_mut().push((id, code));
         }
+        fn on_stream_rejected(&self, id: u32) {
+            self.rejected.borrow_mut().push(id);
+        }
         fn on_push_promise(&self, parent: u32, promised: u32) {
             self.pushes.borrow_mut().push((parent, promised));
+        }
+        fn accept_stream(&self, _id: u32) -> bool {
+            !self.refuse.get()
         }
         fn on_altsvc(&self, id: u32, origin: &[u8], value: &[u8]) {
             self.altsvc
@@ -1929,5 +1956,179 @@ mod tests {
         // Only 4 of 10 bytes fit in the window.
         let sent = c.send_data(&sink, 1, b"0123456789", true);
         assert_eq!(sent, 4);
+    }
+
+    /// RFC 7541 §6.2.1: literal field with incremental indexing, new name. Inserts the field
+    /// into the connection's dynamic table (first entry lands at index 62).
+    fn hpack_insert(name: &[u8], value: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x40u8, name.len() as u8];
+        v.extend_from_slice(name);
+        v.push(value.len() as u8);
+        v.extend_from_slice(value);
+        v
+    }
+
+    /// RFC 7541 §6.1: indexed field for the newest dynamic-table entry (62 = first past the
+    /// 61-entry static table).
+    const HPACK_INDEX_62: u8 = 0x80 | 62;
+
+    /// Scan the captured outbound bytes for an RST_STREAM on `stream_id`; returns its code.
+    fn find_rst(out: &[u8], stream_id: u32) -> Option<u32> {
+        let mut i = 0usize;
+        while i + wire::FRAME_HEADER_SIZE <= out.len() {
+            let h = FrameHeader::parse(&out[i..]);
+            let total = wire::FRAME_HEADER_SIZE + h.length as usize;
+            if i + total > out.len() {
+                break;
+            }
+            if h.frame_type == FrameType::RstStream as u8 && h.stream_id == stream_id {
+                return Some(u32::from_be_bytes([
+                    out[i + 9],
+                    out[i + 10],
+                    out[i + 11],
+                    out[i + 12],
+                ]));
+            }
+            i += total;
+        }
+        None
+    }
+
+    #[test]
+    fn refused_headers_are_decoded_for_hpack_sync_and_never_allocate() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+
+        // Stream 1 is accepted and opens normally.
+        c.receive(&sink, &frame(FrameType::Headers, flags, 1, &[0x82, 0x84]));
+        assert_eq!(*sink.opens.borrow(), vec![1]);
+
+        // Stream 3 is refused. Its block inserts x-probe:1 into the connection-scoped
+        // dynamic table (§4.3): the refusal must still advance the decoder or the next
+        // accepted block desyncs into a COMPRESSION_ERROR.
+        sink.refuse.set(true);
+        let mut b3 = vec![0x82u8, 0x84];
+        b3.extend_from_slice(&hpack_insert(b"x-probe", b"1"));
+        let fed = c.receive(&sink, &frame(FrameType::Headers, flags, 3, &b3));
+        assert!(!fed.fatal);
+        assert_eq!(*sink.opens.borrow(), vec![1]);
+        assert_eq!(*sink.rejected.borrow(), vec![3]);
+        assert!(!c.streams.contains_key(&3));
+        assert_eq!(c.last_stream_id, 3);
+        assert_eq!(
+            find_rst(&sink.out.borrow(), 3),
+            Some(ErrorCode::RefusedStream.as_u32())
+        );
+        // The refused block's fields are never surfaced.
+        assert!(!sink.headers.borrow().iter().any(|(id, _, _)| *id == 3));
+        assert!(!sink.headers_done.borrow().iter().any(|(id, _)| *id == 3));
+
+        // Stream 5 references the dynamic entry the refused block inserted.
+        sink.refuse.set(false);
+        let fed = c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 5, &[0x82, 0x84, HPACK_INDEX_62]),
+        );
+        assert!(!fed.fatal);
+        assert!(sink.goaway.get().is_none());
+        assert!(
+            sink.headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 5 && n == b"x-probe" && v == b"1")
+        );
+        assert_eq!(*sink.opens.borrow(), vec![1, 5]);
+    }
+
+    #[test]
+    fn closed_stream_headers_are_decoded_for_hpack_sync() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+
+        // Stream 1 ends -> HalfClosedRemote; a second HEADERS on it is a §5.1 STREAM_CLOSED.
+        c.receive(&sink, &frame(FrameType::Headers, flags, 1, &[0x82, 0x84]));
+        assert_eq!(
+            c.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedRemote)
+        );
+        let mut again = vec![0x82u8, 0x84];
+        again.extend_from_slice(&hpack_insert(b"x-probe", b"1"));
+        let fed = c.receive(
+            &sink,
+            &frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &again),
+        );
+        assert!(!fed.fatal);
+        assert_eq!(
+            find_rst(&sink.out.borrow(), 1),
+            Some(ErrorCode::StreamClosed.as_u32())
+        );
+        // The second block's fields are never surfaced; only the first block's were.
+        assert_eq!(*sink.headers_done.borrow(), vec![(1, true)]);
+
+        // Stream 3 references the dynamic entry the discarded block inserted (§4.3).
+        let fed = c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 3, &[0x82, 0x84, HPACK_INDEX_62]),
+        );
+        assert!(!fed.fatal);
+        assert!(sink.goaway.get().is_none());
+        assert!(
+            sink.headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 3 && n == b"x-probe" && v == b"1")
+        );
+    }
+
+    #[test]
+    fn refused_push_promise_answers_without_reserving() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+
+        // PUSH_PROMISE payload: 4-byte promised id, then the promised request's block.
+        let push = |promised: u32, block: &[u8]| {
+            let mut p = promised.to_be_bytes().to_vec();
+            p.extend_from_slice(block);
+            frame(FrameType::PushPromise, wire::flags::END_HEADERS, 1, &p)
+        };
+
+        // The declined reservation must not enter the map or reach the embedder, but its
+        // block still carries a dynamic-table insert the decoder has to record (§4.3/§6.6).
+        sink.refuse.set(true);
+        let mut b2 = vec![0x82u8, 0x84];
+        b2.extend_from_slice(&hpack_insert(b"x-probe", b"1"));
+        let fed = c.receive(&sink, &push(2, &b2));
+        assert!(!fed.fatal);
+        assert!(sink.pushes.borrow().is_empty());
+        assert_eq!(*sink.rejected.borrow(), vec![2]);
+        assert!(!c.streams.contains_key(&2));
+        assert_eq!(c.last_stream_id, 2);
+        assert_eq!(
+            find_rst(&sink.out.borrow(), 2),
+            Some(ErrorCode::RefusedStream.as_u32())
+        );
+        assert!(!sink.headers.borrow().iter().any(|(id, _, _)| *id == 2));
+
+        // The next accepted reservation references that dynamic entry and must decode.
+        sink.refuse.set(false);
+        let fed = c.receive(&sink, &push(4, &[0x82, 0x84, HPACK_INDEX_62]));
+        assert!(!fed.fatal);
+        assert!(sink.goaway.get().is_none());
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 4)]);
+        assert_eq!(
+            c.streams.get(&4).map(|s| s.state),
+            Some(State::ReservedRemote)
+        );
+        assert!(
+            sink.headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 4 && n == b"x-probe" && v == b"1")
+        );
     }
 }

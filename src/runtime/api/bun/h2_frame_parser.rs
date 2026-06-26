@@ -206,6 +206,10 @@ const MAX_FRAME_SIZE_F64: f64 = MAX_FRAME_SIZE as f64;
 const HPACK_ENTRY_OVERHEAD: usize = 32;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
+/// Bytes charged against `maxSessionMemory` per Strong-rooted JS stream wrapper in `sctx`
+/// (one per inbound server stream / accepted client push). The wrapper is a node Duplex
+/// (readable + writable state) plus the compat req/res pair: ~3 KiB of retained heap.
+const SESSION_MEMORY_PER_STREAM_CONTEXT: usize = 4096;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum PaddingStrategy {
@@ -5381,17 +5385,19 @@ impl H2FrameParser {
                     engine.pending_local_window_acks.push_back(w);
                 }
             });
-            // Streams whose legacy lifecycle finished since the last batch: evict the engine
-            // entry and free the legacy slot. free_resources already ran for these (it is the
-            // only producer of this queue); duplicate ids are fine — remove() yields None.
+            // Streams done since the last batch: evict the engine entry and, if the legacy
+            // slot exists, free it. Queued by free_resources (legacy entry present, already
+            // torn down) and by rstStream for ids with no legacy entry (refused pushes); the
+            // two producers are exclusive per id, and duplicate ids are no-ops on re-drain.
             self.pending_engine_stream_closes.with_mut(|v| {
                 for id in v.drain(..) {
                     engine.close_stream(id);
                     if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
                         // SAFETY: stream is the heap::alloc'd *mut Stream owned by the map
-                        // entry just removed; free_resources ran when it was queued, no
-                        // borrows are live at the top of rewrite_read, ids never repeat
-                        // within a session, so this frees exactly once.
+                        // entry just removed; only free_resources queues an id that still
+                        // has a legacy entry and it already ran, no borrows are live at the
+                        // top of rewrite_read, and the map entry is gone after this pop, so
+                        // this frees exactly once.
                         unsafe {
                             drop(bun_core::heap::take(stream));
                         }
@@ -5630,11 +5636,11 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn accept_stream(&self, _stream_id: u32) -> bool {
-        // Bound per-connection stream state before allocating: a peer flooding HEADERS with
-        // fresh odd ids would otherwise grow the legacy `streams` map (and the JS objects
-        // pinned by streamStart) without limit. Mirrors the maxSessionMemory check on the
+        // Bound per-connection stream state before allocating: a peer flooding HEADERS (or, on
+        // a client, PUSH_PROMISE) with fresh ids would otherwise grow the stream maps and the
+        // Strong-pinned JS wrappers without limit. Mirrors the maxSessionMemory check on the
         // request() path; the engine answers with RST_STREAM(REFUSED_STREAM), never invokes
-        // on_stream_open, and budgets the refusal via on_stream_rejected.
+        // on_stream_open/on_push_promise, and budgets the refusal via on_stream_rejected.
         self.get_session_memory_usage() <= self.max_session_memory.get() as usize
     }
 
@@ -6779,6 +6785,12 @@ impl H2FrameParser {
                 frame[9..13].copy_from_slice(&error_code.to_be_bytes());
                 this.write(&frame);
                 let _ = this.flush();
+                // A pushed stream the JS layer refused (maxReservedRemoteStreams) has an engine
+                // entry but never got a legacy one; queue the engine eviction here or a
+                // PUSH_PROMISE flood past the reserved budget grows the engine map without
+                // bound. Drained at the top of the next rewrite_read; unknown ids are no-ops.
+                this.pending_engine_stream_closes
+                    .with_mut(|v| v.push(stream_id));
             }
             return Ok(JSValue::TRUE);
         };
@@ -6798,9 +6810,14 @@ impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
         let stream_count = self.streams.get().len();
+        // `sctx` is the map of Strong-rooted JS stream wrappers - the dominant per-stream
+        // cost. It is charged separately from the native boxes in `streams` because the two
+        // sets differ: a reserved pushed stream on a client has a wrapper but no legacy box.
+        let pinned_count = self.sctx.get().len();
         (self.write_buffer.get().len_u32() as usize
             + self.queued_data_size.get() as usize
-            + stream_count * core::mem::size_of::<Stream>())
+            + stream_count * core::mem::size_of::<Stream>()
+            + pinned_count * SESSION_MEMORY_PER_STREAM_CONTEXT)
             / 1024
             / 1024
     }

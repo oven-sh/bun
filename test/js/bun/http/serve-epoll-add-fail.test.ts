@@ -88,6 +88,41 @@ console.log("PORT " + server.port);
 process.stdin.once("data", () => { server.stop(true); process.exit(0); });
 `;
 
+// Listener passes; the outbound fetch() connect socket's ADD fails and the
+// promise must reject instead of pending forever.
+const FETCH_FIXTURE = /* js */ `
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+try {
+  const res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+  console.log(JSON.stringify({ settled: "resolved", status: res.status }));
+} catch (e) {
+  console.log(JSON.stringify({ settled: "rejected", code: e?.code, name: e?.name, message: String(e?.message ?? e) }));
+} finally {
+  server.stop(true);
+}
+`;
+
+// Same for Bun.connect: the outbound socket's ADD fails and the promise must
+// reject instead of pending forever.
+const CONNECT_FIXTURE = /* js */ `
+const server = Bun.listen({
+  port: 0, hostname: "127.0.0.1",
+  socket: { open(s) { s.end(); }, data() {}, close() {}, error() {} },
+});
+try {
+  const sock = await Bun.connect({
+    port: server.port, hostname: "127.0.0.1",
+    socket: { open() {}, data() {}, close() {}, error() {} },
+  });
+  console.log(JSON.stringify({ settled: "resolved" }));
+  sock.end();
+} catch (e) {
+  console.log(JSON.stringify({ settled: "rejected", code: e?.code, errno: e?.errno, message: String(e?.message ?? e) }));
+} finally {
+  server.stop(true);
+}
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -98,6 +133,8 @@ beforeAll(async () => {
     "serve.js": SERVE_FIXTURE,
     "listen.js": LISTEN_FIXTURE,
     "accept.js": ACCEPT_FIXTURE,
+    "fetch.js": FETCH_FIXTURE,
+    "connect.js": CONNECT_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -223,3 +260,28 @@ test.skipIf(!isLinux || !cc)("accepted connection is closed when epoll_ctl(EPOLL
   expect({ stderr, rest }).toEqual({ stderr: expect.any(String), rest: "" });
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(!isLinux || !cc)(
+  "fetch() rejects when epoll_ctl(EPOLL_CTL_ADD) for the connect socket fails",
+  async () => {
+    const { stdout, stderr, exitCode } = await runWithShim("fetch.js", "accepted");
+    const line = stdout.trim().split("\n").pop() ?? "";
+    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+    const result = JSON.parse(line);
+    expect(result.settled).toBe("rejected");
+    expect(result.code).toBe("FailedToOpenSocket");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(!isLinux || !cc)(
+  "Bun.connect rejects when epoll_ctl(EPOLL_CTL_ADD) for the connect socket fails",
+  async () => {
+    const { stdout, stderr, exitCode } = await runWithShim("connect.js", "accepted");
+    const line = stdout.trim().split("\n").pop() ?? "";
+    expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
+    const result = JSON.parse(line);
+    expect(result.settled).toBe("rejected");
+    expect(exitCode).toBe(0);
+  },
+);

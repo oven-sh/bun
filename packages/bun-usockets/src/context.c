@@ -374,11 +374,9 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
-        /* EPOLL_CTL_ADD failed (e.g. ENOSPC when fs.epoll.max_user_watches is
-         * exhausted). The kernel would keep completing TCP handshakes into the
-         * listen backlog while the event loop never hears about it. Report the
-         * error via both the out-param and thread-local errno so Bun.listen
-         * (reads *error) and Bun.serve (reads errno) surface it. */
+        /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches).
+         * Report via both the out-param and thread-local errno: Bun.listen
+         * reads *error, Bun.serve reads errno. */
         int saved_errno = errno;
         bsd_close_socket(listen_socket_fd);
         us_poll_free(p, group->loop);

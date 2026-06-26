@@ -1022,6 +1022,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _httpMessage;
   _secureEstablished = false;
   #pendingCallback = null;
+  #nativeBackpressure = false;
   constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
@@ -1057,19 +1058,21 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         handle.ondrain = this.#onDrain.bind(this);
       } else {
         handle.ondata = undefined;
-        handle.ondrain = undefined;
+        // ondrain is left as-is: a prior socket.write() may have armed it
+        // (see _write) and still wants the native drain notification.
       }
     }
   }
   #onDrain() {
     const handle = this[kHandle];
     this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
+    this.#nativeBackpressure = false;
     const callback = this.#pendingCallback;
     if (callback) {
       this.#pendingCallback = null;
       (callback as Function)();
     }
-    this.emit("drain");
+    if (!this.#nativeBackpressure) this.emit("drain");
   }
   #onData(chunk, last) {
     if (chunk) {
@@ -1313,9 +1316,12 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     try {
       if (handle) {
         const flushed = handle.write(_chunk, _encoding);
-        if (!flushed && handle.ondrain) {
-          // Streaming mode (CONNECT tunnels): wait for the native drain
-          // callback before completing the write.
+        if (flushed === false) {
+          // AsyncSocket::write buffered the remainder alongside the response
+          // body; hold the Writable callback until the native drain so further
+          // socket.write() calls queue in the Duplex, not the native buffer.
+          this.#nativeBackpressure = true;
+          handle.ondrain ??= this.#onDrain.bind(this);
           this.#pendingCallback = _callback;
           return false;
         }
@@ -1325,6 +1331,14 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
     if (err) _callback(err);
     else _callback();
+  }
+
+  write(chunk, encoding?, callback?) {
+    // res.write bypasses this Duplex, so fold in the native socket's
+    // backpressure so the return value matches Node.js's net.Socket
+    // (where res.write and socket.write share one buffer).
+    const ret = super.write(chunk, encoding, callback);
+    return ret && !this.#nativeBackpressure;
   }
 
   pause() {

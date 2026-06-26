@@ -2152,12 +2152,8 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
   // Argument conversion for the native socket write can run arbitrary JS (an encoding
   // object's toString). If that JS calls write() again on the same socket, both the
   // re-entrant write's data and the outer write's data must survive; nothing may be
-  // dropped or written through a stale buffer.
-  //
-  // The raw handle.write()/streamBuffer path only has its drain machinery wired up for
-  // CONNECT-tunneled sockets (uWS HttpContext::onWritable gates onSocketDrain on
-  // isConnectRequest), so the scenario must be driven from a "connect" handler — on a
-  // plain GET the buffered bytes would never flush and the fixture would hang.
+  // dropped or written through a stale buffer. Driven from a CONNECT handler so the
+  // native handle is used directly with no HTTP response framing in the way.
   const MB = 1024 * 1024;
   const expectedTotal = 8 * MB + 4 * MB + 4 * MB;
   await using proc = Bun.spawn({

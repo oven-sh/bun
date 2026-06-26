@@ -7,6 +7,7 @@
  */
 import { once } from "node:events";
 import http from "node:http";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
 
 describe("backpressure", () => {
@@ -106,4 +107,71 @@ describe("backpressure", () => {
 
     expect(totalBytes).toBe(totalSize + smallPayloadSize);
   }, 30_000);
+
+  // In Node.js, res.write and res.socket.write share one net.Socket buffer,
+  // so raw socket bytes written while the response body is backpressured
+  // are ordered after the body bytes and delivered once the buffer drains.
+  // Previously Bun routed res.socket.write() straight to the fd via a
+  // separate buffer that was only drained for CONNECT tunnels, so under
+  // response backpressure the raw bytes were silently dropped and
+  // socket.write() claimed success.
+  it("res.socket.write() under response backpressure is buffered, ordered and delivered", async () => {
+    const BIG = Buffer.alloc(8 * 1024 * 1024, "A");
+    const MARKER = "INJECTED-RAW-BYTES";
+    const TAIL = "ZZZ";
+    const TOTAL = BIG.length + MARKER.length + TAIL.length;
+
+    const { promise: observed, resolve, reject } = Promise.withResolvers<{
+      bigWriteOk: boolean;
+      socketWriteOk: boolean;
+    }>();
+
+    await using server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-length": String(TOTAL) });
+      const bigWriteOk = res.write(BIG);
+      const socketWriteOk = res.socket!.write(MARKER);
+      res.end(TAIL);
+      resolve({ bigWriteOk, socketWriteOk });
+    });
+    server.on("error", reject);
+    await once(server.listen(0), "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    // Raw TCP client so the raw socket bytes are observable as-is (an HTTP
+    // client would error on a body that does not match Content-Length).
+    const body = await new Promise<Buffer>((resolveBody, rejectBody) => {
+      const chunks: Buffer[] = [];
+      const sock = net.connect(port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      });
+      sock.on("data", c => chunks.push(c));
+      sock.on("error", rejectBody);
+      sock.on("close", () => {
+        const all = Buffer.concat(chunks);
+        const headEnd = all.indexOf("\r\n\r\n");
+        resolveBody(all.subarray(headEnd + 4));
+      });
+    });
+
+    const { bigWriteOk, socketWriteOk } = await observed;
+
+    const markerAt = body.indexOf(MARKER);
+    const tailAt = body.indexOf(TAIL);
+    expect({
+      bodyLength: body.length,
+      bigWriteOk,
+      socketWriteOk,
+      markerAt,
+      tailAt,
+    }).toEqual({
+      bodyLength: TOTAL,
+      // res.write(8MB) must report backpressure.
+      bigWriteOk: false,
+      // The raw socket write sees the same backpressured connection.
+      socketWriteOk: false,
+      // Ordered: BIG, then MARKER, then TAIL.
+      markerAt: BIG.length,
+      tailAt: BIG.length + MARKER.length,
+    });
+  });
 });

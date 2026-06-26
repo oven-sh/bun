@@ -210,7 +210,7 @@ void JSNodeHTTPServerSocket::onDrain()
     }
 
     auto bufferedSize = this->streamBuffer.bufferedSize();
-    if (bufferedSize > 0) {
+    if (bufferedSize > 0 || this->ended) {
         auto* globalObject = defaultGlobalObject(this->globalObject());
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));

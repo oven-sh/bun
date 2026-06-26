@@ -95,7 +95,10 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     } finally {
       upstream.close();
     }
-  });
+    // 1-byte sends over TLS on a debug+ASAN build: the handshake alone is
+    // thousands of writable turns per connection, so the default 5s is not
+    // enough.
+  }, 60_000);
 
   test("Bun.serve streaming response under 1-byte sends with client abort mid-body (subprocess)", async () => {
     // Covers the uWS HttpResponse path (AsyncSocket → us_socket_write →

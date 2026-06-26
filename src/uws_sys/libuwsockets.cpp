@@ -1378,6 +1378,26 @@ extern "C"
     }
   }
 
+  // Raw write via the AsyncSocket buffer (ordered with, and drained by, the
+  // HTTP writable handler) instead of straight to the fd like us_socket_write.
+  // Returns true when backpressure is present after the call.
+  bool uws_async_socket_write(int ssl, us_socket_t *s, const char *data, size_t length)
+  {
+    // AsyncSocket::write takes an int length.
+    int len = (int) std::min(length, (size_t) INT_MAX);
+    if (ssl)
+    {
+      auto *asyncSocket = reinterpret_cast<uWS::AsyncSocket<true> *>(s);
+      auto [written, backpressure] = asyncSocket->write(data, len);
+      (void) written;
+      return backpressure || asyncSocket->getBufferedAmount() > 0;
+    }
+    auto *asyncSocket = reinterpret_cast<uWS::AsyncSocket<false> *>(s);
+    auto [written, backpressure] = asyncSocket->write(data, len);
+    (void) written;
+    return backpressure || asyncSocket->getBufferedAmount() > 0;
+  }
+
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length) nonnull_fn_decl;
 
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length)

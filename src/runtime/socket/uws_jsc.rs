@@ -15,7 +15,6 @@ trait StreamBufferExt {
     fn is_not_empty(&self) -> bool;
     fn slice(&self) -> &[u8];
     fn wrote(&mut self, amount: usize);
-    fn write(&mut self, buffer: &[u8]);
 }
 impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
     #[inline]
@@ -29,10 +28,6 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
     #[inline]
     fn wrote(&mut self, amount: usize) {
         self.cursor += amount;
-    }
-    #[inline]
-    fn write(&mut self, buffer: &[u8]) {
-        self.list.extend_from_slice(buffer);
     }
 }
 
@@ -92,6 +87,16 @@ unsafe extern "C" {
         ws: &mut RawWebSocket,
         global_object: &JSGlobalObject,
     ) -> JSValue;
+
+    // Raw AsyncSocket::write so res.socket.write() shares the HTTP response
+    // body's backpressure buffer (AsyncSocketData::buffer) and drain path
+    // instead of going straight to the fd. True when backpressure remains.
+    safe fn uws_async_socket_write(
+        ssl: i32,
+        socket: &mut us_socket_t,
+        data: *const u8,
+        length: usize,
+    ) -> bool;
 }
 
 pub(crate) fn any_web_socket_get_topics_as_js_array(
@@ -114,8 +119,7 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
-    // kept for ABI parity with the C++ caller; TLS is now per-socket
-    _ssl: bool,
+    ssl: bool,
     ended: bool,
     buffer: *mut us_socket_stream_buffer_t,
     global_object: &JSGlobalObject,
@@ -184,27 +188,37 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
         // single `&mut` does not alias the re-entrant write path documented at
         // the top of this fn (raw `socket` is still kept for that reason).
         let socket_ref = us_socket_t::opaque_mut(socket);
+        let ssl_flag: i32 = if ssl { 1 } else { 0 };
+        let mut backpressure = false;
+        // AsyncSocket::write so bytes are ordered against res.write() and
+        // land in AsyncSocketData::buffer (flushed on every writable event)
+        // instead of the raw fd: in Node.js both routes share one buffer.
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();
-            let written: u32 = u32::try_from(socket_ref.write(to_flush).max(0)).unwrap();
-            stream_buffer.wrote(written as usize);
-            total_written = total_written.saturating_add(written as usize);
-            if (written as usize) < to_flush_len {
-                if !data_slice.is_empty() {
-                    stream_buffer.write(data_slice);
-                }
-                break 'body JSValue::FALSE;
-            }
+            backpressure |=
+                uws_async_socket_write(ssl_flag, socket_ref, to_flush.as_ptr(), to_flush_len);
+            stream_buffer.wrote(to_flush_len);
+            total_written = total_written.saturating_add(to_flush_len);
         }
 
         if !data_slice.is_empty() {
-            let written: u32 = u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
-            total_written = total_written.saturating_add(written as usize);
-            if (written as usize) < data_slice.len() {
-                stream_buffer.write(&data_slice[written as usize..]);
-                break 'body JSValue::FALSE;
-            }
+            backpressure |= uws_async_socket_write(
+                ssl_flag,
+                socket_ref,
+                data_slice.as_ptr(),
+                data_slice.len(),
+            );
+            total_written = total_written.saturating_add(data_slice.len());
+        } else if ended && !backpressure {
+            // handle.end() with nothing to write: probe the buffered amount
+            // so shutdown defers until AsyncSocketData::buffer has drained
+            // (the deferred shutdown runs from onDrain once it empties).
+            backpressure |=
+                uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), 0);
+        }
+        if backpressure {
+            break 'body JSValue::FALSE;
         }
         if ended {
             socket_ref.shutdown();

@@ -120,6 +120,9 @@ pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
             "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
         ),
         parse_param!(
+            "--prefix <STR>                    Run from the specified directory (alias for --cwd)"
+        ),
+        parse_param!(
             "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
@@ -752,10 +755,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
-    // ── --cwd ────────────────────────────────────────────────────────────────
+    // ── --cwd / --prefix ─────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
-    let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
+    let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd").or(args.option(b"--prefix")) {
         let mut outbuf = PathBuffer::uninit();
         let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
         let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);

@@ -43,12 +43,17 @@ const ErrorCode = {
 type Frame = { length: number; type: number; flags: number; streamId: number; payload: Buffer };
 
 function encodeFrame(type: number, flags: number, streamId: number, payload: Buffer = Buffer.alloc(0)): Buffer {
+  return Buffer.concat([frameHeader(type, flags, streamId, payload.length), payload]);
+}
+
+/** A bare 9-byte frame header: `length` is what the header declares, not what follows it. */
+function frameHeader(type: number, flags: number, streamId: number, length: number): Buffer {
   const header = Buffer.alloc(9);
-  header.writeUIntBE(payload.length, 0, 3); // 24-bit length
+  header.writeUIntBE(length, 0, 3); // 24-bit length
   header.writeUInt8(type, 3);
   header.writeUInt8(flags, 4);
   header.writeUInt32BE(streamId & 0x7fffffff, 5); // reserved bit clear
-  return Buffer.concat([header, payload]);
+  return header;
 }
 
 /** A minimal raw HTTP/2 client: send arbitrary frames, collect parsed inbound frames. */
@@ -422,15 +427,6 @@ describe("frame size limit (checklist §4.2)", () => {
   // (`Connection::receive`) from the 9-byte header alone, before any payload
   // is buffered: a header declaring a ~16 MiB payload is answered with
   // GOAWAY(FRAME_SIZE_ERROR) without waiting for the bytes it promises.
-  function frameHeader(type: number, streamId: number, length: number): Buffer {
-    const b = Buffer.alloc(9);
-    b.writeUIntBE(length, 0, 3);
-    b.writeUInt8(type, 3);
-    b.writeUInt8(0, 4);
-    b.writeUInt32BE(streamId & 0x7fffffff, 5);
-    return b;
-  }
-
   test.each([
     // Use a multiple of 6 for SETTINGS so the §6.5 length rule cannot mask the §4.2 check.
     ["SETTINGS", FrameType.SETTINGS, 0, 0xfffffc],
@@ -446,7 +442,7 @@ describe("frame size limit (checklist §4.2)", () => {
       c.sendPreface();
       c.sendEmptySettings();
       // Header declaring a multi-MiB payload, followed by only a handful of payload bytes.
-      c.send(frameHeader(type, streamId, length));
+      c.send(frameHeader(type, 0, streamId, length));
       c.send(Buffer.alloc(16, 0));
       // The GOAWAY must arrive even though the declared payload was never sent.
       const goaway = await c.waitForGoaway();
@@ -516,10 +512,7 @@ describe("frame size limit with a non-default SETTINGS_MAX_FRAME_SIZE (checklist
     c.sendEmptySettings();
     // Only the header and a sliver of payload: the rejection must come from
     // the declared length (32769), not from buffering the payload.
-    const header = Buffer.alloc(9);
-    header.writeUIntBE(MAX_FRAME_SIZE + 1, 0, 3);
-    header.writeUInt8(0xff, 3);
-    c.send(header);
+    c.send(frameHeader(0xff, 0, 0, MAX_FRAME_SIZE + 1));
     c.send(Buffer.alloc(16, 0));
     const goaway = await c.waitForGoaway();
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);

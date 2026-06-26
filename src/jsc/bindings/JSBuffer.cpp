@@ -1747,7 +1747,8 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     // after all JS calls in each code path are complete.
 
     // Helper: re-fetch buffer state after JS calls. Returns false if the buffer
-    // was detached; caller treats this as an empty buffer (matches Node.js: -1).
+    // was detached; the caller returns -1 (matches Node.js for a detached
+    // haystack). A merely EMPTY haystack is not -1; see computeIndexOfRange.
     auto refetchBufferState = [&](const uint8_t*& typedVector, size_t& len) -> bool {
         if (buffer->isDetached()) [[unlikely]] {
             typedVector = nullptr;

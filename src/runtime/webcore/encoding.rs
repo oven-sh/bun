@@ -144,7 +144,6 @@ pub(crate) unsafe extern "C" fn Bun__encoding__writeUTF16(
     r.unwrap_or(0)
 }
 
-// TODO(@190n) handle unpaired surrogates
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]

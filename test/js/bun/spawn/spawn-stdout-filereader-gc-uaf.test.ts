@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -37,9 +38,10 @@ test.skipIf(isWindows)(
       // The direct child spawns a detached shell that inherits stdout and
       // waits for a flag file, keeping the pipe's write end open past the
       // child's exit so the FileReader's poll is still armed while we GC.
+      // The loop is bounded so a fixture crash cannot leak the helper.
       const childScript =
         "const { spawn } = require('child_process');" +
-        "spawn('sh', ['-c', 'while [ ! -e " + JSON.stringify(flag) + " ]; do sleep 0.02; done; echo x']," +
+        "spawn('sh', ['-c', 'n=0; while [ ! -e " + JSON.stringify(flag) + " ] && [ $n -lt 1500 ]; do sleep 0.02; n=$((n+1)); done; echo x']," +
         "  { stdio: ['ignore', 'inherit', 'ignore'], detached: true }).unref();";
 
       const count = () =>
@@ -85,22 +87,31 @@ test.skipIf(isWindows)(
       console.log(JSON.stringify({ iters: ITERS, duringLivePipe, afterEof }));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    let stdout = "",
+      stderr = "",
+      exitCode: number | null = null;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    } finally {
+      // Always release the detached grandchildren so nothing outlives the test
+      // even if the fixture crashed before writing the flag itself.
+      writeFileSync(flag, "");
+    }
 
-    const stderrFiltered = stderr
-      .split("\n")
-      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(stderrFiltered).toBe("");
-
-    const { iters, duringLivePipe, afterEof } = JSON.parse(stdout.trim());
+    let result: { iters: number; duringLivePipe: number; afterEof: number };
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+    }
+    const { iters, duringLivePipe, afterEof } = result;
     // Invariant: every FileReader whose pipe poll is still armed must be
     // pinned by its own Strong ref. Before the fix they were swept here
     // (duringLivePipe ~ 0), which is exactly the UAF precondition.

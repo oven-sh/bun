@@ -38,17 +38,22 @@ test.skipIf(isWindows)(
 
       // The direct child spawns a detached sleep that inherits stdout,
       // keeping the pipe's write end open past the child's exit so the
-      // FileReader's poll is still armed while we GC. The helper records
-      // its pid so the fixture can kill it to drive EOF, and the bounded
-      // sleep means nothing outlives the test even if that kill never runs.
+      // FileReader's poll is still armed while we GC. It records its pid so
+      // the fixture can kill it to drive EOF, and the bounded sleep means
+      // nothing outlives the test even if that kill never runs.
       const childScript =
         "const { spawn } = require('child_process');" +
-        "const c = spawn('/bin/sh', ['-c', 'echo $$ > " + JSON.stringify(startedDir) + "/$$; exec sleep 30']," +
+        "const { existsSync } = require('node:fs');" +
+        "const c = spawn('/bin/sh', ['-c', ': > " + JSON.stringify(startedDir) + "/$$; exec sleep 30']," +
         "  { stdio: ['ignore', 'inherit', 'ignore'], detached: true });" +
         "c.unref();" +
-        // Wait one tick so posix_spawn has definitely handed fd 1 to the
-        // grandchild before this process closes its own copy on exit.
-        "setTimeout(() => {}, 10);";
+        // Exit only once the grandchild has recorded its pid. That proves it
+        // is past posix_spawn and owns fd 1, and it guarantees the fixture's
+        // readdirSync below sees every grandchild, so the kill loop is
+        // deterministic instead of racing a timer. Bounded so a failed spawn
+        // still lets the child exit and surface as grandchildrenStarted < 5.
+        "const f = " + JSON.stringify(startedDir) + " + '/' + c.pid;" +
+        "for (let i = 0; i < 5000 && !existsSync(f); i++) Bun.sleepSync(1);";
 
       const count = () =>
         heapStats().objectTypeCounts.FileInternalReadableStreamSource ?? 0;

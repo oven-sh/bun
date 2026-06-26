@@ -5,6 +5,10 @@
 // connection's "ready" state while the next query's Parse+Describe round trip
 // was still in flight, and advance() then pipelined a third query into that
 // window, so its replies were delivered to the wrong query.
+//
+// The simple protocol is used for query.simple(), for sql.unsafe(text) with
+// no parameters, and for the BEGIN/COMMIT/ROLLBACK of sql.begin(), so every
+// one of those emitted the spurious ReadyForQuery.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
@@ -24,6 +28,26 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       sql`SELECT 'AAAA'::text AS v`.simple(),
       sql`SELECT ${"BBBB"}::text AS v`,
       sql`SELECT 'CCCC'::text AS v`.simple(),
+    ]);
+
+    expect({ a, b, c }).toEqual({
+      a: [{ v: "AAAA" }],
+      b: [{ v: "BBBB" }],
+      c: [{ v: "CCCC" }],
+    });
+  });
+
+  // sql.unsafe(text) with no parameters routes through the same simple ('Q')
+  // protocol, so the same misattribution happens without the caller ever
+  // opting into simple mode.
+  test("unsafe() with no parameters does not steal the rows of an in-flight prepare", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+
+    const [a, b, c] = await Promise.all([
+      sql.unsafe(`SELECT 'AAAA'::text AS v`),
+      sql.unsafe(`SELECT $1::text AS v`, ["BBBB"]),
+      sql.unsafe(`SELECT 'CCCC'::text AS v`),
     ]);
 
     expect({ a, b, c }).toEqual({

@@ -1685,9 +1685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .data
                         .e_string()
                         .expect("infallible: variant checked")
-                        .data
-                        == b"__proto__"
-                // __proto__ is utf8, assume it lives in refs
+                        .eql_comptime(b"__proto__")
                 {
                     if has_proto {
                         let r = js_lexer::range_of_identifier(p.source, key.loc);

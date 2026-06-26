@@ -2791,6 +2791,19 @@ pub mod bv2_impl {
             this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
             this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
 
+            // Cross-chunk imports/exports are only generated for ESM (see
+            // computeCrossChunkDependencies). Reject other formats up front
+            // rather than panicking later. Matches esbuild.
+            if this.transpiler.options.code_splitting
+                && this.transpiler.options.output_format != options::Format::Esm
+            {
+                this.transpiler.log_mut().add_error(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    "Code splitting is currently only supported when format is set to \"esm\"",
+                );
+            }
+
             this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
             this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;

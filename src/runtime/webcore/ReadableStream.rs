@@ -650,10 +650,10 @@ pub struct NewSource<C: SourceContext> {
     /// owned/freed here). The JS path stores
     /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
     pub close_ctx: Option<NonNull<c_void>>,
-    /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
-    /// (through `ByteStream::parent_const`), so interior-mutable.
     pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
     pub cancel_ctx: Cell<Option<*mut c_void>>,
+    pub drain_handler: Cell<Option<fn(Option<*mut c_void>)>>,
+    pub drain_ctx: Cell<Option<*mut c_void>>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
@@ -683,6 +683,8 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             close_ctx: None,
             cancel_handler: Cell::new(None),
             cancel_ctx: Cell::new(None),
+            drain_handler: Cell::new(None),
+            drain_ctx: Cell::new(None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
             is_closed: Cell::new(false),

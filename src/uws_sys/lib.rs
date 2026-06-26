@@ -392,6 +392,43 @@ pub mod web_socket;
 
 #[path = "socket.rs"]
 pub mod socket;
+
+#[cfg(socket_fault_injection)]
+pub mod fault_inject {
+    use core::ffi::c_int;
+
+    pub const RECV: c_int = 0;
+    pub const SEND: c_int = 1;
+    pub const WRITEV: c_int = 2;
+    pub const SENDMSG: c_int = 3;
+    pub const RECVMSG: c_int = 4;
+    pub const CONNECT: c_int = 5;
+    pub const ACCEPT: c_int = 6;
+    pub const SOCKET: c_int = 7;
+    pub const CLOSE: c_int = 8;
+    pub const SHUTDOWN: c_int = 9;
+
+    pub const ACTION_NONE: c_int = 0;
+    pub const ACTION_ERRNO: c_int = 1;
+    pub const ACTION_SHORT: c_int = 2;
+    pub const ACTION_ZERO: c_int = 3;
+
+    #[repr(C)]
+    pub struct UsFaultRule {
+        pub action: c_int,
+        pub errno_value: c_int,
+        pub clamp_bytes: c_int,
+        pub after_n_calls: c_int,
+        pub repeat: c_int,
+        pub target_fd: c_int,
+    }
+
+    unsafe extern "C" {
+        pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
+        pub safe fn us_fault_clear(syscall: c_int);
+        pub safe fn us_fault_clear_all();
+    }
+}
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
     SocketTcp, SocketTls,

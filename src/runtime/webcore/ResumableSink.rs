@@ -438,9 +438,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     /// slots and downgrade `js_this` from a strong to a weak handle so the
     /// wrapper (and the `drainReaderIntoSink` closure it caches, which captures
     /// the reader/stream graph) becomes collectible. Unlike [`Self::cancel`]
-    /// this does NOT run any JS callbacks or invoke `on_end`, so it is safe to
-    /// call from contexts where executing JS is not allowed (e.g. teardown /
-    /// finalizers).
+    /// this does NOT run any JS callbacks or invoke `on_end`.
+    ///
+    /// NOT safe during GC sweep (Weak/cell finalizers): the cached-value
+    /// setters downcast the wrapper cell and issue a write barrier.
     pub fn detach_js(&mut self) {
         if let Some(js_this) = self.js_this.try_get() {
             let global = self.global_this;

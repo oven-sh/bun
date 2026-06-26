@@ -7793,6 +7793,88 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
+/// REPL mode second pass: print `Ast.repl_functions.stmts` (function
+/// declarations and side-effect-free declarations, pre-filtered by the
+/// parser's REPL transform) and store the source in the `functions` string of
+/// the REPL result wrapper, so the tree's own print pass emits it as a string
+/// literal. Borrows `symbols` through its own short-lived `NoOpRenamer` and
+/// hands them back for the main pass. On error the literal stays empty.
+fn print_repl_functions_source<'a, const ASCII_ONLY: bool>(
+    bump: &'a bun_alloc::Arena,
+    tree: &'a Ast,
+    symbols: js_ast::symbol::Map,
+    source: &'a bun_ast::Source,
+    opts: &Options<'a>,
+    repl_functions: &bun_ast::ast_result::ReplFunctions,
+) -> js_ast::symbol::Map {
+    let Some(mut slot) = repl_functions.string_expr.data.e_string() else {
+        return symbols;
+    };
+    // `NoOpRenamer` owns its `Map` and a `Printer` pins that borrow, so the
+    // map could not be handed back for the main pass. Instead the sub-pass
+    // renamer gets a bitwise alias of `symbols` parked in `ManuallyDrop`
+    // (the same pattern `get_source_map_builder` uses for a borrowed
+    // `line_offset_tables`).
+    //
+    // SAFETY: `shadow` aliases `symbols`, which is neither accessed nor moved
+    // until this renamer (and the `Printer` borrowing it) is gone; the alias
+    // is never dropped, so the buffers are freed exactly once, by the main
+    // pass's renamer.
+    let shadow: js_ast::symbol::Map = unsafe { core::ptr::read(&symbols) };
+    let mut sub_renamer = core::mem::ManuallyDrop::new(rename::NoOpRenamer::init(shadow, source));
+    // Only formatting-relevant options carry over: no source maps, module
+    // info, or transpiler cache for this pass.
+    let mut sub_opts = Options {
+        indent: opts.indent,
+        target: opts.target,
+        minify_whitespace: opts.minify_whitespace,
+        minify_syntax: opts.minify_syntax,
+        print_dce_annotations: opts.print_dce_annotations,
+        transform_only: opts.transform_only,
+        module_type: opts.module_type,
+        input_module_type: opts.input_module_type,
+        ..Options::default()
+    };
+    let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
+        GenerateSourceMap::Disable,
+        &mut sub_opts,
+        source,
+        tree,
+    );
+    let mut buffer_printer = BufferPrinter::init(BufferWriter::init());
+    let mut printed = true;
+    {
+        let mut printer =
+            Printer::<&mut BufferPrinter, ASCII_ONLY, false, ASCII_ONLY, false, false>::init(
+                &mut buffer_printer,
+                bump,
+                tree.import_records.as_slice(),
+                sub_opts,
+                sub_renamer.to_renamer(),
+                source_map_builder,
+            );
+        for stmt in repl_functions.stmts.slice() {
+            if printer
+                .print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))
+                .is_err()
+                || printer.writer.get_error().is_err()
+            {
+                printed = false;
+                break;
+            }
+            printer.print_semicolon_if_needed();
+        }
+        if printed && printer.writer.done().is_err() {
+            printed = false;
+        }
+    }
+    if printed {
+        slot.data =
+            bun_ast::StoreStr::new(bump.alloc_slice_copy(buffer_printer.ctx.get_written()));
+    }
+    symbols
+}
+
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
     bump: &'a bun_alloc::Arena,
@@ -7803,6 +7885,22 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 ) -> Result<usize, bun_core::Error> {
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+
+    // REPL mode: print the replayable declarations into the result wrapper's
+    // `functions` string literal before the tree itself is printed. The symbol
+    // map is only borrowed by that pass's renamer and is returned for the main
+    // renamer built below.
+    let symbols = match &tree.repl_functions {
+        Some(repl_functions) => print_repl_functions_source::<ASCII_ONLY>(
+            bump,
+            tree,
+            symbols,
+            source,
+            &opts,
+            repl_functions,
+        ),
+        None => symbols,
+    };
 
     // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
     // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the

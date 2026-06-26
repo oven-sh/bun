@@ -2499,8 +2499,22 @@ declare module "bun" {
      * Enable REPL mode transforms:
      * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
      * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
-     * - Wraps last expression in { __proto__: null, value: expr } for result capture
      * - Wraps code in sync/async IIFE to avoid parentheses around object literals
+     * - The IIFE returns a `{ __proto__: null, value, variables, functions }` result object:
+     *   - `value`: the completion value of the snippet (always an own property, even when undefined)
+     *   - `variables`: names declared by the snippet (`var`/`let`/`const`/`function`/`class`/import bindings), as an array of strings
+     *   - `functions`: printed source of the snippet's function declarations and side-effect-free
+     *     top-level declarations, re-declared as `var` so running the string in a fresh `node:vm`
+     *     context re-creates them (for persisting evaluations across VMs)
+     *
+     * @example
+     * ```js
+     * const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+     * const ctx = vm.createContext({});
+     * const out = vm.runInContext(transpiler.transformSync("function inc(n) { return n + 1 }"), ctx);
+     * out.variables; // ["inc"]
+     * out.functions; // "function inc(n) {\n  return n + 1;\n}\n"
+     * ```
      *
      * @default false
      */

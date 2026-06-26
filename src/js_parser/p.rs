@@ -5408,7 +5408,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
+    pub(crate) fn binding_can_be_removed_if_unused_without_dce_check(
+        &mut self,
+        binding: Binding,
+    ) -> bool {
         match binding.data {
             js_ast::b::B::BArray(bi) => {
                 for item in bi.items.slice() {
@@ -5782,7 +5785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.expr_can_be_removed_if_unused_without_dce_check(expr)
     }
 
-    fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
+    pub(crate) fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(expr.loc);
             return false;
@@ -8608,11 +8611,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // REPL mode transforms
-        if self.options.repl_mode {
+        let repl_functions = if self.options.repl_mode {
             // `apply_repl_transforms` is declared in ast::repl_transforms as an
             // `impl P` mixin.
-            self.apply_repl_transforms(parts, arena)?;
-        }
+            self.apply_repl_transforms(parts, arena)?
+        } else {
+            None
+        };
 
         let mut top_level_symbols_to_parts = bun_ast::ast_result::TopLevelSymbolToParts::default();
 
@@ -8794,6 +8799,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols,
             parts: parts_list,
             import_records,
+            repl_functions,
 
             // ── Remaining fields spelled out explicitly. Previously
             //    `..Default::default()` constructed a

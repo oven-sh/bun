@@ -4,15 +4,22 @@
 //! - Wraps the last expression in { value: expr } for result capture
 //! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
+//!
+//! The IIFE always returns a `{ __proto__: null, value, variables, functions }`
+//! object: `value` is the completion value (own property, possibly undefined),
+//! `variables` is the list of names the snippet declares, and `functions` is
+//! the printed source of the snippet's replayable declarations (filled in by
+//! `js_printer::print_ast` via `Ast.repl_functions`).
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::VecExt;
 
 use bun_ast as js_ast;
+use bun_ast::ast_result::ReplFunctions;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
+use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, Ref, S, Stmt};
 
 use crate::p::P;
 
@@ -21,14 +28,17 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
+    ///
+    /// Returns the statements to print into the result wrapper's `functions`
+    /// string (stored on `Ast.repl_functions`), if any.
     pub fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<Option<ReplFunctions>, bun_alloc::AllocError> {
         // Skip transform if there's a top-level return (indicates module pattern)
         if self.has_top_level_return {
-            return Ok(());
+            return Ok(None);
         }
 
         // Collect all statements
@@ -38,7 +48,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         if total_stmts_count == 0 {
-            return Ok(());
+            return Ok(None);
         }
 
         // Collect all statements into a single array
@@ -73,14 +83,23 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         all_stmts: &[Stmt],
         bump: &'bump Bump,
         is_async: bool,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<Option<ReplFunctions>, bun_alloc::AllocError> {
         if all_stmts.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         // Lists for hoisted declarations and inner statements
         let mut hoisted_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
         let mut inner_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
+
+        // Names the snippet declares, in source order (the `variables` array of
+        // the result wrapper).
+        let mut declared_names = BumpVec::<&'static [u8]>::new_in(bump);
+        // Declarations that are safe to re-run on a fresh VM: function
+        // declarations, classes, and locals whose initializers have no side
+        // effects. Printed into the wrapper's `functions` string. Everything is
+        // emitted in `var`-persistable form so the string can be replayed as-is.
+        let mut serializable_stmts = BumpVec::<Stmt>::new_in(bump);
 
         // Process each statement - hoist all declarations for REPL persistence
         for stmt in all_stmts.iter() {
@@ -98,6 +117,30 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             decl.binding,
                             &mut hoisted_decl_list,
                         )?;
+                    }
+
+                    for decl in hoisted_decl_list.iter() {
+                        if let B::B::BIdentifier(ident) = decl.binding.data {
+                            repl_push_unique_name(
+                                &mut declared_names,
+                                self.repl_symbol_name(ident.r#ref),
+                            );
+                        }
+                    }
+
+                    // `const x = 1` / `let y = [1]` are replayable; re-declare
+                    // them as `var` so the printed source persists onto a vm
+                    // context just like the REPL evaluation itself does.
+                    if self.repl_local_is_serializable(&local) {
+                        let decls: &mut [G::Decl] = bump.alloc_slice_copy(local.decls.slice());
+                        serializable_stmts.push(self.s(
+                            S::Local {
+                                kind: S::Kind::KVar,
+                                decls: G::DeclList::from_arena_slice(decls),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
                     }
 
                     if !hoisted_decl_list.is_empty() {
@@ -134,6 +177,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Inner: this.funcName = funcName; function funcName() {}
                     if let Some(name_loc) = func.func.name {
                         let name_ref = name_loc.ref_;
+                        // Function declarations are always replayable.
+                        serializable_stmts.push(*stmt);
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -158,6 +203,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         let name_str: &[u8] = self.symbols[name_ref.inner_index() as usize]
                             .original_name
                             .slice();
+                        repl_push_unique_name(&mut declared_names, name_str);
                         let this_dot = self.new_expr(
                             E::Dot {
                                 target: this_expr,
@@ -199,6 +245,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Inner: ClassName = class ClassName {}
                     if let Some(name_loc) = class.class.class_name {
                         let name_ref = name_loc.ref_;
+                        repl_push_unique_name(
+                            &mut declared_names,
+                            self.repl_symbol_name(name_ref),
+                        );
+                        // Must be checked before `class.class` is moved out below.
+                        let is_serializable = self.class_can_be_removed_if_unused(&class.class);
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -220,6 +272,28 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         // S::Class store entry is dead after this rewrite, so move it out.
                         let class_value = core::mem::take(&mut class.class);
                         let class_expr = self.new_expr(class_value, stmt.loc);
+                        if is_serializable {
+                            // Serialize as `var ClassName = class ClassName {}` so the
+                            // printed source persists onto a vm context when replayed.
+                            let binding = Binding::alloc(
+                                bump,
+                                B::Identifier { r#ref: name_ref },
+                                name_loc.loc,
+                            );
+                            let decls: &mut [G::Decl] =
+                                bump.alloc_slice_fill_with(1, |_| G::Decl {
+                                    binding,
+                                    value: Some(class_expr),
+                                });
+                            serializable_stmts.push(self.s(
+                                S::Local {
+                                    kind: S::Kind::KVar,
+                                    decls: G::DeclList::from_arena_slice(decls),
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            ));
+                        }
                         let class_id = self.new_expr(
                             E::Identifier {
                                 ref_: name_ref,
@@ -275,6 +349,28 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[bun_ast::ClauseItem] = import_data.items.slice();
+
+                    // Record the names this import binds in the REPL context.
+                    // The synthesized namespace ref for named imports is
+                    // internal, so only `import * as X` reports `namespace_ref`.
+                    if !import_data.star_name_loc.is_empty() {
+                        repl_push_unique_name(
+                            &mut declared_names,
+                            self.repl_symbol_name(import_data.namespace_ref),
+                        );
+                    }
+                    if let Some(default_name) = import_data.default_name {
+                        repl_push_unique_name(
+                            &mut declared_names,
+                            self.repl_symbol_name(default_name.ref_),
+                        );
+                    }
+                    for item in import_items {
+                        repl_push_unique_name(
+                            &mut declared_names,
+                            self.repl_symbol_name(item.name.ref_),
+                        );
+                    }
 
                     if !import_data.star_name_loc.is_empty() {
                         // import * as X from 'mod' -> var X = await import('mod')
@@ -466,8 +562,46 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
         }
 
-        // Wrap the last expression in return { value: expr }
-        self.repl_wrap_last_expression_with_return(&mut inner_stmts, bump);
+        // Build the `variables` array: the names this snippet declared.
+        let mut name_items = BumpVec::<Expr>::with_capacity_in(declared_names.len(), bump);
+        for name in declared_names.iter() {
+            name_items.push(self.new_expr(
+                E::String {
+                    data: (*name).into(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ));
+        }
+        let variables_expr = self.new_expr(
+            E::Array {
+                items: ExprNodeList::from_bump_vec(name_items),
+                is_single_line: true,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+
+        // Placeholder for the printed source of `serializable_stmts`; the
+        // printer fills it in through `Ast.repl_functions`.
+        let functions_expr = self.new_expr(
+            E::String {
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let repl_functions = if serializable_stmts.is_empty() {
+            None
+        } else {
+            Some(ReplFunctions {
+                string_expr: functions_expr,
+                stmts: bun_ast::StoreSlice::new_mut(serializable_stmts.into_bump_slice_mut()),
+            })
+        };
+
+        // Wrap the last expression in return { value: expr, ... }; without a
+        // trailing expression, append the wrapper with an undefined `value`.
+        self.repl_finish_with_return(&mut inner_stmts, bump, variables_expr, functions_expr);
 
         // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
         let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
@@ -513,7 +647,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             parts.truncate(1);
         }
 
-        Ok(())
+        Ok(repl_functions)
     }
 
     /// Convert named imports to individual var assignments from the dynamic import
@@ -631,34 +765,49 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Ok(())
     }
 
-    /// Wrap the last expression in return { value: expr }
-    fn repl_wrap_last_expression_with_return<'bump>(
+    /// Wrap the last trailing expression statement in
+    /// `return { __proto__: null, value, variables, functions }`. When the
+    /// snippet has no trailing expression, append the same `return` with an
+    /// undefined `value` so the wrapper is always the completion value.
+    fn repl_finish_with_return<'bump>(
         &mut self,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
         bump: &'bump Bump,
+        variables: Expr,
+        functions: Expr,
     ) {
-        if !inner_stmts.is_empty() {
-            let mut last_idx: usize = inner_stmts.len();
-            while last_idx > 0 {
-                last_idx -= 1;
-                let last_stmt = inner_stmts[last_idx];
-                match last_stmt.data {
-                    StmtData::SEmpty(_) | StmtData::SComment(_) => continue,
-                    StmtData::SExpr(expr_data) => {
-                        // Wrap in return { value: expr }
-                        let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
-                        inner_stmts[last_idx] = self.s(
-                            S::Return {
-                                value: Some(wrapped),
-                            },
-                            last_stmt.loc,
-                        );
-                        break;
-                    }
-                    _ => break,
+        let mut last_idx: usize = inner_stmts.len();
+        while last_idx > 0 {
+            last_idx -= 1;
+            let last_stmt = inner_stmts[last_idx];
+            match last_stmt.data {
+                StmtData::SEmpty(_) | StmtData::SComment(_) => continue,
+                StmtData::SExpr(expr_data) => {
+                    // Wrap in return { value: expr, ... }
+                    let wrapped = self.repl_wrap_expr_in_value_object(
+                        Some(expr_data.value),
+                        variables,
+                        functions,
+                        bump,
+                    );
+                    inner_stmts[last_idx] = self.s(
+                        S::Return {
+                            value: Some(wrapped),
+                        },
+                        last_stmt.loc,
+                    );
+                    return;
                 }
+                _ => break,
             }
         }
+        let wrapped = self.repl_wrap_expr_in_value_object(None, variables, functions, bump);
+        inner_stmts.push(self.s(
+            S::Return {
+                value: Some(wrapped),
+            },
+            bun_ast::Loc::EMPTY,
+        ));
     }
 
     /// Extract individual identifiers from a binding pattern for hoisting
@@ -689,11 +838,47 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Ok(())
     }
 
-    /// Create { __proto__: null, value: expr } wrapper object
-    /// Uses null prototype to create a clean data object
-    fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
+    /// Resolve a symbol `Ref` minted by this parser to its source-level name.
+    #[inline]
+    fn repl_symbol_name(&self, r#ref: Ref) -> &'static [u8] {
+        // `original_name` is an arena-owned `StoreStr`; `.slice()` detaches the
+        // borrow from `self.symbols` (same contract as the hoisting code above).
+        self.symbols[r#ref.inner_index() as usize]
+            .original_name
+            .slice()
+    }
+
+    /// Whether every binding and initializer of a `var`/`let`/`const`
+    /// statement is free of side effects, so re-evaluating its printed source
+    /// on a fresh VM is safe.
+    fn repl_local_is_serializable(&mut self, local: &S::Local) -> bool {
+        for decl in local.decls.slice() {
+            if !self.binding_can_be_removed_if_unused_without_dce_check(decl.binding) {
+                return false;
+            }
+            if let Some(value) = &decl.value {
+                if !self.expr_can_be_removed_if_unused_without_dce_check(value) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Create the `{ __proto__: null, value, variables, functions }` result
+    /// wrapper. Uses a null prototype to create a clean data object. `value`
+    /// is always an own property (undefined when the snippet has no trailing
+    /// expression) so consumers can unwrap it unconditionally.
+    fn repl_wrap_expr_in_value_object<'bump>(
+        &mut self,
+        value: Option<Expr>,
+        variables: Expr,
+        functions: Expr,
+        bump: &'bump Bump,
+    ) -> Expr {
+        let loc = value.map_or(bun_ast::Loc::EMPTY, |value| value.loc);
         // G::Property is non-Copy (owns Vec) → use bump Vec instead of alloc_slice_copy.
-        let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
+        let mut properties = BumpVec::<G::Property>::with_capacity_in(4, bump);
         // __proto__: null - creates null-prototype object
         properties.push(G::Property {
             key: Some(self.new_expr(
@@ -701,21 +886,46 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     data: b"__proto__".into(),
                     ..Default::default()
                 },
-                expr.loc,
+                loc,
             )),
-            value: Some(self.new_expr(E::Null {}, expr.loc)),
+            value: Some(self.new_expr(E::Null {}, loc)),
             ..Default::default()
         });
         // value: expr - the actual result value
+        let value_expr = value.unwrap_or_else(|| self.new_expr(E::Undefined {}, loc));
         properties.push(G::Property {
             key: Some(self.new_expr(
                 E::String {
                     data: b"value".into(),
                     ..Default::default()
                 },
-                expr.loc,
+                loc,
             )),
-            value: Some(expr),
+            value: Some(value_expr),
+            ..Default::default()
+        });
+        // variables: ["a", "b"] - names declared by the snippet
+        properties.push(G::Property {
+            key: Some(self.new_expr(
+                E::String {
+                    data: b"variables".into(),
+                    ..Default::default()
+                },
+                loc,
+            )),
+            value: Some(variables),
+            ..Default::default()
+        });
+        // functions: "..." - printed source of the replayable declarations
+        properties.push(G::Property {
+            key: Some(self.new_expr(
+                E::String {
+                    data: b"functions".into(),
+                    ..Default::default()
+                },
+                loc,
+            )),
+            value: Some(functions),
             ..Default::default()
         });
         let prop_list = G::PropertyList::from_bump_vec(properties);
@@ -724,7 +934,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 properties: prop_list,
                 ..Default::default()
             },
-            expr.loc,
+            loc,
         )
     }
 
@@ -858,6 +1068,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
             B::B::BMissing(_) => self.new_expr(E::Missing {}, binding.loc),
         }
+    }
+}
+
+/// Append `name` unless it is already present: keeps `variables` in source
+/// order without duplicates (e.g. `var x = 1; var x = 2`).
+#[inline]
+fn repl_push_unique_name<'bump>(names: &mut BumpVec<'bump, &'static [u8]>, name: &'static [u8]) {
+    if !names.iter().any(|existing| *existing == name) {
+        names.push(name);
     }
 }
 

@@ -11,7 +11,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 use crate::runtime;
 use crate::{
     CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
-    Ref, Scope, SlotCounts, StoreStr, Target,
+    Ref, Scope, SlotCounts, StmtNodeList, StoreStr, Target,
 };
 
 use crate::part::List as PartList;
@@ -19,6 +19,19 @@ use crate::symbol::List as SymbolList;
 type ImportRecordList<'a> = crate::import_record::List<'a>;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
+
+/// REPL mode: which top-level statements are safe to re-run on a fresh VM
+/// (function declarations and side-effect-free declarations), plus the string
+/// literal in the result wrapper that receives their printed source.
+#[derive(Clone, Copy)]
+pub struct ReplFunctions {
+    /// The `E::String` expression (the wrapper object's `functions` value)
+    /// whose data is replaced with the printed source of `stmts`.
+    pub string_expr: Expr,
+    /// Arena-owned list of statements to print. They alias statements that are
+    /// also in `parts`; both passes only read them.
+    pub stmts: StmtNodeList,
+}
 
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
@@ -50,6 +63,13 @@ pub struct Ast<'a> {
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: ImportRecordList<'a>,
+
+    /// REPL mode only (`ParserOptions.repl_mode`): the statements whose printed
+    /// source becomes the `functions` string of the REPL result wrapper, plus
+    /// the `E::String` slot inside that wrapper to write it into. Filled in by
+    /// `js_printer::print_ast` right before the main print pass, because only
+    /// the printer owns a renamer over the symbol table.
+    pub repl_functions: Option<ReplFunctions>,
 
     // `hashbang`/`directive` are slices into source text. `StoreStr` records
     // them under the same lifetime-erased contract as `StoreRef`.
@@ -116,6 +136,7 @@ impl<'a> Ast<'a> {
             export_keyword: Range::NONE,
             top_level_await_keyword: Range::NONE,
             import_records: ImportRecordList::new_in(arena),
+            repl_functions: None,
             hashbang: StoreStr::EMPTY,
             directive: None,
             parts: PartList::new_in(arena),

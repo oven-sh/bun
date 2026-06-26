@@ -728,6 +728,20 @@ mod _impl {
 
     pub(crate) fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
         // In Node.js, this is a wrapper around uv_os_homedir.
+        //
+        // The public `os.homedir()` entry point honors live mutations of `HOME`
+        // (POSIX) / `USERPROFILE` (Windows). That check lives in
+        // `src/js/node/os.ts` so it reads `process.env` on every call instead of
+        // using Bun's cached env-var accessor, which snapshots at first read.
+        //
+        // On POSIX, this function is the passwd fallback when `HOME` is unset and
+        // is also called directly by `userInfo()` — which must ignore `HOME` and
+        // return the passwd entry, matching Node's `uv_os_get_passwd`. On Windows
+        // this function delegates to `uv_os_homedir`, which reads `USERPROFILE`
+        // first and only falls back to `GetUserProfileDirectoryW`; so
+        // `userInfo().homedir` here tracks `USERPROFILE` mutations, whereas Node's
+        // `userInfo()` (via `uv_os_get_passwd`) ignores `USERPROFILE` entirely.
+        // That Windows divergence is a known follow-up.
         #[cfg(windows)]
         {
             let mut out = PathBuffer::uninit();
@@ -742,14 +756,6 @@ mod _impl {
         }
         #[cfg(not(windows))]
         {
-            // The posix implementation of uv_os_homedir first checks the HOME
-            // environment variable, then falls back to reading the passwd entry.
-            if let Some(home) = env_var::HOME.get() {
-                if !home.is_empty() {
-                    return Ok(BunString::init(home));
-                }
-            }
-
             // From libuv:
             // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
             // > is frequently 1024 or 4096, so we can just use that directly. The pwent
@@ -766,10 +772,14 @@ mod _impl {
             let mut result: *mut libc::passwd = core::ptr::null_mut();
 
             let ret: c_int = loop {
+                // libuv's uv__getpwuid_r uses the real UID (getuid), and userInfo()
+                // below reports uid = getuid(). Using geteuid here would desync the
+                // two in a setuid process — reporting uid=1000 with homedir="/root"
+                // when run as setuid-root by an unprivileged caller.
                 // SAFETY: valid buffers and out-pointer
                 let ret = unsafe {
                     libc::getpwuid_r(
-                        libc::geteuid(),
+                        libc::getuid(),
                         &raw mut pw,
                         string_bytes.as_mut_ptr().cast::<c_char>(),
                         string_bytes.len(),

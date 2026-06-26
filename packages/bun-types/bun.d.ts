@@ -1342,11 +1342,17 @@ declare module "bun" {
       columns?: number;
       /**
        * Inline images using the Kitty Graphics Protocol when the `src`
-       * resolves to a local file on disk. Falls through to the text alt
-       * for remote URLs. Supported by Kitty, WezTerm, and Ghostty.
+       * resolves to a local file on disk. Only PNG files are sent to
+       * the terminal; JPEG/GIF/WebP fall through to the URL-label
+       * fallback. Supported by Kitty, WezTerm, and Ghostty.
        * @default false
        */
       kittyGraphics?: boolean;
+      /**
+       * Base directory used to resolve relative image `src` paths when
+       * `kittyGraphics` is on. Defaults to the process cwd.
+       */
+      cwd?: string;
     }
 
     /**

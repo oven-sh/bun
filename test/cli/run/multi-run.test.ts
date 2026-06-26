@@ -2097,8 +2097,10 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
       cwd: dir,
       terminal,
     });
-    const exitCode = await proc.exited;
-    await done.promise;
+    // Awaited together: `exit()` rejects `done` from the event loop, and a
+    // sequential `await proc.exited` first would leave that rejection with
+    // no handler attached for a tick.
+    const [exitCode] = await Promise.all([proc.exited, done.promise]);
     return { raw, exitCode };
   }
 

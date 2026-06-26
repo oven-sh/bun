@@ -1224,6 +1224,51 @@ it.skipIf(isWindows)(
   },
 );
 
+// The per-task pending_err mutex was acquired via `lock()` (returns `()`) instead of
+// `lock_guard()`, so it was never released: the next failing subtask on the same worker
+// panicked "Deadlock detected" (debug) or blocked forever and the promise never settled.
+it.skipIf(isWindows)(
+  "promises.readdir({recursive: true}) settles when multiple subtasks fail",
+  async () => {
+    using dir = tempDir("readdir-recursive-multi-error", {
+      "keep.txt": "x",
+    });
+    // Self-referencing symlinks: opening one with O_DIRECTORY fails with
+    // ELOOP, which is not swallowed by the recursive walker, so every
+    // enqueued subtask hits the pending_err path.
+    for (let i = 0; i < 64; i++) {
+      const link = join(String(dir), `loop${i}`);
+      fs.symlinkSync(link, link);
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          fs.promises.readdir(${JSON.stringify(String(dir))}, { recursive: true }).then(
+            r => console.log("resolved", r.length),
+            e => console.log("rejected", e.code),
+          );
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 10_000,
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "rejected ELOOP",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");

@@ -130,9 +130,9 @@ mod _impl {
                 )
                 .throw());
             }
-            // A closed `Context` is in `NodeMode::NONE`, which `Context::init`
-            // cannot re-initialize.
-            CompressionStream::<Self>::throw_if_closed(self, global)?;
+            // Racing an in-flight async write would alias `&mut Context`
+            // across threads; a closed `Context` cannot be re-initialized.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let window_bits =
                 validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
@@ -226,6 +226,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // `set_params` calls `deflateParams` on the same `z_stream` an
+            // in-flight async write's `deflate()` is using.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
             let strategy =
@@ -624,7 +627,14 @@ impl Context {
             BROTLI_ENCODE | BROTLI_DECODE => {}
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => {}
         }
-        debug_assert!(status == c::ReturnCode::Ok || status == c::ReturnCode::DataError);
+        // Ok: normal. DataError: pending output discarded by inflateEnd.
+        // StreamError: a handle whose init() threw before deflateInit2_/
+        // inflateInit2_ ran, so the zeroed z_stream has nothing to free.
+        debug_assert!(
+            status == c::ReturnCode::Ok
+                || status == c::ReturnCode::DataError
+                || status == c::ReturnCode::StreamError
+        );
         self.mode = NONE;
     }
 }

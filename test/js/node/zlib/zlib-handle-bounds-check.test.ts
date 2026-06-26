@@ -160,7 +160,11 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
   async function run(body: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `const zlib = require("node:zlib");\n${body}`],
-      env: bunEnv,
+      // BUN_DESTRUCT_VM_ON_EXIT makes exit run `lastChanceToFinalize`, so the
+      // finalizer of every handle the case leaves behind runs deterministically
+      // (the ASAN CI lanes do this on every exit; without it the child "passes"
+      // and then aborts only on those lanes).
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
       stderr: "pipe",
     });
     // stderr is drained so a large diagnostic can't fill the pipe and block
@@ -253,6 +257,91 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        h.write(0, null, 0, 0, new Uint8Array(64), 0, 64);
        console.log("handled");`,
       "handled",
+    ],
+    // A constructed-but-never-initialized handle reaching the GC finalizer:
+    // brotli/zstd Context::close() tried to free/reset a state that was never
+    // created, and zlib's asserted that deflateEnd accepted the zeroed stream.
+    [
+      "zlib: a never-initialized handle finalizes cleanly",
+      `const C = zlib.createDeflate()._handle.constructor;
+       new C(1); console.log("handled");`,
+      "handled",
+    ],
+    [
+      "brotli: a never-initialized handle finalizes cleanly",
+      `const C = zlib.createBrotliCompress()._handle.constructor;
+       new C(8); console.log("handled");`,
+      "handled",
+    ],
+    [
+      "zstd: a never-initialized handle finalizes cleanly",
+      `const C = zlib.createZstdCompress()._handle.constructor;
+       new C(10); console.log("handled");`,
+      "handled",
+    ],
+    // init()/params() while an async write() is still running on the thread
+    // pool: both sides would mutate the same native stream concurrently.
+    [
+      "zlib: init() while an async write is in flight throws",
+      `const C = zlib.createDeflate()._handle.constructor;
+       const h = new C(1);
+       h.init(15, 6, 8, 0, new Uint32Array(2), () => {}, undefined);
+       h.write(0, null, 0, 0, new Uint8Array(64), 0, 64);
+       try { h.init(15, 6, 8, 0, new Uint32Array(2), () => {}, undefined); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      "threw ERR_INVALID_STATE: Write already in progress",
+    ],
+    [
+      "zlib: params() while an async write is in flight throws",
+      `const C = zlib.createDeflate()._handle.constructor;
+       const h = new C(1);
+       h.init(15, 6, 8, 0, new Uint32Array(2), () => {}, undefined);
+       h.write(0, null, 0, 0, new Uint8Array(64), 0, 64);
+       try { h.params(1, 0); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      "threw ERR_INVALID_STATE: Write already in progress",
+    ],
+    [
+      "brotli: init() while an async write is in flight throws",
+      `const C = zlib.createBrotliCompress()._handle.constructor;
+       const h = new C(8);
+       h.init(new Uint32Array(0), new Uint32Array(2), () => {});
+       h.write(0, null, 0, 0, new Uint8Array(64), 0, 64);
+       try { h.init(new Uint32Array(0), new Uint32Array(2), () => {}); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      "threw ERR_INVALID_STATE: Write already in progress",
+    ],
+    [
+      "zstd: init() while an async write is in flight throws",
+      `const C = zlib.createZstdCompress()._handle.constructor;
+       const h = new C(10);
+       h.init(new Uint32Array(0), undefined, new Uint32Array(2), () => {});
+       h.write(0, null, 0, 0, new Uint8Array(64), 0, 64);
+       try { h.init(new Uint32Array(0), undefined, new Uint32Array(2), () => {}); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      "threw ERR_INVALID_STATE: Write already in progress",
+    ],
+    // init() that creates the native state but then fails on a bad parameter
+    // key tears the Context down; the handle has to reject further use.
+    [
+      "brotli: a handle whose init() parameters were rejected is closed",
+      `const C = zlib.createBrotliCompress()._handle.constructor;
+       const h = new C(8);
+       const p = new Uint32Array(50).fill(0xffffffff); p[49] = 0;
+       const r = h.init(p, new Uint32Array(2), () => {});
+       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled " + r); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message + " " + r); }`,
+      "threw ERR_INVALID_STATE: zlib binding closed false",
+    ],
+    [
+      "zstd: a handle whose init() parameters were rejected is closed",
+      `const C = zlib.createZstdCompress()._handle.constructor;
+       const h = new C(10);
+       const p = new Uint32Array(50).fill(0xffffffff); p[49] = 0;
+       try { h.init(p, undefined, new Uint32Array(2), () => {}); } catch {}
+       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      "threw ERR_INVALID_STATE: zlib binding closed",
     ],
   ];
 

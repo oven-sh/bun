@@ -279,10 +279,23 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
 }
 
 impl<T: CompressionStreamImpl> CompressionStream<T> {
-    /// Rejects a call on a handle whose `Context` was already torn down by
-    /// `close()`: its native state is freed and its `mode` is `NodeMode::NONE`,
-    /// which `Context::do_work` and `Context::init` have no arm for.
-    pub(crate) fn throw_if_closed(this: &T, global_this: &JSGlobalObject) -> JsResult<()> {
+    /// Rejects a call on a handle that cannot accept a new operation: an async
+    /// write still holds `&mut Context` on a worker thread, a pending close is
+    /// about to tear it down, or a closed one already did (`mode` is `NONE`).
+    pub(crate) fn throw_unless_idle(this: &T, global_this: &JSGlobalObject) -> JsResult<()> {
+        if this.write_in_progress().get() {
+            return Err(global_this
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!("Write already in progress"),
+                )
+                .throw());
+        }
+        if this.pending_close().get() {
+            return Err(global_this
+                .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
+                .throw());
+        }
         if this.closed().get() {
             return Err(global_this
                 .err(
@@ -390,20 +403,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         let _ = (in_off, in_len, out_off, out_len);
 
-        if this.write_in_progress().get() {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_STATE,
-                    format_args!("Write already in progress"),
-                )
-                .throw());
-        }
-        if this.pending_close().get() {
-            return Err(global_this
-                .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
-                .throw());
-        }
-        Self::throw_if_closed(this, global_this)?;
+        Self::throw_unless_idle(this, global_this)?;
         // Pin both buffers before mutating any state: materializing a
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
@@ -682,20 +682,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         );
         let _ = (in_off, in_len, out_off, out_len);
 
-        if this.write_in_progress().get() {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_STATE,
-                    format_args!("Write already in progress"),
-                )
-                .throw());
-        }
-        if this.pending_close().get() {
-            return Err(global_this
-                .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
-                .throw());
-        }
-        Self::throw_if_closed(this, global_this)?;
+        Self::throw_unless_idle(this, global_this)?;
         this.write_in_progress().set(true);
         this.ref_();
 

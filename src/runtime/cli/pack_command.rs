@@ -184,6 +184,14 @@ impl<'a> Context<'a> {
             }
         }
     }
+
+    pub fn print_tarball_path(path: impl fmt::Display, log_level: LogLevel) {
+        // Quiet/silent output must be only the tarball path so `$(bun pm pack --quiet)` works.
+        if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
+            bun_core::pretty!("\n");
+        }
+        bun_core::pretty!("{}\n", path);
+    }
 }
 
 #[derive(Clone)]
@@ -2417,18 +2425,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         );
 
         if !FOR_PUBLISH {
-            // Quiet/silent output must be only the tarball path so `$(bun pm pack --quiet)` works.
-            if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
-                bun_core::pretty!("\n");
-            }
             if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
-                bun_core::pretty!(
-                    "{}\n",
+                Context::print_tarball_path(
                     fmt_tarball_filename(
                         package_name,
                         package_version,
-                        TarballNameStyle::Normalize
-                    )
+                        TarballNameStyle::Normalize,
+                    ),
+                    log_level,
                 );
             } else {
                 let mut dest_buf = PathBuffer::uninit();
@@ -2440,7 +2444,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     package_version,
                     &mut dest_buf[..],
                 );
-                bun_core::pretty!("{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
+                Context::print_tarball_path(
+                    bstr::BStr::new(abs_tarball_dest.as_bytes()),
+                    log_level,
+                );
             }
         }
 
@@ -2915,17 +2922,13 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     );
 
     if !FOR_PUBLISH {
-        // Quiet/silent output must be only the tarball path so `$(bun pm pack --quiet)` works.
-        if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
-            bun_core::pretty!("\n");
-        }
         if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
-            bun_core::pretty!(
-                "{}\n",
-                fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize)
+            Context::print_tarball_path(
+                fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize),
+                log_level,
             );
         } else {
-            bun_core::pretty!("{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
+            Context::print_tarball_path(bstr::BStr::new(abs_tarball_dest.as_bytes()), log_level);
         }
     }
 

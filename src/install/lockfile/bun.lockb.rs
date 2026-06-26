@@ -20,9 +20,9 @@ use crate::dependency;
 use crate::dependency::{Behavior, Dependency};
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::resolution_real::Tag as ResolutionTag;
+use crate::{invalid_dependency_id, invalid_package_id};
 use bun_ast::Log;
 use bun_core::strings;
-use crate::{invalid_dependency_id, invalid_package_id};
 use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
 use bun_semver::{self as semver, String as SemverString};
 

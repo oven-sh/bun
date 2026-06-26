@@ -248,16 +248,21 @@ function normalizeLf(s: string): string {
  * `dest/` sits inside bun's own git worktree, and `git apply` treats
  * git-header patch paths as repo-toplevel-relative: `build.zig` resolves
  * to `<repo>/build.zig`, falls outside the cwd, and is SILENTLY skipped
- * with exit 0. Traditional diffs get the cwd prefix prepended instead,
- * which is the behavior we want. The skip check below catches a
- * regression either way.
+ * with exit 0 and nothing changed on disk. Traditional diffs get the cwd
+ * prefix prepended instead, which is the behavior we want.
+ *
+ * The skip check below catches a regression. It depends on `-v`: git only
+ * says `Skipped patch '<path>'.` above normal verbosity (an unadorned
+ * `git apply` skips with exit 0 and EMPTY stderr), and the message goes
+ * through gettext, so `LC_ALL=C` pins it to the English spelling.
  */
 function applyPatch(dest: string, patchPath: string, patchBody: string): void {
-  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
+  const result = spawnSync("git", ["apply", "-v", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
     cwd: dest,
     input: normalizeLf(patchBody),
     stdio: ["pipe", "ignore", "pipe"],
     encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
   });
 
   if (result.error) {

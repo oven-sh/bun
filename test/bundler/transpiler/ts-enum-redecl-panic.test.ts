@@ -1,14 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// When an `enum` redeclares a name whose merge result is `Forbidden` (e.g. it
-// was already declared as a function/class/let/const), `declare_symbol`
-// returns the existing symbol's `Ref`. A second colliding `enum` therefore
-// returns the same `Ref` again, so the enum parser's insert into
-// `ref_to_ts_namespace_member` sees the key it inserted for the first enum.
-// That insert used to debug_assert the key was fresh, which turned a
-// user-facing "already declared" parse error into a panic in builds with
-// debug assertions enabled.
+// A forbidden redeclaration makes `declare_symbol` return the existing Ref for
+// every colliding enum, so `ref_to_ts_namespace_member` sees a repeat key.
+// https://github.com/oven-sh/bun/pull/32711
 describe("enum redeclared after a non-mergeable symbol reports an error instead of asserting", () => {
   const cases: [label: string, source: string][] = [
     ["function then enum x2", "function X() {}\nenum X {}\nenum X {}\n"],

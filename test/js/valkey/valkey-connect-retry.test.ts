@@ -173,36 +173,55 @@ test.skipIf(isWindows).concurrent("connect() rejects when a synchronous reconnec
 // The third connect path: on_close()'s auto-reconnect branch schedules
 // on_reconnect_timer without ever reaching on_valkey_close(), so the .connect()
 // promise is still cached when the timer fires. If reconnect()'s connect(2)
-// then fails synchronously, that promise must still settle.
+// then fails synchronously, that promise must still settle, and the failure
+// must also release the strong this_value root that on_close's auto-reconnect
+// bookkeeping took, or every such client leaks for the life of the process.
+const TIMER_ROUNDS = 8;
 test
   .skipIf(isWindows)
   .concurrent("connect() rejects when the auto-reconnect timer's attempt fails synchronously", async () => {
     const { stdout, stderr, exitCode, signalCode } = await run(
       "vk-reconnect-timer",
       /* ts */ `
+        import { heapStats } from "bun:jsc";
         import { rmSync } from "node:fs";
         import { RedisClient } from "bun";
         import { join } from "node:path";
         import { listenRespOk } from "./server.ts";
         const sock = join(import.meta.dir, "s");
-        const server = listenRespOk(sock);
-        // connectionTimeout: 0 disables the connection-timeout timer so the
-        // process can exit naturally once the promise settles.
-        const client = new RedisClient(\`redis+unix://\${sock}\`, { connectionTimeout: 0 });
-        const pending = client.connect().then(() => "resolved", (e) => e?.code);
-        // Kill the target in the same tick, before the handshake can complete.
-        // The socket close takes the auto-reconnect branch; the reconnect timer
-        // then retries connect(2) against a path that no longer exists.
-        server.stop(true);
-        rmSync(sock, { force: true });
-        console.log(JSON.stringify({ first: await pending }));
+        // Scoped to a function so the only thing that can keep a client alive
+        // after it returns is a leaked native strong this_value root.
+        async function connectThenLoseTheTarget() {
+          const server = listenRespOk(sock);
+          // connectionTimeout: 0 disables the connection-timeout timer so the
+          // process can exit naturally once the promise settles.
+          const client = new RedisClient(\`redis+unix://\${sock}\`, { connectionTimeout: 0 });
+          const pending = client.connect().then(() => "resolved", (e) => e?.code);
+          // Kill the target in the same tick, before the handshake can complete.
+          // The socket close takes the auto-reconnect branch; the reconnect timer
+          // then retries connect(2) against a path that no longer exists.
+          server.stop(true);
+          rmSync(sock, { force: true });
+          return await pending;
+        }
+        const results = new Set();
+        for (let i = 0; i < ${TIMER_ROUNDS}; i++) results.add(await connectThenLoseTheTarget());
+        Bun.gc(true);
+        await 1;
+        Bun.gc(true);
+        const alive = heapStats().objectTypeCounts.RedisClient ?? 0;
+        console.log(JSON.stringify({ results: [...results], alive }));
       `,
     );
-    expect({ stdout, exitCode, signalCode }, stderr).toEqual({
-      stdout: JSON.stringify({ first: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION" }),
+    const out = stdout ? JSON.parse(stdout) : {};
+    expect({ results: out.results, exitCode, signalCode }, stderr).toEqual({
+      results: ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION"],
       exitCode: 0,
       signalCode: null,
     });
+    // Every round leaked one client before the fix. The half-of-rounds bound
+    // leaves headroom for instances conservatively rooted by the stack.
+    expect(out.alive, stderr).toBeLessThan(TIMER_ROUNDS / 2);
   });
 
 // on_valkey_close also re-reads the cached connectionPromise. close() while a

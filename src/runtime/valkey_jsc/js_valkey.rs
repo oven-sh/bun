@@ -1234,9 +1234,14 @@ impl JSValkeyClient {
         // auto-reconnect branch schedules this timer without ever reaching
         // on_valkey_close(), which is what normally clears and settles it.
         if let Err(err) = self.reconnect() {
+            // No socket was created, so no close event will arrive to schedule
+            // another attempt; a stale is_reconnecting would keep update_poll_ref
+            // holding a strong this_value root forever and leak the JS wrapper.
+            self.client_mut().flags.is_reconnecting = false;
             if let Some(this_value) = self.this_value.get().try_get() {
                 let _ = self.reject_connection_promise(&self.global_object, this_value, err);
             }
+            self.update_poll_ref();
         }
     }
 

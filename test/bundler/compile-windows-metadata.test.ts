@@ -163,8 +163,8 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
       expect(exitCode).not.toBe(0);
-      // When cross-compiling to non-Windows, it tries to download the target but fails
-      expect(stderr.toLowerCase()).toContain("target platform");
+      // Windows flags require a Windows compile target
+      expect(stderr.toLowerCase()).toContain("windows compile target");
     });
   });
 
@@ -178,7 +178,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: String(dir),
         compile: {
-          target: "bun-windows-x64",
+          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
           outfile: "app-api.exe",
           windows: {
             title: "API App",
@@ -225,7 +225,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: String(dir),
         compile: {
-          target: "bun-windows-x64",
+          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
           outfile: "partial-api.exe",
           windows: {
             title: "Partial App",
@@ -262,7 +262,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         entrypoints: [join(String(dir), "app.js")],
         outdir: "./out",
         compile: {
-          target: "bun-windows-x64",
+          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
           outfile: "relative.exe",
           windows: {
             title: "Relative Path App",
@@ -322,39 +322,35 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
       expect(version).toBe(expected);
     });
 
-    test("invalid version format should error gracefully", async () => {
+    test.each([
+      { version: "not.a.version" },
+      { version: "1.2.3.4.5" },
+      { version: "1.-2.3.4" },
+      { version: "65536.0.0.0" }, // > 65535
+      { version: "" },
+    ])("invalid version format should error gracefully: $version", async ({ version }) => {
       using dir = tempDir("windows-invalid-version", {
         "app.js": `console.log("Invalid version test");`,
       });
 
-      const invalidVersions = [
-        "not.a.version",
-        "1.2.3.4.5",
-        "1.-2.3.4",
-        "65536.0.0.0", // > 65535
-        "",
-      ];
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          join(String(dir), "app.js"),
+          "--outfile",
+          join(String(dir), "test.exe"),
+          "--windows-version",
+          version,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-      for (const version of invalidVersions) {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "build",
-            "--compile",
-            join(String(dir), "app.js"),
-            "--outfile",
-            join(String(dir), "test.exe"),
-            "--windows-version",
-            version,
-          ],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        const exitCode = await proc.exited;
-        expect(exitCode).not.toBe(0);
-      }
+      const exitCode = await proc.exited;
+      expect(exitCode).not.toBe(0);
     });
   });
 

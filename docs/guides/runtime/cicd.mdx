@@ -15,12 +15,12 @@ jobs:
     steps:
       # ...
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2 // [!code ++]
+      - uses: oven-sh/setup-bun@v2 # [!code ++]
 
       # run any `bun` or `bunx` command
-      - run: bun install // [!code ++]
-      - run: bun index.ts // [!code ++]
-      - run: bun run build // [!code ++]
+      - run: bun install # [!code ++]
+      - run: bun index.ts # [!code ++]
+      - run: bun run build # [!code ++]
 ```
 
 ---
@@ -36,8 +36,8 @@ jobs:
     steps:
       # ...
       - uses: oven-sh/setup-bun@v2
-        with: // [!code ++]
-          bun-version: 1.2.0 # or "latest", "canary", <sha> // [!code ++]
+        with: # [!code ++]
+          bun-version: 1.3.3 # or "latest", "canary", <sha> # [!code ++]
 ```
 
 ---

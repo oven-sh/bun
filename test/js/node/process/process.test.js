@@ -269,19 +269,21 @@ it("process.umask()", () => {
 });
 
 it("process.versions", () => {
-  // Expected dependency versions (from CMake-generated header)
+  // Expected dependency versions — must match scripts/build/deps/*.ts commits.
+  // These are the ACTUAL commits built into bun (not derived values, so
+  // bumping a dep requires updating this test too).
   const expectedVersions = {
-    boringssl: "29a2cd359458c9384694b75456026e4b57e3e567",
-    libarchive: "898dc8319355b7e985f68a9819f182aaed61b53a",
-    mimalloc: "4c283af60cdae205df5a872530c77e2a6a307d43",
+    boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
+    libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+    mimalloc: "afb41757285694f832e7a2f164d35f5717457f96",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
-    zlib: "886098f3f339617b4243b286f5ed364b9989e245",
-    tinycc: "ab631362d839333660a265d3084d8ff060b96753",
-    lolhtml: "8d4c273ded322193d017042d1f48df2766b0f88b",
-    ares: "d1722e6e8acaf10eb73fa995798a9cd421d9f85e",
-    libdeflate: "dc76454a39e7e83b68c3704b6e3784654f8d5ac5",
-    zstd: "794ea1b0afca0f020f4e57b6732332231fb23c70",
-    lshpack: "3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0",
+    zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
+    tinycc: "12882eee073cfe5c7621bcfadf679e1372d4537b",
+    lolhtml: "77127cd2b8545998756e8d64e36ee2313c4bb312",
+    ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
+    libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
+    zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+    lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
   };
 
   for (const [name, expectedHash] of Object.entries(expectedVersions)) {
@@ -424,7 +426,7 @@ describe.concurrent(() => {
     });
 
     let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-    expect(out.trim()).toEqual("v24.3.0");
+    expect(out.trim()).toEqual("v26.3.0");
     expect(exited).toBe(0);
   });
 
@@ -804,6 +806,62 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
+  it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
+    // Pins the observable behaviour: order is preserved, late .catch()
+    // suppresses delivery, and a rejection raised from inside the handler is
+    // also delivered.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const N = 1000;
+          const seen = [];
+          let nestedSeen = false;
+          process.on("unhandledRejection", reason => {
+            if (reason === "nested") { nestedSeen = true; return; }
+            seen.push(reason);
+            if (reason === 0) Promise.reject("nested");
+          });
+          for (let i = 0; i < N; i++) Promise.reject(i);
+          // This one is handled before the checkpoint runs — must NOT be delivered.
+          Promise.reject("handled").catch(() => {});
+          await new Promise(r => setImmediate(r));
+          await new Promise(r => setImmediate(r));
+          if (seen.length !== N) throw new Error("count " + seen.length);
+          for (let i = 0; i < N; i++) if (seen[i] !== i) throw new Error("order at " + i + " got " + seen[i]);
+          if (seen.includes("handled")) throw new Error("handled promise was delivered");
+          if (!nestedSeen) throw new Error("rejection from inside handler was dropped");
+
+          // A handler that .catch()es a *later* still-pending rejection must
+          // suppress both 'unhandledRejection' AND 'rejectionHandled' for it.
+          let spuriousRejectionHandled = 0;
+          let lateUnhandled = false;
+          process.on("rejectionHandled", () => spuriousRejectionHandled++);
+          let pLate;
+          process.removeAllListeners("unhandledRejection");
+          process.on("unhandledRejection", reason => {
+            if (reason === "early") pLate.catch(() => {});
+            if (reason === "late") lateUnhandled = true;
+          });
+          Promise.reject("early");
+          pLate = Promise.reject("late");
+          await new Promise(r => setImmediate(r));
+          await new Promise(r => setImmediate(r));
+          if (lateUnhandled) throw new Error("late promise got unhandledRejection");
+          if (spuriousRejectionHandled !== 0)
+            throw new Error("spurious rejectionHandled fired " + spuriousRejectionHandled + "x");
+          console.log("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",
@@ -1173,8 +1231,71 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
 });
 
 it("process.versions", () => {
-  expect(process.versions.node).toEqual("24.3.0");
-  expect(process.versions.v8).toEqual("13.6.233.10-node.18");
+  expect(process.versions.node).toEqual("26.3.0");
+  expect(process.versions.v8).toEqual("14.6.202.34-node.20");
   expect(process.versions.napi).toEqual("10");
-  expect(process.versions.modules).toEqual("137");
+  expect(process.versions.modules).toEqual("147");
+});
+
+// On Windows, env var names are case-insensitive. The proxy-related vars
+// (HTTP_PROXY/HTTPS_PROXY/NO_PROXY) get a CustomAccessor at their canonical
+// uppercase name; that accessor must stay enumerable when the OS env block
+// carries a non-canonical casing (e.g. `Http_Proxy`), or the var is silently
+// dropped from {...process.env}. The spread preserves the *original* key case
+// from the OS env block (JS objects are case-sensitive), so consumers must
+// scan case-insensitively — but the var must at least survive enumeration.
+it.skipIf(!isWindows)("proxy env vars survive process.env enumeration regardless of OS env-block casing", () => {
+  const variants = ["Http_Proxy", "HTTP_proxy", "http_Proxy", "HTTPS_Proxy", "No_Proxy"];
+  for (const variant of variants) {
+    const canonical = variant.toUpperCase();
+    // Drop pre-existing forms of this proxy var from bunEnv so the test
+    // exercises only the explicitly-set non-canonical casing.
+    const env = { ...bunEnv, [variant]: "http://proxy.example" };
+    for (const k of Object.keys(env)) {
+      if (k !== variant && k.toUpperCase() === canonical) delete env[k];
+    }
+    const child = spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const o = {...process.env};
+         const found = Object.keys(o).find(k => k.toUpperCase() === ${JSON.stringify(canonical)});
+         console.log(JSON.stringify({direct: process.env.${canonical}, enumerated: found ? o[found] : undefined}));`,
+      ],
+      env,
+    });
+    const { direct, enumerated } = JSON.parse(child.stdout.toString().trim());
+    expect(direct).toBe("http://proxy.example");
+    expect(enumerated).toBe("http://proxy.example");
+  }
+});
+
+// `process.env.HTTP_PROXY = "..."` (a runtime assignment of a proxy var that
+// was NOT in the OS env at startup) must make the var enumerable so it
+// survives `{...process.env}` / `Bun.spawn({env: process.env})`. The proxy
+// vars are lazily added as `DontEnum` CustomAccessors when not in the OS env
+// block; the setter must clear `DontEnum` on first assignment, like the
+// regular env-var setter does.
+it("proxy env vars assigned at runtime propagate to spawned children via {...process.env}", () => {
+  const cmd = [
+    bunExe(),
+    "-e",
+    `process.env.HTTP_PROXY = "http://x:8080";
+     process.env.HTTPS_PROXY = "http://y:8080";
+     process.env.NO_PROXY = "z";
+     const p = Bun.spawnSync({
+       cmd: [process.execPath, "-e", "console.log(JSON.stringify({HTTP_PROXY: process.env.HTTP_PROXY, HTTPS_PROXY: process.env.HTTPS_PROXY, NO_PROXY: process.env.NO_PROXY}))"],
+       env: { ...process.env },
+     });
+     process.stdout.write(p.stdout.toString());`,
+  ];
+  // Ensure none of the proxy vars are pre-set in the parent's env so the
+  // test exercises the not-in-OS-env-at-startup → assigned-at-runtime path.
+  const env = { ...bunEnv };
+  for (const k of Object.keys(env)) {
+    if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
+  }
+  const child = spawnSync({ cmd, env });
+  const got = JSON.parse(child.stdout.toString().trim());
+  expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });

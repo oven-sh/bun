@@ -3,7 +3,7 @@ title: "Node.js Compatibility"
 description: "Bun's compatibility status with Node.js APIs, modules, and globals"
 ---
 
-Every day, Bun gets closer to 100% Node.js API compatibility. Today, popular frameworks like Next.js, Express, and millions of `npm` packages intended for Node just work with Bun. To ensure compatibility, we run thousands of tests from Node.js' test suite before every release of Bun.
+Every day, Bun gets closer to 100% Node.js API compatibility. Today, popular frameworks like Next.js, Express, and millions of `npm` packages intended for Node work with Bun. To ensure compatibility, we run thousands of tests from Node.js' test suite before every release of Bun.
 
 **If a package works in Node.js but doesn't work in Bun, we consider it a bug in Bun.** Please [open an issue](https://bun.com/issues) and we'll fix it.
 
@@ -149,7 +149,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
-🟡 `writeHeapSnapshot` and `getHeapSnapshot` are implemented. `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Other methods are not implemented. For profiling, use [`bun:jsc`](/project/benchmarking#bunjsc) instead.
+🟡 `writeHeapSnapshot` and `getHeapSnapshot` are implemented. `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Other methods are not implemented. For profiling, use [`bun:jsc`](/project/benchmarking#javascript-heap-stats) instead.
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
@@ -165,7 +165,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 
-🔴 Not implemented.
+🟡 Partially implemented. `Profiler` API is supported (`Profiler.enable`, `Profiler.disable`, `Profiler.start`, `Profiler.stop`, `Profiler.setSamplingInterval`). Other inspector APIs are not yet implemented.
 
 ### [`node:repl`](https://nodejs.org/api/repl.html)
 
@@ -245,7 +245,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 
@@ -273,7 +273,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event)
 

@@ -7,7 +7,7 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1059,11 +1059,45 @@ it("new Response(stream).blob() (direct)", async () => {
   expect(await blob.text()).toBe('{"hello":true}');
 });
 
+it("Blob.stream(undefined) does not crash", () => {
+  var blob = new Blob(["abdefgh"]);
+  var stream = blob.stream(undefined);
+  expect(stream instanceof ReadableStream).toBeTrue();
+  stream = blob.stream(null);
+  expect(stream instanceof ReadableStream).toBeTrue();
+});
+
 it("Blob.stream() -> new Response(stream).text()", async () => {
   var blob = new Blob(["abdefgh"]);
   var stream = blob.stream();
   const text = await new Response(stream).text();
   expect(text).toBe("abdefgh");
+});
+
+it("Bun.file().stream() of a small file does not double-close the controller", async () => {
+  // When the first pull returns data + EOF synchronously, both the native onClose
+  // callback and the pull-result handler enqueue callClose for the same controller.
+  // The second callClose must be a no-op rather than throwing ERR_INVALID_STATE
+  // through reportError → process.on("uncaughtException").
+  using dir = tempDir("file-stream-double-close", { "x.txt": "x" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.on("uncaughtException", e => {
+         console.log(e?.code ?? e?.name, e?.message);
+         process.exitCode = 1;
+       });
+       Bun.file(process.argv[1]).stream().getReader().releaseLock();`,
+      join(String(dir), "x.txt"),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it("Bun.file().stream() read text from large file", async () => {
@@ -1182,4 +1216,104 @@ recursiveFunction();
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
+});
+
+it("handles exceptions during empty stream creation", () => {
+  expect(() => {
+    function foo() {
+      try {
+        foo();
+      } catch (e) {}
+      const v8 = new Blob();
+      v8.stream();
+    }
+    foo();
+    throw new Error("not stack overflow");
+  }).toThrow("not stack overflow");
+});
+
+it("auto-allocated byte stream chunks are zero-filled before being exposed to the source", async () => {
+  const CHUNK_SIZE = 4096;
+
+  // Populate the allocator's free lists with same-sized blocks full of a
+  // non-zero pattern so a recycled, non-zeroed allocation would be visible.
+  for (let i = 0; i < 256; i++) {
+    new Uint8Array(CHUNK_SIZE).fill(0xaa);
+  }
+  Bun.gc(true);
+
+  let nonZeroIndex = -1;
+  const stream = new ReadableStream({
+    type: "bytes",
+    autoAllocateChunkSize: CHUNK_SIZE,
+    pull(controller) {
+      const request = controller.byobRequest;
+      if (!request) return;
+      const view = request.view;
+      // Per the Streams spec the auto-allocated chunk is `new
+      // ArrayBuffer(autoAllocateChunkSize)`, which is zero-filled. A source
+      // that under-writes and over-reports must hand the reader zeros, not
+      // recycled heap contents.
+      for (let i = 0; i < view.byteLength; i++) {
+        if (view[i] !== 0) {
+          nonZeroIndex = i;
+          break;
+        }
+      }
+      view[0] = 1;
+      request.respond(view.byteLength);
+    },
+  });
+
+  const reader = stream.getReader();
+  const { done, value } = await reader.read();
+  expect(done).toBe(false);
+  expect(nonZeroIndex).toBe(-1);
+  expect(value.byteLength).toBe(CHUNK_SIZE);
+  // The byte the source actually wrote survives...
+  expect(value[0]).toBe(1);
+  // ...and every byte it did not write is zero.
+  expect(value.subarray(1).every(b => b === 0)).toBe(true);
+  reader.cancel();
+});
+
+it("ReadableStream BYOB read pending at close() + respond(0) returns a zero-length view of the caller's buffer", async () => {
+  // Spec EOF pattern for byte sources: controller.close() leaves the pending
+  // BYOB read unsettled; byobRequest.respond(0) then resolves it with a
+  // zero-length view over the caller's (transferred) buffer, returning the
+  // buffer for reuse. Only cancel() resolves pending reads with undefined.
+  let ctrl;
+  const rs = new ReadableStream({
+    type: "bytes",
+    start(c) {
+      ctrl = c;
+    },
+  });
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(new ArrayBuffer(16)));
+  ctrl.close();
+  ctrl.byobRequest.respond(0);
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeInstanceOf(Uint8Array);
+  expect(value.byteLength).toBe(0);
+  // The caller's 16-byte buffer comes back (transferred) for reuse.
+  expect(value.buffer.byteLength).toBe(16);
+  await reader.closed;
+});
+
+it("ReadableStream BYOB read pending at cancel() resolves with undefined", async () => {
+  // Spec (ReadableStreamCancel step 6): pending readIntoRequests get their
+  // close steps with undefined - { value: undefined, done: true }.
+  const rs = new ReadableStream({
+    type: "bytes",
+    start() {},
+  });
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(16));
+  await reader.cancel("bye");
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeUndefined();
+  await reader.closed;
 });

@@ -15,6 +15,65 @@ const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
+
+/**
+ * Extracts TLS and proxy options from an agent object.
+ * @param {Object} agent The agent object to extract options from
+ * @returns {{ tls: Object|null, proxy: string|Object|null }}
+ */
+function extractAgentOptions(agent) {
+  const connectOpts = agent?.connectOpts || agent?.options;
+  let tls = null;
+  let proxy = null;
+
+  if ($isObject(connectOpts)) {
+    // Build TLS options
+    const newTlsOptions = {};
+    let hasTlsOptions = false;
+
+    const { rejectUnauthorized, ca, cert, key, passphrase } = connectOpts;
+    if (rejectUnauthorized !== undefined) {
+      newTlsOptions.rejectUnauthorized = rejectUnauthorized;
+      hasTlsOptions = true;
+    }
+    if (ca) {
+      newTlsOptions.ca = ca;
+      hasTlsOptions = true;
+    }
+    if (cert) {
+      newTlsOptions.cert = cert;
+      hasTlsOptions = true;
+    }
+    if (key) {
+      newTlsOptions.key = key;
+      hasTlsOptions = true;
+    }
+    if (passphrase) {
+      newTlsOptions.passphrase = passphrase;
+      hasTlsOptions = true;
+    }
+
+    if (hasTlsOptions) {
+      tls = newTlsOptions;
+    }
+  }
+
+  // Build proxy - check connectOpts.proxy first, then agent.proxy
+  const agentProxy = connectOpts?.proxy || agent?.proxy;
+  if (agentProxy) {
+    const proxyUrl = agentProxy?.href || agentProxy;
+    // Get proxy headers from agent.proxyHeaders
+    if (agent?.proxyHeaders) {
+      const proxyHeaders = $isCallable(agent.proxyHeaders) ? agent.proxyHeaders.$call(agent) : agent.proxyHeaders;
+      proxy = { url: proxyUrl, headers: proxyHeaders };
+    } else {
+      proxy = proxyUrl;
+    }
+  }
+
+  return { tls, proxy };
+}
+
 const eventIds = {
   open: 1,
   close: 2,
@@ -89,9 +148,34 @@ class BunWebSocket extends EventEmitter {
 
     let headers;
     let method = "GET";
+    let proxy;
+    let tlsOptions;
+    let agent;
+    // Mirrors ws's `const opts = { perMessageDeflate: true, ...options }` + truthy check:
+    // any `perMessageDeflate` that's present and falsy suppresses the extension
+    // offer; omitted or truthy keeps the default.
+    let disableDeflate = false;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
+      proxy = options?.proxy;
+      tlsOptions = options?.tls;
+      if ("perMessageDeflate" in options && !options.perMessageDeflate) {
+        disableDeflate = true;
+      }
+
+      // Extract from agent if provided (like HttpsProxyAgent)
+      agent = options?.agent;
+      if ($isObject(agent)) {
+        const agentOpts = extractAgentOptions(agent);
+        const { proxy: agentProxy, tls: agentTls } = agentOpts;
+        if (!proxy && agentProxy) {
+          proxy = agentProxy;
+        }
+        if (!tlsOptions && agentTls) {
+          tlsOptions = agentTls;
+        }
+      }
     }
 
     const finishRequest = options?.finishRequest;
@@ -131,7 +215,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
           }
         },
         write() {},
@@ -160,16 +244,29 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
   }
 
-  #createWebSocket(url, protocols, headers, method) {
-    let ws = (this.#ws = new WebSocket(url, headers ? { headers, method, protocols } : protocols));
+  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
+    // The native WebSocket keeps permessage-deflate enabled by default;
+    // forward `perMessageDeflate: false` only when the caller asked to disable.
+    let wsOptions;
+    if (headers || proxy || tls || disableDeflate) {
+      wsOptions = { protocols };
+      if (headers) wsOptions.headers = headers;
+      if (method) wsOptions.method = method;
+      if (proxy) wsOptions.proxy = proxy;
+      if (tls) wsOptions.tls = tls;
+      if (disableDeflate) wsOptions.perMessageDeflate = false;
+    } else {
+      wsOptions = protocols;
+    }
+    let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
 
     return ws;
@@ -180,8 +277,16 @@ class BunWebSocket extends EventEmitter {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
-    if (mask && (this.#eventId & mask) !== mask) {
-      this.#eventId |= mask;
+    const hasPersistentListener = mask && (this.#eventId & mask) === mask;
+    // Add a native listener if:
+    // 1. For `on()`: no native listener exists yet (will be persistent)
+    // 2. For `once()`: no persistent `on()` listener exists (otherwise the persistent one forwards events)
+    //    If only `once()` listeners exist, each needs its own native listener since they auto-remove
+    if (mask && !hasPersistentListener) {
+      // Only set the eventId bit for persistent `on` listeners, not for `once`
+      if (!once) {
+        this.#eventId |= mask;
+      }
       if (event === "open") {
         this.#ws.addEventListener(
           "open",
@@ -383,7 +488,8 @@ class BunWebSocket extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.ping(data);
+      if (data === undefined) this.#ws.ping();
+      else this.#ws.ping(data);
     } catch (error) {
       if (typeof cb === "function") {
         cb(error);
@@ -412,7 +518,8 @@ class BunWebSocket extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.pong(data);
+      if (data === undefined) this.#ws.pong();
+      else this.#ws.pong(data);
     } catch (error) {
       if (typeof cb === "function") {
         cb(error);
@@ -812,7 +919,8 @@ class BunWebSocketMocked extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.ping(data);
+      if (data === undefined) this.#ws.ping();
+      else this.#ws.ping(data);
     } catch (error) {
       if (typeof cb === "function") cb(error);
       return;
@@ -837,7 +945,8 @@ class BunWebSocketMocked extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.pong(data);
+      if (data === undefined) this.#ws.pong();
+      else this.#ws.pong(data);
     } catch (error) {
       if (typeof cb === "function") cb(error);
       return;
@@ -1067,15 +1176,12 @@ class WebSocketServer extends EventEmitter {
       ...options,
     };
 
-    if (
-      (options.port == null && !options.server && !options.noServer) ||
-      (options.port != null && (options.server || options.noServer)) ||
-      (options.server && options.noServer)
-    ) {
+    const { port, server, noServer, host, backlog } = options;
+    if ((port == null && !server && !noServer) || (port != null && (server || noServer)) || (server && noServer)) {
       throw new TypeError('One and only one of the "port", "server", or "noServer" options must be specified');
     }
 
-    if (options.port != null) {
+    if (port != null) {
       this._server = http.createServer((req, res) => {
         const body = http.STATUS_CODES[426];
 
@@ -1086,12 +1192,13 @@ class WebSocketServer extends EventEmitter {
         res.end(body);
       });
 
-      this._server.listen(options.port, options.host, options.backlog, callback);
-    } else if (options.server) {
-      this._server = options.server;
+      this._server.listen(port, host, backlog, callback);
+    } else if (server) {
+      this._server = server;
     }
 
-    if (this._server) {
+    const ownServer = this._server;
+    if (ownServer) {
       const emitConnection = this.emit.bind(this, "connection");
       const emitListening = this.emit.bind(this, "listening");
       const emitError = this.emit.bind(this, "error");
@@ -1099,14 +1206,14 @@ class WebSocketServer extends EventEmitter {
         this.handleUpgrade(req, socket, head, emitConnection);
       };
 
-      this._server.on("listening", emitListening);
-      this._server.on("error", emitError);
-      this._server.on("upgrade", doUpgrade);
+      ownServer.on("listening", emitListening);
+      ownServer.on("error", emitError);
+      ownServer.on("upgrade", doUpgrade);
 
       this._removeListeners = () => {
-        this._server.removeListener("upgrade", doUpgrade);
-        this._server.removeListener("listening", emitListening);
-        this._server.removeListener("error", emitError);
+        ownServer.removeListener("upgrade", doUpgrade);
+        ownServer.removeListener("listening", emitListening);
+        ownServer.removeListener("error", emitError);
       };
     }
 
@@ -1171,8 +1278,9 @@ class WebSocketServer extends EventEmitter {
         this._removeListeners = this._server = null;
       }
 
-      if (this.clients) {
-        if (!this.clients.size) {
+      const clients = this.clients;
+      if (clients) {
+        if (!clients.size) {
           process.nextTick(server => {
             server._state = CLOSED;
             server.emit("close");
@@ -1211,11 +1319,12 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   shouldHandle(req) {
-    if (this.options.path) {
+    const optionsPath = this.options.path;
+    if (optionsPath) {
       const index = req.url.indexOf("?");
       const pathname = index !== -1 ? req.url.slice(0, index) : req.url;
 
-      if (pathname !== this.options.path) return false;
+      if (pathname !== optionsPath) return false;
     }
 
     return true;
@@ -1259,14 +1368,16 @@ class WebSocketServer extends EventEmitter {
     if (
       server.upgrade(req, {
         data: ws[kBunInternals],
+        headers: protocol ? { "sec-websocket-protocol": protocol } : undefined,
       })
     ) {
-      if (this.clients) {
-        this.clients.add(ws);
+      const clients = this.clients;
+      if (clients) {
+        clients.add(ws);
         ws.on("close", () => {
-          this.clients.delete(ws);
+          clients.delete(ws);
 
-          if (this._shouldEmitClose && !this.clients.size) {
+          if (this._shouldEmitClose && !clients.size) {
             process.nextTick(wsEmitClose, this);
           }
         });

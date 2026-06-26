@@ -44,7 +44,7 @@
     ]
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+    "options": ["copy", "view", "claude", "mcp", "vscode"]
   },
   "styling": {
     "codeblocks": {
@@ -68,6 +68,7 @@
               "/installation",
               "/quickstart",
               "/typescript",
+              "/typescript-6",
               "/runtime/templating/init",
               "/runtime/templating/create"
             ]
@@ -75,7 +76,7 @@
           {
             "group": "Core Runtime",
             "icon": "cog",
-            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/bunfig"]
+            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/repl", "/runtime/bunfig"]
           },
           {
             "group": "File & Module System",
@@ -121,6 +122,7 @@
               "/runtime/file-io",
               "/runtime/streams",
               "/runtime/binary-data",
+              "/runtime/archive",
               "/runtime/sql",
               "/runtime/sqlite",
               "/runtime/s3",
@@ -135,7 +137,13 @@
           {
             "group": "Process & System",
             "icon": "computer",
-            "pages": ["/runtime/environment-variables", "/runtime/shell", "/runtime/child-process"]
+            "pages": [
+              "/runtime/environment-variables",
+              "/runtime/shell",
+              "/runtime/child-process",
+              "/runtime/webview",
+              "/runtime/cron"
+            ]
           },
           {
             "group": "Interop & Tooling",
@@ -146,10 +154,16 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/runtime/csrf",
               "/runtime/secrets",
               "/runtime/console",
+              "/runtime/toml",
               "/runtime/yaml",
+              "/runtime/markdown",
+              "/runtime/json5",
+              "/runtime/jsonl",
               "/runtime/html-rewriter",
+              "/runtime/image",
               "/runtime/hashing",
               "/runtime/glob",
               "/runtime/semver",
@@ -188,7 +202,7 @@
           {
             "group": "Publishing & Analysis",
             "icon": "upload",
-            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit"]
+            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit", "/pm/cli/info"]
           },
           {
             "group": "Workspace Management",
@@ -202,6 +216,7 @@
               "/pm/cli/patch",
               "/pm/filter",
               "/pm/global-cache",
+              "/pm/global-store",
               "/pm/isolated-installs",
               "/pm/lockfile",
               "/pm/lifecycle",
@@ -230,7 +245,7 @@
           {
             "group": "Asset Processing",
             "icon": "image",
-            "pages": ["/bundler/html-static", "/bundler/css", "/bundler/loaders"]
+            "pages": ["/bundler/html-static", "/bundler/standalone-html", "/bundler/css", "/bundler/loaders"]
           },
           {
             "group": "Single File Executable",
@@ -326,6 +341,7 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/guides/util/upgrade",
               "/guides/util/detect-bun",
               "/guides/util/version",
               "/guides/util/hash-a-password",
@@ -395,6 +411,7 @@
               "/guides/http/file-uploads",
               "/guides/http/fetch-unix",
               "/guides/http/stream-iterator",
+              "/guides/http/sse",
               "/guides/http/stream-node-streams-in-bun"
             ]
           },
@@ -464,6 +481,7 @@
               "/guides/test/update-snapshots",
               "/guides/test/coverage",
               "/guides/test/coverage-threshold",
+              "/guides/test/concurrent-test-glob",
               "/guides/test/skip-tests",
               "/guides/test/todo-tests",
               "/guides/test/timeout",
@@ -494,6 +512,7 @@
               "/guides/runtime/import-json",
               "/guides/runtime/import-toml",
               "/guides/runtime/import-yaml",
+              "/guides/runtime/import-json5",
               "/guides/runtime/import-html",
               "/guides/util/import-meta-dir",
               "/guides/util/import-meta-file",

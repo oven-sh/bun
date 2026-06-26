@@ -1,8 +1,11 @@
 declare module "bun" {
   namespace __internal {
-    type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
     type NodeCryptoWebcryptoCryptoKeyPair = import("crypto").webcrypto.CryptoKeyPair;
+
+    type LibEmptyOrNodeCryptoWebcryptoSubtleCrypto = LibDomIsLoaded extends true
+      ? {}
+      : import("crypto").webcrypto.SubtleCrypto;
 
     type LibWorkerOrBunWorker = LibDomIsLoaded extends true ? {} : Bun.Worker;
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
@@ -14,7 +17,9 @@ declare module "bun" {
       ? {}
       : import("node:stream/web").DecompressionStream;
 
-    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
+    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").Performance;
     type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
     type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
     type LibEmptyOrPerformanceMeasure = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMeasure;
@@ -80,6 +85,24 @@ declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   {
     prototype: WritableStream;
     new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
+  }
+>;
+
+interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "CompressionStream",
+  {
+    prototype: CompressionStream;
+    new (format: Bun.CompressionFormat): CompressionStream;
+  }
+>;
+
+interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebDecompressionStream {}
+declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "DecompressionStream",
+  {
+    prototype: DecompressionStream;
+    new (format: Bun.CompressionFormat): DecompressionStream;
   }
 >;
 
@@ -206,7 +229,7 @@ interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
    * @param src The text to encode.
    * @param dest The array to hold the encode result.
    */
-  encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
+  encodeInto(src?: string, dest?: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
 }
 declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoder",
@@ -277,30 +300,6 @@ declare var Event: {
   readonly BUBBLING_PHASE: 3;
   new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
-
-/**
- * Unimplemented in Bun
- */
-interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
-/**
- * Unimplemented in Bun
- */
-declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
-  "CompressionStream",
-  typeof import("node:stream/web").CompressionStream
->;
-
-/**
- * Unimplemented in Bun
- */
-interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
-/**
- * Unimplemented in Bun
- */
-declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
-  "DecompressionStream",
-  typeof import("node:stream/web").DecompressionStream
->;
 
 interface EventTarget {
   /**
@@ -727,9 +726,36 @@ interface ReadableStreamDefaultController<R = any> {
 
 interface ReadableStreamDirectController {
   close(error?: Error): void;
+  /**
+   * Write a chunk directly to the destination.
+   *
+   * Returns the number of bytes written, or a **negative number** when the
+   * destination's internal buffer is full (backpressure). When negative, the
+   * chunk *was* accepted; pause writing and `await controller.flush(true)`,
+   * which resolves once the destination has drained:
+   *
+   * ```ts
+   * const n = controller.write(chunk);
+   * if (typeof n === "number" && n < 0) {
+   *   await controller.flush(true);
+   * }
+   * ```
+   *
+   * For some destinations (e.g. {@link Bun.FileSink} on Windows pipes) the
+   * write itself is asynchronous and a `Promise<number>` is returned instead;
+   * the `typeof` check above skips the backpressure wait for those — the
+   * promise carries its own flow control.
+   */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;
-  flush(): number | Promise<number>;
+  /**
+   * Flush any locally buffered data to the destination.
+   *
+   * @param wait When `true`, the returned promise resolves only once the
+   * destination has drained its own internal buffer (i.e. backpressure has
+   * cleared). Use this after {@link write} returns a negative value.
+   */
+  flush(wait?: boolean): number | Promise<number>;
   start(): void;
 }
 
@@ -958,7 +984,7 @@ declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
-interface SubtleCrypto extends Bun.__internal.NodeCryptoWebcryptoSubtleCrypto {}
+interface SubtleCrypto extends Bun.__internal.LibEmptyOrNodeCryptoWebcryptoSubtleCrypto {}
 declare var SubtleCrypto: {
   prototype: SubtleCrypto;
   new (): SubtleCrypto;
@@ -1457,6 +1483,19 @@ interface Blob {
   json(): Promise<any>;
 
   /**
+   * Wrap this blob in a {@link Bun.Image} pipeline. Equivalent to
+   * `new Bun.Image(this, options)` — the constructor is synchronous (the
+   * underlying read happens lazily when an Image terminal is awaited), so
+   * this works on `Bun.file()`, `Bun.s3()`, fd-backed and in-memory blobs
+   * alike:
+   *
+   * ```ts
+   * await Bun.file("photo.jpg").image().resize(400).webp().write("thumb.webp");
+   * ```
+   */
+  image(options?: Bun.Image.ConstructorOptions): Bun.Image;
+
+  /**
    * Read the data from the blob as a {@link FormData} object.
    *
    * This first decodes the data from UTF-8, then parses it as a
@@ -1694,6 +1733,10 @@ declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
 
 interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}
 declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
+declare var Performance: Bun.__internal.UseLibDomIfAvailable<
+  "Performance",
+  { new (): Performance; prototype: Performance }
+>;
 
 interface PerformanceEntry extends Bun.__internal.LibEmptyOrPerformanceEntry {}
 declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<
@@ -1920,14 +1963,44 @@ interface BunFetchRequestInit extends RequestInit {
    * Override http_proxy or HTTPS_PROXY
    * This is a custom property that is not part of the Fetch API specification.
    *
+   * Can be a string URL or an object with `url` and optional `headers`.
+   *
    * @example
    * ```js
+   * // String format
    * const response = await fetch("http://example.com", {
    *  proxy: "https://username:password@127.0.0.1:8080"
    * });
+   *
+   * // Object format with custom headers sent to the proxy
+   * const response = await fetch("http://example.com", {
+   *  proxy: {
+   *    url: "https://127.0.0.1:8080",
+   *    headers: {
+   *      "Proxy-Authorization": "Bearer token",
+   *      "X-Custom-Proxy-Header": "value"
+   *    }
+   *  }
+   * });
    * ```
+   *
+   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
+   * precedence over credentials parsed from the proxy URL.
    */
-  proxy?: string;
+  proxy?:
+    | string
+    | {
+        /**
+         * The proxy URL
+         */
+        url: string;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: Bun.HeadersInit;
+      };
 
   /**
    * Override the default S3 options
@@ -1956,6 +2029,20 @@ interface BunFetchRequestInit extends RequestInit {
   unix?: string;
 
   /**
+   * Force the underlying HTTP version. `"http2"` advertises only `h2` in
+   * the TLS ALPN list and the request fails with `HTTP2Unsupported` if the
+   * server doesn't select it. `"http1.1"` pins the request to HTTP/1.1,
+   * overriding `--experimental-http2-fetch` /
+   * `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` if set. Omit to use the
+   * default (h2 is offered iff the flag is on).
+   *
+   * Requires `https`. This is a custom property that is not part of the
+   * Fetch API specification.
+   * @experimental
+   */
+  protocol?: "http2" | "http1.1" | "h2" | "h1";
+
+  /**
    * Control automatic decompression of the response body.
    * When set to `false`, the response body will not be automatically decompressed,
    * and the `Content-Encoding` header will be preserved. This can improve performance
@@ -1973,6 +2060,51 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   decompress?: boolean;
+
+  /**
+   * Automatically compress the request body before sending and set the
+   * `Content-Encoding` request header accordingly.
+   *
+   * - `true` is equivalent to `"gzip"`.
+   * - A string selects the encoding with its default level.
+   * - An object selects the encoding and an explicit compression `level`.
+   *
+   * Only buffered bodies (string, `ArrayBuffer`/`TypedArray`, `Blob`) are
+   * compressed; `ReadableStream` bodies are sent as-is. If the request
+   * already has a `Content-Encoding` header, the body is left unchanged.
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @default false
+   * @example
+   * ```js
+   * await fetch("https://example.com/upload", {
+   *   method: "POST",
+   *   body: JSON.stringify(bigPayload),
+   *   compress: "gzip",
+   * });
+   * ```
+   */
+  compress?:
+    | boolean
+    | "gzip"
+    | "deflate"
+    | "br"
+    | "zstd"
+    | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
+
+  /**
+   * The maximum number of redirects to follow when `redirect` is `"follow"`.
+   * If the response chain redirects more than this many times, the request
+   * rejects with a "too many redirects" error.
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @default 126
+   * @example
+   * ```js
+   * const response = await fetch("https://example.com/", { maxRedirects: 3 });
+   * ```
+   */
+  maxRedirects?: number;
 }
 
 /**

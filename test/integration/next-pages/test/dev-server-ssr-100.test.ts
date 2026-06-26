@@ -6,12 +6,14 @@ import { cp, rm } from "fs/promises";
 import PQueue from "p-queue";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
-import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, getPuppeteerInstallEnv, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
 let root = tmpdirSync();
+
+const puppeteerInstallEnv = getPuppeteerInstallEnv();
 
 beforeAll(async () => {
   await rm(root, { recursive: true, force: true });
@@ -60,16 +62,18 @@ async function getDevServerURL() {
   async function readStream() {
     const string_decoder = new StringDecoder("utf-8");
     const stdout = dev_server!.stdout!;
+    let accumulated = "";
     for await (const chunk of stdout) {
       const str = string_decoder.write(chunk);
       console.error(str);
 
       if (!hasLoaded) {
-        let match = str.match(/http:\/\/localhost:\d+/);
+        accumulated += str;
+        let match = accumulated.match(/http:\/\/localhost:\d+/);
         if (match) {
           baseUrl = match[0];
         }
-        if (str.toLowerCase().includes("ready")) {
+        if (accumulated.toLowerCase().includes("ready") && baseUrl) {
           hasLoaded = true;
           loaded();
         }
@@ -91,7 +95,7 @@ async function startDevServer() {
 
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, "bunstall") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, "bunstall"), ...puppeteerInstallEnv },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

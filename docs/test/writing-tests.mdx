@@ -7,7 +7,7 @@ Define tests with a Jest-like API imported from the built-in `bun:test` module. 
 
 ## Basic Usage
 
-To define a simple test:
+To define a test:
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
 import { expect, test } from "bun:test";
@@ -77,6 +77,43 @@ test("wat", async () => {
 In `bun:test`, test timeouts throw an uncatchable exception to force the test to stop running and fail. We also kill any child processes that were spawned in the test to avoid leaving behind zombie processes lurking in the background.
 
 The default timeout for each test is 5000ms (5 seconds) if not overridden by this timeout option or `jest.setDefaultTimeout()`.
+
+## Retries and Repeats
+
+### test.retry
+
+Use the `retry` option to automatically retry a test if it fails. The test passes if it succeeds within the specified number of attempts. This is useful for flaky tests that may fail intermittently.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test(
+  "flaky network request",
+  async () => {
+    const response = await fetch("https://example.com/api");
+    expect(response.ok).toBe(true);
+  },
+  { retry: 3 }, // Retry up to 3 times if the test fails
+);
+```
+
+### test.repeats
+
+Use the `repeats` option to run a test multiple times regardless of pass/fail status. The test fails if any iteration fails. This is useful for detecting flaky tests or stress testing. Note that `repeats: N` runs the test N+1 times total (1 initial run + N repeats).
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test(
+  "ensure test is stable",
+  () => {
+    expect(Math.random()).toBeLessThan(1);
+  },
+  { repeats: 20 }, // Runs 21 times total (1 initial + 20 repeats)
+);
+```
+
+<Note>You cannot use both `retry` and `repeats` on the same test.</Note>
 
 ### 🧟 Zombie Process Killer
 
@@ -317,7 +354,7 @@ test.each([
 
 ### Format Specifiers
 
-There are a number of options available for formatting the test title:
+The following options are available for formatting the test title:
 
 | Specifier | Description             |
 | --------- | ----------------------- |

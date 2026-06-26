@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 test("sleep should saturate timeout values", async () => {
   const fixturesThatShouldTimeout = [
@@ -17,6 +17,10 @@ test("sleep should saturate timeout values", async () => {
     "-999999999999999",
     "-999999999999999.999999999999999",
   ];
+  // ASAN with the system allocator makes subprocess startup dramatically
+  // slower; spawning ~11 children can take well over 10s, so the "completes
+  // instantly" bound needs much more headroom.
+  const ASAN_MULTIPLIER = isASAN ? 60 : 1;
 
   const toKill = fixturesThatShouldTimeout.map(timeout => {
     const proc = Bun.spawn({
@@ -41,7 +45,7 @@ test("sleep should saturate timeout values", async () => {
       cwd: import.meta.dir,
     });
     expect(await proc.exited).toBe(0);
-    expect(performance.now() - start).toBeLessThan(1000);
+    expect(performance.now() - start).toBeLessThan(1000 * ASAN_MULTIPLIER);
   });
 
   await Promise.all(toWait);
@@ -57,7 +61,7 @@ test("sleep should saturate timeout values", async () => {
   toKill.forEach(proc => proc.kill());
 
   await allExited;
-});
+}, 120_000);
 
 test("sleep should keep the event loop alive", async () => {
   const proc = Bun.spawn({

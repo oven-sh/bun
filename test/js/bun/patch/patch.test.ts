@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { patchInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import fs from "fs/promises";
-import { tempDirWithFiles as __tempDirWithFiles } from "harness";
+import { tempDirWithFiles as __tempDirWithFiles, bunEnv, bunExe } from "harness";
 import { join as __join } from "node:path";
 const { parse, apply, makeDiff } = patchInternals;
 
@@ -200,6 +200,38 @@ describe("apply", () => {
       expect(
         await $`if ls -d ${join(afolder, "hey.txt")}; then echo oops; else echo okay!; fi;`.cwd(tempdir).text(),
       ).toBe("okay!\n");
+    });
+
+    test("to a destination dir longer than the path buffer throws instead of crashing", async () => {
+      const tempdir = tempDirWithFiles("patch-test", { "from.txt": "hello!" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const hugeDir = Buffer.alloc(8000, "a").toString();
+           const patchfile = "rename from from.txt\\nrename to " + hugeDir + "/to.txt\\n";
+           try {
+             patchInternals.apply(patchfile, ${JSON.stringify(tempdir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      if (process.platform !== "win32") {
+        expect(stdout.trim()).toBe("caught: ENAMETOOLONG");
+      } else {
+        expect(stdout.trim()).toStartWith("caught:");
+      }
+      expect(exitCode).toBe(0);
     });
 
     test("folders", async () => {
@@ -474,6 +506,116 @@ describe("apply", () => {
   describe("No newline at end of file", () => {
     // TODO: simple, multiline, multiple hunks
   });
+
+  // Each of these hits an error path in `parse_apply_args`. The native code must
+  // surface the failure as a catchable JS exception; it used to return a normal
+  // value while the exception was still pending, which aborts debug/ASAN builds
+  // with "Unexpected exception observed" (releaseAssertNoException).
+  test("invalid arguments throw a catchable error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { patchInternals } from "bun:internal-for-testing";
+         try { patchInternals.apply("@@"); console.log("no-error"); } catch (e) { console.log("invalid-patchfile: " + e.message); }
+         try { patchInternals.apply(); console.log("no-error"); } catch (e) { console.log("missing-argument: " + e.message); }
+         try { patchInternals.apply("@@", "bun-patch-test-nonexistent-dir"); console.log("no-error"); } catch (e) { console.log("bad-dir: " + e.code); }
+         try { patchInternals.apply({ toString() { throw new Error("coerce-fail"); } }, process.cwd()); console.log("no-error"); } catch (e) { console.log("bad-patchfile-arg: " + e.message); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual([
+      "invalid-patchfile: bad_header_line failed to parse patchfile",
+      "missing-argument: apply: expected at least 1 argument, got 0",
+      "bad-dir: ENOENT",
+      "bad-patchfile-arg: coerce-fail",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A crafted patch from an untrusted source must never panic the process. Both
+  // cases below used to crash `bun install` when applying patchedDependencies.
+  describe.concurrent("malformed patches do not crash", () => {
+    test("file creation hunk with empty parts creates an empty file", async () => {
+      const dir = tempDirWithFiles("patch-empty-parts", { ".keep": "" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           import { readFileSync } from "node:fs";
+           const patch = [
+             "diff --git a/newfile.txt b/newfile.txt",
+             "new file mode 100644",
+             "--- /dev/null",
+             "+++ b/newfile.txt",
+             "@@ -0,0 +0,0 @@",
+             "",
+           ].join("\\n");
+           try {
+             const ok = patchInternals.apply(patch, ${JSON.stringify(dir)});
+             console.log("ok=" + ok + " contents=" + JSON.stringify(readFileSync(${JSON.stringify(dir)} + "/newfile.txt", "utf8")));
+           } catch (e) {
+             console.log("threw: " + e.code + " " + e.message);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: 'ok=true contents=""',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("header deleting more lines than the target file has returns EINVAL", async () => {
+      const dir = tempDirWithFiles("patch-underflow", { "target.txt": "only line\n" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const body = [" only line"];
+           for (let i = 0; i < 9; i++) body.push("-deleted " + i);
+           const patch = [
+             "diff --git a/target.txt b/target.txt",
+             "--- a/target.txt",
+             "+++ b/target.txt",
+             "@@ -1,10 +1,1 @@",
+             ...body,
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(dir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "caught: EINVAL",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe("parse", () => {
@@ -735,6 +877,59 @@ describe("parse", () => {
                               "  }",
                             ],
                           },
+                          "no_newline_at_end_of_file": false,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              "before_hash": null,
+              "after_hash": null,
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  // After stripping the "index " prefix the remainder can itself start with "index ",
+  // which used to trip a bogus debug assertion in parse_diff_hashes.
+  test("does not crash when an index line repeats the 'index ' prefix", () => {
+    for (const line of ["index index ", "index index \n", "index index 2de83dd..842652c 100644\n"]) {
+      expect(removeCapacity(JSON.parse(parse(line)))).toEqual({ parts: { items: [] } });
+    }
+  });
+
+  // A `---`/`+++` header line can be shorter than "--- a/"/"+++ b/" (no path after the marker).
+  // This used to crash the parser with an out-of-bounds slice.
+  test("does not crash on truncated ---/+++ header lines", () => {
+    for (const truncated of ["+++ ", "--- ", "--- a", "+++ b"]) {
+      expect(removeCapacity(JSON.parse(parse(truncated)))).toEqual({ "parts": { "items": [] } });
+    }
+
+    // a truncated header line falls back to the paths from the `diff --git` line
+    const truncatedHeaderPatch = `diff --git a/banana.ts b/banana.ts\n--- \n+++ \n@@ -1,1 +1,1 @@\n-a\n+b\n`;
+    expect(removeCapacity(JSON.parse(parse(truncatedHeaderPatch)))).toEqual({
+      "parts": {
+        "items": [
+          {
+            "file_patch": {
+              "path": "banana.ts",
+              "hunks": {
+                "items": [
+                  {
+                    "header": { "original": { "start": 1, "len": 1 }, "patched": { "start": 1, "len": 1 } },
+                    "parts": {
+                      "items": [
+                        {
+                          "type": "deletion",
+                          "lines": { "items": ["a"] },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "insertion",
+                          "lines": { "items": ["b"] },
                           "no_newline_at_end_of_file": false,
                         },
                       ],

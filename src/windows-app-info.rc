@@ -2,6 +2,12 @@
 
 IDI_MYICON ICON "@BUN_ICO_PATH@"
 
+// Application manifest (longPathAware + SegmentHeap), embedded as a resource
+// rather than via the linker's /MANIFEST:EMBED — that path needs libxml2 (or
+// mt.exe) inside the linker, which rustc's bundled lld-link doesn't have.
+// 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID, 24 = RT_MANIFEST.
+1 24 "@BUN_MANIFEST_PATH@"
+
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION @Bun_VERSION_MAJOR@,@Bun_VERSION_MINOR@,@Bun_VERSION_PATCH@,0
 PRODUCTVERSION @Bun_VERSION_MAJOR@,@Bun_VERSION_MINOR@,@Bun_VERSION_PATCH@,0
@@ -24,7 +30,7 @@ BEGIN
             VALUE "InternalName", "bun\0"
             VALUE "OriginalFilename", "bun.exe\0"
             VALUE "ProductName", "Bun\0"
-            VALUE "ProductVersion", "@Bun_VERSION_WITH_TAG@\0",
+            VALUE "ProductVersion", "@Bun_VERSION_WITH_TAG@\0"
             VALUE "CompanyName", "Oven\0"
             VALUE "LegalCopyright", "https://bun.com/docs/project/licensing\0"
         END

@@ -8,7 +8,6 @@ const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {
   readonly kRef: unique symbol;
   readonly kUnref: unique symbol;
   readonly kFd: unique symbol;
-  fs: typeof fs;
 };
 type FileHandle = import("node:fs/promises").FileHandle & {
   on(event: any, listener: any): FileHandle;
@@ -41,6 +40,8 @@ const { validateInteger, validateInt32, validateFunction } = require("internal/v
 // `new Response(Bun.file("path.txt"))`.
 // This makes an idomatic Node.js pattern much faster.
 const kReadStreamFastPath = Symbol("kReadStreamFastPath");
+const kIsPerformingIO = Symbol("kIsPerformingIO");
+const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
@@ -308,7 +309,16 @@ readStreamPrototype._read = function (n) {
 
   const buf = Buffer.allocUnsafeSlow(n);
 
+  this[kIsPerformingIO] = true;
   this[kFs].read(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
+    this[kIsPerformingIO] = false;
+
+    // Tell ._destroy() that it's safe to close the fd now.
+    if (this.destroyed) {
+      this.emit(kIoDone, er);
+      return;
+    }
+
     if (er) {
       require("internal/streams/destroy").errorOrDestroy(this, er);
     } else if (bytesRead > 0) {
@@ -343,6 +353,8 @@ readStreamPrototype._destroy = function (this: FSStream, err, cb) {
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
   if (this[kReadStreamFastPath]) {
     this.once(kReadStreamFastPath, er => close(this, err || er, cb));
+  } else if (this[kIsPerformingIO]) {
+    this.once(kIoDone, er => close(this, err || er, cb));
   } else {
     close(this, err, cb);
   }
@@ -481,12 +493,19 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
+    if (fd != null) {
+      // Already-open fd (stdio): skip the async _construct round-trip so the
+      // stream is born constructed, like node's stdio streams (net.Socket /
+      // tty.WriteStream), which never allocate construct TickObjects.
+      this._construct = undefined;
+    }
   }
 
   Writable.$call(this, options);
 
-  if (options.encoding) {
-    this.setDefaultEncoding(options.encoding);
+  const encoding = options.encoding;
+  if (encoding) {
+    this.setDefaultEncoding(encoding);
   }
   return this as unknown as void;
 }
@@ -595,6 +614,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     this._write = _write;
     return this._write(data, encoding, cb);
   }
+  const hasCallback = typeof cb === "function";
   try {
     if (fileSink === true) {
       fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
@@ -604,10 +624,21 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      maybePromise.then(() => {
-        cb(null);
-        this.emit("drain");
-      }, cb);
+      maybePromise.then(
+        () => {
+          if (cb) cb(null);
+          this.emit("drain");
+        },
+        err => {
+          if (cb) cb(err);
+          // If no callback was provided, emit the error on the stream
+          // This matches Node.js behavior where unhandled write errors
+          // are emitted as 'error' events on the stream
+          if (!hasCallback) {
+            this.destroy(err);
+          }
+        },
+      );
       return false;
     } else {
       if (cb) process.nextTick(cb, null);
@@ -615,6 +646,10 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     }
   } catch (e) {
     if (cb) process.nextTick(cb, e);
+    // If no callback was provided, emit the error on the stream
+    if (!hasCallback) {
+      this.destroy(e);
+    }
     return false;
   }
 }
@@ -629,7 +664,8 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     cb = encoding;
     encoding = undefined;
   }
-  if (typeof cb !== "function") {
+  const hasCallback = typeof cb === "function";
+  if (!hasCallback) {
     cb = streamNoop;
   }
 
@@ -642,7 +678,16 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           this.emit("drain"); // Emit drain event
           cb(null);
         })
-        .catch(cb);
+        .catch(err => {
+          // Always call the callback with the error
+          cb(err);
+          // If no callback was provided, emit the error on the stream
+          // This matches Node.js behavior where unhandled write errors
+          // are emitted as 'error' events on the stream
+          if (!hasCallback) {
+            this.destroy(err);
+          }
+        });
       return false; // Indicate backpressure
     } else {
       cb(null);

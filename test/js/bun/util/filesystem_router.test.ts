@@ -1,7 +1,7 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -89,6 +89,30 @@ it("should find files", () => {
 
   expect(Object.keys(routes).length).toBe(Object.keys(fixture).length);
   expect(Object.values(routes).length).toBe(Object.values(fixture).length);
+});
+
+it("should handle routes under GC pressure", () => {
+  // Regression test for BUN-1K54: fromEntries used ObjectInitializationScope
+  // with putDirect, which could crash when GC triggers during string allocation.
+  const files = Array.from({ length: 128 }, (_, i) => `route${i}/index.tsx`);
+  const { dir } = make(files);
+
+  const router = new FileSystemRouter({
+    dir,
+    fileExtensions: [".tsx"],
+    style: "nextjs",
+  });
+
+  // Access routes repeatedly with GC pressure to exercise the fromEntries path
+  for (let i = 0; i < 10; i++) {
+    Bun.gc(true);
+    const routes = router.routes;
+    const keys = Object.keys(routes);
+    expect(keys.length).toBe(128);
+    for (let j = 0; j < 128; j++) {
+      expect(routes[`/route${j}`]).toBe(`${dir}/route${j}/index.tsx`);
+    }
+  }
 });
 
 it("should handle empty dirs", () => {
@@ -443,4 +467,270 @@ it("origin should be validated", async () => {
       style: "nextjs",
     });
   }).toThrow("Expected origin to be a string");
+});
+
+// POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
+// The route sorter's lookup table must cover the full u8 range.
+// Windows and macOS (APFS/HFS+) require filenames to be valid Unicode, so skip there.
+it.skipIf(isWindows || isMacOS)("handles filenames containing byte 0xFF", () => {
+  using dir = tempDir("fsr-byte-ff", {});
+  // Static routes sharing a prefix so the sorter must compare the 0xFF byte.
+  // tempDir's string-keyed map can't express raw 0xFF, so write via Buffer paths.
+  for (const name of [[0x61, 0xff], [0x61, 0x62], [0xff]]) {
+    fs.writeFileSync(
+      Buffer.concat([Buffer.from(String(dir) + "/"), Buffer.from(name), Buffer.from(".tsx")]),
+      "export default 1;\n",
+    );
+  }
+
+  const router = new FileSystemRouter({
+    dir: String(dir),
+    fileExtensions: [".tsx"],
+    style: "nextjs",
+  });
+
+  const routes = Object.keys(router.routes);
+  expect(routes.length).toBe(3);
+  expect(routes).toContain("/ab");
+});
+
+it("MatchedRoute.params does not leak", async () => {
+  using dir = tempDir("fsr-params-leak", {
+    "pages/[a]/[b]/[c]/[d].tsx": "export default 1;",
+  });
+
+  // Each match()+.params access lazily allocates a QueryStringMap (param name/value
+  // buffer + MultiArrayList of params) which must be freed when the MatchedRoute is
+  // garbage-collected. Use long segment values so any leak is large enough to
+  // dominate RSS noise.
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const seg = "x".repeat(512);
+    const url = "/" + seg + "/" + seg + "/" + seg + "/" + seg;
+
+    // warm up
+    for (let i = 0; i < 1000; i++) router.match(url).params;
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+
+    for (let i = 0; i < 30000; i++) router.match(url).params;
+    Bun.gc(true);
+    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
+    // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
+    // deltas run far higher under bun-asan; widen the threshold there.
+    if (growthMB > ${isASAN ? 400 : 20}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("leaked");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+}, 60_000);
+
+it("throws a clean error for invalid route filenames (no use-after-free)", async () => {
+  // The constructor's log is backed by an arena allocator. When route loading
+  // produces errors (e.g. a filename like `[foo.tsx` missing its closing bracket),
+  // the arena must not be freed before log.toJS() reads the messages.
+  // Run in a subprocess so an ASAN crash doesn't take down the test runner.
+  using dir = tempDir("fsr-invalid-route", {
+    "pages/[foo.tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    try {
+      new Bun.FileSystemRouter({
+        style: "nextjs",
+        dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+        fileExtensions: [".tsx"],
+      });
+      console.log("no-throw");
+    } catch (e) {
+      console.log("caught:" + (e?.message ?? String(e)));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("caught:Route is missing a closing bracket]");
+  expect(exitCode).toBe(0);
+});
+
+it("decodes percent-encoded path segments and keeps params and pathname stable after later matches", async () => {
+  // The buffer that backs a MatchedRoute's decoded pathname, query string and
+  // param values must stay alive (and unshared) for as long as the MatchedRoute
+  // object does. Two back-to-back matches with equal-length encoded segments
+  // are used so that, if the first match's decode buffer were released or
+  // shared, the second match would immediately reuse and overwrite it.
+  // Run in a subprocess so a memory error in the child cannot take down the
+  // test runner.
+  using dir = tempDir("fsr-percent-decode", {
+    "pages/posts/[id].tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const enc = s => [...s].map(c => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+
+    const a = "alpha-" + "a".repeat(58);
+    const b = "bravo-" + "b".repeat(58);
+    const ma = router.match("/posts/" + enc(a));
+    const mb = router.match("/posts/" + enc(b));
+    if (!ma || !mb) throw new Error("expected both URLs to match");
+    if (ma.name !== "/posts/[id]") throw new Error("bad name: " + ma.name);
+    if (ma.params.id !== a) throw new Error("first param corrupted: " + JSON.stringify(ma.params.id));
+    if (ma.pathname !== "/posts/" + a) throw new Error("first pathname corrupted: " + JSON.stringify(ma.pathname));
+    if (mb.params.id !== b) throw new Error("second param corrupted: " + JSON.stringify(mb.params.id));
+    if (mb.pathname !== "/posts/" + b) throw new Error("second pathname corrupted: " + JSON.stringify(mb.pathname));
+
+    // Un-encoded URLs must keep working.
+    const plain = router.match("/posts/hello-world");
+    if (!plain || plain.params.id !== "hello-world") throw new Error("plain param: " + JSON.stringify(plain && plain.params.id));
+    console.log("ok");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
+it("caps the number of parsed query string parameters instead of crashing", async () => {
+  // A query string with more parameters than the iterator's fixed-size visited
+  // bitset (2048 entries) must not be able to take down the process when
+  // `.query` is read. Run in a subprocess so an abort is observable as output
+  // on stderr / a nonzero exit code instead of killing the test runner.
+  using dir = tempDir("fsr-many-query-params", {
+    "pages/posts.tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const qs = Array.from({ length: 3000 }, (_, i) => "k" + i + "=v" + i).join("&");
+    const match = router.match("/posts?" + qs);
+    if (!match) throw new Error("expected /posts to match");
+    const query = match.query;
+    const keys = Object.keys(query);
+    if (keys.length < 1 || keys.length > 3000) throw new Error("unexpected key count: " + keys.length);
+    if (query.k0 !== "v0") throw new Error("first param wrong: " + JSON.stringify(query.k0));
+    console.log("ok " + keys.length);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toMatch(/^ok \d+$/);
+  expect(exitCode).toBe(0);
+});
+
+it("does not match a dynamic route whose static segment merely collides on length and 32-bit hash", () => {
+  // Route segment matching must compare bytes, not just (length, truncated
+  // 32-bit wyhash). Bun.hash.wyhash(s, 0) is the same hash the router stores
+  // for static route segments, so a birthday search over a few hundred
+  // thousand equal-length candidates finds a colliding pair with overwhelming
+  // probability (expected after ~80k candidates).
+  const seen = new Map<number, string>();
+  let pair: [string, string] | null = null;
+  for (let i = 0; i < 600_000; i++) {
+    const candidate = "s" + i.toString(36).padStart(9, "0");
+    const h = Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(candidate))));
+    const prev = seen.get(h);
+    if (prev !== undefined) {
+      pair = [prev, candidate];
+      break;
+    }
+    seen.set(h, candidate);
+  }
+  expect(pair).not.toBeNull();
+  const [routeSegment, attackSegment] = pair!;
+  expect(attackSegment).not.toBe(routeSegment);
+  expect(attackSegment.length).toBe(routeSegment.length);
+
+  const { dir } = make([`${routeSegment}/[id].tsx`]);
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  // The genuine segment matches its dynamic route.
+  expect(router.match(`/${routeSegment}/42`)?.name).toBe(`/${routeSegment}/[id]`);
+  // A different segment that only collides on (length, 32-bit hash) must not.
+  expect(router.match(`/${attackSegment}/42`)).toBeNull();
+});
+
+it("match() does not panic on a leading '?' or a path that percent-decodes to empty", async () => {
+  // URLPath::parse assumed the decoded pathname was non-empty and had a leading
+  // byte to skip. A bare query string ("?", "?foo") makes the path slice end at 0
+  // while the start is hardcoded to 1, and "%PUBLIC_URL%" (which the fault-tolerant
+  // decoder consumes entirely) yields an empty decoded pathname; either case used
+  // to trigger a slice bounds panic. Run in a subprocess so a panic is observable
+  // as a nonzero exit / missing stdout instead of killing the test runner.
+  using dir = tempDir("fsr-degenerate-path", {
+    "pages/index.tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const out = {};
+    for (const input of ["?", "?foo=bar", "%PUBLIC_URL%", "%PUBLIC_URL%?x=1"]) {
+      const m = router.match(input);
+      out[input] = m ? { name: m.name, query: m.query } : null;
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    "?": { name: "/", query: {} },
+    "?foo=bar": { name: "/", query: { foo: "bar" } },
+    "%PUBLIC_URL%": { name: "/", query: {} },
+    "%PUBLIC_URL%?x=1": { name: "/", query: { x: "1" } },
+  });
+  expect(exitCode).toBe(0);
 });

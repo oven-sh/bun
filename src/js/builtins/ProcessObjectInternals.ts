@@ -80,6 +80,26 @@ export function getStdioWriteStream(
         });
       }
     };
+
+    const kFastPath = require("internal/fs/streams").kWriteStreamFastPath;
+    stream._final = function (cb) {
+      try {
+        const sink = this[kFastPath];
+        if (sink && sink !== true) {
+          const result = sink.flush();
+          if ($isPromise(result)) {
+            result.then(
+              () => cb(null),
+              err => cb(err),
+            );
+            return;
+          }
+        }
+        cb(null);
+      } catch (err) {
+        cb(err);
+      }
+    };
   }
 
   stream._isStdio = true;
@@ -280,6 +300,7 @@ export function initializeNextTickQueue(
   reportUncaughtExceptionFn,
 ) {
   var queue;
+  var tickInitHooks;
   var process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
@@ -291,6 +312,7 @@ export function initializeNextTickQueue(
   setup = () => {
     const { FixedQueue } = require("internal/fixed_queue");
     queue = new FixedQueue();
+    tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
 
     function processTicksAndRejections() {
       var tock;
@@ -348,13 +370,37 @@ export function initializeNextTickQueue(
     }
     if (process._exiting) return;
 
-    queue.push({
+    const tock = {
       callback: cb,
       // We want to avoid materializing the args if there are none because it's
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
-    });
+    };
+    if (tickInitHooks.length !== 0) {
+      // node fires one TickObject init per process.nextTick() call, at
+      // construction time (before the callback runs).
+      const asyncHooksTick = require("internal/async_hooks_tick");
+      const asyncId = asyncHooksTick.newAsyncId();
+      // Snapshot: enable()/disable() from inside a hook must not affect the
+      // in-flight dispatch (node stages such mutations in tmp_array until
+      // the emit completes).
+      const hooks = tickInitHooks.slice();
+      for (let i = 0; i < hooks.length; i++) {
+        try {
+          hooks[i](asyncId, "TickObject", 0, tock);
+        } catch (err) {
+          // node: a throwing init hook is fatal (fatalError: print + exit 1),
+          // never surfaced to the process.nextTick() caller. console is a
+          // user-mutable global, so shield the print; exit regardless.
+          try {
+            console.error(typeof err?.stack === "string" ? err.stack : err);
+          } catch {}
+          process.exit(1);
+        }
+      }
+    }
+    queue.push(tock);
     $putInternalField(nextTickQueue, 0, 1);
   }
 
@@ -394,7 +440,14 @@ export function windowsEnv(
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      // Track the key for enumeration if it isn't already there. Don't gate on
+      // `k in internalEnv`: the proxy-related env-var accessors (HTTP_PROXY,
+      // HTTPS_PROXY, NO_PROXY and lowercase variants) always exist on
+      // `internalEnv` as DontEnum CustomAccessors even when the var was never
+      // in the OS env block, so the `in` check is true while envMapList
+      // correctly omits them. A first-time runtime assignment must still add
+      // the key so `Object.keys(process.env)` / `{...process.env}` see it.
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
       if (internalEnv[k] !== value) {
@@ -436,7 +489,7 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
+  const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);
   return new (class Control extends EventEmitter {
     constructor() {
       super();

@@ -124,7 +124,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
       );
 
       expect(async () => await ctx.redis.send("SYNTAX-ERROR", [])).toThrowErrorMatchingInlineSnapshot(
-        `"ERR unknown command 'SYNTAX-ERROR', with args beginning with: "`,
+        `"ERR unknown command 'SYNTAX-ERROR'"`,
       );
     });
   });

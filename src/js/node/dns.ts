@@ -65,17 +65,17 @@ function setServers(servers) {
   return setServersOn(servers, dns);
 }
 
-const getRuntimeDefaultResultOrderOption = $newZigFunction(
-  "bun.js/api/bun/dns.zig",
+const getRuntimeDefaultResultOrderOption = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
   "Resolver.getRuntimeDefaultResultOrderOption",
   0,
 );
 
 function newResolver(options) {
-  if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction("bun.js/api/bun/dns.zig", "Resolver.newResolver", 1);
+  if (!newResolver.native) {
+    newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1);
   }
-  return newResolver.zig(options);
+  return newResolver.native(options);
 }
 
 function defaultResultOrder() {
@@ -92,7 +92,7 @@ function setDefaultResultOrder(order) {
 }
 
 function getDefaultResultOrder() {
-  return defaultResultOrder;
+  return defaultResultOrder();
 }
 
 function setServersOn(servers, object) {
@@ -147,10 +147,11 @@ function validateFlagsOption(options) {
     return;
   }
 
-  validateNumber(options.flags);
+  const flags = options.flags;
+  validateNumber(flags);
 
-  if ((options.flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
-    throw $ERR_INVALID_ARG_VALUE("hints", options.flags, "is invalid");
+  if ((flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
+    throw $ERR_INVALID_ARG_VALUE("hints", flags, "is invalid");
   }
 }
 
@@ -177,14 +178,16 @@ function validateFamilyOption(options) {
 }
 
 function validateAllOption(options) {
-  if (options.all !== undefined) {
-    validateBoolean(options.all);
+  const all = options.all;
+  if (all !== undefined) {
+    validateBoolean(all);
   }
 }
 
 function validateVerbatimOption(options) {
-  if (options.verbatim !== undefined) {
-    validateBoolean(options.verbatim);
+  const verbatim = options.verbatim;
+  if (verbatim !== undefined) {
+    validateBoolean(verbatim);
   }
 }
 
@@ -195,8 +198,9 @@ function validateOrder(order) {
 }
 
 function validateOrderOption(options) {
-  if (options.order !== undefined) {
-    validateOrder(options.order);
+  const order = options.order;
+  if (order !== undefined) {
+    validateOrder(order);
   }
 }
 
@@ -322,6 +326,13 @@ function lookup(hostname, options, callback) {
     })
     .catch(err => {
       if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+      // Node.js getaddrinfo errors (DNSException) carry the looked-up
+      // hostname both as a property and at the end of the message.
+      const syscall = err.syscall;
+      if (syscall === "getaddrinfo" && !err.hostname && hostname) {
+        err.hostname = hostname;
+        err.message = `${syscall} ${err.code} ${hostname}`;
+      }
       callback(err, undefined, undefined);
     });
 }
@@ -943,7 +954,9 @@ const promises = {
     }
   },
 
+  getDefaultResultOrder,
   setDefaultResultOrder,
+  getServers,
   setServers,
 };
 

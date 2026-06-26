@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
 
 const RealStringDecoder = require("string_decoder").StringDecoder;
 
@@ -270,11 +270,86 @@ it("invalid utf-8 at end of stream can sometimes produce more than one replaceme
   expect(decoder.end(Buffer.from("9c", "hex"))).toEqual("\uFFFD\uFFFD");
 });
 
-it("invalid utf-8 at end of stream can sometimes produce more than one replacement character", () => {
-  let decoder = new RealStringDecoder("utf-8");
-  expect(decoder.write(Buffer.from("36f59c", "hex"))).toEqual("6");
-  expect(decoder.end()).toEqual("\uFFFD\uFFFD");
-  decoder = new RealStringDecoder("utf-8");
-  expect(decoder.write(Buffer.from("36f5", "hex"))).toEqual("6");
-  expect(decoder.end(Buffer.from("9c", "hex"))).toEqual("\uFFFD\uFFFD");
-});
+// When the input buffer is too large to be represented as a JS string,
+// write()/end() should throw ERR_STRING_TOO_LONG instead of segfaulting.
+// Previously, Bun__encoding__toString would throw and return an empty JSValue,
+// and JSStringDecoder::write would call .toString() on it before checking for
+// an exception, dereferencing nullptr->m_type (segfault at address 0x5).
+it(
+  "write() with a buffer larger than String::MaxLength throws instead of crashing",
+  async () => {
+    const src = `
+    const { StringDecoder } = require("string_decoder");
+    // Larger than JSC's String::MaxLength (2^31 - 1). allocUnsafe is lazily
+    // committed so this stays cheap until the ASCII scan touches pages.
+    const buf = Buffer.allocUnsafe(2 ** 31);
+    for (const method of ["write", "end"]) {
+      const decoder = new StringDecoder("utf8");
+      try {
+        decoder[method](buf);
+        console.log(method, "no throw");
+      } catch (e) {
+        console.log(method, e.code);
+      }
+    }
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // ASAN builds unconditionally print "WARNING: ASAN interferes with JSC
+    // signal handlers..." to stderr from WebKit's Options.cpp; filter it out.
+    const stderrFiltered = stderr
+      .split(/\r?\n/)
+      .filter(s => !s.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderrFiltered).toBe("");
+    expect(stdout).toBe("write ERR_STRING_TOO_LONG\nend ERR_STRING_TOO_LONG\n");
+    expect(exitCode).toBe(0);
+    // The 2 GiB ASCII scan takes ~15s under debug/ASAN vs ~1s in release.
+  },
+  isDebug || isASAN ? 60_000 : undefined,
+);
+
+// StringDecoder.prototype.text(buf, offset) takes the offset as an int32 and
+// previously validated it with `offset > byteLength` where byteLength is
+// unsigned. The comparison promoted the signed offset to unsigned, so for
+// buffers of 2 GiB or more a negative offset slipped past the check and was
+// used directly in pointer arithmetic, decoding memory located before the
+// buffer. A negative offset must yield an empty string without touching the
+// buffer.
+it(
+  "text() with a negative offset on a 2 GiB buffer returns an empty string",
+  async () => {
+    const src = `
+      const { StringDecoder } = require("string_decoder");
+      // Legitimate case: an in-range positive offset still decodes the tail.
+      {
+        const decoder = new StringDecoder("utf8");
+        console.log(JSON.stringify(decoder.text(Buffer.from("hello world"), 6)));
+      }
+      // byteLength must be >= 2**31 for INT32_MIN to pass the old unsigned
+      // comparison (INT32_MIN reinterpreted as uint32 is 2**31). allocUnsafe
+      // is lazily committed, and a rejected offset never reads the buffer, so
+      // this stays cheap.
+      const buf = Buffer.allocUnsafe(2 ** 31 + 16);
+      const decoder = new StringDecoder("utf8");
+      const out = decoder.text(buf, -2147483648);
+      console.log("length:", out.length);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe('"world"\nlength: 0\n');
+    expect(exitCode).toBe(0);
+  },
+  // Allocating a 2 GiB buffer under debug/ASAN is slow even when lazily committed.
+  isDebug || isASAN ? 60_000 : undefined,
+);

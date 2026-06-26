@@ -10,12 +10,12 @@ export const avx2 =
   arch === "x64" &&
   ((os === "linux" && isLinuxAVX2()) || (os === "darwin" && isDarwinAVX2()) || (os === "win32" && isWindowsAVX2()));
 
-export const abi = os === "linux" && isLinuxMusl() ? "musl" : undefined;
+export const abi = os === "android" ? "android" : os === "linux" && isLinuxMusl() ? "musl" : undefined;
 
 export type Platform = {
   os: string;
   arch: string;
-  abi?: "musl";
+  abi?: "musl" | "android";
   avx2?: boolean;
   bin: string;
   exe: string;
@@ -83,6 +83,36 @@ export const platforms: Platform[] = [
     exe: "bin/bun",
   },
   {
+    // Node's process.platform is "android" on Android (Termux etc.), not "linux".
+    // The release asset is still named bun-linux-* for consistency with the
+    // build triplet, but npm's os field must be "android" for optionalDependency
+    // resolution to pick it up on-device.
+    os: "android",
+    arch: "arm64",
+    abi: "android",
+    bin: "bun-linux-aarch64-android",
+    exe: "bin/bun",
+  },
+  {
+    os: "android",
+    arch: "x64",
+    abi: "android",
+    bin: "bun-linux-x64-android",
+    exe: "bin/bun",
+  },
+  {
+    os: "freebsd",
+    arch: "arm64",
+    bin: "bun-freebsd-aarch64",
+    exe: "bin/bun",
+  },
+  {
+    os: "freebsd",
+    arch: "x64",
+    bin: "bun-freebsd-x64",
+    exe: "bin/bun",
+  },
+  {
     os: "win32",
     arch: "x64",
     avx2: true,
@@ -93,6 +123,12 @@ export const platforms: Platform[] = [
     os: "win32",
     arch: "x64",
     bin: "bun-windows-x64-baseline",
+    exe: "bin/bun.exe",
+  },
+  {
+    os: "win32",
+    arch: "arm64",
+    bin: "bun-windows-aarch64",
     exe: "bin/bun.exe",
   },
 ];

@@ -1538,7 +1538,7 @@ export function parseNumber(value) {
 
 /**
  * @param {string} string
- * @returns {"darwin" | "linux" | "windows" | "freebsd"}
+ * @returns {"darwin" | "linux" | "windows"}
  */
 export function parseOs(string) {
   if (/darwin|apple|mac/i.test(string)) {
@@ -1549,9 +1549,6 @@ export function parseOs(string) {
   }
   if (/win/i.test(string)) {
     return "windows";
-  }
-  if (/freebsd/i.test(string)) {
-    return "freebsd";
   }
   throw new Error(`Unsupported operating system: ${string}`);
 }
@@ -1840,6 +1837,13 @@ export function getTailscale() {
     }
   }
 
+  if (isWindows) {
+    const tailscaleExe = "C:\\Program Files\\Tailscale\\tailscale.exe";
+    if (existsSync(tailscaleExe)) {
+      return tailscaleExe;
+    }
+  }
+
   return "tailscale";
 }
 
@@ -1915,10 +1919,6 @@ export function getUsernameForDistro(distro) {
   if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
     return "ec2-user";
   }
-  if (/freebsd/i.test(distro)) {
-    return "root";
-  }
-
   throw new Error(`Unsupported distro: ${distro}`);
 }
 
@@ -2050,7 +2050,7 @@ export function getShell() {
 }
 
 /**
- * @typedef {"aws" | "google"} Cloud
+ * @typedef {"aws" | "google" | "azure"} Cloud
  */
 
 /** @type {Cloud | undefined} */
@@ -2144,6 +2144,37 @@ export async function isGoogleCloud() {
 }
 
 /**
+ * @returns {Promise<boolean | undefined>}
+ */
+export async function isAzure() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "azure";
+  }
+
+  async function detectAzure() {
+    // Azure IMDS (Instance Metadata Service) — the official way to detect Azure VMs.
+    // https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
+    const { error, body } = await curl("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
+      headers: { "Metadata": "true" },
+      retries: 1,
+    });
+    if (!error && body) {
+      try {
+        const metadata = JSON.parse(body);
+        if (metadata?.compute?.azEnvironment) {
+          return true;
+        }
+      } catch {}
+    }
+  }
+
+  if (await detectAzure()) {
+    detectedCloud = "azure";
+    return true;
+  }
+}
+
+/**
  * @returns {Promise<Cloud | undefined>}
  */
 export async function getCloud() {
@@ -2157,6 +2188,10 @@ export async function getCloud() {
 
   if (await isGoogleCloud()) {
     return "google";
+  }
+
+  if (await isAzure()) {
+    return "azure";
   }
 }
 
@@ -2182,6 +2217,10 @@ export async function getCloudMetadata(name, cloud) {
   } else if (cloud === "google") {
     url = new URL(name, "http://metadata.google.internal/computeMetadata/v1/instance/");
     headers = { "Metadata-Flavor": "Google" };
+  } else if (cloud === "azure") {
+    // Azure IMDS uses a single JSON endpoint; individual fields are extracted by the caller.
+    url = new URL("http://169.254.169.254/metadata/instance?api-version=2021-02-01");
+    headers = { "Metadata": "true" };
   } else {
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
@@ -2200,7 +2239,25 @@ export async function getCloudMetadata(name, cloud) {
  * @param {Cloud} [cloud]
  * @returns {Promise<string | undefined>}
  */
-export function getCloudMetadataTag(tag, cloud) {
+export async function getCloudMetadataTag(tag, cloud) {
+  cloud ??= await getCloud();
+
+  if (cloud === "azure") {
+    // Azure IMDS returns all tags in a single JSON response.
+    // Tags are in compute.tagsList as [{name, value}, ...].
+    const body = await getCloudMetadata("", cloud);
+    if (!body) return;
+    try {
+      const metadata = JSON.parse(body);
+      const tags = metadata?.compute?.tagsList;
+      if (Array.isArray(tags)) {
+        const entry = tags.find(t => t.name === tag);
+        return entry?.value;
+      }
+    } catch {}
+    return;
+  }
+
   const metadata = {
     "aws": `tags/instance/${tag}`,
     "google": `labels/${tag.replace(":", "-")}`,
@@ -2221,6 +2278,20 @@ export async function getBuildMetadata(name) {
       if (value) {
         return value;
       }
+    }
+  }
+}
+
+/**
+ * @param {string} name
+ * @param {string} value
+ * @returns {Promise<void>}
+ */
+export async function setBuildMetadata(name, value) {
+  if (isBuildkite) {
+    const { error } = await spawn(["buildkite-agent", "meta-data", "set", name, value]);
+    if (error) {
+      console.error(`Failed to set build meta-data '${name}':`, error);
     }
   }
 }
@@ -2581,26 +2652,32 @@ export function parseAnnotations(content) {
       annotations.push(annotation);
     }
 
-    // Zig compiler error
-    // e.g. /path/to/build.zig:8:19: error: ...
-    const zigMessage = line.match(/^(.+\.zig):(\d+):(\d+): (error|warning): (.+)$/);
-    if (zigMessage) {
-      const [, filename, line, column, level] = zigMessage;
-
-      const { match: callStackMatch } = readUntil(/referenced by:/i);
-      if (callStackMatch) {
-        readUntil(/(.+\.zig):(\d+):(\d+)/i, 5);
-      }
-
+    // rustc / cargo error
+    // e.g. error[E0308]: mismatched types
+    //        --> src/http/lib.rs:553:5
+    // The header line carries the level + (optional) code; the location
+    // arrives on the following `-->` line. Read until the blank line that
+    // separates rustc diagnostics so the annotation body contains the
+    // rendered span + help/note lines.
+    const rustHeader = line.match(/^(error|warning)(\[[A-Z0-9]+\])?: (.+)$/);
+    if (rustHeader && !/\b(generated|emitted)\b/.test(line) /* "warning: 3 warnings emitted" */) {
+      const [, level, code, title] = rustHeader;
+      const { match: locMatch } = readUntil(/-->\s+(.+?):(\d+):(\d+)/, 3);
+      // Swallow the diagnostic body up to the blank-line separator (rustc
+      // always emits one between diagnostics in the human format; cap at 30
+      // for `--message-format=short` which doesn't).
+      readUntil(/^$/, 30);
       const annotation = parseAnnotation({
-        source: "zig",
+        source: "rustc",
         level,
-        filename,
-        line,
-        column,
+        filename: locMatch?.[1],
+        line: locMatch?.[2],
+        column: locMatch?.[3],
+        title: code ? `${code} ${title}` : title,
         content: bufferedLines,
       });
       annotations.push(annotation);
+      continue;
     }
 
     const nodeJsError = line.match(/^file:\/\/(.+\.(?:c|m)js):(\d+)/i);
@@ -2681,37 +2758,32 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
   if (!isBuildkite) {
     return;
   }
+  // BuildKite rejects annotation contexts > 100 chars (`400 Bad Request: This
+  // context is too long`). rustc diagnostic titles routinely exceed that and
+  // were silently dropped, leaving only short warnings visible in the UI.
+  const ctx = `${context || label}`.slice(0, 100);
   const { error, status, signal, stderr } = nodeSpawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
       encoding: "utf-8",
-      timeout: 5_000,
+      timeout: 30_000,
     },
   );
   if (status === 0) {
     return;
   }
-  if (attempt > 0) {
-    const cause = error ?? signal ?? `code ${status}`;
-    throw new Error(`Failed to create annotation: ${label}`, { cause });
+  const cause = error?.message || signal || (status == null ? "timed out" : `exit code ${status}`);
+  if (attempt === 0) {
+    console.error(`buildkite-agent annotate failed for '${label}' (${cause}), retrying...`);
+    return reportAnnotationToBuildKite({ context, label, content, style, priority, attempt: attempt + 1 });
   }
-  const errorContent = formatAnnotationToHtml({
-    title: "annotation error",
-    content: stderr || "",
-    source: "buildkite",
-    level: "error",
-  });
-  reportAnnotationToBuildKite({
-    context,
-    label: `${label}-error`,
-    content: errorContent,
-    style,
-    priority,
-    attempt: attempt + 1,
-  });
+  // Annotations are best-effort: log and move on rather than throwing, which
+  // would abort the test runner mid-suite over a cosmetic failure.
+  console.error(`buildkite-agent annotate failed for '${label}' after retry (${cause}), giving up`);
+  if (stderr) console.error(stderr);
 }
 
 /**
@@ -2754,10 +2826,24 @@ export function toYaml(obj, indent = 0) {
         value.includes("#") ||
         value.includes("'") ||
         value.includes('"') ||
+        value.includes("\\") ||
         value.includes("\n") ||
-        value.includes("*"))
+        value.includes("*") ||
+        value.includes("&") ||
+        value.includes("!") ||
+        value.includes("|") ||
+        value.includes(">") ||
+        value.includes("%") ||
+        value.includes("@") ||
+        value.includes("`") ||
+        value.includes("{") ||
+        value.includes("}") ||
+        value.includes("[") ||
+        value.includes("]") ||
+        value.includes(",") ||
+        value.includes(";"))
     ) {
-      result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
+      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
       continue;
     }
     result += `${spaces}${key}: ${value}\n`;
@@ -2842,7 +2928,7 @@ export function printEnvironment() {
 
   if (isCI) {
     startGroup("Environment", () => {
-      for (const [key, value] of Object.entries(process.env)) {
+      for (const [key, value] of Object.entries(process.env).toSorted()) {
         console.log(`${key}:`, value);
       }
     });
@@ -2940,15 +3026,18 @@ export function getLoggedInUserCountOrDetails() {
     const users = stdout
       .split("\n")
       .filter(line => /tty|pts/i.test(line))
+      // Only count REMOTE logins (have an `(ip)` suffix from sshd). A local
+      // console/auto-login (e.g. cirruslabs CI VM images log the admin user in
+      // on ttys000 at boot) has no source host and isn't a human debugging the
+      // job — waiting for it would hang the runner forever.
+      .filter(line => /\([^)]+\)\s*$/.test(line))
       .map(line => {
-        // who output format: username terminal date/time (ip)
-        const [username, terminal, datetime, ip] = line.split(/\s+/);
-        return {
-          username,
-          terminal,
-          datetime,
-          ip: (ip || "").replace(/[()]/g, ""), // Remove parentheses from IP
-        };
+        // `who` output: `username terminal date time (host)`. The date/time
+        // field has spaces, so a plain split() can't slice it cleanly — take
+        // the first two tokens and pull the host from the trailing `(...)`.
+        const [username, terminal] = line.split(/\s+/);
+        const ip = line.match(/\(([^)]+)\)\s*$/)?.[1] || "";
+        return { username, terminal, ip };
       });
 
     if (users.length === 0) {
@@ -2958,7 +3047,7 @@ export function getLoggedInUserCountOrDetails() {
     let message = `${users.length} currently logged in users:`;
 
     for (const user of users) {
-      message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;
+      message += `\n- ${user.username} on ${user.terminal}${user.ip ? ` from ${user.ip}` : ""}`;
     }
 
     return message;
@@ -2985,7 +3074,11 @@ const emojiMap = {
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
+  package: ["📦", "package"],
   rocket: ["🚀", "rocket"],
+  openbsd: ["🐡", "openbsd"],
+  netbsd: ["🚩", "netbsd"],
+  freebsd: ["😈", "freebsd"],
 };
 
 /**

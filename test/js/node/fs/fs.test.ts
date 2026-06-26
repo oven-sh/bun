@@ -1,5 +1,18 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { bunEnv, bunExe, gc, getMaxFD, isBroken, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gc,
+  getMaxFD,
+  isBroken,
+  isIntelMacOS,
+  isLinux,
+  isPosix,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -51,6 +64,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnSync } from "bun";
+import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 
@@ -78,16 +92,37 @@ function tmpdirTestMkdir(): string {
   return tempdir;
 }
 
-it("fs.writeFile(1, data) should work when its inherited", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"]).toRun();
+it.concurrent("fs.writeFile(1, data) should work when its inherited", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
-it("fs.writeFile(2, data) should work when its inherited", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"]).toRun();
+it.concurrent("fs.writeFile(2, data) should work when its inherited", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
-it("fs.writeFile(/dev/null, data) should work", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), require("os").devNull]).toRun();
+it.concurrent("fs.writeFile(/dev/null, data) should work", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), os.devNull],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
 it("fs.openAsBlob", async () => {
@@ -414,12 +449,13 @@ it("writeFileSync in append should not truncate the file", () => {
   expect(readFileSync(path, "utf8")).toBe(str);
 });
 
-it("await readdir #3931", async () => {
-  const { exitCode } = spawnSync({
+it.concurrent("await readdir #3931", async () => {
+  await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
     env: bunEnv,
     cwd: import.meta.dir,
   });
+  const exitCode = await proc.exited;
   expect(exitCode).toBe(0);
 });
 
@@ -1143,7 +1179,90 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   }
 });
 
+// The error cleanup path previously called MarkedArrayBuffer.destroy() on
+// structs stored by-value inside the entries ArrayList, which passed interior
+// ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
+// then freeing it again in entries.deinit()). A self-referential symlink makes
+// the recursive walk fail with ELOOP after entries have been collected, exercising
+// that cleanup path.
+it.skipIf(isWindows)(
+  "readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open",
+  async () => {
+    using dir = tempDir("readdir-buffer-error", {
+      "a.txt": "a",
+      "b.txt": "b",
+      "c.txt": "c",
+    });
+    fs.symlinkSync("loop", join(String(dir), "loop"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          let code;
+          for (let i = 0; i < 2; i++) {
+            try {
+              fs.readdirSync(${JSON.stringify(String(dir))}, { encoding: "buffer", recursive: true });
+              throw new Error("expected readdirSync to throw");
+            } catch (e) {
+              code = e.code;
+            }
+          }
+          console.log(code);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
+  },
+);
+
 describe("readSync", () => {
+  it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    try {
+      // A plain numeric length still works.
+      const ok = new Uint8Array(4);
+      expect(readSync(fd, ok, 0, 4, 0)).toBe(4);
+
+      // Coercing a non-numeric length argument re-enters JavaScript. If that
+      // re-entry detaches the destination buffer, the call must be rejected
+      // instead of reading into the previously captured backing store.
+      const ab = new ArrayBuffer(65536);
+      const buf = new Uint8Array(ab);
+      // Keep the transferred ArrayBuffer reachable so its memory stays alive
+      // for the duration of the call.
+      let moved: ArrayBuffer | undefined;
+      expect(() =>
+        readSync(
+          fd,
+          buf,
+          0,
+          {
+            valueOf() {
+              moved = ab.transfer();
+              return 65536;
+            },
+          } as any,
+          0,
+        ),
+      ).toThrow();
+      // The coercion side effect really ran: the destination view is detached
+      // and its bytes now live in the transferred ArrayBuffer.
+      expect(buf.byteLength).toBe(0);
+      expect(moved?.byteLength).toBe(65536);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
 
   it("works on large files", () => {
@@ -1442,6 +1561,66 @@ describe("readFile", () => {
   });
 });
 
+describe("open with a numeric flag boxed as a double", () => {
+  // https://github.com/oven-sh/bun/issues/32505
+  // Go's `syscall/js` (GOOS=js GOARCH=wasm) reads every argument out of wasm
+  // linear memory with DataView.getFloat64, so a valid integer flag such as
+  // 578 (O_RDWR|O_CREAT|O_TRUNC) reaches fs.open boxed as a double instead of
+  // an int32. Node accepts any integer-valued number; Bun must too.
+  const asDouble = (n: number) => new Float64Array([n])[0];
+
+  it("openSync accepts a double-boxed flag and honors it", () => {
+    using dir = tempDir("fs-flags-double", {});
+    const file = join(String(dir), "sync.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+    expect(Number.isInteger(flags)).toBe(true);
+
+    const fd = openSync(file, flags, 0o666);
+    try {
+      writeSync(fd, "hello\n");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("hello\n");
+  });
+
+  it("async open accepts a double-boxed flag and honors it", async () => {
+    using dir = tempDir("fs-flags-double-async", {});
+    const file = join(String(dir), "async.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    fs.open(file, flags, 0o666, (err, fd) => (err ? reject(err) : resolve(fd)));
+    const fd = await promise;
+    try {
+      writeSync(fd, "world\n");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("world\n");
+  });
+
+  it("promises.open accepts a double-boxed flag and honors it", async () => {
+    using dir = tempDir("fs-flags-double-promise", {});
+    const file = join(String(dir), "promise.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+
+    const handle = await promises.open(file, flags, 0o666);
+    try {
+      await handle.write("promise\n");
+    } finally {
+      await handle.close();
+    }
+    expect(readFileSync(file, "utf8")).toBe("promise\n");
+  });
+
+  it("still rejects a non-integer numeric flag", () => {
+    using dir = tempDir("fs-flags-double-reject", {});
+    const file = join(String(dir), "bad.txt");
+    expect(() => openSync(file, asDouble(578.5), 0o666)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  });
+});
+
 describe("writeFileSync", () => {
   it("works", () => {
     const path = `${tmpdirSync()}/writeFileSync.txt`;
@@ -1540,6 +1719,57 @@ it("symlink", () => {
   expect(realpathSync(actual)).toBe(realpathSync(import.meta.path));
 });
 
+it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
+  const path = join(tmpdirSync(), "test-fs-fifo-block.fifo");
+  mkfifo(path, 0o666);
+  realpathSync(path);
+  unlinkSync(path);
+});
+
+// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
+// a /dev/fd fallback for environments where /proc is broken (FreeBSD
+// Linuxulator) or absent (minimal containers).
+it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
+  expect(realpathSync("/")).toBe("/");
+
+  const self = realpathSync(import.meta.path);
+  expect(self).toStartWith("/");
+  expect(existsSync(self)).toBe(true);
+
+  using dir = tempDir("fs-realpath-getfdpath", {});
+  const linkPath = join(String(dir), "link");
+  symlinkSync(import.meta.path, linkPath);
+  expect(realpathSync(linkPath)).toBe(self);
+});
+
+// src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
+// (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
+// covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every
+// non-Windows target Bun ships, fd→path resolution is implemented — there is
+// no platform that falls through to ENOSYS. realpathSync on POSIX is
+// open() → getFdPath(fd), so an ENOSYS here means the per-OS arm is missing.
+it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX target — never ENOSYS", () => {
+  using dir = tempDir("fs-getfdpath-platform-arm", { "probe.txt": "x" });
+  const probe = join(String(dir), "probe.txt");
+
+  let resolved: string;
+  try {
+    resolved = realpathSync(probe);
+  } catch (e: any) {
+    // The Zig spec never returns ENOSYS from getFdPath: every Environment.os
+    // value has a real implementation. If this fires, a target (FreeBSD's
+    // F_KINFO arm, or Android via the .linux /proc/self/fd arm) was dropped.
+    expect(e?.code).not.toBe("ENOSYS");
+    expect(e?.errno).not.toBe(-os.constants.errno.ENOSYS);
+    throw e;
+  }
+
+  expect(resolved).toStartWith("/");
+  expect(readFileSync(resolved, "utf8")).toBe("x");
+  // Idempotent: resolving the canonical path returns itself.
+  expect(realpathSync(resolved)).toBe(resolved);
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {
@@ -1549,6 +1779,38 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+// On FUSE / some network filesystems a symlink target can exceed PATH_MAX,
+// and POSIX readlink() may return exactly buf.len (truncated). Bun used to
+// write the NUL terminator at buf[rc] which would be one past the end of the
+// stack PathBuffer in that case. We can't create a >= PATH_MAX target on a
+// normal filesystem, but we can exercise the longest-possible target to make
+// sure the bounds check in sys.readlink doesn't fire early.
+it.skipIf(isWindows)("readlink with PATH_MAX-1 target", () => {
+  const dir = tmpdirSync();
+  // Find the longest target the local filesystem will accept for symlink(2).
+  // On Linux this is 4095, on macOS 1023. Bun's own path validation silently
+  // replaces the target with "" when it is exactly MAX_PATH_BYTES long (and
+  // Darwin accepts symlink("", link)), so start just below that boundary on
+  // each platform rather than probing through it.
+  let len = process.platform === "darwin" ? 1023 : 4095;
+  let link: string;
+  let target: string;
+  while (true) {
+    link = join(dir, "l" + len);
+    target = Buffer.alloc(len, "x").toString();
+    try {
+      symlinkSync(target, link);
+      break;
+    } catch {
+      if (len <= 1) throw new Error("could not create any symlink");
+      len--;
+    }
+  }
+  // readlinkSync must return the exact target, not error and not truncate.
+  expect(readlinkSync(link).length).toBe(len);
+  expect(readlinkSync(link)).toBe(target);
 });
 
 it.if(isWindows)("symlink on windows with forward slashes", async () => {
@@ -1736,6 +1998,33 @@ describe("rm", () => {
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
   });
+
+  // On Windows a leading-separator, drive-less path like "/foo/bar" is
+  // "rooted" and must be resolved against the cwd's drive. existsSync/
+  // statSync/unlinkSync all do this; recursive rmSync must agree
+  // or cleanup helpers (rmSync(dir, { recursive: true, force: true })) silently
+  // no-op on directories existsSync just said were there.
+  //
+  // Derive the driveless-but-rooted path from tmpdir() so all writes stay
+  // inside the existing temp area instead of creating <drive>:\tmp at the
+  // drive root. Only meaningful when cwd and tmpdir share a drive (always
+  // true on CI); otherwise the driveless path resolves to a different
+  // physical location, so skip.
+  const cwdDrive = process.cwd().slice(0, 2);
+  const tmpDrive = tmpdir().slice(0, 2);
+  const sameDriveAsCwd = isWindows && cwdDrive.toLowerCase() === tmpDrive.toLowerCase();
+  const drivelessTmp = tmpdir()
+    .replace(/^[a-zA-Z]:/, "")
+    .replaceAll("\\", "/");
+
+  it.skipIf(!sameDriveAsCwd)("rmSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
+    const dir = `${drivelessTmp}/bun-rm-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(dir + "/inner.txt", "x");
+    expect(fs.existsSync(dir)).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(fs.existsSync(dir)).toBe(false);
+  });
 });
 
 describe("rmdir", () => {
@@ -1802,25 +2091,21 @@ describe("rmdir", () => {
 
     expect(existsSync(path + "/file.txt")).toBe(true);
 
-    await promises.rmdir(path, { recursive: true });
+    await expect(promises.rmdir(path, { recursive: true })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+    await promises.rm(path, { recursive: true, force: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
-  it("removes a dir recursively", done => {
+  it("throws for recursive: true like node", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmdir(join(path, "../../"), { recursive: true }, err => {
-      try {
-        expect(existsSync(path)).toBe(false);
-        done(err);
-      } catch (e) {
-        return done(e);
-      } finally {
-        done();
-      }
-    });
+    expect(() => {
+      rmdir(join(path, "../../"), { recursive: true }, () => {});
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    rmSync(join(path, "../../"), { recursive: true, force: true });
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -1843,13 +2128,16 @@ describe("rmdirSync", () => {
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
   });
-  it("removes a dir recursively", () => {
+  it("throws for recursive: true like node", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmdirSync(join(path, "../../"), { recursive: true });
+    expect(() => rmdirSync(join(path, "../../"), { recursive: true })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    rmSync(join(path, "../../"), { recursive: true, force: true });
     expect(existsSync(path)).toBe(false);
   });
 });
@@ -2044,10 +2332,8 @@ describe("fs.WriteStream", () => {
     });
 
     stream.on("finish", () => {
-      Bun.sleep(1000).then(() => {
-        expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
-        done();
-      });
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
     });
   });
 
@@ -2341,7 +2627,7 @@ describe("createWriteStream", () => {
 });
 
 describe("fs/promises", () => {
-  const { exists, mkdir, readFile, rmdir, stat, writeFile } = promises;
+  const { exists, mkdir, readFile, rm, rmdir, stat, writeFile } = promises;
 
   it("should not segfault on exception", async () => {
     try {
@@ -2365,150 +2651,166 @@ describe("fs/promises", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  it("readdir(path, {recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { recursive: true });
-        files.sort();
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { recursive: true }).sort()), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { recursive: true });
+          files.sort();
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { recursive: true }).sort()), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun).toEqual(node as string[]);
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun).toEqual(node as string[]);
+    },
+    100000,
+  );
 
-  it("readdir(path, {withFileTypes: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { withFileTypes: true });
-        files.sort();
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {withFileTypes: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { withFileTypes: true });
+          files.sort();
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-    expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+      expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
-  it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
-        files.sort((a, b) => a.path.localeCompare(b.path));
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
+          files.sort((a, b) => a.path.localeCompare(b.path));
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
-  it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = readdirSync(full, { withFileTypes: true, recursive: true });
-        files.sort((a, b) => a.path.localeCompare(b.path));
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = readdirSync(full, { withFileTypes: true, recursive: true });
+          files.sort((a, b) => a.path.localeCompare(b.path));
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
   for (let withFileTypes of [false, true] as const) {
     const iterCount = 200;
@@ -2631,6 +2933,83 @@ describe("fs/promises", () => {
     }
   }
 
+  // Linux-only: uses /proc/self/fd/<n> to build entries whose relative path
+  // from the readdir root reaches MAX_PATH_BYTES without ever handing a long
+  // path to a single syscall. On Linux MAX_PATH_BYTES = 4096 and NAME_MAX = 255,
+  // so 16 levels of 255-byte dir names puts the deepest relative path at 4095.
+  it.skipIf(!isLinux).concurrent(
+    "readdir(path, {recursive: true}) reports entries whose relative path reaches MAX_PATH_BYTES",
+    async () => {
+      const script = `
+        const fs = require("fs");
+        const root = process.env.DEEP_ROOT;
+        const seg = Buffer.alloc(255, "d").toString();
+        const longName = Buffer.alloc(255, "x").toString();
+        let cur = fs.openSync(root, "r");
+        for (let i = 0; i < 16; i++) {
+          const base = "/proc/self/fd/" + cur;
+          fs.mkdirSync(base + "/" + seg);
+          const next = fs.openSync(base + "/" + seg, "r");
+          fs.closeSync(cur);
+          cur = next;
+        }
+        // cur = depth 16 (relative path 4095). Up one -> depth 15 (relative 3839).
+        const d15 = fs.openSync("/proc/self/fd/" + cur + "/..", "r");
+        fs.closeSync(cur);
+        // At depth 15 the iterator sees three entries: the depth-16 dir (name
+        // len 255), longName (file, len 255) and "short" (file, len 5). The
+        // former two have relative paths of 4095 bytes from root.
+        fs.writeFileSync("/proc/self/fd/" + d15 + "/" + longName, "");
+        fs.writeFileSync("/proc/self/fd/" + d15 + "/short", "");
+        fs.closeSync(d15);
+
+        function report(label, entries) {
+          const rel = entries.map(e => {
+            if (typeof e === "string") return e;
+            return require("path").join(e.parentPath, e.name).slice(root.length + 1);
+          });
+          const long = rel.filter(n => n.endsWith("/" + longName)).length;
+          const deepDir = rel.filter(n => n.length === 4095 && n.endsWith("/" + seg)).length;
+          const short = rel.filter(n => n.endsWith("/short")).length;
+          console.log(JSON.stringify({ label, count: entries.length, long, deepDir, short }));
+        }
+
+        report("sync", fs.readdirSync(root, { recursive: true }));
+        report("syncDirent", fs.readdirSync(root, { recursive: true, withFileTypes: true }));
+        fs.promises.readdir(root, { recursive: true }).then(r => {
+          report("async", r);
+          return fs.promises.readdir(root, { recursive: true, withFileTypes: true });
+        }).then(r => report("asyncDirent", r));
+      `;
+      using dir = tempDir("readdir-deep", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, DEEP_ROOT: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map(l => JSON.parse(l));
+      // 16 dirs + 2 files = 18 entries; every mode must see the depth-16 dir
+      // and the 255-byte file whose relative paths are 4095 bytes.
+      const want = { count: 18, long: 1, deepDir: 1, short: 1 };
+      expect({ stderr, lines }).toEqual({
+        stderr: "",
+        lines: [
+          { label: "sync", ...want },
+          { label: "syncDirent", ...want },
+          { label: "async", ...want },
+          { label: "asyncDirent", ...want },
+        ],
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   it("readdir() no args doesnt segfault", async () => {
     const fizz = [
       [],
@@ -2675,13 +3054,16 @@ describe("fs/promises", () => {
       await rmdir(path);
       expect(await exists(path)).toBe(false);
     });
-    it("removes a dir recursively", async () => {
+    it("throws for recursive: true like node", async () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
       try {
         await mkdir(path, { recursive: true });
       } catch (e) {}
       expect(await exists(path)).toBe(true);
-      await rmdir(join(path, "../../"), { recursive: true });
+      await expect(rmdir(join(path, "../../"), { recursive: true })).rejects.toMatchObject({
+        code: "ERR_INVALID_ARG_VALUE",
+      });
+      await rm(join(path, "../../"), { recursive: true, force: true });
       expect(await exists(path)).toBe(false);
     });
   });
@@ -3282,10 +3664,11 @@ it("new Stats", () => {
   expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
   expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
 
-  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
-  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
-  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
-  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+  // Allow ±1ms leeway: the non-bigint path goes through a float and can round differently.
+  expect(Math.abs(withBigInt.atime.getTime() - withoutBigInt.atime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.mtime.getTime() - withoutBigInt.mtime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.ctime.getTime() - withoutBigInt.ctime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
 it("test syscall errno, issue#4198", () => {
@@ -3452,6 +3835,26 @@ it("chown should verify its arguments", () => {
   expect(() => fs.chown("doesnt-matter.txt", 0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
 });
 
+// https://github.com/oven-sh/bun/issues/32050
+it("lchown succeeds on every platform", async () => {
+  const dir = tmpdirSync();
+  const file = join(dir, "lchown.txt");
+  writeFileSync(file, "x");
+  // A dangling symlink distinguishes lchown from chown: it operates on the
+  // link itself, so the missing target must not matter.
+  const link = join(dir, "lchown-link");
+  symlinkSync(join(dir, "does-not-exist"), link);
+
+  for (const target of [file, link]) {
+    // uid/gid of -1 means "leave unchanged", so this succeeds unprivileged.
+    expect(fs.lchownSync(target, -1, -1)).toBeUndefined();
+    await expect(fs.promises.lchown(target, -1, -1)).resolves.toBeUndefined();
+    await new Promise<void>((resolve, reject) => {
+      fs.lchown(target, -1, -1, err => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
 it("open flags verification", async () => {
   const invalid = 4_294_967_296;
   expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
@@ -3491,24 +3894,47 @@ it("fs.statfsSync should work", () => {
     expect(stats[k]).toBeNumber();
   });
 
+  // Regression for oven-sh/bun#31133: on darwin-x64, libc::statfs linked
+  // to `statfs$INODE64` was writing a legacy struct layout, so bsize came
+  // back as 0 and the remaining fields were shifted. Any real filesystem
+  // has a positive block size and at least one block — asserting that here
+  // catches the misaligned-struct case without depending on absolute values.
+  if (isPosix) {
+    expect(stats.bsize).toBeGreaterThan(0);
+    expect(stats.blocks).toBeGreaterThan(0);
+  }
+
   const bigIntStats = statfsSync(import.meta.path, { bigint: true });
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
     expect(bigIntStats).toHaveProperty(k);
     expect(bigIntStats[k]).toBeTypeOf("bigint");
   });
+  if (isPosix) {
+    expect(bigIntStats.bsize > 0n).toBe(true);
+    expect(bigIntStats.blocks > 0n).toBe(true);
+  }
 });
 
 it("fs.promises.statfs should work", async () => {
   const stats = await fs.promises.statfs(import.meta.path);
   expect(stats).toBeDefined();
+  // See "fs.statfsSync should work" above — same regression gate for #31133.
+  if (isPosix) {
+    expect(stats.bsize).toBeGreaterThan(0);
+    expect(stats.blocks).toBeGreaterThan(0);
+  }
 });
 
 it("fs.promises.statfs should work with bigint", async () => {
   const stats = await fs.promises.statfs(import.meta.path, { bigint: true });
   expect(stats).toBeDefined();
+  if (isPosix) {
+    expect(stats.bsize > 0n).toBe(true);
+    expect(stats.blocks > 0n).toBe(true);
+  }
 });
 
-it("fs.statfs should work with bigint", async () => {
+it("fs.statfs (callback) should work with bigint", async () => {
   const { promise, resolve } = Promise.withResolvers();
   fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
     if (err) return resolve(err);
@@ -3520,19 +3946,10 @@ it("fs.statfs should work with bigint", async () => {
     expect(stats).toHaveProperty(k);
     expect(stats[k]).toBeTypeOf("bigint");
   }
-});
-
-it("fs.statfs should work with bigint", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
-    if (err) return resolve(err);
-    resolve(stats);
-  });
-  const stats = await promise;
-  expect(stats).toBeDefined();
-  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
-    expect(stats).toHaveProperty(k);
-    expect(stats[k]).toBeTypeOf("bigint");
+  // See "fs.statfsSync should work" above — same regression gate for #31133.
+  if (isPosix) {
+    expect(stats.bsize > 0n).toBe(true);
+    expect(stats.blocks > 0n).toBe(true);
   }
 });
 
@@ -3625,25 +4042,27 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
   ];
 
   for (const [name, code] of nonExistTests) {
-    it(`${name} (not existing)`, () => {
-      const { success } = spawnSync({
+    it.concurrent(`${name} (not existing)`, async () => {
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", code],
         cwd: workingDir1,
         stdio: ["ignore", "inherit", "inherit"],
         env: bunEnv,
       });
-      expect(success).toBeTrue();
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
     });
   }
   for (const [name, code] of existTests) {
-    it(`${name} (existing)`, () => {
-      const { success } = spawnSync({
+    it.concurrent(`${name} (existing)`, async () => {
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", code],
         cwd: workingDir2,
         stdio: ["ignore", "inherit", "inherit"],
         env: bunEnv,
       });
-      expect(success).toBeTrue();
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
     });
   }
 });
@@ -3660,4 +4079,428 @@ it("overflowing mode doesn't crash", () => {
       path: "./a.txt",
     }),
   );
+});
+
+describe("numeric flags produce same result as string flags", () => {
+  it("numeric O_CREAT|O_TRUNC|O_WRONLY is equivalent to 'w'", () => {
+    const { O_CREAT, O_TRUNC, O_WRONLY } = constants;
+    const numericFlag = O_CREAT | O_TRUNC | O_WRONLY;
+
+    using dir = tempDir("numeric-flags", {});
+    const fileStr = join(String(dir), "string.txt");
+    const fileNum = join(String(dir), "numeric.txt");
+
+    const fd1 = openSync(fileStr, "w", 0o666);
+    writeSync(fd1, "hello");
+    closeSync(fd1);
+
+    const fd2 = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2, "hello");
+    closeSync(fd2);
+
+    expect(readFileSync(fileNum, "utf8")).toBe(readFileSync(fileStr, "utf8"));
+  });
+
+  it("numeric O_CREAT|O_WRONLY|O_APPEND is equivalent to 'a'", () => {
+    const { O_APPEND, O_CREAT, O_WRONLY } = constants;
+    const numericFlag = O_CREAT | O_WRONLY | O_APPEND;
+
+    using dir = tempDir("numeric-flags", {});
+    const fileStr = join(String(dir), "string.txt");
+    const fileNum = join(String(dir), "numeric.txt");
+
+    const fd1 = openSync(fileStr, "a", 0o666);
+    writeSync(fd1, "first");
+    closeSync(fd1);
+    const fd1b = openSync(fileStr, "a", 0o666);
+    writeSync(fd1b, "second");
+    closeSync(fd1b);
+
+    const fd2 = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2, "first");
+    closeSync(fd2);
+    const fd2b = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2b, "second");
+    closeSync(fd2b);
+
+    expect(readFileSync(fileNum, "utf8")).toBe(readFileSync(fileStr, "utf8"));
+    expect(readFileSync(fileNum, "utf8")).toBe("firstsecond");
+  });
+
+  it("numeric O_CREAT|O_RDWR|O_TRUNC is equivalent to 'w+'", () => {
+    const { O_CREAT, O_RDWR, O_TRUNC } = constants;
+    const numericFlag = O_CREAT | O_RDWR | O_TRUNC;
+
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "readwrite.txt");
+
+    const fd = openSync(file, numericFlag, 0o666);
+    writeSync(fd, "read-write");
+
+    // Read back from the same fd to verify O_RDWR actually grants read access.
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("read-write");
+  });
+
+  it("numeric O_RDONLY reads existing file", () => {
+    const { O_RDONLY } = constants;
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "readonly.txt");
+
+    writeFileSync(file, "existing content");
+
+    const fd = openSync(file, O_RDONLY);
+    const buf = Buffer.alloc(50);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("existing content");
+  });
+
+  it("numeric O_CREAT|O_EXCL|O_RDWR fails on existing file", () => {
+    const { O_CREAT, O_EXCL, O_RDWR } = constants;
+    const numericFlag = O_CREAT | O_EXCL | O_RDWR;
+
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "excl.txt");
+
+    // First open should succeed (creates the file).
+    const fd = openSync(file, numericFlag, 0o666);
+    closeSync(fd);
+
+    // Second open with O_EXCL should fail (file already exists).
+    expect(() => openSync(file, numericFlag, 0o666)).toThrow();
+  });
+});
+
+describe("synchronous I/O string flags", () => {
+  it("'rs' opens existing file for reading", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "sync content",
+    });
+
+    const fd = openSync(join(String(dir), "existing.txt"), "rs");
+    const buf = Buffer.alloc(20);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("sync content");
+  });
+
+  it("'rs+' opens existing file for read-write", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "original",
+    });
+    const file = join(String(dir), "existing.txt");
+
+    const fd = openSync(file, "rs+");
+    writeSync(fd, "replaced");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("replaced");
+  });
+
+  it("'as' creates and appends to file", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended.txt");
+
+    const fd = openSync(file, "as");
+    writeSync(fd, "sync-append");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("sync-append");
+  });
+
+  it("'as+' creates and appends with read access", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended-rw.txt");
+
+    const fd = openSync(file, "as+");
+    writeSync(fd, "hello");
+
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
+});
+
+describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
+  it("does not balloon the read buffer", async () => {
+    using dir = tempDir("fs-readfile-fifo", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Pre-fix this never returns (RawVec doubling balloons RSS to multiple GB);
+    // the per-test timeout would fire. Fixed: completes promptly with the full
+    // 400 KB of content intact.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("len=409600 allA=true");
+    expect(exitCode).toBe(0);
+  });
+});
+
+it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred while the read is pending", async () => {
+  using dir = tempDir("fs-read-transfer", {
+    "data.bin": Buffer.alloc(65536, 0x61).toString(),
+  });
+
+  // The async read snapshots the destination buffer before handing it to the
+  // work pool. Transferring the backing ArrayBuffer immediately afterwards
+  // must not leave the in-flight read writing into storage the caller's view
+  // no longer owns: the view must still be attached and contain the file's
+  // bytes once the read completes.
+  const script = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    (async () => {
+      const fd = fs.openSync(path.join(process.cwd(), "data.bin"), "r");
+      const ab = new ArrayBuffer(65536);
+      const view = new Uint8Array(ab);
+      const pending = new Promise((resolve, reject) => {
+        fs.read(fd, view, 0, 65536, 0, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead)));
+      });
+      // Attempt to detach the destination's backing store before the async
+      // read completes. Refusing the detach by throwing is also acceptable.
+      let transferred;
+      try {
+        transferred = ab.transfer();
+      } catch {}
+      const bytesRead = await pending;
+      fs.closeSync(fd);
+      console.log(
+        JSON.stringify({
+          bytesRead,
+          viewByteLength: view.byteLength,
+          first: view[0] ?? null,
+          last: view[65535] ?? null,
+        }),
+      );
+    })().catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    bytesRead: 65536,
+    viewByteLength: 65536,
+    first: 0x61,
+    last: 0x61,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("writevSync does not write bytes from a buffer detached by an index getter during argument conversion", () => {
+  using dir = tempDir("fs-writev-detach", {});
+  const file = join(String(dir), "out.bin");
+
+  // Legitimate case: a plain array of views writes every byte.
+  let fd = openSync(file, "w");
+  expect(writevSync(fd, [Buffer.from("AAAA"), Buffer.from("BBBB")])).toBe(8);
+  closeSync(fd);
+  expect(readFileSync(file, "latin1")).toBe("AAAABBBB");
+
+  // An accessor on index 1 detaches element 0's ArrayBuffer while the
+  // argument array is still being converted. Every element is read before any
+  // data pointer is captured, so the detached element contributes zero bytes
+  // instead of a dangling pointer.
+  const first = new Uint8Array(new ArrayBuffer(16)).fill(0x41);
+  const second = new Uint8Array(8).fill(0x42);
+  const buffers: Uint8Array[] = [first];
+  Object.defineProperty(buffers, 1, {
+    enumerable: true,
+    configurable: true,
+    get() {
+      first.buffer.transfer();
+      return second;
+    },
+  });
+  expect(buffers.length).toBe(2);
+
+  fd = openSync(file, "w");
+  try {
+    expect(writevSync(fd, buffers)).toBe(8);
+  } finally {
+    closeSync(fd);
+  }
+  expect(first.buffer.detached).toBe(true);
+  expect(readFileSync(file, "latin1")).toBe("BBBBBBBB");
+});
+
+it("fs.writev keeps buffers attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writev-pin", {});
+  const file = join(String(dir), "out.bin");
+  const fd = openSync(file, "w");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x43);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  try {
+    fs.writev(fd, [buf], 0, (err, written) => (err ? reject(err) : resolve(written)));
+
+    // The native write runs on the thread pool; the backing store cannot be
+    // detached out from under it.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(false);
+
+    expect(await promise).toBe(8);
+
+    // Released once the write completes.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(true);
+
+    // A rejected call must not leave the buffers held either.
+    const other = new Uint8Array(new ArrayBuffer(8));
+    expect(() => fs.writev(fd, [other], "not a position" as any, () => {})).toThrow();
+    other.buffer.transfer();
+    expect(other.buffer.detached).toBe(true);
+  } finally {
+    closeSync(fd);
+  }
+  expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
+});
+
+it("fs.write keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-write-pin", {});
+  const file = join(String(dir), "out.bin");
+  const fd = openSync(file, "w");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  try {
+    fs.write(fd, buf, 0, buf.byteLength, 0, (err, written) => (err ? reject(err) : resolve(written)));
+
+    // The native write runs on the thread pool and reads the source bytes
+    // through a raw pointer; the backing store must not be detachable out
+    // from under it while the write is pending.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(false);
+
+    expect(await promise).toBe(8);
+
+    // Released once the write completes.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(true);
+  } finally {
+    closeSync(fd);
+  }
+  expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
+});
+
+it("fs.promises.writeFile keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writefile-pin", {});
+  const file = join(String(dir), "out.bin");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x45);
+  const pending = fs.promises.writeFile(file, buf);
+
+  // The native write runs on the thread pool and reads the source bytes
+  // through a raw pointer; the backing store must not be detachable out
+  // from under it while the write is pending.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(false);
+
+  await pending;
+
+  // Released once the write completes.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(true);
+
+  expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
+});
+
+it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
+  using dir = tempDir("fs-realpath-too-long", {});
+
+  // The relative path argument is within the per-argument limit, but joining
+  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
+  // Both realpath variants must surface this as a clean ENAMETOOLONG error
+  // instead of aborting the process.
+  const script = `
+    const fs = require("node:fs");
+    const longPath = "a".repeat(4090);
+    for (const impl of [fs.realpathSync, fs.realpathSync.native]) {
+      try {
+        impl(longPath);
+        console.log("resolved");
+      } catch (err) {
+        console.log(err.code);
+      }
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
+  expect(exitCode).toBe(0);
+});
+
+it("fs.writeFile (callback) keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writefile-cb-pin", {});
+  const file = join(String(dir), "out.bin");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x46);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  fs.writeFile(file, buf, err => (err ? reject(err) : resolve(null)));
+
+  // The native write runs on the thread pool and reads the source bytes
+  // through a raw pointer; the backing store must not be detachable out
+  // from under it while the write is pending.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(false);
+
+  await promise;
+
+  // Released once the write completes.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(true);
+
+  expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
+});
+
+it("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {
+  using dir = tempDir("fs-writefile-path-pin", {});
+  const file = join(String(dir), "out.txt");
+  const pathBytes = new TextEncoder().encode(file);
+  // Standalone ArrayBuffer (not the shared Buffer pool) so detaching it would
+  // only affect this path argument.
+  const pathBuf = new Uint8Array(new ArrayBuffer(pathBytes.byteLength));
+  pathBuf.set(pathBytes);
+
+  let detachedDuringOptions: boolean | undefined;
+  await fs.promises.writeFile(pathBuf as any, "hello world", {
+    // Reading the options object re-enters JavaScript after the native call
+    // captured a pointer into the path buffer; the backing store must not be
+    // detachable out from under it.
+    get flag() {
+      pathBuf.buffer.transfer();
+      detachedDuringOptions = pathBuf.buffer.detached;
+      return "w";
+    },
+  });
+
+  expect(detachedDuringOptions).toBe(false);
+  expect(readFileSync(file, "utf8")).toBe("hello world");
 });

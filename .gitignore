@@ -1,4 +1,8 @@
+.rustup
 .claude/settings.local.json
+.cargo
+Library/Caches
+.direnv
 .DS_Store
 .env
 .envrc
@@ -9,6 +13,7 @@
 .ninja_deps
 .ninja_log
 .npm
+.npmrc
 .npm.gz
 .parcel-cache
 .swcrc
@@ -17,7 +22,6 @@
 .vs
 .vscode/clang*
 .vscode/cpp*
-.zig-cache
 .bake-debug
 *.a
 *.bc
@@ -52,15 +56,16 @@
 /.cache
 /.webkit-cache
 /build-*/
+/test/build/
 /bun-webkit
 /kcov-out
 /test-report.json
 /test-report.md
 /test.js
 /test.ts
-/test.zig
 /testdir
-build
+/build/
+cmake/sources
 build.ninja
 bun-binary
 bun-mimalloc
@@ -120,15 +125,8 @@ scripts/env.local
 sign.*.json
 sign.json
 src/bake/generated.ts
-src/generated_enum_extractor.zig
-src/bun.js/bindings-obj
-src/bun.js/bindings/GeneratedJS2Native.zig
-src/bun.js/bindings/GeneratedBindings.zig
+src/jsc/bindings-obj
 src/bun.js/debug-bindings-obj
-src/deps/zig-clap/.gitattributes
-src/deps/zig-clap/.github
-src/deps/zig-clap/example
-src/deps/zig-clap/README.md
 src/fallback.version
 src/js/out/DebugPath.h
 src/js/out/functions*
@@ -137,7 +135,6 @@ src/js/out/tmp
 src/node-fallbacks/node_modules
 src/node-fallbacks/out/*
 src/runtime.version
-src/tests.zig
 test.txt
 test/js/bun/glob/fixtures
 test/node.js/upstream
@@ -145,10 +142,7 @@ tsconfig.tsbuildinfo
 txt.js
 x64
 yarn.lock
-zig-cache
-zig-out
 test/node.js/upstream
-.zig-cache
 scripts/env.local
 *.generated.ts
 src/bake/generated.ts
@@ -182,6 +176,10 @@ codegen-for-zig-team.tar.gz
 
 # Generated files
 
+# Written at configure time from the discovered toolchain by
+# scripts/build/cargo-config.ts — see scripts/build/CLAUDE.md.
+.cargo/config.toml
+
 .buildkite/ci.yml
 *.sock
 scratch*.{js,ts,tsx,cjs,mjs}
@@ -190,5 +188,13 @@ scratch*.{js,ts,tsx,cjs,mjs}
 
 scripts/lldb-inline
 
-# We regenerate these in all the build scripts
-cmake/sources/*.txt
+test/integration/bun-types/fixture/bun.lock
+.claude/scheduled_tasks.lock
+.claude/worktrees
+src/runtime/bake/generated.ts
+/target/
+*.heapsnapshot
+# Legacy codegen outputs (no longer written, but old build trees still have
+# them on disk; keep ignored so they don't show as untracked).
+src/jsc/bindings/GeneratedJS2Native.zig
+src/jsc/bindings/GeneratedBindings.zig

@@ -408,6 +408,83 @@ for (let credentials of allCredentials) {
               }
             });
 
+            it("should be able to set content-disposition", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                await s3file.write("Hello Bun!", { contentDisposition: 'attachment; filename="test.txt"' });
+                const response = await fetch(s3file.presign());
+                expect(response.headers.get("content-disposition")).toBe('attachment; filename="test.txt"');
+              }
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                await s3file.write("Hello Bun!", { contentDisposition: "inline" });
+                const response = await fetch(s3file.presign());
+                expect(response.headers.get("content-disposition")).toBe("inline");
+              }
+              {
+                await bucket.write(tmpfile.name, "Hello Bun!", {
+                  ...options,
+                  contentDisposition: 'attachment; filename="report.pdf"',
+                });
+                const response = await fetch(bucket.file(tmpfile.name, options!).presign());
+                expect(response.headers.get("content-disposition")).toBe('attachment; filename="report.pdf"');
+              }
+            });
+            it("should be able to set content-disposition in writer", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                const writer = s3file.writer({
+                  contentDisposition: 'attachment; filename="test.txt"',
+                });
+                writer.write("Hello Bun!!");
+                await writer.end();
+                const response = await fetch(s3file.presign());
+                expect(response.headers.get("content-disposition")).toBe('attachment; filename="test.txt"');
+              }
+            });
+
+            it("should be able to set content-encoding", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                await s3file.write("Hello Bun!", { contentEncoding: "gzip" });
+                // Use decompress: false since content isn't actually gzip-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("gzip");
+              }
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                await s3file.write("Hello Bun!", { contentEncoding: "br" });
+                // Use decompress: false since content isn't actually br-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("br");
+              }
+              {
+                await bucket.write(tmpfile.name, "Hello Bun!", {
+                  ...options,
+                  contentEncoding: "identity",
+                });
+                const response = await fetch(bucket.file(tmpfile.name, options!).presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("identity");
+              }
+            });
+            it("should be able to set content-encoding in writer", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                const writer = s3file.writer({
+                  contentEncoding: "gzip",
+                });
+                writer.write("Hello Bun!!");
+                await writer.end();
+                // Use decompress: false since content isn't actually gzip-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("gzip");
+              }
+            });
+
             it("should be able to upload large files using bucket.write + readable Request", async () => {
               await using tmpfile = await tmp();
               {
@@ -803,6 +880,44 @@ for (let credentials of allCredentials) {
                   expect(SHA1).toBe(SHA1_2);
                 }
               }, 30_000);
+              it("should work with sliced files (offset 0)", async () => {
+                await using tmpfile = await tmp();
+                const s3file = s3(tmpfile.name + "-readable-stream-slice", options);
+                await s3file.write("Hello Bun!");
+                const sliced = s3file.slice(0, 5);
+                const stream = sliced.stream();
+                const reader = stream.getReader();
+                let bytes = 0;
+                let chunks: Array<Buffer> = [];
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  bytes += value?.length ?? 0;
+                  if (value) chunks.push(value as Buffer);
+                }
+                expect(bytes).toBe(5);
+                expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello"));
+              });
+              it("should work with sliced files (non-zero offset)", async () => {
+                await using tmpfile = await tmp();
+                const s3file = s3(tmpfile.name + "-readable-stream-slice-offset", options);
+                await s3file.write("Hello Bun!");
+                const sliced = s3file.slice(6, 10);
+                const stream = sliced.stream();
+                const reader = stream.getReader();
+                let bytes = 0;
+                let chunks: Array<Buffer> = [];
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  bytes += value?.length ?? 0;
+                  if (value) chunks.push(value as Buffer);
+                }
+                expect(bytes).toBe(4);
+                expect(Buffer.concat(chunks)).toEqual(Buffer.from("Bun!"));
+              });
             });
           });
         });
@@ -998,7 +1113,8 @@ for (let credentials of allCredentials) {
                 await s3file.write("Hello Bun!");
                 expect.unreachable();
               } catch (e: any) {
-                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH"]).toContain(e?.code);
+                // ERR_STRING_TOO_LONG can occur when the path is too long to convert to a JS string
+                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH", "ERR_STRING_TOO_LONG"]).toContain(e?.code);
               }
             }),
           );
@@ -1471,4 +1587,217 @@ describe.concurrent("s3 missing credentials", () => {
       await Bun.s3.file("test").stat();
     });
   });
+});
+
+// Archive + S3 integration tests
+describe.skipIf(!minioCredentials)("Archive with S3", () => {
+  const credentials = minioCredentials!;
+
+  it("writes archive to S3 via S3Client.write()", async () => {
+    const client = new Bun.S3Client(credentials);
+    const archive = new Bun.Archive({
+      "hello.txt": "Hello from Archive!",
+      "data.json": JSON.stringify({ test: true }),
+    });
+
+    const key = randomUUIDv7() + ".tar";
+    await client.write(key, archive);
+
+    // Verify by downloading and reading back
+    const downloaded = await client.file(key).bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+
+    expect(files.size).toBe(2);
+    expect(await files.get("hello.txt")!.text()).toBe("Hello from Archive!");
+    expect(await files.get("data.json")!.text()).toBe(JSON.stringify({ test: true }));
+
+    // Cleanup
+    await client.unlink(key);
+  });
+
+  it("writes archive to S3 via Bun.write() with s3:// URL", async () => {
+    const archive = new Bun.Archive({
+      "file1.txt": "content1",
+      "dir/file2.txt": "content2",
+    });
+
+    const key = randomUUIDv7() + ".tar";
+    const s3Url = `s3://${credentials.bucket}/${key}`;
+
+    await Bun.write(s3Url, archive, {
+      ...credentials,
+    });
+
+    // Verify by downloading
+    const s3File = Bun.file(s3Url, credentials);
+    const downloaded = await s3File.bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+
+    expect(files.size).toBe(2);
+    expect(await files.get("file1.txt")!.text()).toBe("content1");
+    expect(await files.get("dir/file2.txt")!.text()).toBe("content2");
+
+    // Cleanup
+    await s3File.delete();
+  });
+
+  it("writes archive with binary content to S3", async () => {
+    const client = new Bun.S3Client(credentials);
+    const binaryData = new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd, 0x80, 0x7f]);
+    const archive = new Bun.Archive({
+      "binary.bin": binaryData,
+    });
+
+    const key = randomUUIDv7() + ".tar";
+    await client.write(key, archive);
+
+    // Verify binary data is preserved
+    const downloaded = await client.file(key).bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+    const extractedBinary = await files.get("binary.bin")!.bytes();
+
+    expect(extractedBinary).toEqual(binaryData);
+
+    // Cleanup
+    await client.unlink(key);
+  });
+
+  it("writes large archive to S3", async () => {
+    const client = new Bun.S3Client(credentials);
+
+    // Create archive with multiple files
+    const entries: Record<string, string> = {};
+    for (let i = 0; i < 50; i++) {
+      entries[`file${i.toString().padStart(3, "0")}.txt`] = `Content for file ${i}`;
+    }
+    const archive = new Bun.Archive(entries);
+
+    const key = randomUUIDv7() + ".tar";
+    await client.write(key, archive);
+
+    // Verify
+    const downloaded = await client.file(key).bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+
+    expect(files.size).toBe(50);
+    expect(await files.get("file000.txt")!.text()).toBe("Content for file 0");
+    expect(await files.get("file049.txt")!.text()).toBe("Content for file 49");
+
+    // Cleanup
+    await client.unlink(key);
+  });
+
+  it("writes archive via s3File.write()", async () => {
+    const client = new Bun.S3Client(credentials);
+    const archive = new Bun.Archive({
+      "test.txt": "Hello via s3File.write()!",
+    });
+
+    const key = randomUUIDv7() + ".tar";
+    const s3File = client.file(key);
+    await s3File.write(archive);
+
+    // Verify
+    const downloaded = await s3File.bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+
+    expect(files.size).toBe(1);
+    expect(await files.get("test.txt")!.text()).toBe("Hello via s3File.write()!");
+
+    // Cleanup
+    await s3File.delete();
+  });
+});
+
+describe("s3 multipart upload id validation", () => {
+  it("rejects a CreateMultipartUpload response whose upload id contains non-ASCII bytes", async () => {
+    // The whole scenario runs in a subprocess so a misbehaving runtime cannot take down the test runner.
+    const fixture = `
+        const goodUploadId = "valid-upload-id-1234567890";
+        function initiateXml(uploadIdBytes) {
+          return Buffer.concat([
+            Buffer.from("<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>"),
+            uploadIdBytes,
+            Buffer.from("</UploadId></InitiateMultipartUploadResult>"),
+          ]);
+        }
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const isCreateMultipartUpload = req.method === "POST" && req.url.includes("?uploads=");
+            if (isCreateMultipartUpload) {
+              // The "malformed-id-object" key gets an upload id made entirely of bytes >= 0x80,
+              // which no real S3 server returns. Everything else gets a normal ASCII upload id.
+              const uploadId = req.url.includes("malformed-id-object")
+                ? Buffer.alloc(1024, 0xff)
+                : Buffer.from(goodUploadId);
+              return new Response(initiateXml(uploadId), {
+                status: 200,
+                headers: { "Content-Type": "text/xml" },
+              });
+            }
+            const isCompleteMultipartUpload = req.method === "POST" && req.url.includes("uploadId=");
+            if (isCompleteMultipartUpload) {
+              return new Response(
+                '<CompleteMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><ETag>"etag"</ETag></CompleteMultipartUploadResult>',
+                { status: 200, headers: { "Content-Type": "text/xml" } },
+              );
+            }
+            return new Response(undefined, { status: 200, headers: { "ETag": '"etag"' } });
+          },
+        });
+
+        const client = new Bun.S3Client({
+          accessKeyId: "test",
+          secretAccessKey: "test",
+          region: "eu-west-3",
+          bucket: "my_bucket",
+          endpoint: server.url.href,
+        });
+
+        // One part size plus 1 MiB so the writer takes the multipart path instead of a single PUT.
+        const part = Buffer.alloc(6 * 1024 * 1024, "a");
+
+        {
+          const writer = client.file("malformed-id-object").writer({ partSize: 5 * 1024 * 1024 });
+          writer.write(part);
+          try {
+            await writer.end();
+            console.log("malformed-id: resolved");
+          } catch (err) {
+            console.log("malformed-id: rejected", err?.code, "-", err?.message);
+          }
+        }
+
+        {
+          const writer = client.file("valid-id-object").writer({ partSize: 5 * 1024 * 1024 });
+          writer.write(part);
+          await writer.end();
+          console.log("valid-id: resolved");
+        }
+
+        server.stop(true);
+      `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // A server-supplied upload id containing non-ASCII bytes must surface as a normal S3 error
+    // on the writer promise instead of terminating the process.
+    expect(stdout).toContain("malformed-id: rejected UnknownError - Failed to initiate multipart upload");
+    // A well-formed upload id still completes the multipart upload in the same process.
+    expect(stdout).toContain("valid-id: resolved");
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });

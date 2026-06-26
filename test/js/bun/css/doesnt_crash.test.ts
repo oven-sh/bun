@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "fs";
 import "harness";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import path from "path";
 describe("doesnt_crash", async () => {
   let files: string[] = [];
@@ -25,15 +25,22 @@ describe("doesnt_crash", async () => {
       { target: "browser", minify: false },
       { target: "browser", minify: true },
     ];
+    let code = "";
+    async function getCode() {
+      if (code) return code;
+      code = await Bun.file(absolute).text();
+      return code;
+    }
 
     for (const { target, minify } of configs) {
-      test(`${file} - ${minify ? "minify" : "not minify"}`, async () => {
+      test(`${file} - ${minify ? "minify" : "not minify"} - ${target}`, async () => {
         const timeLog = `Transpiled ${file} - ${minify ? "minify" : "not minify"}`;
         console.time(timeLog);
         const { logs, outputs } = await Bun.build({
           entrypoints: [absolute],
           minify: minify,
           target,
+          files: { [absolute]: await getCode() },
         });
         console.timeEnd(timeLog);
 
@@ -43,6 +50,7 @@ describe("doesnt_crash", async () => {
 
         expect(outputs.length).toBe(1);
         const outfile1 = path.join(temp_dir, "file-1" + file).replaceAll("\\", "/");
+        const content1 = await outputs[0].text();
 
         await Bun.write(outfile1, outputs[0]);
 
@@ -53,6 +61,7 @@ describe("doesnt_crash", async () => {
           const { logs, outputs } = await Bun.build({
             entrypoints: [outfile1],
             target,
+            files: { [outfile1]: content1 },
             minify: minify,
           });
 
@@ -67,4 +76,50 @@ describe("doesnt_crash", async () => {
       });
     }
   });
+});
+
+test("bundling a css file ending in a truncated escape sequence completes cleanly", async () => {
+  using dir = tempDir("css-truncated-escape", {
+    "build.ts": `
+      let truncatedOutcome = "threw";
+      try {
+        const result = await Bun.build({ entrypoints: ["./truncated.css"] });
+        truncatedOutcome = result.success ? "success" : "failed";
+      } catch (e) {
+        truncatedOutcome = "threw";
+      }
+      console.log("TRUNCATED_DONE " + truncatedOutcome);
+
+      const valid = await Bun.build({ entrypoints: ["./valid.css"] });
+      console.log("VALID_OK " + (valid.success && valid.outputs.length === 1));
+    `,
+    "valid.css": "@supports (color: red) {\n  a { color: red; }\n}\n",
+  });
+
+  // The css source ends with a backslash escape whose escaped character is a
+  // lone multi-byte UTF-8 lead byte (0xCE) as the very last byte of the file.
+  // The tokenizer must not advance its position past the end of the buffer
+  // when decoding this truncated sequence.
+  const prefix = new TextEncoder().encode("@supports (color: red\\");
+  const cssBytes = new Uint8Array(prefix.length + 1);
+  cssBytes.set(prefix);
+  cssBytes[prefix.length] = 0xce;
+  await Bun.write(path.join(String(dir), "truncated.css"), cssBytes);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The malformed file may produce a build error or a recovered build, but the
+  // process must reach the end of the script either way.
+  expect(stdout).toContain("TRUNCATED_DONE");
+  // A well-formed @supports rule still bundles successfully.
+  expect(stdout).toContain("VALID_OK true");
+  expect(exitCode).toBe(0);
 });

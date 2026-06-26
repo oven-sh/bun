@@ -1,0 +1,28 @@
+{
+  "_id": "test-native-binlink-altpath",
+  "name": "test-native-binlink-altpath",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink-altpath",
+      "version": "1.0.0",
+      "_id": "test-native-binlink-altpath@1.0.0",
+      "bin": {
+        "altpath-cmd": "bin/altpath-cmd.exe"
+      },
+      "optionalDependencies": {
+        "test-native-binlink-altpath-target": "1.0.0"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "dist": {
+        "integrity": "sha512-hnh5o7AF7OIk+0CDgxqj9dyDEbCA3iMYDFU061+WcR6RpPW5lhis6okUJ9LO4HStQ2yjAsgZHzW0SDOpv0JKlQ==",
+        "shasum": "69359d5eba1439c9a383e8bb16819f86eb958747",
+        "tarball": "http://localhost:4873/test-native-binlink-altpath/-/test-native-binlink-altpath-1.0.0.tgz"
+      }
+    }
+  }
+}

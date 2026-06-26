@@ -7,7 +7,7 @@ Bun exposes its internal transpiler via the `Bun.Transpiler` class. To create an
 
 ```ts
 const transpiler = new Bun.Transpiler({
-  loader: "tsx", // "js | "jsx" | "ts" | "tsx"
+  loader: "tsx", // "js" | "jsx" | "ts" | "tsx"
 });
 ```
 
@@ -278,7 +278,7 @@ type Import = {
   // url() in CSS
   | "url-token"
   // The import was injected by Bun
-  | "internal" 
+  | "internal"
   // Entry point (not common)
   | "entry-point-build"
   | "entry-point-run"

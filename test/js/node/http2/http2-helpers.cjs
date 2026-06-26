@@ -29,9 +29,20 @@ exports.nodeEchoServer = async function nodeEchoServer(paddingStrategy = 0) {
       subprocess.stdout.off("data", readData);
       resolve({ address, url, subprocess });
     } catch (e) {
-      console.error(e);
+      // JSON parse failed, need more data - don't log, just wait for more chunks
     }
   }
+  subprocess.on("error", reject);
+  subprocess.on("exit", code => {
+    if (code !== 0 && code !== null) {
+      reject(new Error(`node-echo-server exited with code ${code}`));
+    }
+  });
   subprocess.stdout.on("data", readData);
-  return await promise;
+  const result = await promise;
+  // Add Symbol.asyncDispose for use with `await using`
+  result[Symbol.asyncDispose] = async () => {
+    result.subprocess?.kill?.(9);
+  };
+  return result;
 };

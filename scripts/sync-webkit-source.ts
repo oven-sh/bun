@@ -12,8 +12,7 @@ if (!existsSync(webkitRepo)) {
 
 process.chdir(webkitRepo);
 const checkedOutCommit = (await Bun.$`git rev-parse HEAD`.text()).trim();
-const cmakeContents = await Bun.file(join(bunRepo, "cmake/tools/SetupWebKit.cmake")).text();
-const expectedCommit = cmakeContents.match(/set\(WEBKIT_VERSION ([0-9a-f]{40})\)/)![1];
+const { WEBKIT_VERSION: expectedCommit } = await import("./build/deps/webkit.ts");
 
 if (checkedOutCommit == expectedCommit) {
   console.log(`already at commit ${expectedCommit}`);

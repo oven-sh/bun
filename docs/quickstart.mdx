@@ -78,7 +78,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
     Listening on http://localhost:3000
     ```
 
-    Visit [`http://localhost:3000`](http://localhost:3000) to test the server. You should see a simple page that says `"Bun!"`.
+    Visit [`http://localhost:3000`](http://localhost:3000) to test the server. You should see a page that says `"Bun!"`.
 
     <Accordion title="Seeing TypeScript errors on Bun?">
 
@@ -92,7 +92,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
 
       Then add the following to your `compilerOptions` in `tsconfig.json`:
 
-      ```json tsconfig.json icon="file-code"
+      ```json tsconfig.json icon="file-json"
       {
         "compilerOptions": {
           "lib": ["ESNext"],
@@ -147,7 +147,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
     Listening on http://localhost:3000
     ```
 
-    Visit [`http://localhost:3000/figlet`](http://localhost:3000/figlet) to test the server. You should see a simple page that says `"Bun!"` in ASCII art.
+    Visit [`http://localhost:3000/figlet`](http://localhost:3000/figlet) to test the server. You should see a page that says `"Bun!"` in ASCII art.
 
     ```txt
     ____              _
@@ -211,7 +211,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
 
 </Steps>
 
-🎉 Congratulations! You've built a simple HTTP server with Bun and installed a package.
+🎉 Congratulations! You've built an HTTP server with Bun and installed a package.
 
 ---
 
@@ -219,16 +219,21 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
 
 Bun can also execute `"scripts"` from your `package.json`. Add the following script:
 
-```json package.json icon="file-code"
+{/* prettier-ignore */}
+```json package.json icon="file-json"
 {
   "name": "quickstart",
   "module": "index.ts",
   "type": "module",
-  "scripts": {
-    "start": "bun run index.ts"
-  },
+  "private": true,
+  "scripts": { // [!code ++]
+    "start": "bun run index.ts" // [!code ++]
+  }, // [!code ++]
   "devDependencies": {
     "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
   }
 }
 ```

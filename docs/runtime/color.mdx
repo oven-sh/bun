@@ -27,7 +27,7 @@ There are many different ways to use this API:
 
 - Validate and normalize colors to persist in a database (`number` is the most database-friendly)
 - Convert colors to different formats
-- Colorful logging beyond the 16 colors many use today (use `ansi` if you don't want to figure out what the user's terminal supports, otherwise use `ansi-16`, `ansi-256`, or `ansi-16m` for how many colors the terminal supports)
+- Colorful logging beyond the 16 colors many use today (use `ansi` to auto-detect terminal color support, or use `ansi-16`, `ansi-256`, or `ansi-16m` to target a specific color depth)
 - Format colors for use in CSS injected into HTML
 - Get the `r`, `g`, `b`, and `a` color components as JavaScript objects or numbers from a CSS color string
 

@@ -103,3 +103,12 @@ q1 = 1
   });
   expect(parsed.items).toEqual([{ q1: 1 }]);
 });
+
+it("Bun.TOML.parse throws on deeply nested inline tables instead of crashing", () => {
+  // Calibrated to exhaust the 18 MB main-thread stack at the smallest expected
+  // per-recursion frame size (~100 B in release builds). Previously 25_000.
+  const depth = 200_000;
+  const deepToml =
+    "a = " + Buffer.alloc(depth * 6, "{ b = ").toString() + "1" + Buffer.alloc(depth * 2, " }").toString();
+  expect(() => Bun.TOML.parse(deepToml)).toThrow(RangeError);
+});

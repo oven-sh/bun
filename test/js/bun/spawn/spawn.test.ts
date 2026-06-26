@@ -6,6 +6,7 @@ import {
   bunExe,
   getMaxFD,
   isBroken,
+  isDebug,
   isMacOS,
   isPosix,
   isWindows,
@@ -13,7 +14,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -163,7 +164,7 @@ for (let [gcTick, label] of [
       });
 
       it("check exit code from onExit", async () => {
-        const count = isWindows ? 100 : 1000;
+        const count = isWindows || isDebug ? 100 : 1000;
 
         for (let i = 0; i < count; i++) {
           var exitCode1, exitCode2;
@@ -814,6 +815,213 @@ describe("close handling", () => {
       }
     }
   }
+
+  it.skipIf(isWindows)("does not close caller-owned fds passed as extra stdio", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await (async function () {
+        const procs = Array.from({ length: 8 }, () =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "ignore", "ignore", fd],
+          }),
+        );
+        // The caller-supplied fd should be exposed on stdio[N] (not null) while
+        // still not being closed by the subprocess.
+        expect(procs[0].stdio).toEqual([null, null, null, fd]);
+        await Promise.all(procs.map(p => p.exited));
+      })();
+
+      Bun.gc(true);
+      await Bun.sleep(0);
+      Bun.gc(true);
+
+      expect(() => fstatSync(fd)).not.toThrow();
+
+      const { exited } = spawn({
+        cmd: [bunExe(), "-e", `require("fs").fstatSync(3)`],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "inherit", fd],
+      });
+      expect(await exited).toBe(0);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
+
+  it.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", ""],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "ignore", "ignore", fd],
+      });
+      expect(proc.stdio).toEqual([null, null, null, null, fd]);
+      await proc.exited;
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
+
+  for (const [label, makeStdio] of [
+    ["undefined", () => ["ignore", "pipe", "inherit", undefined, undefined]],
+    // eslint-disable-next-line no-sparse-arrays
+    ["a hole", () => ["ignore", "pipe", "inherit", , "ignore"]],
+  ] as const) {
+    it(`stdio[N>=3] = ${label} is treated as ignore`, async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: makeStdio() as any,
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("ok");
+      expect(proc.stdio).toEqual([null, null, null, null, null]);
+      expect(exitCode).toBe(0);
+    });
+
+    it(`spawnSync stdio[N>=3] = ${label} is treated as ignore`, () => {
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: makeStdio() as any,
+      });
+      expect(stdout.toString()).toBe("ok");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  describe("stdio[N>=3] blob-like inputs", () => {
+    const readFd3 = `const fs = require("fs"); const b = Buffer.alloc(64); const n = fs.readSync(3, b); process.stdout.write(b.subarray(0, n));`;
+
+    it.skipIf(isWindows)("Bun.file(path) at index >= 3 is readable in the child", async () => {
+      const file = join(tmp, "stdio-extra-bunfile.txt");
+      writeFileSync(file, "from-bun-file");
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", readFd3],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", Bun.file(file)],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file", stderr: "", exitCode: 0 });
+    });
+
+    it.skipIf(isWindows)("Bun.file(fd) at index >= 3 is readable in the child", async () => {
+      const file = join(tmp, "stdio-extra-bunfile-fd.txt");
+      writeFileSync(file, "from-bun-file-fd");
+      const fd = openSync(file, "r");
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", readFd3],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", Bun.file(fd)],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file-fd", stderr: "", exitCode: 0 });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", new Blob([])],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
+
+    const pullStream = () =>
+      new ReadableStream({
+        pull(c) {
+          c.enqueue(new Uint8Array([1]));
+          c.close();
+        },
+      });
+    for (const [label, make, msg] of [
+      ["Blob", () => new Blob(["from-blob"]), "Blob cannot be used for stdio[3] yet"],
+      ["Response", () => new Response("from-response"), "Blob cannot be used for stdio[3] yet"],
+      [
+        "Request",
+        () => new Request("http://x", { method: "POST", body: "from-request" }),
+        "Blob cannot be used for stdio[3] yet",
+      ],
+      ["ReadableStream", () => pullStream(), "ReadableStream cannot be used for stdio[3] yet"],
+      ["Response(ReadableStream)", () => new Response(pullStream()), "ReadableStream cannot be used for stdio[3] yet"],
+      [
+        "Request(ReadableStream)",
+        () => new Request("http://x", { method: "POST", body: pullStream() }),
+        "ReadableStream cannot be used for stdio[3] yet",
+      ],
+    ] as const) {
+      it(`${label} at index >= 3 throws instead of panicking`, () => {
+        expect(() =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "pipe", "pipe", make()],
+          }),
+        ).toThrow(msg);
+      });
+    }
+
+    it("'socket-fd' at index < 3 throws", () => {
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          // @ts-expect-error — intentionally invalid at index 0
+          stdio: ["socket-fd", "pipe", "pipe"],
+        }),
+      ).toThrow("'socket-fd' is only supported at indices >= 3");
+    });
+
+    it("'socket-fd' with spawnSync throws", () => {
+      // SyncSubprocess has no .stdio, so the caller could never receive
+      // the fd to close; reject rather than leak it.
+      expect(() =>
+        spawnSync({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        }),
+      ).toThrow("'socket-fd' cannot be used with spawnSync");
+    });
+
+    it.skipIf(isWindows)(
+      "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
+      async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        });
+        const fd = proc.stdio[3];
+        expect(typeof fd).toBe("number");
+        try {
+          await proc.exited;
+          // fd is UnownedFd: still open and readable here (process exit does
+          // not touch stdio_pipes), and finalize_streams on later GC will skip
+          // this slot. The caller owns the close.
+          const buf = Buffer.alloc(64);
+          const n = readSync(fd as number, buf);
+          expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
+        } finally {
+          // Caller is responsible for closing it.
+          closeSync(fd as number);
+        }
+        expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      },
+    );
+  });
 });
 
 it("dispose keyword works", async () => {

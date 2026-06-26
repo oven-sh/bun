@@ -13,7 +13,7 @@ bun publish
 ```
 
 ```txt
-bun publish v1.3.2 (ca7428e9)
+bun publish v1.3.3 (ca7428e9)
 
 packed 203B package.json
 packed 224B README.md
@@ -87,6 +87,14 @@ The `--dry-run` flag can be used to simulate the publish process without actuall
 
 ```sh terminal icon="terminal"
 bun publish --dry-run
+```
+
+### `--tolerate-republish`
+
+Exit with code 0 instead of 1 if the package version already exists. Useful in CI/CD where jobs may be re-run.
+
+```sh terminal icon="terminal"
+bun publish --tolerate-republish
 ```
 
 ### `--gzip-level`

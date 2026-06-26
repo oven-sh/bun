@@ -1,0 +1,30 @@
+name: Close stale robobun PRs
+on:
+  schedule:
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  close-stale-robobun-prs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Close stale robobun PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ninety_days_ago=$(date -u -d '90 days ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          gh pr list \
+            --author robobun \
+            --state open \
+            --json number,updatedAt \
+            --limit 1000 \
+            --jq ".[] | select(.updatedAt < \"$ninety_days_ago\") | .number" |
+          while read -r pr_number; do
+            echo "Closing PR #$pr_number (last updated before $ninety_days_ago)"
+            gh pr close "$pr_number" --comment "Closing this PR because it has been inactive for more than 90 days."
+          done

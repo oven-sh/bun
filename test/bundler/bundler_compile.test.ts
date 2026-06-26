@@ -1,8 +1,16 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
-import { itBundled } from "./expectBundled";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { join } from "path";
+import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
+
+// Default to the CLI backend. We intentionally use plain `describe` here
+// (not `describe.concurrent`): since the ELF-section inject path was added,
+// each `bun build --compile` on Linux reads + rewrites the full executable
+// (~500MB for profile builds). Running 20 of these concurrently exhausts CI
+// memory/IO and causes subprocess timeouts — see build #40193 failures.
+const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {
@@ -14,6 +22,46 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
+  // standalone module graph treating those bytes as Latin-1, which would
+  // print "rÃ©sumÃ©" / "ã\x81\x93ã\x82\x93..." (one Latin-1 char per UTF-8
+  // byte) instead of the original codepoints.
+  for (const [where, flag] of [
+    ["Footer", "--footer"],
+    ["Banner", "--banner"],
+  ] as const) {
+    test(`compile/${where}NonAsciiUTF8`, async () => {
+      using dir = tempDir(`compile-${where.toLowerCase()}-nonascii`, {
+        "entry.ts": `export const x = 1;`,
+      });
+      const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+      {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "build",
+            "--compile",
+            flag,
+            `console.log("résumé", "こんにちは");`,
+            "./entry.ts",
+            "--outfile",
+            outfile,
+          ],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
+      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("résumé こんにちは\n");
+      expect(exitCode).toBe(0);
+    });
+  }
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
@@ -87,6 +135,169 @@ describe("bundler", () => {
       env: {
         BUN_JSC_verboseDiskCache: "1",
       },
+    },
+  });
+
+  // `import defer * as ns from "..."` must not break bytecode generation.
+  // The bundler inlines the deferred module into the entry chunk (documented
+  // out-of-scope limitation — same as esbuild), so the defer semantics are
+  // lost in the compiled output; this test verifies that the syntax is
+  // accepted by the bundler parser, the resulting source bytecode-compiles
+  // cleanly in JSC, and the compiled binary loads from the bytecode cache.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`compile/ImportDeferBytecode+${format}`, {
+      compile: true,
+      bytecode: true,
+      format,
+      files: {
+        "/entry.ts": /* js */ `
+          import defer * as ns from "./dep.ts";
+          console.log("before");
+          console.log("value:", ns.value);
+        `,
+        "/dep.ts": /* js */ `
+          console.log("dep evaluated");
+          export const value = 42;
+        `,
+      },
+      run: {
+        stdout: "dep evaluated\nbefore\nvalue: 42",
+        env: {
+          BUN_JSC_verboseDiskCache: "1",
+        },
+        validate({ stderr }) {
+          expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+        },
+      },
+    });
+  }
+  // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
+  // With --compile, static imports are inlined into one chunk, but dynamic imports
+  // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
+  const esmBytecodeScenarios: Array<{
+    name: string;
+    files: Record<string, string>;
+    stdout: string;
+  }> = [
+    {
+      name: "HelloWorld",
+      files: {
+        "/entry.ts": `console.log("Hello, world!");`,
+      },
+      stdout: "Hello, world!",
+    },
+    {
+      // top-level await is ESM-only; if ModuleInfo or bytecode generation
+      // mishandles async modules, this breaks.
+      name: "TopLevelAwait",
+      files: {
+        "/entry.ts": `
+          const result = await Promise.resolve("tla works");
+          console.log(result);
+        `,
+      },
+      stdout: "tla works",
+    },
+    {
+      // import.meta is ESM-only.
+      name: "ImportMeta",
+      files: {
+        "/entry.ts": `
+          console.log(typeof import.meta.url === "string" ? "ok" : "fail");
+          console.log(typeof import.meta.dir === "string" ? "ok" : "fail");
+        `,
+      },
+      stdout: "ok\nok",
+    },
+    {
+      // Dynamic import creates a separate module in the standalone graph,
+      // exercising per-module bytecode + ModuleInfo.
+      name: "DynamicImport",
+      files: {
+        "/entry.ts": `
+          const { value } = await import("./lazy.ts");
+          console.log("lazy:", value);
+        `,
+        "/lazy.ts": `export const value = 42;`,
+      },
+      stdout: "lazy: 42",
+    },
+    {
+      // Dynamic import of a module that itself uses top-level await.
+      // The dynamically imported module is a separate chunk with async
+      // evaluation — stresses both ModuleInfo and async bytecode loading.
+      name: "DynamicImportTLA",
+      files: {
+        "/entry.ts": `
+          const mod = await import("./async-mod.ts");
+          console.log("value:", mod.value);
+        `,
+        "/async-mod.ts": `export const value = await Promise.resolve(99);`,
+      },
+      stdout: "value: 99",
+    },
+    {
+      // Multiple dynamic imports: several separate modules in the graph,
+      // each with its own bytecode + ModuleInfo.
+      name: "MultipleDynamicImports",
+      files: {
+        "/entry.ts": `
+          const [a, b] = await Promise.all([
+            import("./mod-a.ts"),
+            import("./mod-b.ts"),
+          ]);
+          console.log(a.value, b.value);
+        `,
+        "/mod-a.ts": `export const value = "a";`,
+        "/mod-b.ts": `export const value = "b";`,
+      },
+      stdout: "a b",
+    },
+  ];
+
+  for (const scenario of esmBytecodeScenarios) {
+    for (const minify of [false, true]) {
+      itBundled(`compile/ESMBytecode+${scenario.name}${minify ? "+minify" : ""}`, {
+        compile: true,
+        bytecode: true,
+        format: "esm",
+        ...(minify && {
+          minifySyntax: true,
+          minifyIdentifiers: true,
+          minifyWhitespace: true,
+        }),
+        files: scenario.files,
+        run: { stdout: scenario.stdout },
+      });
+    }
+  }
+
+  // Multi-entry ESM bytecode with Worker (can't be in the matrix — needs
+  // entryPointsRaw, outfile, setCwd). Each entry becomes a separate module
+  // in the standalone graph with its own bytecode + ModuleInfo.
+  itBundled("compile/WorkerBytecodeESM", {
+    backend: "cli",
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./worker.ts", {force: true});
+        console.log("Hello, world!");
+        new Worker("./worker.ts");
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "Hello, world!\nWorker loaded!\n",
+      file: "dist/out",
+      setCwd: true,
     },
   });
   // https://github.com/oven-sh/bun/issues/8697
@@ -232,6 +443,60 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/Bun.isStandaloneExecutable", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { heapStats } from "bun:jsc";
+        import "./asset.file";
+
+        const blobCount = () => heapStats().objectTypeCounts.Blob ?? 0;
+
+        // Reading isStandaloneExecutable must not materialize embedded files as Blobs.
+        Bun.gc(true);
+        const baseline = blobCount();
+        if (Bun.isStandaloneExecutable !== true) {
+          throw new Error("expected Bun.isStandaloneExecutable === true, got " + Bun.isStandaloneExecutable);
+        }
+        const afterRead = blobCount();
+        if (afterRead !== baseline) {
+          throw new Error("reading Bun.isStandaloneExecutable changed Blob count (" + baseline + " -> " + afterRead + ")");
+        }
+
+        // Accessing embeddedFiles allocates a Blob per embedded asset; if it did not,
+        // the afterRead === baseline check above would be vacuous.
+        const files = Bun.embeddedFiles;
+        if (files.length !== 1) throw new Error("expected 1 embedded file, got " + files.length);
+        const afterEmbedded = blobCount();
+        if (afterEmbedded <= baseline) {
+          throw new Error("expected Blob count to increase after reading Bun.embeddedFiles (" + baseline + " -> " + afterEmbedded + ")");
+        }
+        console.log("ok", JSON.stringify({ baseline, afterRead, afterEmbedded }));
+      `,
+      "/asset.file": "abcd",
+    },
+    outfile: "dist/out",
+    run: { stdout: /^ok \{"baseline":\d+,"afterRead":\d+,"afterEmbedded":\d+\}$/ },
+  });
+  test("Bun.isStandaloneExecutable is false when not compiled", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify({ value: Bun.isStandaloneExecutable, type: typeof Bun.isStandaloneExecutable }))`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `{"value":false,"type":"boolean"}`,
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
+  });
   itBundled("compile/ResolveEmbeddedFileOutfile", {
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.
@@ -271,7 +536,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: isWindows, // TODO(@paperclover)
+    todo: isWindows, // TODO
     compile: true,
     files: {
       "/entry.ts": `
@@ -286,7 +551,8 @@ describe("bundler", () => {
         const db = new Database("test.db");
         const query = db.query(\`select "Hello world" as message\`);
         if (query.get().message !== "Hello world") throw "fail from sqlite";
-        const icon = await fetch("https://bun.sh/favicon.ico").then(x=>x.arrayBuffer())
+        const icon = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) icon[i] = i;
         if(icon.byteLength < 100) throw "fail from icon";
         if (typeof getRandomSeed() !== 'number') throw "fail from bun:jsc";
         const server = serve({
@@ -311,6 +577,8 @@ describe("bundler", () => {
     format: "cjs" | "esm";
   }> = [
     { bytecode: true, minify: true, format: "cjs" },
+    { bytecode: true, format: "esm" },
+    { bytecode: true, minify: true, format: "esm" },
     { format: "cjs" },
     { format: "cjs", minify: true },
     { format: "esm" },
@@ -655,17 +923,29 @@ error: Hello World`,
     files: {
       "/entry.ts": /* js */ `
         console.log("This is compiled code");
+        console.log(JSON.stringify({ isStandaloneExecutable: Bun.isStandaloneExecutable }));
       `,
     },
     run: [
       {
-        stdout: "This is compiled code",
+        stdout: `This is compiled code\n{"isStandaloneExecutable":true}`,
       },
       {
         env: { BUN_BE_BUN: "1" },
         validate({ stdout }) {
           expect(stdout).not.toContain("This is compiled code");
         },
+      },
+      {
+        // With BUN_BE_BUN=1 the compiled executable behaves like the plain `bun` CLI:
+        // the embedded standalone module graph is never loaded, so Bun.isStandaloneExecutable
+        // must be false even though the binary itself contains one.
+        env: { BUN_BE_BUN: "1" },
+        args: [
+          "-e",
+          `console.log(JSON.stringify({ isStandaloneExecutable: Bun.isStandaloneExecutable, type: typeof Bun.isStandaloneExecutable }))`,
+        ],
+        stdout: `{"isStandaloneExecutable":false,"type":"boolean"}`,
       },
     ],
   });
@@ -734,5 +1014,205 @@ const server = serve({
       .cwd(dir)
       .env(bunEnv)
       .throws(true);
-  });
+  }, 30_000);
+
+  // Verify ESM bytecode is actually loaded from the cache at runtime, not just generated.
+  // Uses regex matching on stderr (not itBundled) since we don't know the exact
+  // number of cache hit/miss lines for ESM standalone.
+  test("ESM bytecode cache is used at runtime", async () => {
+    const ext = isWindows ? ".exe" : "";
+    using dir = tempDir("esm-bytecode-cache", {
+      "entry.js": `console.log("esm bytecode loaded");`,
+    });
+
+    const outfile = join(String(dir), `app${ext}`);
+
+    // Build with ESM + bytecode
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        "--format=esm",
+        join(String(dir), "entry.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
+
+    // Run with verbose disk cache to verify bytecode is loaded
+    await using exe = Bun.spawn({
+      cmd: [outfile],
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [exeStdout, exeStderr, exeExitCode] = await Promise.all([exe.stdout.text(), exe.stderr.text(), exe.exited]);
+
+    expect(exeStdout).toContain("esm bytecode loaded");
+    expect(exeStderr).toMatch(/\[Disk Cache\].*Cache hit/i);
+    expect(exeExitCode).toBe(0);
+  }, 30_000);
+
+  // When compiling with 8+ entry points, the main entry point should still run correctly.
+  test("compile with 8+ entry points runs main entry correctly", async () => {
+    const dir = tempDirWithFiles("compile-many-entries", {
+      "app.js": `console.log("IT WORKS");`,
+      "assets/file-1": "",
+      "assets/file-2": "",
+      "assets/file-3": "",
+      "assets/file-4": "",
+      "assets/file-5": "",
+      "assets/file-6": "",
+      "assets/file-7": "",
+      "assets/file-8": "",
+    });
+
+    await Bun.$`${bunExe()} build --compile app.js assets/* --outfile app`.cwd(dir).env(bunEnv).throws(true);
+
+    const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
+    expect(result.stdout.toString().trim()).toBe("IT WORKS");
+  }, 30_000);
 });
+
+test("compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds", async () => {
+  // `bun build --compile --target=bun-darwin-*` patches the application bundle into the
+  // __BUN,__bun section of the base executable named by --compile-executable-path. The
+  // segment/section offsets in that file's load commands must be validated against the
+  // actual file size before they are used as memmove destinations.
+  const MH_MAGIC_64 = 0xfeedfacf;
+  const CPU_TYPE_X86_64 = 0x01000007;
+  const MH_EXECUTE = 2;
+  const LC_SEGMENT_64 = 0x19;
+
+  // Minimal Mach-O "base executable": a __BUN segment with one __bun section followed by a
+  // __LINKEDIT segment. `bunFileOff` is where the load commands claim the __BUN data lives.
+  function machoTemplate(bunFileOff: number): Buffer {
+    const fileSize = 0x8100; // 33 KB of actual bytes
+    const segCmdSize = 72; // sizeof(segment_command_64)
+    const sectSize = 80; // sizeof(section_64)
+    const sizeofcmds = segCmdSize + sectSize + segCmdSize;
+    const buf = Buffer.alloc(fileSize);
+    const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
+
+    // mach_header_64
+    buf.writeUInt32LE(MH_MAGIC_64, 0);
+    buf.writeInt32LE(CPU_TYPE_X86_64, 4);
+    buf.writeInt32LE(3, 8); // cpusubtype
+    buf.writeUInt32LE(MH_EXECUTE, 12);
+    buf.writeUInt32LE(2, 16); // ncmds
+    buf.writeUInt32LE(sizeofcmds, 20);
+
+    // LC_SEGMENT_64 __BUN with one section
+    let o = 32;
+    buf.writeUInt32LE(LC_SEGMENT_64, o);
+    buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
+    writeName(o + 8, "__BUN");
+    buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
+    buf.writeBigUInt64LE(0x4000n, o + 32); // vmsize
+    buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
+    buf.writeBigUInt64LE(0x4000n, o + 48); // filesize
+    buf.writeInt32LE(7, o + 56); // maxprot
+    buf.writeInt32LE(3, o + 60); // initprot
+    buf.writeUInt32LE(1, o + 64); // nsects
+
+    // section_64 __bun
+    o += segCmdSize;
+    writeName(o, "__bun");
+    writeName(o + 16, "__BUN");
+    buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
+    buf.writeBigUInt64LE(0x4000n, o + 40); // size
+    buf.writeUInt32LE(bunFileOff, o + 48); // offset
+    buf.writeUInt32LE(14, o + 52); // align = 2^14
+
+    // LC_SEGMENT_64 __LINKEDIT
+    o += sectSize;
+    buf.writeUInt32LE(LC_SEGMENT_64, o);
+    buf.writeUInt32LE(segCmdSize, o + 4);
+    writeName(o + 8, "__LINKEDIT");
+    buf.writeBigUInt64LE(0x1_0000_8000n, o + 24); // vmaddr
+    buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
+    buf.writeBigUInt64LE(BigInt(bunFileOff + 0x4000), o + 40); // fileoff (right after __BUN)
+    buf.writeBigUInt64LE(0x100n, o + 48); // filesize
+    buf.writeInt32LE(1, o + 56); // maxprot
+    buf.writeInt32LE(1, o + 60); // initprot
+
+    return buf;
+  }
+
+  using dir = tempDir("compile-macho-template-bounds", {
+    "entry.js": `console.log("compiled-from-template");`,
+  });
+  const cwd = String(dir);
+
+  // Template whose __BUN offsets point 1 GiB past the end of the 33 KB file.
+  const badTemplate = join(cwd, "template-bad");
+  await Bun.write(badTemplate, machoTemplate(0x40000000));
+  const outBad = join(cwd, "out-bad");
+  {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        badTemplate,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outBad,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The out-of-range offsets must be reported as a clean error...
+    expect(stderr).toContain("OffsetOutOfRange");
+    // ...no output executable is produced...
+    expect(await Bun.file(outBad).exists()).toBe(false);
+    // ...and the build exits with a normal failure code instead of crashing.
+    expect(exitCode).toBe(1);
+  }
+
+  // The same template with in-bounds offsets is still accepted.
+  const goodTemplate = join(cwd, "template-good");
+  await Bun.write(goodTemplate, machoTemplate(0x4000));
+  const outGood = join(cwd, "out-good");
+  {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        goodTemplate,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outGood,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("OffsetOutOfRange");
+    const outBytes = Buffer.from(await Bun.file(outGood).arrayBuffer());
+    expect(outBytes.includes("compiled-from-template")).toBe(true);
+    expect(exitCode).toBe(0);
+  }
+}, 60_000);

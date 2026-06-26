@@ -71,6 +71,11 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd,
 }
 
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
+  // poll was resized and dont own uv_poll_t anymore
+  if(!p->uv_p) {
+    free(p);
+    return;
+  }
   /* The idea here is like so; in us_poll_stop we call uv_close after setting
    * data of uv-poll to 0. This means that in close_cb_free we call free on 0
    * with does nothing, since us_poll_stop should not really free the poll.
@@ -86,6 +91,7 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
 }
 
 void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return;
   p->poll_type = us_internal_poll_type(p) |
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
@@ -98,7 +104,13 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   uv_poll_start(p->uv_p, events, poll_cb);
 }
 
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  us_poll_start(p, loop, events);
+  return 0;
+}
+
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return;
   if (us_poll_events(p) != events) {
     p->poll_type =
         us_internal_poll_type(p) |
@@ -109,6 +121,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 }
 
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
+  if(!p->uv_p) return;
   uv_poll_stop(p->uv_p);
 
   /* We normally only want to close the poll here, not free it. But if we stop
@@ -217,10 +230,20 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
 /* If we update our block position we have to update the uv_poll data to point
  * to us */
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
-                                 unsigned int ext_size) {
+                                 unsigned int old_ext_size, unsigned int ext_size) {
 
-  struct us_poll_t *new_p = realloc(p, sizeof(struct us_poll_t) + ext_size);
+  // cannot resize if we dont own uv_poll_t
+  if(!p->uv_p) return p;
+
+  unsigned int old_size = sizeof(struct us_poll_t) + old_ext_size;
+  unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
+  if(new_size <= old_size) return p;
+
+  struct us_poll_t *new_p = calloc(1, new_size);
+  memcpy(new_p, p, old_size);
+
   new_p->uv_p->data = new_p;
+  p->uv_p = NULL;
 
   return new_p;
 }
@@ -270,11 +293,16 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
   struct us_internal_callback_t *internal_cb =
       (struct us_internal_callback_t *)t;
 
-  // only add the timer to the event loop once
-  if (internal_cb->has_added_timer_to_event_loop) {
-    return;
+  // Match the epoll_kqueue backend: re-arming is allowed (uv_timer_start
+  // restarts an already-running timer). The one-shot guard only applies to
+  // the sweep timer, which is set with the same args from every new socket
+  // context — restarting it would skew the 4s tick.
+  if (internal_cb->loop->data.sweep_timer == t) {
+    if (internal_cb->has_added_timer_to_event_loop) {
+      return;
+    }
+    internal_cb->has_added_timer_to_event_loop = 1;
   }
-  internal_cb->has_added_timer_to_event_loop = 1;
 
   internal_cb->cb = (void (*)(struct us_internal_callback_t *))cb;
 
@@ -337,7 +365,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
   uv_async_send(uv_async);
 }
 
-int us_socket_get_error(int ssl, struct us_socket_t *s) {
+int us_socket_get_error(struct us_socket_t *s) {
   int error = 0;
   socklen_t len = sizeof(error);
   if (getsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_ERROR,

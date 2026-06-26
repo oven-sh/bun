@@ -107,7 +107,7 @@ When callbacks must be used and it's just a single callback, use `Promise.withRe
 
 ```ts
 const ws = new WebSocket("ws://localhost:8080");
-const { promise, resolve, reject } = Promise.withResolvers();
+const { promise, resolve, reject } = Promise.withResolvers<void>(); // Can specify any type here for resolution value
 ws.onopen = resolve;
 ws.onclose = reject;
 await promise;
@@ -149,9 +149,36 @@ To create a repetitive string, use `Buffer.alloc(count, fill).toString()` instea
 ### Test Organization
 
 - Use `describe` blocks for grouping related tests
-- Regression tests for specific issues go in `/test/regression/issue/${issueNumber}.test.ts`. If there's no issue number, do not put them in the regression directory.
-- Unit tests for specific features are organized by module (e.g., `/test/js/bun/`, `/test/js/node/`)
+- **Add tests to the existing test file for the code you're changing** — do not create a new file. Tests are organized by module (e.g., `/test/js/bun/`, `/test/js/node/`, `/test/js/web/`).
+- `/test/regression/issue/${issueNumber}.test.ts` is **only** for bugs that have a GitHub issue number **and** are true regressions (worked in a previous release, then broke). An issue number alone does not qualify — if it was never correct, put the test in the module's existing test file instead.
 - Integration tests are in `/test/integration/`
+
+### Nested/complex object equality
+
+Prefer usage of `.toEqual` rather than many `.toBe` assertions for nested or complex objects.
+
+<example>
+
+BAD (try to avoid doing this):
+
+```ts
+expect(result).toHaveLength(3);
+expect(result[0].optional).toBe(null);
+expect(result[1].optional).toBe("middle-value"); // CRITICAL: middle item's value must be preserved
+expect(result[2].optional).toBe(null);
+```
+
+**GOOD (always prefer this):**
+
+```ts
+expect(result).toEqual([
+  { optional: null },
+  { optional: "middle-value" }, // CRITICAL: middle item's value must be preserved
+  { optional: null },
+]);
+```
+
+</example>
 
 ### Common Imports from `harness`
 
@@ -185,6 +212,30 @@ test("handles errors", async () => {
 
   // For synchronous errors
   expect(() => someFunction()).toThrow("Expected error message");
+});
+```
+
+### Avoid dynamic import & require
+
+**Only** use dynamic import or require when the test is specifically testing something relataed to dynamic import or require. Otherwise, **always use module-scope import statements**.
+
+**BAD, do not do this**:
+
+```ts
+test("foo", async () => {
+  // BAD: Unnecessary usage of dynamic import.
+  const { readFile } = await import("node:fs");
+
+  expect(await readFile("ok.txt")).toBe("");
+});
+```
+
+**GOOD, do this:**
+
+```ts
+import { readFile } from "node:fs";
+test("foo", async () => {
+  expect(await readFile("ok.txt")).toBe("");
 });
 ```
 

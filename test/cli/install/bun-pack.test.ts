@@ -83,6 +83,52 @@ test("in subdirectory", async () => {
 });
 
 describe("package.json names and versions", () => {
+  test("rejects name and version containing parent directory components", async () => {
+    const projectDir = join(packageDir, "nested", "project");
+    await mkdir(projectDir, { recursive: true });
+    await Promise.all([
+      write(
+        join(projectDir, "package.json"),
+        JSON.stringify({
+          name: "../../outside-pkg",
+          version: "1.0.0",
+        }),
+      ),
+      write(join(projectDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { err } = await packExpectError(projectDir, bunEnv);
+    expect(err).toContain("package.json `name` and `version` fields");
+
+    // the tarball must not be created at the location the ".." segments resolve to,
+    // nor anywhere inside the project directory
+    expect(await exists(join(packageDir, "outside-pkg-1.0.0.tgz"))).toBeFalse();
+    expect(await exists(join(projectDir, "outside-pkg-1.0.0.tgz"))).toBeFalse();
+
+    // a version with ".." segments is rejected the same way
+    await write(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "pack-traversal-check",
+        version: "../1.0.0",
+      }),
+    );
+    const { err: versionErr } = await packExpectError(projectDir, bunEnv);
+    expect(versionErr).toContain("package.json `name` and `version` fields");
+
+    // a normal name and version still packs into the project directory
+    await write(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "pack-traversal-check",
+        version: "1.0.0",
+      }),
+    );
+    await pack(projectDir, bunEnv);
+    const tarball = readTarball(join(projectDir, "pack-traversal-check-1.0.0.tgz"));
+    expect(tarball.entries).toHaveLength(2);
+  });
+
   const tests = [
     {
       desc: "missing name",
@@ -661,6 +707,42 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
     "\nprepack: false\nprepare: false\npostpack: false\ntarball: false",
     "\nprepack: true\nprepare: true\npostpack: false\ntarball: true",
     "\nprepack: true\nprepare: false\npostpack: false\ntarball: false",
+  ]);
+});
+
+test("lifecycle script modifying version updates tarball filename (#17195)", async () => {
+  const updateScript = `const fs = require("fs");
+  const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  pkg.version = "2.0.0-snapshot.test";
+  fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));`;
+
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-version-update",
+        version: "1.0.0",
+        scripts: {
+          prepack: `${bunExe()} update-version.js`,
+        },
+      }),
+    ),
+    write(join(packageDir, "update-version.js"), updateScript),
+    write(join(packageDir, "index.js"), "module.exports = {};"),
+  ]);
+
+  await pack(packageDir, bunEnv);
+
+  // The tarball filename should use the UPDATED version
+  expect(await exists(join(packageDir, "pack-version-update-2.0.0-snapshot.test.tgz"))).toBeTrue();
+  // The old version tarball should NOT exist
+  expect(await exists(join(packageDir, "pack-version-update-1.0.0.tgz"))).toBeFalse();
+
+  const tarball = readTarball(join(packageDir, "pack-version-update-2.0.0-snapshot.test.tgz"));
+  expect(tarball.entries).toMatchObject([
+    { "pathname": "package/package.json" },
+    { "pathname": "package/index.js" },
+    { "pathname": "package/update-version.js" },
   ]);
 });
 

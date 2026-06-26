@@ -23,16 +23,6 @@ interface BunConsumerConvenienceMethods {
    * Consume as JSON
    */
   json(): Promise<any>;
-
-  /**
-   * Consume as a FormData instance
-   */
-  formData(): Promise<FormData>;
-
-  /**
-   * Consume as an ArrayBuffer
-   */
-  arrayBuffer(): Promise<ArrayBuffer>;
 }
 
 declare module "stream/web" {
@@ -51,6 +41,27 @@ declare module "buffer" {
     // slightly different from just "copying in the methods" (the difference is
     // related to how type parameters are resolved)
     bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+    /**
+     * Consume the blob as a FormData instance
+     */
+    formData(): Promise<FormData>;
+
+    /**
+     * Consume the blob as an ArrayBuffer
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+
+    /**
+     * Wrap this blob in a {@link Bun.Image} pipeline.
+     * Equivalent to `new Bun.Image(this, options)`.
+     */
+    image(options?: Bun.Image.ConstructorOptions): Bun.Image;
+
+    /**
+     * Returns a readable stream of the blob's contents
+     */
+    stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
   }
 }
 
@@ -81,7 +92,29 @@ declare global {
       reallyExit(code?: number): never;
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
       _exiting: boolean;
-      noDeprecation: boolean;
+      noDeprecation?: boolean | undefined;
+
+      /**
+       * Emitted when the operating system signals that available memory is
+       * running low. Use this to release caches or reap idle resources instead
+       * of polling.
+       *
+       * On macOS `level` distinguishes `"warning"` from `"critical"` based on
+       * the kernel's memorystatus thresholds. On Linux (PSI) and Windows the
+       * event is always emitted with `"critical"`. On Linux, the underlying
+       * PSI trigger requires `CAP_SYS_RESOURCE` on kernels before 6.6; when
+       * unavailable the event is simply never emitted.
+       *
+       * This listener does not keep the event loop alive.
+       */
+      on(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      once(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      off(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      addListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      removeListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      prependListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      prependOnceListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      emit(event: "memoryPressure", level: "warning" | "critical"): boolean;
 
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
@@ -303,11 +336,11 @@ declare global {
   }
 }
 
-declare module "fs/promises" {
+declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
-declare module "tls" {
+declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**
      * Optionally override the trusted CA certificates. Default is to trust
@@ -353,4 +386,19 @@ declare module "tls" {
   }
 
   function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+}
+
+declare module "console" {
+  interface Console {
+    /**
+     * Asynchronously read lines from standard input (fd 0)
+     *
+     * ```ts
+     * for await (const line of console) {
+     *   console.log(line);
+     * }
+     * ```
+     */
+    [Symbol.asyncIterator](): AsyncIterableIterator<string>;
+  }
 }

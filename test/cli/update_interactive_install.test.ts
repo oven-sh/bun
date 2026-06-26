@@ -146,8 +146,8 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     });
 
     try {
-      updateProc.stdin.write("l"); // toggle latest
-      updateProc.stdin.write(" "); // select
+      // 'l' toggles to latest AND selects the package (no separate space needed)
+      updateProc.stdin.write("l"); // toggle latest (also selects)
       updateProc.stdin.write("\r"); // confirm
       updateProc.stdin.end();
 

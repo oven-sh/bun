@@ -59,6 +59,10 @@ expectType(node_stream.blob()).is<Promise<Blob>>();
 
 Bun.file("./foo.csv").stream().pipeThrough(new TextDecoderStream()).pipeThrough(new TextEncoderStream());
 
+Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"));
+Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("brotli")).pipeThrough(new DecompressionStream("brotli"));
+Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("zstd")).pipeThrough(new DecompressionStream("zstd"));
+
 Bun.file("./foo.csv")
   .stream()
   .pipeThrough(new TextDecoderStream())
@@ -69,3 +73,15 @@ Bun.file("./foo.csv")
       },
     }),
   );
+
+// @ts-expect-error These properties do not exist right now
+expectType(new ReadableStream().arrayBuffer());
+// @ts-expect-error These properties do not exist right now
+expectType(new ReadableStream().formData());
+
+expectType(new Blob([]).text()).is<Promise<string>>();
+expectType(new Blob([]).arrayBuffer()).is<Promise<ArrayBuffer>>();
+expectType(new Blob([]).bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
+expectType(new Blob([]).json()).is<Promise<any>>();
+expectType(new Blob([]).formData()).is<Promise<FormData>>();
+expectType(new Blob([]).stream()).is<ReadableStream<Uint8Array<ArrayBuffer>>>();

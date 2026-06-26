@@ -95,10 +95,13 @@ export function readIntLE(this: BufferExt, offset, byteLength) {
     case 4:
     case 5:
     case 6: {
-      if (typeof offset !== "number" || (offset | 0) !== offset)
+      // Infinity must fall through to boundsError() so it reports the
+      // ">= 0 and <= N" range like Node, not "an integer".
+      if (typeof offset !== "number" || ((offset | 0) !== offset && offset !== Infinity && offset !== -Infinity))
         require("internal/validators").validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset <= this.length - byteLength))
-        require("internal/buffer").boundsError(offset, this.length - byteLength);
+      let thisLength;
+      if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
+        require("internal/buffer").boundsError(offset, (thisLength ?? this.length) - byteLength);
     }
   }
   switch (byteLength) {
@@ -138,10 +141,13 @@ export function readIntBE(this: BufferExt, offset, byteLength) {
     case 4:
     case 5:
     case 6: {
-      if (typeof offset !== "number" || (offset | 0) !== offset)
+      // Infinity must fall through to boundsError() so it reports the
+      // ">= 0 and <= N" range like Node, not "an integer".
+      if (typeof offset !== "number" || ((offset | 0) !== offset && offset !== Infinity && offset !== -Infinity))
         require("internal/validators").validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset <= this.length - byteLength))
-        require("internal/buffer").boundsError(offset, this.length - byteLength);
+      let thisLength;
+      if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
+        require("internal/buffer").boundsError(offset, (thisLength ?? this.length) - byteLength);
     }
   }
   switch (byteLength) {
@@ -181,10 +187,13 @@ export function readUIntLE(this: BufferExt, offset, byteLength) {
     case 4:
     case 5:
     case 6: {
-      if (typeof offset !== "number" || (offset | 0) !== offset)
+      // Infinity must fall through to boundsError() so it reports the
+      // ">= 0 and <= N" range like Node, not "an integer".
+      if (typeof offset !== "number" || ((offset | 0) !== offset && offset !== Infinity && offset !== -Infinity))
         require("internal/validators").validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset <= this.length - byteLength))
-        require("internal/buffer").boundsError(offset, this.length - byteLength);
+      let thisLength;
+      if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
+        require("internal/buffer").boundsError(offset, (thisLength ?? this.length) - byteLength);
     }
   }
   switch (byteLength) {
@@ -221,10 +230,13 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
     case 4:
     case 5:
     case 6: {
-      if (typeof offset !== "number" || (offset | 0) !== offset)
+      // Infinity must fall through to boundsError() so it reports the
+      // ">= 0 and <= N" range like Node, not "an integer".
+      if (typeof offset !== "number" || ((offset | 0) !== offset && offset !== Infinity && offset !== -Infinity))
         require("internal/validators").validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset <= this.length - byteLength))
-        require("internal/buffer").boundsError(offset, this.length - byteLength);
+      let thisLength;
+      if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
+        require("internal/buffer").boundsError(offset, (thisLength ?? this.length) - byteLength);
     }
   }
   switch (byteLength) {
@@ -662,28 +674,6 @@ export function toJSON(this: BufferExt) {
   const type = "Buffer";
   const data = Array.from(this);
   return { type, data };
-}
-
-export function slice(this: BufferExt, start, end) {
-  var { buffer, byteOffset, byteLength } = this;
-
-  function adjustOffset(offset, length) {
-    // Use Math.trunc() to convert offset to an integer value that can be larger
-    // than an Int32. Hence, don't use offset | 0 or similar techniques.
-    offset = Math.trunc(offset);
-    if (offset === 0 || offset !== offset) {
-      return 0;
-    } else if (offset < 0) {
-      offset += length;
-      return offset > 0 ? offset : 0;
-    } else {
-      return offset < length ? offset : length;
-    }
-  }
-
-  var start_ = adjustOffset(start, byteLength);
-  var end_ = end !== undefined ? adjustOffset(end, byteLength) : byteLength;
-  return new $Buffer(buffer, byteOffset + start_, end_ > start_ ? end_ - start_ : 0);
 }
 
 $getter;

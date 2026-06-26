@@ -100,7 +100,7 @@ You can read results from the subprocess via the `stdout` and `stderr` propertie
 ```ts
 const proc = Bun.spawn(["bun", "--version"]);
 const text = await proc.stdout.text();
-console.log(text); // => "1.3.2\n"
+console.log(text); // => "1.3.3\n"
 ```
 
 Configure the output stream by passing one of the following values to `stdout/stderr`:
@@ -289,7 +289,7 @@ childProc.disconnect();
 
 To use IPC between a `bun` process and a Node.js process, set `serialization: "json"` in `Bun.spawn`. This is because Node.js and Bun use different JavaScript engines with different object serialization formats.
 
-```ts bun-node-ipc.js icon="file-code"
+```js bun-node-ipc.js icon="file-code"
 if (typeof Bun !== "undefined") {
   const prefix = `[bun ${process.versions.bun} 🐇]`;
   const node = Bun.spawn({
@@ -312,6 +312,118 @@ if (typeof Bun !== "undefined") {
   });
 }
 ```
+
+---
+
+## Terminal (PTY) support
+
+For interactive terminal applications, you can spawn a subprocess with a pseudo-terminal (PTY) attached using the `terminal` option. This makes the subprocess think it's running in a real terminal, enabling features like colored output, cursor movement, and interactive prompts.
+
+```ts
+const proc = Bun.spawn(["bash"], {
+  terminal: {
+    cols: 80,
+    rows: 24,
+    data(terminal, data) {
+      // Called when data is received from the terminal
+      process.stdout.write(data);
+    },
+  },
+});
+
+// Write to the terminal
+proc.terminal.write("echo hello\n");
+
+// Wait for the process to exit
+await proc.exited;
+
+// Close the terminal
+proc.terminal.close();
+```
+
+When the `terminal` option is provided:
+
+- The subprocess sees `process.stdout.isTTY` as `true`
+- `stdin`, `stdout`, and `stderr` are all connected to the terminal
+- `proc.stdin`, `proc.stdout`, and `proc.stderr` return `null` — use the terminal instead
+- Access the terminal via `proc.terminal`
+
+### Terminal options
+
+| Option  | Description                                                                                                                                                        | Default            |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| `cols`  | Number of columns                                                                                                                                                  | `80`               |
+| `rows`  | Number of rows                                                                                                                                                     | `24`               |
+| `name`  | Terminal type for PTY configuration (set `TERM` env var separately via `env` option)                                                                               | `"xterm-256color"` |
+| `data`  | Callback when data is received `(terminal, data) => void`                                                                                                          | —                  |
+| `exit`  | Callback when PTY stream closes (EOF or error). `exitCode` is PTY lifecycle status (0=EOF, 1=error), not subprocess exit code. Use `proc.exited` for process exit. | —                  |
+| `drain` | Callback when ready for more data `(terminal) => void`                                                                                                             | —                  |
+
+### Terminal methods
+
+The `Terminal` object returned by `proc.terminal` has the following methods:
+
+```ts
+// Write data to the terminal
+proc.terminal.write("echo hello\n");
+
+// Resize the terminal
+proc.terminal.resize(120, 40);
+
+// Set raw mode (disable line buffering and echo)
+proc.terminal.setRawMode(true);
+
+// Keep event loop alive while terminal is open
+proc.terminal.ref();
+proc.terminal.unref();
+
+// Close the terminal
+proc.terminal.close();
+```
+
+### Reusable Terminal
+
+You can create a terminal independently and reuse it across multiple subprocesses:
+
+```ts
+await using terminal = new Bun.Terminal({
+  cols: 80,
+  rows: 24,
+  data(term, data) {
+    process.stdout.write(data);
+  },
+});
+
+// Spawn first process
+const proc1 = Bun.spawn(["echo", "first"], { terminal });
+await proc1.exited;
+
+// Reuse terminal for another process
+const proc2 = Bun.spawn(["echo", "second"], { terminal });
+await proc2.exited;
+
+// Terminal is closed automatically by `await using`
+```
+
+When passing an existing `Terminal` object:
+
+- The terminal can be reused across multiple spawns
+- You control when to close the terminal
+- The `exit` callback fires when you call `terminal.close()`, not when each subprocess exits
+- Use `proc.exited` to detect individual subprocess exits
+
+This is useful for running multiple commands in sequence through the same terminal session.
+
+### Platform differences
+
+`Bun.Terminal` uses `openpty()` on Linux and macOS, and ConPTY (`CreatePseudoConsole`) on Windows. The core behaviour — child sees a TTY, `write()` reaches the child's stdin, child output reaches the `data` callback, `resize()` updates the child's view — is the same on every platform. A few details differ:
+
+- **No termios on Windows.** `inputFlags`, `outputFlags`, `localFlags`, and `controlFlags` always read as `0` and setting them is a no-op. `setRawMode()` records the flag but has no effect on the child; the child controls its own console mode.
+- **No echo without a child process on Windows.** On POSIX, the kernel line discipline echoes `write()` input back to the `data` callback even with no process attached. ConPTY has no line discipline; input is buffered for the next reader. If you need echo, spawn a process that echoes.
+- **ConPTY re-encodes output.** ConPTY renders the child's output to a virtual screen and emits whatever VT sequences describe the result, so the `data` callback receives semantically equivalent — but not byte-identical — escape sequences. Colours and text are preserved; cursor-positioning and reset sequences may be reordered or coalesced. ConPTY also emits a short VT init sequence (`\x1b[?9001h\x1b[?1004h…`) before any child output.
+- **Input `\r` is not translated to `\n` on Windows.** POSIX `ICRNL` maps carriage return to newline on input; ConPTY passes `\r` through unchanged.
+- **`process.on('SIGWINCH')` in the child does not fire under ConPTY** unless the child is reading stdin in raw mode. `process.stdout.columns`/`rows` do update after `resize()`. This is a libuv limitation that affects any libuv-based child (Node.js included).
+- On Windows before 11 24H2 (build 26100), `terminal.close()` may not terminate a still-running child promptly because [`ClosePseudoConsole`](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole) blocks until conhost has flushed its output through the pipe on those versions. Kill the attached process first if you need to tear down with a running child.
 
 ---
 
@@ -407,6 +519,7 @@ namespace SpawnOptions {
     timeout?: number;
     killSignal?: string | number;
     maxBuffer?: number;
+    terminal?: TerminalOptions; // PTY (POSIX) / ConPTY (Windows) support
   }
 
   type Readable =
@@ -435,10 +548,11 @@ namespace SpawnOptions {
 }
 
 interface Subprocess extends AsyncDisposable {
-  readonly stdin: FileSink | number | undefined;
-  readonly stdout: ReadableStream<Uint8Array> | number | undefined;
-  readonly stderr: ReadableStream<Uint8Array> | number | undefined;
-  readonly readable: ReadableStream<Uint8Array> | number | undefined;
+  readonly stdin: FileSink | number | undefined | null;
+  readonly stdout: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly stderr: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly readable: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly terminal: Terminal | undefined;
   readonly pid: number;
   readonly exited: Promise<number>;
   readonly exitCode: number | null;
@@ -463,6 +577,28 @@ interface SyncSubprocess {
   signalCode?: string;
   exitedDueToTimeout?: true;
   pid: number;
+}
+
+interface TerminalOptions {
+  cols?: number;
+  rows?: number;
+  name?: string;
+  data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
+  /** Called when PTY stream closes (EOF or error). exitCode is PTY lifecycle status (0=EOF, 1=error), not subprocess exit code. */
+  exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
+  drain?: (terminal: Terminal) => void;
+}
+
+interface Terminal extends AsyncDisposable {
+  readonly stdin: number;
+  readonly stdout: number;
+  readonly closed: boolean;
+  write(data: string | BufferSource): number;
+  resize(cols: number, rows: number): void;
+  setRawMode(enabled: boolean): void;
+  ref(): void;
+  unref(): void;
+  close(): void;
 }
 
 interface ResourceUsage {

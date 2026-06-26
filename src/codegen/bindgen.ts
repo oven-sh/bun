@@ -1,10 +1,9 @@
 // The binding generator to rule them all.
-// Converts binding definition files (.bind.ts) into C++ and Zig code.
+// Converts binding definition files (.bind.ts) into C++ and native binding code.
 //
-// Generated bindings are available in `bun.generated.<basename>.*` in Zig,
+// Generated bindings are available as `bun.generated.<basename>.*` on the native side,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import assert from "node:assert";
-import fs from "node:fs";
 import * as path from "node:path";
 import {
   ArgStrategyChildItem,
@@ -60,8 +59,8 @@ function resolveVariantStrategies(vari: Variant, name: string) {
     const abiType = !isNullable && arg.type.canDirectlyMapToCAbi();
     if (abiType) {
       arg.loweringStrategy = {
-        // This does not work in release builds, possibly due to a Zig 0.13 bug
-        // regarding by-value extern structs in C functions.
+        // Passing by-value extern structs in C functions did not work
+        // reliably in release builds.
         // type: cAbiTypeInfo(abiType)[0] > 8 ? "c-abi-pointer" : "c-abi-value",
         // Always pass an argument by-pointer for now.
         type: abiType === "*anyopaque" || abiType === "*JSGlobalObject" ? "c-abi-value" : "c-abi-pointer",
@@ -142,6 +141,36 @@ function resolveComplexArgumentStrategy(
   }
 }
 
+function collectStringTemps(args: readonly { type: TypeImpl }[]): Map<number, string[]> {
+  const result = new Map<number, string[]>();
+  // Use the same JS argument indexing as the arg processing loop:
+  // skip virtual args entirely, increment for everything else.
+  let jsArgIdx = 0;
+  for (const arg of args) {
+    const type = arg.type;
+    if (type.isVirtualArgument()) continue;
+    if (type.isIgnoredUndefinedType()) {
+      jsArgIdx++;
+      continue;
+    }
+    if (type.isStringType()) {
+      result.set(jsArgIdx, [cpp.nextTemporaryName("wtfString")]);
+    } else if (type.kind === "dictionary") {
+      const temps: string[] = [];
+      for (const field of type.data as DictionaryField[]) {
+        if (field.type.isStringType()) {
+          temps.push(cpp.nextTemporaryName("wtfString"));
+        }
+      }
+      if (temps.length > 0) {
+        result.set(jsArgIdx, temps);
+      }
+    }
+    jsArgIdx++;
+  }
+  return result;
+}
+
 function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionName: string) {
   cpp.line(`auto& vm = JSC::getVM(global);`);
   cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
@@ -155,6 +184,16 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
   if (communicationStruct) {
     cpp.line(`${communicationStruct.name()} buf;`);
     communicationStruct.emitCpp(cppInternal, communicationStruct.name());
+  }
+
+  // Hoist all WTF::String temps to the dispatch scope so they outlive any
+  // BunString values that reference them. Bun::toString() does not ref the
+  // StringImpl, so the WTF::String must stay alive until the dispatch call.
+  const hoistedTemps = collectStringTemps(variant.args);
+  for (const temps of hoistedTemps.values()) {
+    for (const temp of temps) {
+      cpp.line(`WTF::String ${temp};`);
+    }
   }
 
   let i = 0;
@@ -201,6 +240,8 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
     /** If the final representation may include null */
     const isNullable = type.flags.optional && !("default" in type.flags);
 
+    const argTemps = hoistedTemps.get(i);
+
     if (isOptionalToUser) {
       if (needDeclare) {
         addHeaderForType(type);
@@ -215,7 +256,8 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         cpp.line(`if (!${jsValueRef}.${isUndefinedOrNull}()) {`);
       }
       cpp.indent();
-      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign");
+      const hoistedTemp = type.isStringType() ? argTemps?.[0] : undefined;
+      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign", hoistedTemp, argTemps);
       cpp.dedent();
       if ("default" in type.flags) {
         cpp.line(`} else {`);
@@ -229,7 +271,16 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
       }
       cpp.line(`}`);
     } else {
-      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, needDeclare ? "declare" : "assign");
+      const hoistedTemp = type.isStringType() ? argTemps?.[0] : undefined;
+      emitConvertValue(
+        storageLocation,
+        arg.type,
+        jsValueRef,
+        exceptionContext,
+        needDeclare ? "declare" : "assign",
+        hoistedTemp,
+        argTemps,
+      );
     }
 
     i += 1;
@@ -343,7 +394,7 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         case "USVString":
         case "ByteString":
           cpp.line(
-            `return JSC::JSValue::encode(WebCore::toJS<WebCore::IDL${variant.ret.kind}>(*global, out.toWTFString()));`,
+            `return JSC::JSValue::encode(WebCore::toJS<WebCore::IDL${variant.ret.kind}>(*global, out.transferToWTFString()));`,
           );
           break;
       }
@@ -424,6 +475,8 @@ function emitConvertValue(
   jsValueRef: string,
   exceptionContext: ExceptionContext,
   decl: "declare" | "assign",
+  hoistedTemp?: string,
+  dictStringTemps?: string[],
 ) {
   if (decl === "declare") {
     addHeaderForType(type);
@@ -473,8 +526,12 @@ function emitConvertValue(
       case "USVString":
       case "DOMString":
       case "ByteString": {
-        const temp = cpp.nextTemporaryName("wtfString");
-        cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef});`);
+        const temp = hoistedTemp ?? cpp.nextTemporaryName("wtfString");
+        if (hoistedTemp) {
+          cpp.line(`${temp} = WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef});`);
+        } else {
+          cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef});`);
+        }
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
 
         if (decl === "declare") {
@@ -484,8 +541,12 @@ function emitConvertValue(
         break;
       }
       case "UTF8String": {
-        const temp = cpp.nextTemporaryName("wtfString");
-        cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef});`);
+        const temp = hoistedTemp ?? cpp.nextTemporaryName("wtfString");
+        if (hoistedTemp) {
+          cpp.line(`${temp} = WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef});`);
+        } else {
+          cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef});`);
+        }
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
 
         if (decl === "declare") {
@@ -498,7 +559,13 @@ function emitConvertValue(
         if (decl === "declare") {
           cpp.line(`${type.cppName()} ${storageLocation};`);
         }
-        cpp.line(`auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef});`);
+        if (dictStringTemps && dictStringTemps.length > 0) {
+          cpp.line(
+            `auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef}, ${dictStringTemps.join(", ")});`,
+          );
+        } else {
+          cpp.line(`auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef});`);
+        }
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
         cpp.line(`if (!did_convert) return {};`);
         break;
@@ -582,10 +649,22 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
 
   addHeaderForType(type);
 
+  // Build WTF::String& params for string fields (caller owns the storage).
+  const stringFieldParams: string[] = [];
+  for (const field of fields) {
+    if (field.type.isStringType()) {
+      stringFieldParams.push(`WTF::String& ${field.key}_str`);
+    }
+  }
+
   cpp.line(`// Internal dictionary parse for ${type.name()}`);
-  cpp.line(
-    `bool convert${type.cppInternalName()}(${type.cppName()}* result, JSC::JSGlobalObject* global, JSC::JSValue value) {`,
-  );
+  const params = [
+    `${type.cppName()}* result`,
+    `JSC::JSGlobalObject* global`,
+    `JSC::JSValue value`,
+    ...stringFieldParams,
+  ];
+  cpp.line(`bool convert${type.cppInternalName()}(${params.join(", ")}) {`);
   cpp.indent();
 
   cpp.line(`auto& vm = JSC::getVM(global);`);
@@ -610,9 +689,12 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     );
     cpp.line(`    RETURN_IF_EXCEPTION(throwScope, false);`);
     cpp.line(`}`);
+    // For string fields, use the caller-owned WTF::String& ref so the
+    // string data outlives this function and the BunString in the result.
+    const hoistedTemp = fieldType.isStringType() ? `${key}_str` : undefined;
     cpp.line(`if (!propValue.isUndefined()) {`);
     cpp.indent();
-    emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, "assign");
+    emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, "assign", hoistedTemp);
     cpp.dedent();
     cpp.line(`} else {`);
     cpp.indent();
@@ -754,12 +836,13 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line();
   w.line(`template<> std::optional<${name}> parseEnumerationFromString<${name}>(const String& stringValue)`);
   w.line(`{`);
-  w.line(`    static constexpr std::pair<ComparableASCIILiteral, ${name}> mappings[] = {`);
+  w.line(
+    `    static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, ${name}>>({`,
+  );
   for (const value of type.data) {
     w.line(`        { ${str(value)}_s, ${name}::${pascal(value)} },`);
   }
-  w.line(`    };`);
-  w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);
+  w.line(`    }) };`);
   w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]`);
   w.line(`        return *enumerationValue;`);
   w.line(`    return std::nullopt;`);
@@ -1080,15 +1163,7 @@ const unsortedFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["nod
 // Sort for deterministic output
 for (const fileName of [...unsortedFiles].sort()) {
   const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));
-  const zigFilePath = path.join(src, zigFile);
   let file = files.get(zigFile);
-  if (!fs.existsSync(zigFilePath)) {
-    // It would be nice if this would generate the file with the correct boilerplate
-    const bindName = path.basename(fileName);
-    throw new Error(
-      `${bindName} is missing a corresponding Zig file at ${zigFile}. Please create it and make sure it matches signatures in ${bindName}.`,
-    );
-  }
   if (!file) {
     file = { functions: [], typedefs: [] };
     files.set(zigFile, file);
@@ -1200,7 +1275,7 @@ for (const type of typeHashToReachableType.values()) {
 for (const [filename, { functions, typedefs }] of files) {
   const namespaceVar = fileMap.get(filename)!;
   assert(namespaceVar, `namespaceVar not found for ${filename}, ${inspect(fileMap)}`);
-  zigInternal.line(`const import_${namespaceVar} = @import(${str(path.relative(src + "/bun.js", filename))});`);
+  zigInternal.line(`const import_${namespaceVar} = @import(${str("../../" + filename)});`);
 
   zig.line(`/// Generated for "src/${filename}"`);
   zig.line(`pub const ${namespaceVar} = struct {`);
@@ -1292,7 +1367,7 @@ for (const [filename, { functions, typedefs }] of files) {
     cpp.line(`}`);
     cpp.line();
 
-    // Generated Zig dispatch functions
+    // Generated dispatch functions
     variNum = 1;
     for (const vari of fn.variants) {
       const dispatchName = extDispatchVariant(namespaceVar, fn.name, variNum);
@@ -1455,7 +1530,7 @@ for (const [filename, { functions, typedefs }] of files) {
     const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
     zig.line(`pub fn ${wrapperName}(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {`);
     zig.line(
-      `    return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
+      `    return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, null);`,
     );
     zig.line(`}`);
   }
@@ -1504,7 +1579,6 @@ writeIfNotChanged(
   path.join(codegenRoot, "GeneratedBindings.cpp"),
   [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cppInternal.buffer + "\n" + cpp.buffer,
 );
-writeIfNotChanged(path.join(src, "bun.js/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
 
 // Headers
 for (const [filename, { functions, typedefs }] of files) {

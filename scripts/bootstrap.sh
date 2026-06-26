@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 20
+# Version: 37
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -9,7 +9,13 @@
 
 # If you need to make a change to this script, such as upgrading a dependency,
 # increment the version comment to indicate that a new image should be built.
-# Otherwise, the existing image will be retroactively updated.
+# Then, on a PR (image bakes are disabled on main):
+#   1. Put `[build images]` (or `[build linux images]`) in the commit subject
+#      to bake throwaway images and run CI against them.
+#   2. Once green, change the subject to `[publish images]` and push again to
+#      bake the real `-vN` image tag.
+#   3. Merge after the publish run finishes so main never waits on a bake.
+# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
 
 pid="$$"
 
@@ -192,7 +198,7 @@ download_file() {
 	file_tmp_dir="$(create_tmp_directory)"
 	file_tmp_path="$file_tmp_dir/$(basename "$file_url")"
 
-	fetch "$file_url" >"$file_tmp_path"
+	fetch "$file_url" > "$file_tmp_path"
 	grant_to_user "$file_tmp_path"
 
 	print "$file_tmp_path"
@@ -204,14 +210,14 @@ download_and_verify_file() {
 	hash="$2"
 
 	path=$(download_file "$file_url")
-	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c' >/dev/null 2>&1
+	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c -' >/dev/null 2>&1
 
 	print "$path"
 }
 
 append_to_profile() {
 	content="$1"
-	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
+	profiles=".profile .zprofile .bash_profile .bashrc .zshrc .cshrc"
 	for profile in $profiles; do
 		for profile_path in "$current_home/$profile" "$home/$profile"; do
 			if [ "$ci" = "1" ] || [ -f "$profile_path" ]; then
@@ -275,10 +281,10 @@ check_operating_system() {
 
 	os="$("$uname" -s)"
 	case "$os" in
-	Linux*)
+	Linux)
 		os="linux"
 		;;
-	Darwin*)
+	Darwin)
 		os="darwin"
 		;;
 	*)
@@ -478,6 +484,9 @@ check_user() {
 }
 
 check_ulimit() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
 	if ! [ "$ci" = "1" ]; then
 		return
 	fi
@@ -588,6 +597,9 @@ package_manager() {
 	brew)
 		execute_as_user brew "$@"
 		;;
+	pkg)
+		execute_sudo pkg "$@"
+		;;
 	*)
 		error "Unsupported package manager: $pm"
 		;;
@@ -645,6 +657,9 @@ install_packages() {
 			--no-progress \
 			"$@"
 		;;
+	pkg)
+		package_manager install "$@"
+		;;
 	*)
 		error "Unsupported package manager: $pm"
 		;;
@@ -688,12 +703,56 @@ install_common_software() {
 				apt-transport-https \
 				software-properties-common
 		fi
+		# https://packages.debian.org
+		# https://packages.ubuntu.com
 		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
 			libc6-dbg
 		;;
 	dnf)
+		# https://packages.fedoraproject.org
 		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
 			dnf-plugins-core
+		;;
+	apk)
+		# https://pkgs.alpinelinux.org/packages
+		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
+		;;
+	pkg)
+		# https://www.freshports.org
+		install_packages \
+			shells/bash \
+			ftp/curl \
+			sysutils/htop \
+			security/gnupg \
+			devel/git \
+			archivers/unzip \
+			ftp/wget \
+			editors/vim \
+			sysutils/neofetch \
 		;;
 	esac
 
@@ -718,25 +777,16 @@ install_common_software() {
 		execute "$crb" enable
 	fi
 
-	install_packages \
-		bash \
-		ca-certificates \
-		curl \
-		htop \
-		gnupg \
-		git \
-		unzip \
-		wget
-
 	install_rosetta
 	install_nodejs
 	install_bun
+	install_curl_h3
 	install_tailscale
 	install_buildkite
 }
 
 nodejs_version_exact() {
-	print "24.3.0"
+	print "26.3.0"
 }
 
 nodejs_version() {
@@ -775,7 +825,11 @@ install_nodejs() {
 
 	case "$abi" in
 	musl)
-		nodejs_mirror="https://bun-nodejs-release.s3.us-west-1.amazonaws.com"
+		# nodejs.org doesn't publish musl binaries; the unofficial-builds
+		# project (nodejs/unofficial-builds) ships both x64-musl and
+		# arm64-musl for current releases. (The old private S3 mirror at
+		# bun-nodejs-release predates arm64-musl being available there.)
+		nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
 		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl"
 		;;
 	*)
@@ -910,7 +964,55 @@ setup_node_gyp_cache() {
 }
 
 bun_version_exact() {
-	print "1.3.1"
+	print "1.3.13"
+}
+
+curl_h3_version() {
+	# https://github.com/stunnel/static-curl/releases
+	print "8.19.0"
+}
+
+# Installs a fully-static curl built with nghttp3/ngtcp2 as `curl-h3` so the
+# HTTP/3 server tests (test/js/bun/http/serve-http3.test.ts, fetch-h3.ts) can
+# run in CI. Kept separate from the system `curl` so nothing else changes
+# behavior. Tests discover it via $CURL_HTTP3, then `curl-h3` in PATH.
+install_curl_h3() {
+	case "$arch" in
+	x64) curl_h3_arch="x86_64" ;;
+	aarch64) curl_h3_arch="aarch64" ;;
+	*) return ;;
+	esac
+	case "$os" in
+	linux)
+		case "$abi" in
+		musl) curl_h3_asset="curl-linux-$curl_h3_arch-musl" ;;
+		*) curl_h3_asset="curl-linux-$curl_h3_arch-glibc" ;;
+		esac
+		;;
+	darwin)
+		case "$arch" in
+		aarch64) curl_h3_asset="curl-macos-arm64" ;;
+		*) curl_h3_asset="curl-macos-x86_64" ;;
+		esac
+		;;
+	*) return ;;
+	esac
+
+	case "$pm" in
+	apt) install_packages xz-utils ;;
+	apk | dnf | yum | zypper) install_packages xz ;;
+	esac
+
+	curl_h3_url="https://github.com/stunnel/static-curl/releases/download/$(curl_h3_version)/$curl_h3_asset-$(curl_h3_version).tar.xz"
+	curl_h3_tar="$(download_file "$curl_h3_url")"
+	curl_h3_dir="$(dirname "$curl_h3_tar")"
+	execute tar -xJf "$curl_h3_tar" -C "$curl_h3_dir" curl
+	execute mv "$curl_h3_dir/curl" "$curl_h3_dir/curl-h3"
+	move_to_bin "$curl_h3_dir/curl-h3"
+
+	curl_h3_bin="$(which curl-h3)"
+	append_to_profile "export CURL_HTTP3=$curl_h3_bin"
+	execute "$curl_h3_bin" --version | head -n1
 }
 
 install_bun() {
@@ -1018,6 +1120,11 @@ install_build_essentials() {
 			go \
 			xz
 		install_packages apache2-utils
+		# QEMU user-mode for baseline CPU verification in CI
+		case "$arch" in
+		x64)     install_packages qemu-x86_64 ;;
+		aarch64) install_packages qemu-aarch64 ;;
+		esac
 		;;
 	esac
 
@@ -1027,24 +1134,32 @@ install_build_essentials() {
 		;;
 	esac
 
-	install_packages \
-		make \
-		python3 \
-		libtool \
-		ruby \
-		perl
+	case "$os" in
+		linux)
+			install_packages \
+				make \
+				nasm \
+				python3 \
+				libtool \
+				ruby \
+				perl \
+			;;
+	esac
 
 	install_cmake
 	install_llvm
 	install_osxcross
 	install_gcc
-	install_sccache
 	install_rust
+	install_android_ndk
+	install_freebsd_sysroot
+	install_windows_sysroot
+	install_ccache
 	install_docker
 }
 
 llvm_version_exact() {
-	print "19.1.7"
+	print "21.1.8"
 }
 
 llvm_version() {
@@ -1054,6 +1169,14 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
+		# apt.llvm.org's GPG key uses SHA1, which Debian 13+ (sqv) rejects since 2026-02-01.
+		# Override the sequoia crypto policy to extend the SHA1 deadline.
+		# See: https://github.com/llvm/llvm-project/issues/153385
+		if [ -x /usr/bin/sqv ] && [ -f /usr/share/apt/default-sequoia.config ]; then
+			execute_sudo mkdir -p /etc/crypto-policies/back-ends
+			execute_sudo /usr/bin/sh -c "sed 's/sha1.second_preimage_resistance = 2026-02-01/sha1.second_preimage_resistance = 2028-02-01/' /usr/share/apt/default-sequoia.config > /etc/crypto-policies/back-ends/apt-sequoia.config"
+		fi
+
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
@@ -1076,8 +1199,7 @@ install_llvm() {
 }
 
 install_gcc() {
-	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]
-	then
+	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]; then
 		return
 	fi
 
@@ -1115,7 +1237,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="19"
+	llvm_v="21"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"
@@ -1149,52 +1271,39 @@ install_gcc() {
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
-install_sccache() {
-	# Alright, look, this function is cobbled together but it's only as cobbled
-	# together as this whole script is.
-	#
-	# For some reason, move_to_bin doesn't work here due to permissions so I'm
-	# avoiding that function. It's also wrong with permissions and so on.
-	#
-	# Unfortunately, we cannot use install_packages since many package managers
-	# don't compile `sccache` with S3 support.
-	local opts=$-
-	set -ef
-
-	local sccache_http
-	sccache_http="https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-$(uname -m)-unknown-linux-musl.tar.gz"
-
-	local file
-	file=$(download_file "$sccache_http")
-
-	local tmpdir
-	tmpdir=$(mktemp -d)
-
-	execute tar -xzf "$file" -C "$tmpdir"
-	execute_sudo install -m755 "$tmpdir/sccache-v0.12.0-$(uname -m)-unknown-linux-musl/sccache" "/usr/local/bin"
-
-	set +ef -"$opts"
+install_ccache() {
+	case "$pm" in
+	apt)
+		install_packages ccache
+		;;
+	brew)
+		install_packages ccache
+		;;
+	apk)
+		install_packages ccache
+		;;
+	dnf|yum)
+		install_packages ccache
+		;;
+	zypper)
+		install_packages ccache
+		;;
+	esac
 }
 
 install_rust() {
-	case "$pm" in
-	apk)
-		install_packages \
-			rust \
-			cargo
-		;;
-	*)
-		rust_home="/opt/rust"
-		create_directory "$rust_home"
-		append_to_profile "export RUSTUP_HOME=$rust_home"
-		append_to_profile "export CARGO_HOME=$rust_home"
+	rust_home="/opt/rust"
+	create_directory "$rust_home"
+	append_to_profile "export RUSTUP_HOME=$rust_home"
+	append_to_profile "export CARGO_HOME=$rust_home"
 
-		sh="$(require sh)"
-		rustup_script=$(download_file "https://sh.rustup.rs")
-		execute "$sh" -lc "$rustup_script -y --no-modify-path"
-		append_to_path "$rust_home/bin"
-		;;
-	esac
+	sh="$(require sh)"
+	rustup_script=$(download_file "https://sh.rustup.rs")
+	execute "$sh" -lc "$rustup_script -y --no-modify-path"
+	append_to_path "$rust_home/bin"
+
+	# Ensure all rustup files are accessible (for CI builds where different users run builds)
+	grant_to_user "$rust_home"
 
 	case "$osxcross" in
 	1)
@@ -1203,6 +1312,177 @@ install_rust() {
 		execute_as_user "$rustup" target add x86_64-apple-darwin
 		;;
 	esac
+
+	case "$os" in
+	linux)
+		rustup="$rust_home/bin/rustup"
+		if ! [ -x "$rustup" ]; then
+			error "rustup not found at $rustup after install"
+		fi
+		execute_as_user "$rustup" target add aarch64-linux-android
+		execute_as_user "$rustup" target add x86_64-linux-android
+		# x86_64-unknown-freebsd is Tier 2 (prebuilt std). aarch64 is Tier 3
+		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that.
+		execute_as_user "$rustup" target add x86_64-unknown-freebsd
+		# macOS cross-compile lanes build libbun_rust.a for darwin on the
+		# shared Linux rust box (Tier 2, prebuilt std). The ninja rule
+		# self-heals with `rustup target add` if these are missing, but
+		# preinstalling keeps that step off the network.
+		execute_as_user "$rustup" target add aarch64-apple-darwin
+		execute_as_user "$rustup" target add x86_64-apple-darwin
+		# Windows cross-compile targets (--os=windows from a linux host).
+		execute_as_user "$rustup" target add x86_64-pc-windows-msvc
+		execute_as_user "$rustup" target add aarch64-pc-windows-msvc
+		# rust-src for -Zbuild-std (Tier 3 targets without prebuilt std).
+		execute_as_user "$rustup" component add rust-src
+		;;
+	esac
+}
+
+android_ndk_version() {
+	print "r27c"
+}
+
+install_android_ndk() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	ndk_version="$(android_ndk_version)"
+	ndk_home="/opt/android-ndk"
+	if ! [ -d "$ndk_home" ]; then
+		ndk_zip=$(download_file "https://dl.google.com/android/repository/android-ndk-${ndk_version}-linux.zip")
+		unzip="$(require unzip)"
+		execute_sudo "$unzip" -q "$ndk_zip" -d /opt
+		execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
+		# Trim ~1.1GB unused (NDK clang/lld, lldb, non-android runtimes).
+		ndk_prebuilt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64"
+		execute_sudo rm -rf "$ndk_prebuilt/bin" "$ndk_prebuilt/python3" "$ndk_prebuilt/lib/liblldb.so" \
+			"$ndk_home/simpleperf" "$ndk_home/shader-tools" "$ndk_home/sources"
+		append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
+	fi
+
+	# Symlink NDK compiler-rt builtins + libunwind into host clang's resource
+	# dir. clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
+	# with no -L fallback, so the file must exist there for any android link.
+	# Done here (as root) so the build user doesn't need write access to /usr.
+	clang="$(which clang-$(llvm_version) || which clang)"
+	if [ -x "$clang" ]; then
+		res_dir="$("$clang" -print-resource-dir)"
+		ndk_clang_ver="$(ls "$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/" | head -1)"
+		ndk_rt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$ndk_clang_ver/lib/linux"
+		execute_sudo mkdir -p "$res_dir/lib/linux"
+		for ndk_arch in aarch64 x86_64; do
+			# Old-style flat layout (apt.llvm.org clang) AND new-style per-triple.
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$res_dir/lib/linux/"
+			execute_sudo mkdir -p "$res_dir/lib/linux/${ndk_arch}"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$res_dir/lib/linux/${ndk_arch}/"
+			triple_dir="$res_dir/lib/${ndk_arch}-unknown-linux-android28"
+			execute_sudo mkdir -p "$triple_dir"
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$triple_dir/libclang_rt.builtins.a"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$triple_dir/libunwind.a"
+		done
+	fi
+}
+
+freebsd_version() {
+	print "14.3"
+}
+
+install_freebsd_sysroot() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	freebsd_ver="$(freebsd_version)"
+	for fbsd_arch in amd64 arm64; do
+		case "$fbsd_arch" in
+		amd64) sysroot="/opt/freebsd-sysroot" ;;
+		arm64) sysroot="/opt/freebsd-sysroot-arm64" ;;
+		esac
+		# Same sentinel detectFreebsdSysroot() uses, plus a /lib file so a
+		# half-extracted (interrupted) sysroot isn't treated as complete.
+		if [ -f "$sysroot/usr/include/sys/param.h" ] && [ -f "$sysroot/lib/libc.so.7" ]; then
+			continue
+		fi
+		execute_sudo rm -rf "$sysroot"
+		execute_sudo mkdir -p "$sysroot"
+		base_txz=$(download_file "https://download.freebsd.org/releases/${fbsd_arch}/${freebsd_ver}-RELEASE/base.txz")
+		execute_sudo tar -C "$sysroot" -xJf "$base_txz" ./usr/include ./usr/lib ./lib
+	done
+	# No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
+	# arch-appropriate /opt/freebsd-sysroot{,-arm64} by well-known path.
+}
+
+xwin_version() {
+	# Keep in sync with XWIN_VERSION in scripts/build/winsysroot.ts and
+	# .buildkite/Dockerfile.
+	print "0.9.0"
+}
+
+install_windows_sysroot() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	# MSVC CRT/STL + Windows SDK splat for --os=windows cross-compiles,
+	# laid out like a Visual Studio install so clang-cl/lld-link's
+	# /winsysroot flag works (see scripts/build/config.ts `winsysroot`).
+	# Fetched with xwin, which downloads the components from Microsoft's CDN;
+	# --accept-license accepts the Microsoft Software License Terms for the
+	# Build Tools/SDK on behalf of this machine (same terms the Windows CI
+	# images accept when installing VS Build Tools). Machines that skip this
+	# step still work: configure fetches the same splat at build time when
+	# none is present (scripts/build/winsysroot.ts).
+	sysroot="/opt/winsysroot"
+	# Same sentinel scripts/build/winsysroot.ts isCompleteWindowsSysroot()
+	# uses: the SDK lib tree plus a kernel32 import lib plus the ATL headers
+	# (--include-atl), so a half-splatted or pre-ATL sysroot isn't treated as
+	# complete. xwin writes the SDK dirs/files lowercase; a copied VS install
+	# is title-case — accept both.
+	if ls "$sysroot/Windows Kits/10/"[Ll]ib/*/um/x64/kernel32.[Ll]ib >/dev/null 2>&1 &&
+		ls "$sysroot"/VC/Tools/MSVC/*/include/atlstr.h >/dev/null 2>&1; then
+		return
+	fi
+
+	xwin_ver="$(xwin_version)"
+	case "$arch" in
+	aarch64) xwin_triple="aarch64-unknown-linux-musl" ;;
+	*) xwin_triple="x86_64-unknown-linux-musl" ;;
+	esac
+	xwin_tar=$(download_file "https://github.com/Jake-Shadle/xwin/releases/download/${xwin_ver}/xwin-${xwin_ver}-${xwin_triple}.tar.gz")
+	xwin_dir="$(dirname "$xwin_tar")/xwin-extract"
+	execute mkdir -p "$xwin_dir"
+	execute tar -xzf "$xwin_tar" -C "$xwin_dir" --strip-components=1
+
+	execute_sudo rm -rf "$sysroot"
+	execute_sudo mkdir -p "$sysroot"
+	# The cache must live on the same filesystem as the output: splat moves
+	# unpacked files with rename(2), which fails with EXDEV (cross-device
+	# link) when the download dir is on tmpfs and /opt is not.
+	xwin_cache="$sysroot.cache"
+	execute_sudo rm -rf "$xwin_cache"
+	execute_sudo mkdir -p "$xwin_cache"
+	# Both target arches in one splat; --include-debug-libs so /MTd (debug
+	# CRT) links work; --include-atl for <atlstr.h> (rescle.cpp);
+	# winsysroot-style + MS arch notation so clang-cl and lld-link resolve it
+	# with a single /winsysroot flag; symlinks stay ON (default) to fix
+	# include/lib casing on a case-sensitive filesystem.
+	# stdout is dropped: xwin draws progress bars there even without a TTY,
+	# which floods the image-build log. Errors stay on stderr.
+	execute_sudo "$xwin_dir/xwin" --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl --cache-dir "$xwin_cache" \
+		splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
+		--output "$sysroot" >/dev/null
+	# clang-cl/lld-link compose SDK paths as "Include"/"Lib" (title case);
+	# the winsysroot-style splat writes lowercase — alias both spellings.
+	execute_sudo ln -s include "$sysroot/Windows Kits/10/Include"
+	execute_sudo ln -s lib "$sysroot/Windows Kits/10/Lib"
+	execute_sudo rm -rf "$xwin_dir" "$xwin_cache"
+	# No WINDOWS_SYSROOT export — detectWindowsSysroot() picks up
+	# /opt/winsysroot by well-known path.
 }
 
 install_docker() {
@@ -1211,6 +1491,11 @@ install_docker() {
 		if ! [ -d "/Applications/Docker.app" ]; then
 			package_manager install docker --cask
 		fi
+		;;
+	pkg)
+		install_packages \
+			sysutils/docker \
+			sysutils/docker-compose \
 		;;
 	*)
 		case "$distro-$release" in
@@ -1302,14 +1587,21 @@ install_tailscale() {
 		execute "$sh" "$tailscale_script"
 		;;
 	darwin)
-		install_packages go
-		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
-		append_to_path "$home/go/bin"
+		# Homebrew-managed tailscale: a single upgrade path (`brew upgrade`),
+		# proper version reporting (the go-install build shows ERR-BuildInfo),
+		# and `install-system-daemon` writes the launchd plist for us.
+		install_packages tailscale
+		brew_prefix="$(execute_as_user brew --prefix)"
+		execute_sudo "$brew_prefix/bin/tailscaled" install-system-daemon
 		;;
 	esac
 }
 
 install_fuse_python() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+
 	# only linux needs this
 	case "$pm" in
 	apk)
@@ -1339,7 +1631,7 @@ install_fuse_python() {
 }
 
 create_buildkite_user() {
-	if ! [ "$ci" = "1" ] || ! [ "$os" = "linux" ]; then
+	if ! [ "$ci" = "1" ]; then
 		return
 	fi
 
@@ -1393,9 +1685,7 @@ create_buildkite_user() {
 	done
 
 	# The following is necessary to configure buildkite to use a stable
-	# checkout directory. sccache hashes absolute paths into its cache keys,
-	# so if buildkite uses a different checkout path each time (which it does
-	# by default), sccache will be useless.
+	# checkout directory for ccache to be effective.
 	local opts=$-
 	set -ef
 
@@ -1421,7 +1711,7 @@ install_buildkite() {
 		return
 	fi
 
-	buildkite_version="3.87.0"
+	buildkite_version="3.114.0"
 	case "$arch" in
 	aarch64)
 		buildkite_arch="arm64"
@@ -1494,6 +1784,17 @@ install_chromium() {
 		else
 			install_packages libasound2
 		fi
+
+		# Install Chrome itself on x64 (no arm64 build exists): with a system
+		# browser present, puppeteer-based tests skip their per-run ~300MB
+		# Chrome for Testing download entirely (see
+		# test/harness.ts getPuppeteerInstallEnv).
+		if [ "$arch" = "x64" ]; then
+			chrome_deb=$(download_file "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb")
+			# Best-effort: execute_sudo aborts the whole script on failure, so the
+			# fallback chain must run inside a single sudo'd shell.
+			execute_sudo sh -c "apt-get install -y '$chrome_deb' || dpkg -i '$chrome_deb' || true"
+		fi
 		;;
 	dnf | yum)
 		install_packages \
@@ -1518,6 +1819,10 @@ install_chromium() {
 			xorg-x11-fonts-Type1 \
 			xorg-x11-utils
 		;;
+	pkg)
+		install_packages \
+			www/chromium \
+		;;
 	esac
 
 	case "$distro" in
@@ -1529,28 +1834,35 @@ install_chromium() {
 }
 
 install_age() {
-	# we only use this to encrypt core dumps, which we only have on Linux
+	age_version="1.2.1"
 	case "$os" in
 	linux)
-		age_tarball=""
 		case "$arch" in
 		x64)
-			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz 7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50)"
+			age_arch="amd64"
+			age_hash="7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50"
 			;;
 		aarch64)
-			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-arm64.tar.gz 57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f)"
+			age_arch="arm64"
+			age_hash="57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f"
+			;;
+		*)
+			error "Unsupported platform: $os-$arch"
 			;;
 		esac
-
-		age_extract_dir="$(create_tmp_directory)"
-		execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
-		move_to_bin "$age_extract_dir/age/age"
+		;;
+	*)
+		error "Unsupported platform: $os-$arch"
 		;;
 	esac
+
+	age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v$age_version/age-v$age_version-$os-$age_arch.tar.gz "$age_hash")"
+	age_extract_dir="$(create_tmp_directory)"
+	execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
+	move_to_bin "$age_extract_dir/age/age"
 }
 
 configure_core_dumps() {
-	# we only have core dumps on Linux
 	case "$os" in
 	linux)
 		# set up a directory that the test runner will look in after running tests
@@ -1600,11 +1912,85 @@ ensure_no_tmpfs() {
 	if ! [ "$os" = "linux" ]; then
 		return
 	fi
-	if ! [ "$distro" = "ubuntu" ]; then
+	if ! ( [ "$distro" = "ubuntu" ] || [ "$distro" = "debian" ] ); then
 		return
 	fi
 
 	execute_sudo systemctl mask tmp.mount
+}
+
+prefetch_build_deps() {
+	# CI-only: bake a read-only download cache for scripts/build/download.ts
+	# (BUN_BUILD_PREFETCH_DIR). Everything is content-addressed by URL/identity,
+	# so a dep version bump in scripts/build/deps/ just misses the cache for that
+	# one dep — no image rebuild needed.
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+
+	prefetch_dir="/opt/bun-prefetch"
+	bun_path="$(require bun)"
+	git_path="$(require git)"
+
+	# Only bootstrap.sh is uploaded to the bake VM, so the repo (and the
+	# prefetch script + scripts/build/deps/*.ts version pins) has to be cloned.
+	# BUN_BOOTSTRAP_REPO_REF lets the image-build orchestrator pin to the
+	# commit it was triggered from; default to main.
+	repo_ref="${BUN_BOOTSTRAP_REPO_REF:-main}"
+	clone_dir="$(create_tmp_directory)"
+	# Best-effort: a fork-PR branch that doesn't exist on the upstream remote,
+	# a deleted branch, or a transient network blip shouldn't abort the whole
+	# image bake — the build just falls through to the network with no warm
+	# cache. Same for a ref that predates the prefetch script.
+	if ! "$git_path" clone --depth=1 --branch "$repo_ref" \
+		https://github.com/oven-sh/bun.git "$clone_dir/bun"; then
+		print "warning: clone of $repo_ref failed; skipping warm cache"
+		execute_sudo rm -rf "$clone_dir"
+		return
+	fi
+	if ! [ -f "$clone_dir/bun/scripts/prefetch-deps.ts" ]; then
+		print "prefetch-deps.ts not present at $repo_ref; skipping warm cache"
+		execute_sudo rm -rf "$clone_dir"
+		return
+	fi
+
+	create_directory "$prefetch_dir"
+	# resolveConfig() walks up from cwd to find package.json — run from inside
+	# the clone. Direct invocation (not `execute`) so a non-zero is observable
+	# here rather than swallowed by the subshell — the parent shell has no
+	# `set -e`, and `error()` inside a subshell can't kill the parent.
+	if ! ( cd "$clone_dir/bun" && "$bun_path" scripts/prefetch-deps.ts "$prefetch_dir" ); then
+		print "warning: prefetch-deps.ts failed; baking without warm cache"
+		execute_sudo rm -rf "$clone_dir" "$prefetch_dir"
+		return
+	fi
+
+	# Pre-pull test docker images (postgres, mysql, redis, minio, …) so tests
+	# don't fetch them at runtime. install_docker() only enables the daemon for
+	# next boot on most distros — start it now. Runs as root: install_docker()
+	# added $user to the docker group, but group membership doesn't apply to
+	# the current shell, so a non-root `docker compose` here would get
+	# permission-denied on the socket. Best-effort: a docker hiccup shouldn't
+	# fail the bake.
+	if [ -f "$clone_dir/bun/test/docker/prepare-ci.ts" ] && command -v docker >/dev/null; then
+		systemctl_path="$(which systemctl)"
+		if [ -n "$systemctl_path" ]; then
+			execute_sudo "$systemctl_path" start docker || true
+		fi
+		( cd "$clone_dir/bun" && execute_sudo "$bun_path" test/docker/prepare-ci.ts ) || \
+			print "warning: prepare-ci.ts failed; test docker images not pre-pulled"
+	fi
+
+	execute_sudo rm -rf "$clone_dir"
+
+	# Read-only: download.ts only ever copies FROM here, and a writable baked
+	# input is something a misbehaving job could corrupt for later jobs on the
+	# same runner. download.ts also falls back to this path when the env var
+	# isn't set, so the exports below are belt-and-braces for interactive
+	# debugging rather than the load-bearing mechanism.
+	execute_sudo chmod -R a-w "$prefetch_dir"
+	append_file /etc/environment "BUN_BUILD_PREFETCH_DIR=$prefetch_dir"
+	append_to_profile "export BUN_BUILD_PREFETCH_DIR=\"$prefetch_dir\""
 }
 
 main() {
@@ -1620,6 +2006,7 @@ main() {
 	install_chromium
 	install_fuse_python
 	install_age
+	prefetch_build_deps
 	if [ "${BUN_NO_CORE_DUMP:-0}" != "1" ]; then
 		configure_core_dumps
 	fi

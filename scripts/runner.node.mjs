@@ -40,6 +40,7 @@ import {
   getArch,
   getBranch,
   getBuildLabel,
+  getBuildMetadata,
   getBuildUrl,
   getCommit,
   getDistro,
@@ -77,9 +78,10 @@ const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
-  if (testPath.includes("test-dns")) {
-    return 90_000;
-  }
+  if (testPath.includes("test-dns")) return 60_000;
+  if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
+  if (testPath.includes("-docker-")) return 60_000;
+  if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -167,6 +169,11 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: false,
     },
+    /** Write per-file results as JSON to this path (for test-fix workflows). */
+    ["results-json"]: {
+      type: "string",
+      default: undefined,
+    },
   },
 });
 
@@ -191,29 +198,53 @@ let allFiles = [];
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
-  try {
-    console.log("on buildkite: collecting new files from PR");
-    const per_page = 50;
-    const { BUILDKITE_PULL_REQUEST } = process.env;
-    for (let i = 1; i <= 10; i++) {
-      const res = await fetch(
-        `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-        { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
-      );
-      const doc = await res.json();
-      console.log(`-> page ${i}, found ${doc.length} items`);
-      if (doc.length === 0) break;
-      for (const { filename, status } of doc) {
-        prFileCount += 1;
-        allFiles.push(filename);
-        if (status !== "added") continue;
-        newFiles.push(filename);
-      }
-      if (doc.length < per_page) break;
+  // The pipeline-upload step (.buildkite/ci.mjs) already fetched the PR file
+  // list once and stored it as build meta-data. Read it from there so each of
+  // the ~150 test shards doesn't repeat the GitHub API call and burn through
+  // the token's hourly rate limit.
+  const cachedAll = await getBuildMetadata("pr-all-files");
+  const cachedNew = await getBuildMetadata("pr-new-files");
+  if (cachedAll) {
+    try {
+      allFiles = JSON.parse(cachedAll);
+      newFiles = cachedNew ? JSON.parse(cachedNew) : [];
+      prFileCount = allFiles.length;
+      console.log(`- PR file list from build meta-data: ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error("Failed to parse pr-*-files meta-data:", e);
+      allFiles = [];
+      newFiles = [];
     }
-    console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
-  } catch (e) {
-    console.error(e);
+  }
+  if (allFiles.length === 0) {
+    try {
+      console.log("on buildkite: collecting new files from PR");
+      const per_page = 50;
+      const { BUILDKITE_PULL_REQUEST } = process.env;
+      for (let i = 1; i <= 10; i++) {
+        const res = await fetch(
+          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+        );
+        const doc = await res.json();
+        if (!res.ok || !Array.isArray(doc)) {
+          console.error(`-> page ${i}: GitHub API ${res.status} ${res.statusText}:`, JSON.stringify(doc));
+          throw new Error(`GitHub API returned ${res.status}; cannot determine changed files`);
+        }
+        console.log(`-> page ${i}, found ${doc.length} items`);
+        if (doc.length === 0) break;
+        for (const { filename, status } of doc) {
+          prFileCount += 1;
+          allFiles.push(filename);
+          if (status !== "added") continue;
+          newFiles.push(filename);
+        }
+        if (doc.length < per_page) break;
+      }
+      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error(e);
+    }
   }
 }
 
@@ -329,7 +360,10 @@ const skipsForLeaksan = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+  // Skip-list entries use `/`; on Windows callers pass `\`-separated paths
+  // (path.relative) which never match. Normalize before lookup.
+  const t = test.replaceAll(sep, "/");
+  return !(skipsForExceptionValidation.includes(t) || skipsForExceptionValidation.includes("test/" + t));
 };
 
 /**
@@ -386,9 +420,62 @@ function getTestModifiers(testPath) {
 }
 
 /**
+ * Smoke-checks that this agent actually matches the platform the CI step was
+ * generated for. The step exports EXPECTED_PLATFORM_* (see getTestBunStep in
+ * .buildkite/ci.mjs); we compare against the same utils the agent uses to
+ * emit its tags. Catches misrouted jobs (e.g. a macOS 26 step landing on a
+ * macOS 15 box) before any test runs, instead of producing silently-wrong
+ * results for a whole shard.
+ */
+function assertExpectedPlatform() {
+  const expectedOs = process.env["EXPECTED_PLATFORM_OS"];
+  if (!expectedOs) {
+    return; // step does not declare expectations (e.g. local runs)
+  }
+
+  const checks = [
+    ["os", expectedOs, getOs()],
+    ["arch", process.env["EXPECTED_PLATFORM_ARCH"], getArch()],
+    ["abi", process.env["EXPECTED_PLATFORM_ABI"], getAbi()],
+    ["distro", process.env["EXPECTED_PLATFORM_DISTRO"], getDistro()],
+  ];
+
+  const expectedRelease = process.env["EXPECTED_PLATFORM_RELEASE"];
+  if (expectedRelease) {
+    // Major-version prefix match: "26" accepts "26.4", "25.04" accepts "25.04.1".
+    const actualRelease = getDistroVersion();
+    const ok = actualRelease === expectedRelease || `${actualRelease}.`.startsWith(`${expectedRelease}.`);
+    checks.push(["release", expectedRelease, ok ? expectedRelease : actualRelease]);
+  }
+
+  // Fail closed: a declared expectation with no detectable actual value is a
+  // mismatch (e.g. a musl step on a box where the ABI probe fails).
+  const mismatches = checks.filter(([, expected, actual]) => expected && expected !== actual);
+  if (mismatches.length) {
+    const details = mismatches
+      .map(([k, e, a]) => `${k}: step expects "${e}", agent is ${a ? `"${a}"` : "(undetected)"}`)
+      .join("\n  ");
+    console.error(`Platform smoke check FAILED, this job landed on the wrong agent:\n  ${details}`);
+    process.exit(1);
+  }
+
+  !isQuiet &&
+    console.log(
+      "Platform check:",
+      checks
+        .filter(([, e]) => e)
+        .map(([k, e]) => `${k}=${e}`)
+        .join(" "),
+      "(ok)",
+    );
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
+  assertExpectedPlatform();
+
   let execPath;
   if (options["step"]) {
     execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
@@ -406,6 +493,65 @@ async function runTests() {
 
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
+
+  // Start the docker-service coordinator (test/docker/coordinator.ts). It
+  // owns every `docker compose` invocation for this shard — `compose up` is
+  // not concurrency-safe, so exactly one process runs it — and prestarts the
+  // services this shard's tests need (mysql/postgres/redis/minio/…) in the
+  // background while getVendorTests below installs vendor deps. Tests reach
+  // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
+  // spawned test process); ensure() waits for the coordinator's ready message
+  // instead of shelling out to compose itself. Without the env var, ensure()
+  // falls back to running compose directly. Linux-only — macOS / Windows CI
+  // don't run docker tests. Lifetime is tied to this process via the stdin
+  // pipe.
+  if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
+    const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);
+    const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {
+      stdio: ["pipe", "pipe", "inherit"],
+      env: { ...process.env, BUN_DOCKER_COORDINATOR_SOCKET: coordinatorSocket },
+    });
+    coordinator.on("error", err => console.warn("docker coordinator spawn failed:", err.message));
+    process.once("exit", () => coordinator.kill());
+
+    // Don't point tests at the socket until it's actually listening; if the
+    // coordinator never gets there, tests use the direct-compose fallback.
+    const ready = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(false), 15_000);
+      timer.unref?.();
+      let buffered = "";
+      coordinator.stdout.on("data", chunk => {
+        process.stdout.write(chunk);
+        if (buffered !== null) {
+          buffered += chunk;
+          if (buffered.includes("COORDINATOR_READY")) {
+            buffered = null;
+            clearTimeout(timer);
+            resolve(true);
+          }
+        }
+      });
+      coordinator.once("exit", () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+      coordinator.once("error", () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+    });
+    if (ready) {
+      process.env.BUN_DOCKER_COORDINATOR = coordinatorSocket;
+    } else {
+      console.warn("docker coordinator did not become ready; tests will run compose directly");
+      coordinator.kill();
+    }
+    // Never keep the runner alive on the coordinator's account; it exits on
+    // stdin EOF when the runner is gone.
+    coordinator.unref();
+    coordinator.stdin?.unref?.();
+    coordinator.stdout?.unref?.();
+  }
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
@@ -494,7 +640,7 @@ async function runTests() {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const style = flaky ? "warning" : "error";
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
@@ -602,7 +748,7 @@ async function runTests() {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
-              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+              env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -874,6 +1020,23 @@ async function runTests() {
     }
   }
 
+  // Dump per-file results as JSON for post-processing (test-fix workflows
+  // shard from this). Opt-in via --results-json so CI output is unchanged.
+  if (cliOptions["results-json"]) {
+    const all = [...okResults, ...flakyResults, ...failedResults].map(r => ({
+      testPath: r.testPath,
+      ok: r.ok,
+      status: r.status,
+      error: r.error,
+      exitCode: r.exitCode,
+      signalCode: r.signalCode,
+      duration: r.duration,
+      stdoutPreview: r.stdoutPreview?.slice?.(-4000),
+    }));
+    writeFileSync(cliOptions["results-json"], JSON.stringify(all, null, 2));
+    !isQuiet && console.log(`Wrote ${all.length} results to ${cliOptions["results-json"]}`);
+  }
+
   // Exclude flaky tests from the final results
   return [...okResults, ...failedResults];
 }
@@ -1032,6 +1195,23 @@ async function spawnSafe(options) {
       error = "spawn error";
       buffer = stack || message;
     }
+  } else if ((error = buffer.match(/ERROR: Unchecked JS exception:/g))) {
+    // Format from JSC's VM::verifyExceptionCheckNeedIsSatisfied / ExceptionEventLocation::printInternal:
+    //   "{functionName} @ {__FILE__}:{line}"
+    // __FILE__ is relative to the cmake build dir (e.g. ../../src/...) — strip leading ../ for a repo-relative path.
+    // JSC crashes immediately after printing, so >1 block means multiple subprocesses crashed.
+    const count = error.length;
+    const repoRel = p => p?.replace(/^(?:\.\.?[\\/])+/, "");
+    const thrown = /This scope can throw a JS exception: (\S+) @ (\S+)/.exec(buffer);
+    const unchecked = /But the exception was unchecked as of this scope: (\S+) @ (\S+)/.exec(buffer);
+    error = "unchecked exception";
+    if (unchecked) {
+      error += ` at ${unchecked[1]} @ ${repoRel(unchecked[2])}`;
+      if (thrown) error += ` (thrown from ${repoRel(thrown[2])})`;
+    } else if (thrown) {
+      error += ` thrown from ${thrown[1]} @ ${repoRel(thrown[2])}`;
+    }
+    if (count > 1) error += ` +${count - 1} more`;
   } else if (
     (error = /thread \d+ panic: (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
     (error = /panic\(.*\): (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
@@ -1129,6 +1309,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    BUN_TMPDIR: tmpdirPath,
     USER: username,
     HOME: homedir,
     SHELL: shellPath,
@@ -1309,12 +1490,16 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
-  const perTestTimeout = Math.ceil(timeout / 2);
+  // ASAN builds run 5-10x slower (instrumentation + the agent only exposes
+  // 2 of its 8 vCPUs); without a wider per-test timeout, install/git tests
+  // that spawn many subprocesses time out on otherwise-healthy runs.
+  const isAsan = basename(execPath).includes("asan");
+  const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
   const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = opts["args"] ?? [];
 
-  const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
+  const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`, "--reporter=dots"];
 
   // This will be set if a JUnit file is generated
   let junitFilePath = null;
@@ -1348,13 +1533,25 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore
-    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+    env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+  }
+  if (basename(execPath).includes("asan")) {
+    // ASAN test processes are slow and memory-heavy; if the bun test runner is
+    // SIGKILLed (timeout, OOM) its spawned subprocesses keep running and pile
+    // up, eventually OOM-killing the agent. --no-orphans makes every spawned
+    // bun exit when its parent dies AND SIGKILL its own descendants on exit.
+    env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts["cwd"],
-    timeout: isReallyTest ? timeout : 30_000,
+    // release-asan with debug-assertions on runs every spawned subprocess
+    // slower; give each file more headroom so tests with heavy beforeAll
+    // setup (napi node-gyp compiles) or many subprocess spawns don't hit
+    // the file wall before any individual test times out. Kept below the
+    // per-test multiplier so the overall shard stays inside the job timeout.
+    timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
     stdout: options.stdout,
     stderr: options.stderr,
@@ -1387,7 +1584,11 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
+  if (
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
+      testPath,
+    )
+  ) {
     return integrationTimeout;
   }
   return testTimeout;
@@ -1583,6 +1784,9 @@ function isJavaScriptTest(path) {
 function isNodeTest(path) {
   // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
+    return false;
+  }
+  if (!isJavaScript(path)) {
     return false;
   }
   const unixPath = path.replaceAll(sep, "/");
@@ -1969,11 +2173,17 @@ async function getExecPathFromBuildKite(target, buildId) {
       args.push("--build", buildId);
     }
 
-    await spawnSafe({
+    const { error } = await spawnSafe({
       command: "buildkite-agent",
       args,
-      timeout: 60000,
+      timeout: 120000,
     });
+    if (error === "timeout") {
+      throw new Error(
+        `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
+          `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
+      );
+    }
 
     zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
       .filter(filename => /^bun.*\.zip$/i.test(filename))
@@ -2308,7 +2518,9 @@ function isAlwaysFailure(error) {
   return (
     error.includes("segmentation fault") ||
     error.includes("illegal instruction") ||
+    error.includes("unchecked exception") ||
     error.includes("sigtrap") ||
+    error.includes("sigabrt") ||
     error.includes("sigkill") ||
     error.includes("error: addresssanitizer") ||
     error.includes("internal assertion failure") ||
@@ -2639,7 +2851,11 @@ export async function main() {
 
   let doRunTests = true;
   if (isCI) {
-    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+    // allFiles can be empty if the GitHub API call failed (bad token, rate
+    // limit, non-PR build). [].every() is vacuously true, which would skip the
+    // entire suite and exit 0 — so require at least one file before treating
+    // the change set as docs-only.
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       doRunTests = false;
     }
   }

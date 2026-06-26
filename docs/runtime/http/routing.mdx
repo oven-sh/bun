@@ -5,7 +5,7 @@ description: Define routes in `Bun.serve` using static paths, parameters, and wi
 
 You can add routes to `Bun.serve()` by using the `routes` property (for static paths, parameters, and wildcards) or by handling unmatched requests with the [`fetch`](#fetch) method.
 
-`Bun.serve()`'s router builds on top uWebSocket's [tree-based approach](https://github.com/oven-sh/bun/blob/0d1a00fa0f7830f8ecd99c027fce8096c9d459b6/packages/bun-uws/src/HttpRouter.h#L57-L64) to add [SIMD-accelerated route parameter decoding](https://github.com/oven-sh/bun/blob/main/src/bun.js/bindings/decodeURIComponentSIMD.cpp#L21-L271) and [JavaScriptCore structure caching](https://github.com/oven-sh/bun/blob/main/src/bun.js/bindings/ServerRouteList.cpp#L100-L101) to push the performance limits of what modern hardware allows.
+`Bun.serve()`'s router builds on top uWebSocket's [tree-based approach](https://github.com/oven-sh/bun/blob/0d1a00fa0f7830f8ecd99c027fce8096c9d459b6/packages/bun-uws/src/HttpRouter.h#L57-L64) to add [SIMD-accelerated route parameter decoding](https://github.com/oven-sh/bun/blob/main/src/jsc/bindings/decodeURIComponentSIMD.cpp#L21-L271) and [JavaScriptCore structure caching](https://github.com/oven-sh/bun/blob/main/src/jsc/bindings/ServerRouteList.cpp#L100-L101) to push the performance limits of what modern hardware allows.
 
 ## Basic Setup
 
@@ -102,7 +102,7 @@ Bun.serve({
 
 TypeScript parses route parameters when passed as a string literal, so that your editor will show autocomplete when accessing `request.params`.
 
-```ts title="index.ts"
+```ts title="index.ts" icon="/icons/typescript.svg"
 import type { BunRequest } from "bun";
 
 Bun.serve({
@@ -283,7 +283,7 @@ You can also access the `Server` object from the `fetch` handler. It's the secon
 const server = Bun.serve({
   fetch(req, server) {
     const ip = server.requestIP(req);
-    return new Response(`Your IP is ${ip}`);
+    return new Response(`Your IP is ${ip.address}`);
   },
 });
 ```

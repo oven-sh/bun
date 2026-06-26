@@ -3,6 +3,8 @@ title: "bunx"
 description: "Run packages from npm"
 ---
 
+import Bunx from "/snippets/cli/bunx.mdx";
+
 <Note>`bunx` is an alias for `bun x`. The `bunx` CLI will be auto-installed when you install `bun`.</Note>
 
 Use `bunx` to auto-install and run packages from `npm`. It's Bun's equivalent of `npx` or `yarn dlx`.
@@ -30,7 +32,7 @@ Packages can declare executables in the `"bin"` field of their `package.json`. T
 
 These executables are commonly plain JavaScript files marked with a [shebang line](<https://en.wikipedia.org/wiki/Shebang_(Unix)>) to indicate which program should be used to execute them. The following file indicates that it should be executed with `node`.
 
-```ts dist/index.js icon="/icons/javascript.svg"
+```js dist/index.js icon="/icons/javascript.svg"
 #!/usr/bin/env node
 
 console.log("Hello world!");
@@ -51,6 +53,8 @@ To pass additional command-line flags and arguments through to the executable, p
 ```bash terminal icon="terminal"
 bunx my-cli --foo bar
 ```
+
+---
 
 ## Shebangs
 
@@ -78,6 +82,10 @@ bunx --package @angular/cli ng
 
 To force bun to always be used with a script, use a shebang.
 
-```ts dist/index.js icon="/icons/javascript.svg"
+```js dist/index.js icon="/icons/javascript.svg"
 #!/usr/bin/env bun
 ```
+
+---
+
+<Bunx />

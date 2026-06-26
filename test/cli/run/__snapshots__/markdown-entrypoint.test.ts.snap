@@ -1,0 +1,217 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`bun <file.md> renders headings with underlines 1`] = `
+"\x1B[1m\x1B[35mHeading 1\x1B[0m
+\x1B[2m═════════\x1B[0m
+
+\x1B[1m\x1B[36mHeading 2\x1B[0m
+\x1B[2m─────────\x1B[0m
+
+\x1B[1m\x1B[33mHeading 3\x1B[0m
+
+body\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders bold, italic, strikethrough, inline code 1`] = `
+"\x1B[1mbold\x1B[22m \x1B[3mitalic\x1B[23m \x1B[9mstrike\x1B[29m \x1B[48;5;236m\x1B[38;5;215mcode\x1B[39m\x1B[49m regular\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders ordered, unordered, and task lists 1`] = `
+"   \x1B[36m1. \x1B[0mfirst
+   \x1B[36m2. \x1B[0msecond
+   \x1B[36m3. \x1B[0mthird
+  \x1B[36m• \x1B[0mapple\x1B[0m
+  \x1B[36m• \x1B[0mbanana\x1B[0m
+  \x1B[36m• \x1B[0mcherry\x1B[0m
+  \x1B[2m☐ \x1B[0mtodo\x1B[0m
+  \x1B[32m☒ \x1B[0mdone\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders blockquotes and nested blockquotes 1`] = `
+"\x1B[38;5;242m│ \x1B[39mA quote\x1B[0m
+\x1B[38;5;242m│\x1B[39m
+\x1B[38;5;242m│ │ \x1B[39mNested quote\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders horizontal rules 1`] = `
+"above\x1B[0m
+
+\x1B[2m────────────────────────────────────────────────────────────\x1B[0m
+
+below\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders fenced code block with JS syntax highlighting 1`] = `
+"\x1B[2m┌─ \x1B[0m\x1B[2m\x1B[3mjs\x1B[0m
+\x1B[2m│ \x1B[0m\x1B[0m\x1B[35mconst\x1B[0m name = \x1B[0m\x1B[32m"world"\x1B[0m\x1B[0m\x1B[2m;\x1B[0m
+\x1B[2m│ \x1B[0mconsole\x1B[0m\x1B[3m\x1B[1m.log\x1B[0m(\x1B[0m\x1B[32m\`hello \x1B[0m\${name}\x1B[0m\x1B[32m\`\x1B[0m)\x1B[0m\x1B[2m;\x1B[0m
+\x1B[2m└─\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders fenced code block without language 1`] = `
+"\x1B[2m\x1B[2m┌─\x1B[0m
+\x1B[2m│ \x1B[0mplain text
+\x1B[2m│ \x1B[0mno highlighting
+\x1B[2m└─\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders link text with url fallback when no TTY 1`] = `
+"Visit \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m today.\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders link with text + url pair fallback 1`] = `
+"see \x1B[34m\x1B[4mBun\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders images as alt text with link 1`] = `
+"\x1B[35m📷 an image\x1B[0m\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders wikilinks 1`] = `
+"see \x1B[34m[[SomePage]]\x1B[39m for more\x1B[0m
+"
+`;
+
+exports[`bun <file.md> falls back to literal text when \`[[\` never closes 1`] = `
+"foo [[bar baz\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders simple table with alignment 1`] = `
+"\x1B[2m┌───────┬─────┬──────┐\x1B[0m
+\x1B[2m│\x1B[0m \x1B[1mName\x1B[0m  \x1B[2m│\x1B[0m \x1B[1mAge\x1B[0m \x1B[2m│\x1B[0m \x1B[1mCity\x1B[0m \x1B[2m│\x1B[0m
+\x1B[2m├───────┼─────┼──────┤\x1B[0m
+\x1B[2m│\x1B[0m Alice \x1B[2m│\x1B[0m 30  \x1B[2m│\x1B[0m  NYC \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m Bob   \x1B[2m│\x1B[0m 25  \x1B[2m│\x1B[0m   LA \x1B[2m│\x1B[0m
+\x1B[2m└───────┴─────┴──────┘\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders table with CJK multi-width graphemes 1`] = `
+"\x1B[2m┌───────┬─────────┬──────┐\x1B[0m
+\x1B[2m│\x1B[0m \x1B[1m名前\x1B[0m  \x1B[2m│\x1B[0m \x1B[1m 言語\x1B[0m   \x1B[2m│\x1B[0m \x1B[1m都市\x1B[0m \x1B[2m│\x1B[0m
+\x1B[2m├───────┼─────────┼──────┤\x1B[0m
+\x1B[2m│\x1B[0m 山田  \x1B[2m│\x1B[0m 日本語  \x1B[2m│\x1B[0m 東京 \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m Alice \x1B[2m│\x1B[0m English \x1B[2m│\x1B[0m  NYC \x1B[2m│\x1B[0m
+\x1B[2m└───────┴─────────┴──────┘\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders table with emoji graphemes 1`] = `
+"\x1B[2m┌────────┬────────┐\x1B[0m
+\x1B[2m│\x1B[0m \x1B[1mStatus\x1B[0m \x1B[2m│\x1B[0m \x1B[1mLabel\x1B[0m  \x1B[2m│\x1B[0m
+\x1B[2m├────────┼────────┤\x1B[0m
+\x1B[2m│\x1B[0m   ✅   \x1B[2m│\x1B[0m pass   \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m   ❌   \x1B[2m│\x1B[0m fail   \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m   🚀   \x1B[2m│\x1B[0m launch \x1B[2m│\x1B[0m
+\x1B[2m└────────┴────────┘\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders combining characters without breaking alignment 1`] = `
+"\x1B[2m┌───────┬──────┐\x1B[0m
+\x1B[2m│\x1B[0m \x1B[1mName\x1B[0m  \x1B[2m│\x1B[0m \x1B[1mNote\x1B[0m \x1B[2m│\x1B[0m
+\x1B[2m├───────┼──────┤\x1B[0m
+\x1B[2m│\x1B[0m café  \x1B[2m│\x1B[0m hot  \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m naïve \x1B[2m│\x1B[0m ok   \x1B[2m│\x1B[0m
+\x1B[2m└───────┴──────┘\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders inline formatting inside table cells 1`] = `
+"\x1B[2m┌───────┬────────────────────────┐\x1B[0m
+\x1B[2m│\x1B[0m \x1B[1mName\x1B[0m  \x1B[2m│\x1B[0m \x1B[1mStyle\x1B[0m                  \x1B[2m│\x1B[0m
+\x1B[2m├───────┼────────────────────────┤\x1B[0m
+\x1B[2m│\x1B[0m \x1B[1mAlice\x1B[22m \x1B[2m│\x1B[0m \x1B[3meditor\x1B[23m                 \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mbob\x1B[39m\x1B[49m   \x1B[2m│\x1B[0m \x1B[34m\x1B[4mlink\x1B[24m\x1B[39m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m \x1B[2m│\x1B[0m
+\x1B[2m└───────┴────────────────────────┘\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders inline formatting inside headings 1`] = `
+"\x1B[1m\x1B[35mHello \x1B[1mbold\x1B[22m\x1B[1m\x1B[35m and \x1B[3mitalic\x1B[23m\x1B[1m\x1B[35m heading\x1B[0m
+\x1B[2m═════════════════════════════\x1B[0m
+"
+`;
+
+exports[`bun <file.md> nested code span inside bold keeps outer bold 1`] = `
+"\x1B[1mbefore \x1B[48;5;236m\x1B[38;5;215mcode\x1B[39m\x1B[49m\x1B[1m after\x1B[22m tail\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders mixed inline styles with autolinks 1`] = `
+"Check \x1B[1m\x1B[34m\x1B[4mhttps://bun.com\x1B[24m\x1B[39m\x1B[1m\x1B[2m (https://bun.com\x1B[2m)\x1B[39m\x1B[22m\x1B[1m\x1B[22m and \x1B[34m\x1B[4mme@example.com\x1B[24m\x1B[39m\x1B[2m (
+mailto:me@example.com\x1B[2m)\x1B[39m\x1B[22m!\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders nested lists 1`] = `
+"  \x1B[36m• \x1B[0mouter
+      \x1B[36m• \x1B[0minner 1
+      \x1B[36m• \x1B[0minner 2
+          \x1B[36m• \x1B[0mdeep
+  \x1B[36m• \x1B[0msecond outer
+"
+`;
+
+exports[`bun <file.md> runs without colors when NO_COLOR is set 1`] = `
+"Hello
+=====
+
+world
+"
+`;
+
+exports[`bun <file.md> renders via \`bun run ./file.md\` 1`] = `
+"\x1B[1m\x1B[35mTitle\x1B[0m
+\x1B[2m═════\x1B[0m
+
+body\x1B[0m
+"
+`;
+
+exports[`bun <file.md> renders .markdown extension too 1`] = `
+"\x1B[1m\x1B[35myep\x1B[0m
+\x1B[2m═══\x1B[0m
+"
+`;
+
+exports[`bun <file.md> wraps inline code spans within COLUMNS, never mid-word 1`] = `
+"After modifying \x1B[48;5;236m\x1B[38;5;215mcoreBeeps.ts\x1B[39m\x1B[49m, \x1B[48;5;236m\x1B[38;5;215mcontrolBoops.ts\x1B[39m\x1B[49m
+, or \x1B[48;5;236m\x1B[38;5;215mtoolBoops.ts\x1B[39m\x1B[49m, run \x1B[48;5;236m\x1B[38;5;215mbun run build:boop\x1B[39m\x1B[49m to
+regenerate. \x1B[1mDo not edit \x1B[48;5;236m\x1B[38;5;215m*.generated.ts\x1B[39m\x1B[49m\x1B[1m files
+directly.\x1B[22m\x1B[0m
+"
+`;
+
+exports[`bun <file.md> hard-breaks an overlong CJK word at the visible-width boundary 1`] = `
+"A 测试测试测试测试测试测试测试
+测试测试测试 wide.\x1B[0m
+"
+`;
+
+exports[`bun <file.md> shrinks table columns to fit COLUMNS and wraps cell content 1`] = `
+"\x1B[2m┌───────────────────────┬────────────────────────┐\x1B[0m
+\x1B[2m│\x1B[0m \x1B[1mPath\x1B[0m                  \x1B[2m│\x1B[0m \x1B[1mScope\x1B[0m                  \x1B[2m│\x1B[0m
+\x1B[2m├───────────────────────┼────────────────────────┤\x1B[0m
+\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mdocs/guide.md\x1B[39m\x1B[49m         \x1B[2m│\x1B[0m Top-level              \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m                       \x1B[2m│\x1B[0m architecture: module   \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m                       \x1B[2m│\x1B[0m map, startup flow,     \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m                       \x1B[2m│\x1B[0m state management       \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[48;5;236m\x1B[38;5;215mdocs/components/desig\x1B[0m \x1B[2m│\x1B[0m Design system          \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m \x1B[38;5;215m\x1B[48;5;236mn-system/guide.md\x1B[39m\x1B[49m     \x1B[2m│\x1B[0m component API          \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m                       \x1B[2m│\x1B[0m (Dialog, Tabs,         \x1B[2m│\x1B[0m
+\x1B[2m│\x1B[0m                       \x1B[2m│\x1B[0m StatusIcon, etc.)      \x1B[2m│\x1B[0m
+\x1B[2m└───────────────────────┴────────────────────────┘\x1B[0m
+"
+`;

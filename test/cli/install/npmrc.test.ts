@@ -1,7 +1,7 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, stderrForInstall } from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, stderrForInstall, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -464,4 +464,112 @@ ${Object.keys(opts)
       expect(result.default_registry_email).toEqual("test@example.com");
     },
   );
+
+  test("applies auth tokens to default registry correctly - same host different paths", () => {
+    // Regression test for https://github.com/oven-sh/bun/issues/26350
+    // When multiple auth tokens exist for the same host but different paths,
+    // Bun should match the token by both host AND path, not just host.
+    const ini = `
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/org1/npm/registry/:_authToken=jwt1
+//somehost.com/org2/npm/registry/:_authToken=jwt2
+//somehost.com/org3/npm/registry/:_authToken=jwt3
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
+    expect(result.default_registry_token).toBe("jwt1");
+  });
+
+  test("auth token not applied when paths don't match - same host", () => {
+    // Regression test for https://github.com/oven-sh/bun/issues/26350
+    // When auth tokens exist for a different path on the same host,
+    // they should not be applied to the default registry.
+    const ini = `
+registry=https://somehost.com/org1/npm/registry/
+//somehost.com/org2/npm/registry/:_authToken=jwt2
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
+    // Should be empty since there's no matching token for /org1/npm/registry/
+    expect(result.default_registry_token).toBe("");
+  });
+});
+
+describe("scoped registry routing", () => {
+  // A request for a @scope package must be sent only to that scope's configured
+  // registry with that scope's token. The registry map was keyed by a bare
+  // Wyhash11 hash of the scope name, so a different scope whose name hashed to
+  // the same value would overwrite it and silently inherit its registry + token.
+  // https://github.com/oven-sh/bun/issues/32741
+  test("does not route to a hash-colliding scope's registry or token", async () => {
+    // scopeA and scopeB collide under Bun's internal scope-name hash
+    // (Wyhash11(0) == 0xd2c80616f46b9bf2) but are distinct strings.
+    const scopeA = "cuxk74rj1jlebf5o-cigmevrqk5-74swpkgcollapkgcollbaaaaaaaa8k0b-p2s";
+    const scopeB = "cuxk74rj1jlebf5o-cigmevrqk5-74swpkgcollapkgcollbbbbbbbbb8k0b-p2s";
+
+    type Req = { path: string; auth: string | null };
+    const reqsA: Req[] = [];
+    const reqsB: Req[] = [];
+    const notFound = () =>
+      new Response(JSON.stringify({ error: "not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+
+    await using serverA = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        reqsA.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+        return notFound();
+      },
+    });
+    await using serverB = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        reqsB.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+        return notFound();
+      },
+    });
+
+    const portA = serverA.port;
+    const portB = serverB.port;
+    const urlA = `http://127.0.0.1:${portA}/`;
+    const urlB = `http://127.0.0.1:${portB}/`;
+
+    // scopeA is declared first, so scopeB's colliding entry overwrites it in the
+    // hash-keyed registry map. The default registry also points at A so that a
+    // correct fallback stays offline instead of reaching the public registry.
+    using dir = tempDir("npmrc-scope-collision", {
+      ".npmrc":
+        `registry=${urlA}\n` +
+        `@${scopeA}:registry=${urlA}\n` +
+        `//127.0.0.1:${portA}/:_authToken=scope-A-SECRET-token\n` +
+        `@${scopeB}:registry=${urlB}\n` +
+        `//127.0.0.1:${portB}/:_authToken=scope-B-SECRET-token\n`,
+      "package.json": JSON.stringify({
+        name: "victim",
+        version: "0.0.0",
+        dependencies: { [`@${scopeA}/probe`]: "^1.0.0" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-cache"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The install fails (probe does not exist); we only care where it asked.
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).not.toBe(0);
+
+    // scopeB's registry must never see the @scopeA/probe request, and must
+    // never be handed scopeB's secret token for it.
+    expect(reqsB).toEqual([]);
+    // The request must have been attempted against scopeA's own registry.
+    expect(reqsA.some(r => r.path.includes("probe"))).toBe(true);
+  });
 });

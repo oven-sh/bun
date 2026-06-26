@@ -13,7 +13,7 @@ See the [introduction blog post](https://bun.com/blog/compile-and-run-c-in-js) f
 
 JavaScript:
 
-```ts hello.js icon="file-code"
+```ts hello.ts icon="file-code"
 import { cc } from "bun:ffi";
 import source from "./hello.c" with { type: "file" };
 
@@ -87,7 +87,7 @@ You can also pass a `napi_env` to receive the N-API environment used to call the
 
 For example, if you have a string in C, you can return it to JavaScript like this:
 
-```ts hello.js
+```ts hello.ts
 import { cc } from "bun:ffi";
 import source from "./hello.c" with { type: "file" };
 
@@ -134,7 +134,7 @@ napi_value hello(napi_env env) {
 
 #### `library: string[]`
 
-The `library` array is used to specify the libraries that should be linked with the C code.
+Use the `library` array to specify the libraries to link with the C code.
 
 ```ts
 type Library = string[];
@@ -147,7 +147,7 @@ cc({
 
 #### `symbols`
 
-The `symbols` object is used to specify the functions and variables that should be exposed to JavaScript.
+Use the `symbols` object to specify the functions and variables to expose to JavaScript.
 
 ```ts
 type Symbols = {

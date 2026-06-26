@@ -9,6 +9,36 @@ describe("seq", async () => {
     .stderr("usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n")
     .runAsTest("prints usage");
 
+  TestBuilder.command`seq -w`
+    .exitCode(1)
+    .stdout("")
+    .stderr("usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n")
+    .runAsTest("prints usage when only -w flag given");
+
+  TestBuilder.command`seq --fixed-width`
+    .exitCode(1)
+    .stdout("")
+    .stderr("usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n")
+    .runAsTest("prints usage when only --fixed-width flag given");
+
+  TestBuilder.command`seq -s ,`
+    .exitCode(1)
+    .stdout("")
+    .stderr("usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n")
+    .runAsTest("prints usage when only -s flag given");
+
+  TestBuilder.command`seq -t ,`
+    .exitCode(1)
+    .stdout("")
+    .stderr("usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n")
+    .runAsTest("prints usage when only -t flag given");
+
+  TestBuilder.command`seq -w -s , -t .`
+    .exitCode(1)
+    .stdout("")
+    .stderr("usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n")
+    .runAsTest("prints usage when only flags given");
+
   TestBuilder.command`seq -s`
     .exitCode(1)
     .stdout("")
@@ -78,6 +108,18 @@ describe("seq", async () => {
     .stdout("")
     .stderr("seq: needs negative decrement\n")
     .runAsTest("needs negative decrement");
+
+  TestBuilder.command`seq 16777216 16777218`
+    .exitCode(0)
+    .stdout("16777216\n")
+    .stderr("")
+    .runAsTest("terminates when adding the increment no longer changes the value");
+
+  TestBuilder.command`seq 1 0.00000001 2`
+    .exitCode(0)
+    .stdout("1\n")
+    .stderr("")
+    .runAsTest("terminates when the increment is too small to advance the accumulator");
 });
 
 describe("seq without stdout", async () => {

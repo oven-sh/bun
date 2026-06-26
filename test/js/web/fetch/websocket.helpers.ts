@@ -45,9 +45,11 @@ export function encodeCloseFrame(code = 1000, reason = "") {
 
   return buf;
 }
-export function* decodeFrames(buffer) {
+export function decodeFrames(buffer) {
+  const messages = [];
   let i = 0;
   while (i + 2 <= buffer.length) {
+    const start = i;
     const b0 = buffer[i++];
     const b1 = buffer[i++];
     const fin = (b0 & 0x80) !== 0;
@@ -56,11 +58,17 @@ export function* decodeFrames(buffer) {
     let len = b1 & 0x7f;
 
     if (len === 126) {
-      if (i + 2 > buffer.length) break;
+      if (i + 2 > buffer.length) {
+        i = start;
+        break;
+      }
       len = buffer.readUInt16BE(i);
       i += 2;
     } else if (len === 127) {
-      if (i + 8 > buffer.length) break;
+      if (i + 8 > buffer.length) {
+        i = start;
+        break;
+      }
       const big = buffer.readBigUInt64BE(i);
       i += 8;
       if (big > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("frame too large");
@@ -69,12 +77,18 @@ export function* decodeFrames(buffer) {
 
     let mask;
     if (masked) {
-      if (i + 4 > buffer.length) break;
+      if (i + 4 > buffer.length) {
+        i = start;
+        break;
+      }
       mask = buffer.subarray(i, i + 4);
       i += 4;
     }
 
-    if (i + len > buffer.length) break;
+    if (i + len > buffer.length) {
+      i = start;
+      break;
+    }
     let payload = buffer.subarray(i, i + len);
     i += len;
 
@@ -86,22 +100,17 @@ export function* decodeFrames(buffer) {
 
     if (!fin) throw new Error("fragmentation not supported in this demo");
     if (opcode === 0x1) {
-      // text
-      yield payload.toString("utf8");
+      messages.push(payload.toString("utf8"));
     } else if (opcode === 0x8) {
-      // CLOSE
-      yield { type: "close" };
-      return;
+      messages.push({ type: "close" });
+      return { messages, remaining: Buffer.alloc(0) };
     } else if (opcode === 0x9) {
-      // PING -> respond with PONG if you implement writes here
-      yield { type: "ping", data: payload };
+      messages.push({ type: "ping", data: payload });
     } else if (opcode === 0xa) {
-      // PONG
-      yield { type: "pong", data: payload };
-    } else {
-      // ignore other opcodes for brevity
+      messages.push({ type: "pong", data: payload });
     }
   }
+  return { messages, remaining: buffer.subarray(i) };
 }
 
 // Encode a single unfragmented TEXT frame (client -> server must be masked)

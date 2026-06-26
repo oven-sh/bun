@@ -184,6 +184,118 @@ describe("bundler", () => {
       {"$$typeof":"Symbol(jsx)","type":"Symbol("jsx.fragment")","key":"null","ref":"null","props":{"children":"Fragment"},"_owner":"null"}
     `,
   });
+  // A used `Fragment` import must not be reported as a duplicate of the
+  // auto-imported JSX `Fragment` helper that shares its name at module scope.
+  itBundledDevAndProd("jsx/AutomaticFragmentNamedImport", {
+    files: {
+      "/index.tsx": /* tsx */ `
+        import { print } from 'bun-test-helpers'
+        import { Fragment } from 'react'
+        const F = Fragment
+        const el = <>hi</>
+        print([typeof F, typeof el])
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    devStdout: `["symbol","object"]`,
+    prodStdout: `["symbol","object"]`,
+  });
+  // A user's local `jsx` / `jsxDEV` / `Fragment` binding in the scope
+  // containing the first JSX element must not capture the automatic JSX
+  // runtime import.
+  itBundledDevAndProd("jsx/AutomaticLocalShadow", {
+    files: {
+      "/index.tsx": /* tsx */ `
+        import { print } from 'bun-test-helpers'
+        function f() {
+          let jsx: any
+          let jsxDEV: any
+          let Fragment: any
+          const el = <><div /></>
+          return [el, jsx, jsxDEV, Fragment]
+        }
+        const [el, a, b, c] = f()
+        print([el, a, b, c])
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    devStdout: `
+      [{"$$typeof":"Symbol(jsxdev)","type":"Symbol(jsxdev.fragment)","props":{"children":{"$$typeof":"Symbol(jsxdev)","type":"div","props":{},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"},"undefined","undefined","undefined"]
+    `,
+    prodStdout: `
+      [{"$$typeof":"Symbol(jsx)","type":"Symbol(jsx.fragment)","props":{"children":{"$$typeof":"Symbol(jsx)","type":"div","props":{},"key":"undefined"}},"key":"undefined"},"undefined","undefined","undefined"]
+    `,
+  });
+  // Same as above but with `--minify-identifiers`. Covers jsx / jsxs /
+  // Fragment / createElement (prod) and jsxDEV / Fragment (dev).
+  // The property under test is that the minified names assigned to the
+  // auto-imported runtime helpers and the user's local `let` bindings are
+  // pairwise distinct; literal minified slot names are not pinned.
+  function expectMinifiedRuntimeImportsNotShadowed(out: string, runtimeKinds: string[]) {
+    const importClauses = [...out.matchAll(/^import \{([^}]+)\} from /gm)].map(m => m[1]).join(",");
+    const importAliases: Record<string, string> = {};
+    for (const [, orig, alias] of importClauses.matchAll(/\b(\w+) as (\w+)\b/g)) {
+      importAliases[orig] = alias;
+    }
+    const locals = [...out.matchAll(/\blet (\w+);/g)].map(m => m[1]);
+    expect(Object.keys(importAliases).sort()).toEqual([...runtimeKinds].sort());
+    expect(locals).toHaveLength(runtimeKinds.length);
+    for (const kind of runtimeKinds) {
+      expect({ kind, alias: importAliases[kind], locals }).toEqual({
+        kind,
+        alias: expect.not.stringMatching(new RegExp(`^(${locals.join("|")})$`)),
+        locals,
+      });
+    }
+  }
+  itBundled("jsx/AutomaticLocalShadowMinifyIdentifiersProd", {
+    files: {
+      "/index.tsx": /* tsx */ `
+        export function f() {
+          let jsx: any
+          let jsxs: any
+          let Fragment: any
+          let createElement: any
+          const props = {}
+          const els = [<div />, <div><a/><b/></div>, <><div /></>, <div {...props} key="k" />]
+          return [els, jsx, jsxs, Fragment, createElement]
+        }
+      `,
+    },
+    external: ["react", "react/*"],
+    minifyIdentifiers: true,
+    env: {
+      NODE_ENV: "production",
+    },
+    bundleWarnings: {
+      "/index.tsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+    },
+    onAfterBundle(api) {
+      expectMinifiedRuntimeImportsNotShadowed(api.readFile("out.js"), ["jsx", "jsxs", "Fragment", "createElement"]);
+    },
+  });
+  itBundled("jsx/AutomaticLocalShadowMinifyIdentifiersDev", {
+    files: {
+      "/index.tsx": /* tsx */ `
+        export function f() {
+          let jsxDEV: any
+          let Fragment: any
+          const els = [<div />, <><div /></>]
+          return [els, jsxDEV, Fragment]
+        }
+      `,
+    },
+    external: ["react", "react/*"],
+    minifyIdentifiers: true,
+    env: {
+      NODE_ENV: "development",
+    },
+    onAfterBundle(api) {
+      expectMinifiedRuntimeImportsNotShadowed(api.readFile("out.js"), ["jsxDEV", "Fragment"]);
+    },
+  });
   itBundledDevAndProd("jsx/ImportSource", {
     prodTodo: true,
     files: {

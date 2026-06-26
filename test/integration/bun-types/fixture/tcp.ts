@@ -145,3 +145,23 @@ listener.reload({
     // ...listener.
   },
 });
+
+// Test Socket.reload() type signature (issue #26290)
+// The socket instance's reload() method should also accept { socket: handler }
+await Bun.connect({
+  data: { arg: "asdf" },
+  socket: {
+    open(socket) {
+      // Socket.reload() should accept { socket: handler }, not handler directly
+      socket.reload({
+        socket: {
+          open() {},
+          data() {},
+        },
+      });
+    },
+    data() {},
+  },
+  hostname: "localhost",
+  port: 1,
+});

@@ -1663,6 +1663,91 @@ describe("Helper argument validation", () => {
     await sqlSafe.close();
   });
 
+  test("insert helper filters out undefined values", async () => {
+    await sql`CREATE TABLE insert_undefined_test (id INTEGER PRIMARY KEY, name TEXT NOT NULL, optional TEXT)`;
+
+    // Insert with undefined value - should only include defined columns
+    await sql`INSERT INTO insert_undefined_test ${sql({ id: 1, name: "test", optional: undefined })}`;
+
+    const result = await sql`SELECT * FROM insert_undefined_test WHERE id = 1`;
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("test");
+    expect(result[0].optional).toBe(null); // SQLite default
+
+    // Insert with all defined values - should work normally
+    await sql`INSERT INTO insert_undefined_test ${sql({ id: 2, name: "test2", optional: "value" })}`;
+    const result2 = await sql`SELECT * FROM insert_undefined_test WHERE id = 2`;
+    expect(result2[0].optional).toBe("value");
+
+    // Bulk insert with undefined values
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 3, name: "bulk1", optional: undefined },
+      { id: 4, name: "bulk2", optional: undefined },
+    ])}`;
+    const result3 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (3, 4) ORDER BY id`;
+    expect(result3).toHaveLength(2);
+    expect(result3[0].name).toBe("bulk1");
+    expect(result3[1].name).toBe("bulk2");
+
+    // DATA LOSS TEST: Bulk insert where first item has undefined but later item has value
+    // Previously this would silently lose "has-value" because columns were determined from first item only
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 5, name: "mixed1", optional: undefined },
+      { id: 6, name: "mixed2", optional: "has-value" },
+    ])}`;
+    const result4 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (5, 6) ORDER BY id`;
+    expect(result4).toHaveLength(2);
+    expect(result4[0].name).toBe("mixed1");
+    expect(result4[0].optional).toBe(null); // first item's undefined becomes null
+    expect(result4[1].name).toBe("mixed2");
+    expect(result4[1].optional).toBe("has-value"); // CRITICAL: this value must be preserved, not lost!
+
+    // Bulk insert with mixed undefined patterns - reverse order (first has value, second undefined)
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 7, name: "mixed3", optional: "first-has-value" },
+      { id: 8, name: "mixed4", optional: undefined },
+    ])}`;
+    const result5 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (7, 8) ORDER BY id`;
+    expect(result5).toHaveLength(2);
+    expect(result5[0].optional).toBe("first-has-value");
+    expect(result5[1].optional).toBe(null); // second item's undefined becomes null
+
+    // DATA LOSS TEST: Bulk insert with 3+ items where only middle item has value
+    // Ensures we check ALL items, not just first or last
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 9, name: "three1", optional: undefined },
+      { id: 10, name: "three2", optional: "middle-value" },
+      { id: 11, name: "three3", optional: undefined },
+    ])}`;
+    const result6 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (9, 10, 11) ORDER BY id`;
+    expect(result6).toHaveLength(3);
+    expect(result6[0].optional).toBe(null);
+    expect(result6[1].optional).toBe("middle-value"); // CRITICAL: middle item's value must be preserved
+    expect(result6[2].optional).toBe(null);
+
+    // Insert with all undefined except one column should throw
+    expect(
+      async () =>
+        await sql`INSERT INTO insert_undefined_test ${sql({ id: undefined, name: undefined, optional: undefined })}`.execute(),
+    ).toThrow("Insert needs to have at least one column with a defined value");
+  });
+
+  // Exact regression test for https://github.com/oven-sh/bun/issues/25829
+  // undefined values should be filtered out, allowing NOT NULL columns with DEFAULT to use their default
+  test("insert with undefined on NOT NULL column with DEFAULT uses default value", async () => {
+    await sql`CREATE TABLE issue_25829 (id TEXT PRIMARY KEY, foo TEXT NOT NULL DEFAULT 'default-foo')`;
+
+    // This should work - foo:undefined should be filtered out, and DEFAULT should be used
+    await sql`INSERT INTO issue_25829 ${sql({
+      foo: undefined,
+      id: "test-id",
+    })}`;
+
+    const result = await sql`SELECT * FROM issue_25829 WHERE id = 'test-id'`;
+    expect(result).toEqual([{ id: "test-id", foo: "default-foo" }]);
+  });
+
   test("invalid keys for helper throw immediately", () => {
     const obj = { id: 1, text_val: "x" };
     expect(() => sql`INSERT INTO helper_invalid ${sql(obj, Symbol("k") as any)}`).toThrowErrorMatchingInlineSnapshot(
@@ -2178,13 +2263,13 @@ describe("BLOB Edge Cases and Binary Data", () => {
     await sql`CREATE TABLE large_blob (id INTEGER, data BLOB)`;
 
     const sizes = [1024 * 1024, 10 * 1024 * 1024];
+    // 256-byte repeating pattern (0..255). Buffer.alloc(size, pattern) tiles it,
+    // producing bytes identical to `largeBuffer[i] = i % 256` without an 11M-iteration JS loop.
+    const pattern = Buffer.alloc(256);
+    for (let i = 0; i < 256; i++) pattern[i] = i;
 
     for (const size of sizes) {
-      const largeBuffer = Buffer.alloc(size);
-
-      for (let i = 0; i < size; i++) {
-        largeBuffer[i] = i % 256;
-      }
+      const largeBuffer = Buffer.alloc(size, pattern);
 
       await sql`INSERT INTO large_blob VALUES (${size}, ${largeBuffer})`;
 
@@ -2461,16 +2546,18 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_name_lower ON products(LOWER(name))`;
 
-    for (let i = 1; i <= 100; i++) {
-      await sql`INSERT INTO products VALUES (
-        ${i}, 
-        ${"Product " + i}, 
-        ${"Category " + (i % 10)},
-        ${i * 10.5},
-        ${"SKU-" + i.toString().padStart(5, "0")},
-        ${"Description for product " + i}
-      )`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 1; i <= 100; i++) {
+        await tx`INSERT INTO products VALUES (
+          ${i},
+          ${"Product " + i},
+          ${"Category " + (i % 10)},
+          ${i * 10.5},
+          ${"SKU-" + i.toString().padStart(5, "0")},
+          ${"Description for product " + i}
+        )`;
+      }
+    });
 
     try {
       await sql`INSERT INTO products VALUES (101, 'Test', 'Test', 10, 'SKU-00001', 'Duplicate SKU')`;
@@ -2496,10 +2583,12 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_type ON stats_test(type)`;
 
-    for (let i = 1; i <= 1000; i++) {
-      const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
-      await sql`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 1; i <= 1000; i++) {
+        const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
+        await tx`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
+      }
+    });
 
     await sql`ANALYZE`;
 
@@ -2517,14 +2606,16 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_email_username ON users(email, username)`;
 
-    for (let i = 1; i <= 100; i++) {
-      await sql`INSERT INTO users VALUES (
-        ${i},
-        ${"user" + i + "@example.com"},
-        ${"user" + i},
-        ${new Date().toISOString()}
-      )`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 1; i <= 100; i++) {
+        await tx`INSERT INTO users VALUES (
+          ${i},
+          ${"user" + i + "@example.com"},
+          ${"user" + i},
+          ${new Date().toISOString()}
+        )`;
+      }
+    });
 
     const result = await sql`SELECT email, username FROM users WHERE email LIKE 'user1%'`;
     expect(result.length).toBeGreaterThan(0);
@@ -2539,9 +2630,11 @@ describe("VACUUM and Database Maintenance", () => {
 
     await sql`CREATE TABLE vacuum_test (id INTEGER, data TEXT)`;
 
-    for (let i = 0; i < 1000; i++) {
-      await sql`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 0; i < 1000; i++) {
+        await tx`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
+      }
+    });
 
     await sql`DELETE FROM vacuum_test WHERE id % 2 = 0`;
 
@@ -2568,9 +2661,11 @@ describe("VACUUM and Database Maintenance", () => {
 
     await sql`CREATE TABLE test (id INTEGER, data TEXT)`;
 
-    for (let i = 0; i < 100; i++) {
-      await sql`INSERT INTO test VALUES (${i}, ${Buffer.alloc(1000, "x").toString()})`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 0; i < 100; i++) {
+        await tx`INSERT INTO test VALUES (${i}, ${Buffer.alloc(1000, "x").toString()})`;
+      }
+    });
 
     await sql`DELETE FROM test WHERE id < 50`;
 
@@ -3062,9 +3157,11 @@ describe("Concurrency and Locking", () => {
     const sql1 = new SQL(`sqlite://${dbPath}`);
     await sql1`CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    for (let i = 1; i <= 100; i++) {
-      await sql1`INSERT INTO test VALUES (${i}, ${"value" + i})`;
-    }
+    await sql1.begin(async tx => {
+      for (let i = 1; i <= 100; i++) {
+        await tx`INSERT INTO test VALUES (${i}, ${"value" + i})`;
+      }
+    });
 
     const sql2 = new SQL(`sqlite://${dbPath}`);
     const sql3 = new SQL(`sqlite://${dbPath}`);
@@ -3849,14 +3946,16 @@ describe("Query Explain and Optimization", () => {
       description TEXT
     )`;
 
-    for (let i = 1; i <= 1000; i++) {
-      await sql`INSERT INTO large_table VALUES (
-        ${i},
-        ${"category" + (i % 10)},
-        ${i * 10},
-        ${"description for item " + i}
-      )`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 1; i <= 1000; i++) {
+        await tx`INSERT INTO large_table VALUES (
+          ${i},
+          ${"category" + (i % 10)},
+          ${i * 10},
+          ${"description for item " + i}
+        )`;
+      }
+    });
   });
 
   afterAll(async () => {
@@ -5091,17 +5190,24 @@ describe("Unicode & Encoding Fuzzing Tests", () => {
       expect(result).toHaveLength(1);
 
       // SQLite's actual behavior with problematic Unicode:
-      // - Lone surrogates (\uD800, \uDFFF) are dropped (become empty string)
-      // - BOM inverse (\uFFFE) is dropped (becomes empty string)
-      // - Null characters are preserved (not truncated)
-      const droppedCharacters = [
-        "High surrogate (invalid alone)",
-        "Low surrogate (invalid alone)",
-        "Byte order mark inverse",
-      ];
+      // - Lone surrogates (\uD800, \uDFFF) bind via sqlite3_bind_text16 and are
+      //   stored by SQLite as invalid UTF-8 (WTF-8, e.g. ED A0 80). On read-back
+      //   those invalid bytes decode leniently to U+FFFD, matching node:sqlite.
+      // - BOM inverse (\uFFFE) is dropped by SQLite itself (stored as 0 bytes),
+      //   so it reads back as an empty string.
+      // - Null characters are preserved (not truncated).
+      const lenientlyReplaced: Record<string, string> = {
+        // 3 invalid bytes -> 3 replacement characters (maximal-subpart replacement)
+        "High surrogate (invalid alone)": "\uFFFD\uFFFD\uFFFD",
+        "Low surrogate (invalid alone)": "\uFFFD\uFFFD\uFFFD",
+      };
+      const droppedBySqlite = ["Byte order mark inverse"];
 
-      if (droppedCharacters.includes(desc)) {
-        // SQLite drops these invalid UTF-8 sequences
+      if (desc in lenientlyReplaced) {
+        // Invalid UTF-8 bytes decode leniently to U+FFFD rather than dropping the field.
+        expect(result[0].text_data).toBe(lenientlyReplaced[desc]);
+      } else if (droppedBySqlite.includes(desc)) {
+        // SQLite stores nothing for these, so they come back empty.
         expect(result[0].text_data).toBe("");
       } else {
         // All other characters should be preserved exactly, including null bytes

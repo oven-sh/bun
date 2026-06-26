@@ -40,6 +40,10 @@ int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int 
     return bsd_udp_packet_buffer_payload_length((struct udp_recvbuf *)buf, index);
 }
 
+int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index) {
+    return bsd_udp_packet_buffer_truncated((struct udp_recvbuf *)buf, index);
+}
+
 int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num) {
     if (num == 0) return 0;
     int fd = us_poll_fd((struct us_poll_t *) s);
@@ -91,7 +95,7 @@ void us_udp_socket_remote_ip(struct us_udp_socket_t *s, char *buf, int *length) 
   }
 }
 
-void *us_udp_socket_user(struct us_udp_socket_t *udp) {
+__attribute__((always_inline)) void *us_udp_socket_user(struct us_udp_socket_t *udp) {
     return udp->user;
 }
 
@@ -147,6 +151,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     void (*data_cb)(struct us_udp_socket_t *, void *, int),
     void (*drain_cb)(struct us_udp_socket_t *),
     void (*close_cb)(struct us_udp_socket_t *),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int),
     const char *host,
     unsigned short port,
     int flags,
@@ -164,6 +169,14 @@ struct us_udp_socket_t *us_create_udp_socket(
 
     struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
     us_poll_init(p, fd, POLL_TYPE_UDP);
+    if (us_poll_start_rc(p, loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        bsd_close_socket(fd);
+        us_poll_free(p, loop);
+        if (err) *err = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
 
     struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
 
@@ -182,9 +195,8 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;
     udp->on_close = close_cb;
+    udp->on_recv_error = recv_error_cb;
     udp->next = NULL;
-
-    us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
 
     return (struct us_udp_socket_t *) udp;
 }

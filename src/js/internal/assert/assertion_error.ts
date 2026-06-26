@@ -166,7 +166,11 @@ function getSimpleDiff(originalActual, actual: string, originalExpected, expecte
   const isStringComparison = typeof originalActual === "string" && typeof originalExpected === "string";
   // colored myers diff
   if (isStringComparison && colors.hasColors) {
-    return getColoredMyersDiff(actual, expected);
+    try {
+      return getColoredMyersDiff(actual, expected);
+    } catch {
+      return getStackedDiff(actual, expected);
+    }
   }
 
   return getStackedDiff(actual, expected);
@@ -195,8 +199,9 @@ function createErrDiff(actual, expected, operator, customMessage) {
   if (showSimpleDiff) {
     const simpleDiff = getSimpleDiff(actual, inspectedSplitActual[0], expected, inspectedSplitExpected[0]);
     message = simpleDiff.message;
-    if (typeof simpleDiff.header !== "undefined") {
-      header = simpleDiff.header;
+    const simpleHeader = simpleDiff.header;
+    if (typeof simpleHeader !== "undefined") {
+      header = simpleHeader;
     }
     if (simpleDiff.skipped) {
       skipped = true;
@@ -213,13 +218,24 @@ function createErrDiff(actual, expected, operator, customMessage) {
     header = "";
   } else {
     const checkCommaDisparity = actual != null && typeof actual === "object";
-    const diff = myersDiff(inspectedActual, inspectedExpected, checkCommaDisparity, true);
+    let myersDiffMessage;
+    try {
+      const diff = myersDiff(inspectedActual, inspectedExpected, checkCommaDisparity, true);
+      myersDiffMessage = printMyersDiff(diff);
+    } catch {
+      myersDiffMessage = undefined;
+    }
 
-    const myersDiffMessage = printMyersDiff(diff);
-    message = myersDiffMessage.message;
-
-    if (myersDiffMessage.skipped) {
+    if (myersDiffMessage === undefined) {
+      message = `${ArrayPrototypeJoin.$call(ArrayPrototypeSlice.$call(inspectedSplitActual, 0, 50), "\n")}\n...`;
+      header = "";
       skipped = true;
+    } else {
+      message = myersDiffMessage.message;
+
+      if (myersDiffMessage.skipped) {
+        skipped = true;
+      }
     }
   }
 
@@ -308,7 +324,8 @@ class AssertionError extends Error {
 
         // Only remove lines in case it makes sense to collapse those.
         // TODO: Accept env to always show the full error.
-        if (res.length > 50) {
+        const resLength = res.length;
+        if (resLength > 50) {
           res[46] = `${colors.blue}...${colors.white}`;
           while (res.length > 47) {
             ArrayPrototypePop.$call(res);
@@ -378,10 +395,15 @@ class AssertionError extends Error {
       this.operator = operator;
     }
     ErrorCaptureStackTrace(this, stackStartFn || stackStartFunction);
-    // JSC::Interpreter::getStackTrace() sometimes short-circuits without creating a .stack property.
-    // e.g.: https://github.com/oven-sh/WebKit/blob/e32c6356625cfacebff0c61d182f759abf6f508a/Source/JavaScriptCore/interpreter/Interpreter.cpp#L501
-    if ($isUndefinedOrNull(this.stack)) {
-      ErrorCaptureStackTrace(this, AssertionError);
+    // When all stack frames are above the stackStartFn (e.g. in async
+    // contexts), captureStackTrace produces a stack with just the error
+    // message and no frame lines. Retry with AssertionError as the filter
+    // so we get at least the frames below the constructor.
+    {
+      const s = this.stack;
+      if ($isUndefinedOrNull(s) || (typeof s === "string" && s.indexOf("\n    at ") === -1)) {
+        ErrorCaptureStackTrace(this, AssertionError);
+      }
     }
     // Create error message including the error code in the name.
     this.stack; // eslint-disable-line no-unused-expressions

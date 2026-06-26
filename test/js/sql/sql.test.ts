@@ -1,7 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
-import * as net from "node:net";
+import { bunEnv, bunExe, isASAN, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
@@ -16,6 +15,7 @@ function rel(filename: string) {
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
+import { neverAnsweringServer } from "./wire-frames";
 
 if (isDockerEnabled()) {
   describe("PostgreSQL tests", async () => {
@@ -139,6 +139,30 @@ if (isDockerEnabled()) {
     });
 
     describe("Array helpers", () => {
+      test("sql.array rejects type names with parentheses outside numeric modifiers", async () => {
+        await using sql = postgres(options);
+
+        // The type name is interpolated verbatim into `$N::${type}[]`. Parentheses,
+        // commas and spaces are only legal as `(digits[,digits])` modifiers after an
+        // identifier; a value that closes the cast and appends further expression
+        // terms must be refused before it reaches the query text.
+        for (const type of [
+          "INT) OR PG_SLEEP(10) IS NOT NULL OR ID IN (1",
+          "INT) OR ARRAY_LENGTH(CAST(NULL AS INT",
+          "TEXT(1)) , (SELECT PG_SLEEP(10",
+          "INT(1,2,X)",
+        ]) {
+          expect(() => sql.array([1, 2], type)).toThrow(/valid PostgreSQL type name/);
+        }
+
+        // Legitimate parameterized and qualified type names are still accepted.
+        expect(() => sql.array([1.5], "NUMERIC(10,2)")).not.toThrow();
+        expect(() => sql.array([new Date()], "TIMESTAMP(3) WITH TIME ZONE")).not.toThrow();
+        expect(() => sql.array(["a"], "MYSCHEMA.MY_ENUM")).not.toThrow();
+        const [{ x }] = await sql`select ${sql.array(["hello", "world"], "CHARACTER VARYING(255)")} as x`;
+        expect(x).toEqual(["hello", "world"]);
+      });
+
       test("SQL helper should support sql.array", async () => {
         await using sql = postgres(options);
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
@@ -441,7 +465,7 @@ if (isDockerEnabled()) {
 
           // Insert test data with various time values
           await db`
-      INSERT INTO bun_time_test (regular_time, time_with_tz) VALUES 
+      INSERT INTO bun_time_test (regular_time, time_with_tz) VALUES
         ('09:00:00', '09:00:00+00'),
         ('10:30:45.123456', '10:30:45.123456-05'),
         ('23:59:59.999999', '23:59:59.999999+08:30'),
@@ -451,7 +475,7 @@ if (isDockerEnabled()) {
 
           // Query the data
           const result = await db`
-      SELECT 
+      SELECT
         id,
         regular_time,
         time_with_tz
@@ -511,7 +535,7 @@ if (isDockerEnabled()) {
 
           // Insert test data
           await db`
-      INSERT INTO bun_time_array_test (time_values, timetz_values) VALUES 
+      INSERT INTO bun_time_array_test (time_values, timetz_values) VALUES
         (ARRAY['09:00:00'::time, '17:00:00'::time], ARRAY['09:00:00+00'::timetz, '17:00:00-05'::timetz]),
         (ARRAY['10:30:00'::time, '18:30:00'::time, '20:00:00'::time], ARRAY['10:30:00+02'::timetz]),
         (NULL, NULL),
@@ -519,7 +543,7 @@ if (isDockerEnabled()) {
     `;
 
           const result = await db`
-      SELECT 
+      SELECT
         id,
         time_values,
         timetz_values
@@ -577,13 +601,13 @@ if (isDockerEnabled()) {
 
           // Insert test data with times in JSONB
           await db`
-      INSERT INTO bun_time_json_test (schedule) VALUES 
+      INSERT INTO bun_time_json_test (schedule) VALUES
         ('{"dayOfWeek": 1, "timeBlocks": [{"startTime": "09:00:00", "endTime": "17:00:00"}]}'::jsonb),
         ('{"dayOfWeek": 2, "timeBlocks": [{"startTime": "10:30:00", "endTime": "18:30:00"}]}'::jsonb)
     `;
 
           const result = await db`
-      SELECT 
+      SELECT
         id,
         schedule
       FROM bun_time_json_test
@@ -681,6 +705,33 @@ if (isDockerEnabled()) {
     describe("should work with more than the max inline capacity", () => {
       const sql = postgres(options);
       afterAll(() => sql.close());
+
+      // Mixed named + integer-aliased columns past JSFinalObject's inline capacity
+      // take the un-cached structure path where property names come from a raw
+      // column-identifier array; the names cursor must skip integer-aliased entries
+      // so every named column keeps a real column name.
+      test("keeps property names aligned for mixed named and integer-aliased columns past the inline capacity", async () => {
+        const namedCount = 65;
+        const columns = [`1000 as "2"`, ...Array.from({ length: namedCount }, (_, i) => `${i + 1} as a${i + 1}`)];
+        const result = await sql.unsafe(`select ${columns.join(", ")}`);
+        expect(result).toHaveLength(1);
+        const row = result[0];
+
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+
+        // Exactly the selected column names appear as keys: the numeric alias plus
+        // a1..a65 — no missing trailing column and no extra/empty property names.
+        const expectedKeys = ["2", ...Array.from({ length: namedCount }, (_, i) => `a${i + 1}`)].sort();
+        expect(Object.keys(row).sort()).toEqual(expectedKeys);
+
+        // The integer-aliased column keeps its value under its numeric key.
+        expect(row["2"]).toBe(1000);
+
+        // Every selected value shows up exactly once across the row's properties.
+        const expectedValues = [1000, ...Array.from({ length: namedCount }, (_, i) => i + 1)].sort((a, b) => a - b);
+        expect(Object.values(row).sort((a, b) => a - b)).toEqual(expectedValues);
+      });
 
       for (let size of [50, 60, 62, 64, 70, 100]) {
         for (let duplicated of [true, false]) {
@@ -862,7 +913,9 @@ if (isDockerEnabled()) {
       //   rss: 49152000,
       // }
       // ~440 MB.
-      expect((after - rss) / 1024 / 1024).toBeLessThan(200);
+      // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
+      // deltas run far higher under bun-asan; widen the threshold there.
+      expect((after - rss) / 1024 / 1024).toBeLessThan(isASAN ? 500 : 200);
     });
 
     // Last one wins.
@@ -1404,7 +1457,9 @@ if (isDockerEnabled()) {
             login_md5.username +
             ":" +
             (login_md5.password || "") +
-            "@localhost:" +
+            "@" +
+            container.host +
+            ":" +
             container.port.toString() +
             "/" +
             options.db,
@@ -1455,7 +1510,7 @@ if (isDockerEnabled()) {
       const results = await sql`
     SELECT ${random_name}.*
     FROM ${random_name}
-    WHERE ${random_name}.hotel_id = ${user.hotel_id} 
+    WHERE ${random_name}.hotel_id = ${user.hotel_id}
     ${sortBy.should_sort ? orderBy(sortBy.field) : sql``}`;
       expect(results).toEqual([
         { id: 2, hotel_id: 1, created_at: new Date("2024-01-02T10:00:00.000Z") },
@@ -1917,6 +1972,19 @@ if (isDockerEnabled()) {
       expect(result[1][0].x).toEqual(2);
     });
 
+    test("simple query with multiple statements and different column names", async () => {
+      // Each result set has its own RowDescription; the statement's cached
+      // structure must be rebuilt for the second one instead of reusing the
+      // first (which would surface as {x: 2} below).
+      const result = await sql`select 1 as x;select 2 as y`.simple();
+      expect(result).toEqual([[{ x: 1 }], [{ y: 2 }]]);
+    });
+
+    test("simple query with multiple statements and different column counts", async () => {
+      const result = await sql.unsafe("select 1 as one; select 1 as a, 2 as b, 3 as c; select 'hi' as greeting");
+      expect(result).toEqual([[{ one: 1 }], [{ a: 1, b: 2, c: 3 }], [{ greeting: "hi" }]]);
+    });
+
     // t('listen and notify', async() => {
     //   const sql = postgres(options)
     //   const channel = 'hello'
@@ -2232,7 +2300,7 @@ if (isDockerEnabled()) {
       }
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_REFUSED");
     });
 
     test("dynamic table name", async () => {
@@ -2763,6 +2831,30 @@ if (isDockerEnabled()) {
       10000,
     );
 
+    // Regression: src/sql_jsc/postgres/PostgresSQLQuery.zig:234 `push()` appends each
+    // DataRow JSValue into the codegen-backed `pending_value` cached array. The Rust port
+    // stubbed push() as a no-op under the mistaken belief that `pending_value` is not a
+    // field (it is — generated from `values: ["pendingValue", ...]` in sql.classes.ts).
+    // This test asserts the Zig spec: every streamed row must land in the result array,
+    // in order, with no rows dropped — for both objects mode and .values() mode.
+    test("multi-row results accumulate every row in pending_value (push contract)", async () => {
+      await using sql = postgres(options);
+
+      // objects mode (default): each DataRow → { n: i } pushed into pending_value
+      const rows = await sql`select generate_series(1, 500) as n`;
+      expect(rows.length).toBe(500);
+      for (let i = 0; i < 500; i++) {
+        expect(rows[i].n).toBe(i + 1);
+      }
+
+      // .values() mode: result_mode = .values, rows are arrays-of-columns
+      const vals = await sql`select generate_series(1, 500) as n`.values();
+      expect(vals.length).toBe(500);
+      for (let i = 0; i < 500; i++) {
+        expect(vals[i][0]).toBe(i + 1);
+      }
+    });
+
     // t('Debug', async() => {
     //   let result
     //   const sql = postgres({
@@ -2860,12 +2952,15 @@ if (isDockerEnabled()) {
     //   ]
     // })
 
+    // Fault-injection test: requires a server that refuses / drops / sends malformed
+    // frames, which a healthy container will not do on demand. DO NOT COPY THIS
+    // PATTERN — anything a real server can produce belongs in describeWithContainer.
+    // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+    // Buffer.alloc frame construction here.
     test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
       "connection timeout key %p throws",
       async key => {
-        const server = net.createServer().listen();
-
-        const port = (server.address() as import("node:net").AddressInfo).port;
+        const { port, server } = await neverAnsweringServer();
 
         const sql = postgres({ port, host: "127.0.0.1", [key]: 0.2 });
 
@@ -3941,7 +4036,7 @@ CREATE TABLE ${table_name} (
       test("should handle array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY[true, false] @> ARRAY[true]::boolean[] as contains_true,
         ARRAY[true, false] @> ARRAY[false]::boolean[] as contains_false,
         ARRAY[true, false] @> ARRAY[true, false]::boolean[] as contains_both
@@ -3955,7 +4050,7 @@ CREATE TABLE ${table_name} (
       test("should handle array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY[true, false] && ARRAY[true]::boolean[] as overlaps_true,
         ARRAY[true, false] && ARRAY[false]::boolean[] as overlaps_false,
         ARRAY[true, true] && ARRAY[false]::boolean[] as no_overlap
@@ -3969,7 +4064,7 @@ CREATE TABLE ${table_name} (
       test("should handle array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY[true, false] || ARRAY[true]::boolean[] as concatenated,
         ARRAY[true] || ARRAY[false]::boolean[] || ARRAY[true]::boolean[] as triple_concat
     `;
@@ -4003,7 +4098,7 @@ CREATE TABLE ${table_name} (
       test("should handle array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY[true, false] = ARRAY[true, false]::boolean[] as equal_arrays,
         ARRAY[true, false] = ARRAY[false, true]::boolean[] as different_arrays,
         ARRAY[true, true] > ARRAY[true, false]::boolean[] as greater_than,
@@ -4019,7 +4114,7 @@ CREATE TABLE ${table_name} (
       test("should handle array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         array_dims(ARRAY[true, false]::boolean[]) as one_dim,
         array_dims(ARRAY[[true, false], [false, true]]::boolean[][]) as two_dim
     `;
@@ -4031,7 +4126,7 @@ CREATE TABLE ${table_name} (
       test("should handle array length", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         array_length(ARRAY[true, false]::boolean[], 1) as length_one_dim,
         array_length(ARRAY[[true, false], [false, true]]::boolean[][], 1) as rows_two_dim,
         array_length(ARRAY[[true, false], [false, true]]::boolean[][], 2) as cols_two_dim
@@ -4063,7 +4158,7 @@ CREATE TABLE ${table_name} (
 
         const result = await sql`
       SELECT ARRAY[
-        E'\\x41424344'::bytea, 
+        E'\\x41424344'::bytea,
         E'\\x45464748'::bytea
       ]::bytea[] as multiple_values
     `;
@@ -4098,14 +4193,14 @@ CREATE TABLE ${table_name} (
         await using sql = postgres({ ...options, max: 1 });
 
         const result = await sql`
-      SELECT 
-        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] @> 
+      SELECT
+        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] @>
         ARRAY[E'\\x41424344'::bytea]::bytea[] as contains_first,
-        
-        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] @> 
+
+        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] @>
         ARRAY[E'\\x45464748'::bytea]::bytea[] as contains_second,
-        
-        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] @> 
+
+        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] @>
         ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea]::bytea[] as contains_both
     `;
 
@@ -4118,14 +4213,14 @@ CREATE TABLE ${table_name} (
         await using sql = postgres({ ...options, max: 1 });
 
         const result = await sql`
-      SELECT 
-        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] && 
+      SELECT
+        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] &&
         ARRAY[E'\\x41424344'::bytea]::bytea[] as overlaps_first,
-        
-        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] && 
+
+        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] &&
         ARRAY[E'\\x45464748'::bytea]::bytea[] as overlaps_second,
-        
-        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] && 
+
+        ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea] &&
         ARRAY[E'\\x49504B4C'::bytea]::bytea[] as no_overlap
     `;
 
@@ -4138,8 +4233,8 @@ CREATE TABLE ${table_name} (
         await using sql = postgres({ ...options, max: 1 });
 
         const result = await sql`
-      SELECT 
-        ARRAY[E'\\x41424344'::bytea] || 
+      SELECT
+        ARRAY[E'\\x41424344'::bytea] ||
         ARRAY[E'\\x45464748'::bytea]::bytea[] as concatenated
     `;
 
@@ -4165,11 +4260,11 @@ CREATE TABLE ${table_name} (
         await using sql = postgres({ ...options, max: 1 });
 
         const result = await sql`
-      SELECT 
-        ARRAY[E'\\x41424344'::bytea] = 
+      SELECT
+        ARRAY[E'\\x41424344'::bytea] =
         ARRAY[E'\\x41424344'::bytea]::bytea[] as equal_arrays,
-        
-        ARRAY[E'\\x41424344'::bytea] = 
+
+        ARRAY[E'\\x41424344'::bytea] =
         ARRAY[E'\\x45464748'::bytea]::bytea[] as different_arrays
     `;
 
@@ -4181,7 +4276,7 @@ CREATE TABLE ${table_name} (
         await using sql = postgres({ ...options, max: 1 });
 
         const result = await sql`
-      SELECT 
+      SELECT
         array_length(
           ARRAY[E'\\x41424344'::bytea, E'\\x45464748'::bytea]::bytea[],
           1
@@ -4242,7 +4337,7 @@ CREATE TABLE ${table_name} (
       test("char[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         (ARRAY['A', 'B', 'C']::char[])[1] as first_element,
         (ARRAY['A', 'B', 'C']::char[])[2] as second_element,
         (ARRAY['A', 'B', 'C']::char[])[3] as third_element
@@ -4256,7 +4351,7 @@ CREATE TABLE ${table_name} (
       test("char[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY['A', 'B', 'C']::char[] @> ARRAY['A']::char[] as contains_a,
         ARRAY['A', 'B', 'C']::char[] @> ARRAY['B']::char[] as contains_b,
         ARRAY['A', 'B', 'C']::char[] @> ARRAY['D']::char[] as contains_d,
@@ -4272,7 +4367,7 @@ CREATE TABLE ${table_name} (
       test("char[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY['A', 'B']::char[] && ARRAY['B', 'C']::char[] as has_overlap,
         ARRAY['A', 'B']::char[] && ARRAY['C', 'D']::char[] as no_overlap
     `;
@@ -4284,7 +4379,7 @@ CREATE TABLE ${table_name} (
       test("char[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY['A', 'B']::char[] || ARRAY['C', 'D']::char[] as concatenated,
         ARRAY['A']::char[] || ARRAY['B']::char[] || ARRAY['C']::char[] as triple_concat
     `;
@@ -4312,7 +4407,7 @@ CREATE TABLE ${table_name} (
       test("char[] - case sensitivity", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY['a']::char[] = ARRAY['A']::char[] as case_sensitive,
         ARRAY['a']::char[] = ARRAY['a']::char[] as same_case
     `;
@@ -4324,7 +4419,7 @@ CREATE TABLE ${table_name} (
       test("char[] - array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         ARRAY['A', 'B']::char[] = ARRAY['A', 'B']::char[] as equal_arrays,
         ARRAY['A', 'B']::char[] = ARRAY['B', 'A']::char[] as different_order,
         ARRAY['A', 'B']::char[] < ARRAY['B', 'B']::char[] as less_than,
@@ -4340,7 +4435,7 @@ CREATE TABLE ${table_name} (
       test("char[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-      SELECT 
+      SELECT
         array_length(ARRAY['A', 'B', 'C']::char[], 1) as array_length,
         array_dims(ARRAY['A', 'B', 'C']::char[]) as dimensions,
         array_upper(ARRAY['A', 'B', 'C']::char[], 1) as upper_bound,
@@ -4406,7 +4501,7 @@ CREATE TABLE ${table_name} (
       test("name[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['name1', 'name2', 'name3']::name[])[1] as first_element,
           (ARRAY['name1', 'name2', 'name3']::name[])[2] as second_element,
           (ARRAY['name1', 'name2', 'name3']::name[])[3] as third_element
@@ -4420,7 +4515,7 @@ CREATE TABLE ${table_name} (
       test("name[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['name1', 'name2', 'name3']::name[] @> ARRAY['name1']::name[] as contains_first,
           ARRAY['name1', 'name2', 'name3']::name[] @> ARRAY['name2']::name[] as contains_second,
           ARRAY['name1', 'name2', 'name3']::name[] @> ARRAY['name4']::name[] as contains_none,
@@ -4436,7 +4531,7 @@ CREATE TABLE ${table_name} (
       test("name[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['name1', 'name2']::name[] && ARRAY['name2', 'name3']::name[] as has_overlap,
           ARRAY['name1', 'name2']::name[] && ARRAY['name3', 'name4']::name[] as no_overlap
       `;
@@ -4448,7 +4543,7 @@ CREATE TABLE ${table_name} (
       test("name[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['name1', 'name2']::name[] || ARRAY['name3', 'name4']::name[] as concatenated,
           ARRAY['name1']::name[] || ARRAY['name2']::name[] || ARRAY['name3']::name[] as triple_concat
       `;
@@ -4470,7 +4565,7 @@ CREATE TABLE ${table_name} (
       test("name[] - case sensitivity", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['Name1']::name[] = ARRAY['name1']::name[] as case_sensitive,
           ARRAY['name1']::name[] = ARRAY['name1']::name[] as same_case
       `;
@@ -4482,7 +4577,7 @@ CREATE TABLE ${table_name} (
       test("name[] - array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['name1', 'name2']::name[] = ARRAY['name1', 'name2']::name[] as equal_arrays,
           ARRAY['name1', 'name2']::name[] = ARRAY['name2', 'name1']::name[] as different_order,
           ARRAY['name1', 'name2']::name[] < ARRAY['name2', 'name2']::name[] as less_than,
@@ -4498,7 +4593,7 @@ CREATE TABLE ${table_name} (
       test("name[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['name1', 'name2', 'name3']::name[], 1) as array_length,
           array_dims(ARRAY['name1', 'name2', 'name3']::name[]) as dimensions,
           array_upper(ARRAY['name1', 'name2', 'name3']::name[], 1) as upper_bound,
@@ -4611,7 +4706,7 @@ CREATE TABLE ${table_name} (
         test("int8[] - array element access", async () => {
           await using sql = postgres({ ...options, max: 1, bigint: bigint });
           const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[1, 2, 3]::int8[])[1] as first_element,
           (ARRAY[1, 2, 3]::int8[])[2] as second_element,
           (ARRAY[1, 2, 3]::int8[])[3] as third_element
@@ -4630,7 +4725,7 @@ CREATE TABLE ${table_name} (
         test("int8[] - array contains operator", async () => {
           await using sql = postgres({ ...options, max: 1, bigint: bigint });
           const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2, 3]::int8[] @> ARRAY[1]::int8[] as contains_first,
           ARRAY[1, 2, 3]::int8[] @> ARRAY[2]::int8[] as contains_second,
           ARRAY[1, 2, 3]::int8[] @> ARRAY[4]::int8[] as contains_none,
@@ -4646,7 +4741,7 @@ CREATE TABLE ${table_name} (
         test("int8[] - array overlap operator", async () => {
           await using sql = postgres({ ...options, max: 1, bigint: bigint });
           const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int8[] && ARRAY[2, 3]::int8[] as has_overlap,
           ARRAY[1, 2]::int8[] && ARRAY[3, 4]::int8[] as no_overlap
       `;
@@ -4657,7 +4752,7 @@ CREATE TABLE ${table_name} (
         test("int8[] - array concatenation", async () => {
           await using sql = postgres({ ...options, max: 1, bigint: bigint });
           const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int8[] || ARRAY[3, 4]::int8[] as concatenated,
           ARRAY[1]::int8[] || ARRAY[2]::int8[] || ARRAY[3]::int8[] as triple_concat
       `;
@@ -4686,7 +4781,7 @@ CREATE TABLE ${table_name} (
         test("int8[] - array arithmetic operations", async () => {
           await using sql = postgres({ ...options, max: 1, bigint: bigint });
           const result = await sql`
-        SELECT 
+        SELECT
           (SELECT array_agg(val + 1) FROM unnest(ARRAY[1, 2, 3]::int8[]) as val) as addition,
           (SELECT array_agg(val * 2) FROM unnest(ARRAY[1, 2, 3]::int8[]) as val) as multiplication
       `;
@@ -4702,7 +4797,7 @@ CREATE TABLE ${table_name} (
         test("int8[] - array comparison", async () => {
           await using sql = postgres({ ...options, max: 1, bigint: bigint });
           const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int8[] = ARRAY[1, 2]::int8[] as equal_arrays,
           ARRAY[1, 2]::int8[] = ARRAY[2, 1]::int8[] as different_order,
           ARRAY[1, 2]::int8[] < ARRAY[2, 2]::int8[] as less_than,
@@ -4724,7 +4819,7 @@ CREATE TABLE ${table_name} (
         test("int8[] - array dimensions", async () => {
           await using sql = postgres({ ...options, max: 1, bigint: bigint });
           const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[1, 2, 3]::int8[], 1)::int8 as array_length,
           array_dims(ARRAY[1, 2, 3]::int8[]) as dimensions,
           array_upper(ARRAY[1, 2, 3]::int8[], 1)::int8 as upper_bound,
@@ -4762,7 +4857,7 @@ CREATE TABLE ${table_name} (
         test("int8[] - array mathematical functions", async () => {
           await using sql = postgres({ ...options, max: 1, bigint: bigint });
           const result = await sql`
-        SELECT 
+        SELECT
           (SELECT sum(val) FROM unnest(ARRAY[1, 2, 3]::int8[]) as val)::int8 as total,
           (SELECT avg(val) FROM unnest(ARRAY[1, 2, 3]::int8[]) as val)::int8 as average,
           (SELECT min(val) FROM unnest(ARRAY[1, 2, 3]::int8[]) as val)::int8 as minimum,
@@ -4832,7 +4927,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[1, 2, 3]::int4[])[1] as first_element,
           (ARRAY[1, 2, 3]::int4[])[2] as second_element,
           (ARRAY[1, 2, 3]::int4[])[3] as third_element
@@ -4846,7 +4941,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2, 3]::int4[] @> ARRAY[1]::int4[] as contains_first,
           ARRAY[1, 2, 3]::int4[] @> ARRAY[2]::int4[] as contains_second,
           ARRAY[1, 2, 3]::int4[] @> ARRAY[4]::int4[] as contains_none,
@@ -4862,7 +4957,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int4[] && ARRAY[2, 3]::int4[] as has_overlap,
           ARRAY[1, 2]::int4[] && ARRAY[3, 4]::int4[] as no_overlap
       `;
@@ -4874,7 +4969,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int4[] || ARRAY[3, 4]::int4[] as concatenated,
           ARRAY[1]::int4[] || ARRAY[2]::int4[] || ARRAY[3]::int4[] as triple_concat
       `;
@@ -4896,7 +4991,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array arithmetic operations", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (SELECT array_agg(val + 1) FROM unnest(ARRAY[1, 2, 3]::int4[]) as val) as addition,
           (SELECT array_agg(val * 2) FROM unnest(ARRAY[1, 2, 3]::int4[]) as val) as multiplication
       `;
@@ -4908,7 +5003,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int4[] = ARRAY[1, 2]::int4[] as equal_arrays,
           ARRAY[1, 2]::int4[] = ARRAY[2, 1]::int4[] as different_order,
           ARRAY[1, 2]::int4[] < ARRAY[2, 2]::int4[] as less_than,
@@ -4924,7 +5019,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[1, 2, 3]::int4[], 1) as array_length,
           array_dims(ARRAY[1, 2, 3]::int4[]) as dimensions,
           array_upper(ARRAY[1, 2, 3]::int4[], 1) as upper_bound,
@@ -4953,7 +5048,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array mathematical functions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (SELECT sum(val) FROM unnest(ARRAY[1, 2, 3]::int4[]) as val)::int4 as total,
           (SELECT avg(val) FROM unnest(ARRAY[1, 2, 3]::int4[]) as val)::int4 as average,
           (SELECT min(val) FROM unnest(ARRAY[1, 2, 3]::int4[]) as val)::int4 as minimum,
@@ -4969,7 +5064,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array type casting", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2, 3]::int8[] = ARRAY[1, 2, 3]::int4[]::int8[] as cast_to_int8,
           ARRAY[1, 2, 3]::float8[] = ARRAY[1, 2, 3]::int4[]::float8[] as cast_to_float8
       `;
@@ -4981,7 +5076,7 @@ CREATE TABLE ${table_name} (
       test("int4[] - array with zero values", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[0, 0, 0]::int4[] as zero_array,
           ARRAY[-0, 0, +0]::int4[] as signed_zeros
       `;
@@ -5039,7 +5134,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[1, 2, 3]::int2[])[1] as first_element,
           (ARRAY[1, 2, 3]::int2[])[2] as second_element,
           (ARRAY[1, 2, 3]::int2[])[3] as third_element
@@ -5053,7 +5148,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2, 3]::int2[] @> ARRAY[1]::int2[] as contains_first,
           ARRAY[1, 2, 3]::int2[] @> ARRAY[2]::int2[] as contains_second,
           ARRAY[1, 2, 3]::int2[] @> ARRAY[4]::int2[] as contains_none,
@@ -5069,7 +5164,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int2[] && ARRAY[2, 3]::int2[] as has_overlap,
           ARRAY[1, 2]::int2[] && ARRAY[3, 4]::int2[] as no_overlap
       `;
@@ -5081,7 +5176,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int2[] || ARRAY[3, 4]::int2[] as concatenated,
           ARRAY[1]::int2[] || ARRAY[2]::int2[] || ARRAY[3]::int2[] as triple_concat
       `;
@@ -5103,7 +5198,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array arithmetic operations", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (SELECT array_agg(val + 1) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val) as addition,
           (SELECT array_agg(val * 2) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val) as multiplication
       `;
@@ -5115,7 +5210,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::int2[] = ARRAY[1, 2]::int2[] as equal_arrays,
           ARRAY[1, 2]::int2[] = ARRAY[2, 1]::int2[] as different_order,
           ARRAY[1, 2]::int2[] < ARRAY[2, 2]::int2[] as less_than,
@@ -5131,7 +5226,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[1, 2, 3]::int2[], 1) as array_length,
           array_dims(ARRAY[1, 2, 3]::int2[]) as dimensions,
           array_upper(ARRAY[1, 2, 3]::int2[], 1) as upper_bound,
@@ -5160,7 +5255,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array mathematical functions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (SELECT sum(val) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val)::int2 as total,
           (SELECT avg(val) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val)::int2 as average,
           (SELECT min(val) FROM unnest(ARRAY[1, 2, 3]::int2[]) as val)::int2 as minimum,
@@ -5176,7 +5271,7 @@ CREATE TABLE ${table_name} (
       test("int2[] - array type casting", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2, 3]::int4[] = ARRAY[1, 2, 3]::int2[]::int4[] as cast_to_int4,
           ARRAY[1, 2, 3]::int8[] = ARRAY[1, 2, 3]::int2[]::int8[] as cast_to_int8,
           ARRAY[1, 2, 3]::float4[] = ARRAY[1, 2, 3]::int2[]::float4[] as cast_to_float4
@@ -5220,14 +5315,14 @@ CREATE TABLE ${table_name} (
       test("int2vector[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['1 2'::int2vector, '3 4'::int2vector] @> 
+        SELECT
+          ARRAY['1 2'::int2vector, '3 4'::int2vector] @>
           ARRAY['1 2'::int2vector] as contains_first,
-          
-          ARRAY['1 2'::int2vector, '3 4'::int2vector] @> 
+
+          ARRAY['1 2'::int2vector, '3 4'::int2vector] @>
           ARRAY['3 4'::int2vector] as contains_second,
-          
-          ARRAY['1 2'::int2vector, '3 4'::int2vector] @> 
+
+          ARRAY['1 2'::int2vector, '3 4'::int2vector] @>
           ARRAY['5 6'::int2vector] as contains_none
       `;
 
@@ -5310,7 +5405,7 @@ CREATE TABLE ${table_name} (
       test("text[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['first', 'second', 'third']::text[])[1] as first_element,
           (ARRAY['first', 'second', 'third']::text[])[2] as second_element,
           (ARRAY['first', 'second', 'third']::text[])[3] as third_element
@@ -5324,7 +5419,7 @@ CREATE TABLE ${table_name} (
       test("text[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['a', 'b', 'c']::text[] @> ARRAY['a']::text[] as contains_first,
           ARRAY['a', 'b', 'c']::text[] @> ARRAY['b']::text[] as contains_second,
           ARRAY['a', 'b', 'c']::text[] @> ARRAY['d']::text[] as contains_none,
@@ -5340,7 +5435,7 @@ CREATE TABLE ${table_name} (
       test("text[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['a', 'b']::text[] && ARRAY['b', 'c']::text[] as has_overlap,
           ARRAY['a', 'b']::text[] && ARRAY['c', 'd']::text[] as no_overlap
       `;
@@ -5352,7 +5447,7 @@ CREATE TABLE ${table_name} (
       test("text[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['a', 'b']::text[] || ARRAY['c', 'd']::text[] as concatenated,
           ARRAY['a']::text[] || ARRAY['b']::text[] || ARRAY['c']::text[] as triple_concat
       `;
@@ -5364,7 +5459,7 @@ CREATE TABLE ${table_name} (
       test("text[] - case sensitivity", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['Test']::text[] = ARRAY['test']::text[] as case_sensitive,
           ARRAY['test']::text[] = ARRAY['test']::text[] as same_case
       `;
@@ -5376,7 +5471,7 @@ CREATE TABLE ${table_name} (
       test("text[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['a', 'b', 'c']::text[], 1) as array_length,
           array_dims(ARRAY['a', 'b', 'c']::text[]) as dimensions,
           array_upper(ARRAY['a', 'b', 'c']::text[], 1) as upper_bound,
@@ -5392,7 +5487,7 @@ CREATE TABLE ${table_name} (
       test("text[] - array string functions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (SELECT array_agg(upper(val)) FROM unnest(ARRAY['a', 'b', 'c']::text[]) as val) as uppercase,
           (SELECT array_agg(length(val)) FROM unnest(ARRAY['a', 'bb', 'ccc']::text[]) as val) as lengths
       `;
@@ -5555,7 +5650,7 @@ CREATE TABLE ${table_name} (
             'Hello There'
           ]::text[]) as phrase
         )
-        SELECT 
+        SELECT
           array_agg(phrase ORDER BY phrase) FILTER (WHERE phrase LIKE 'Hello%') as hello_phrases,
           array_agg(phrase ORDER BY phrase) FILTER (WHERE phrase LIKE '%World') as world_phrases
         FROM texts
@@ -5568,7 +5663,7 @@ CREATE TABLE ${table_name} (
       test("text[] - comparison with spaces", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['Hello World']::text[] @> ARRAY['Hello World']::text[] as exact_match,
           ARRAY['Hello World']::text[] @> ARRAY['Hello']::text[] as partial_match,
           ARRAY['Hello', 'World']::text[] @> ARRAY['Hello World']::text[] as separate_words
@@ -5582,7 +5677,7 @@ CREATE TABLE ${table_name} (
       test("text[] - concatenation with spaces", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['Hello', 'World']::text[] || ARRAY['Good Morning']::text[] as concatenated,
           string_agg(word, ' ') as joined
         FROM unnest(ARRAY['Hello', 'World']::text[]) as word
@@ -5806,7 +5901,7 @@ CREATE TABLE ${table_name} (
       test("oid[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[1, 2, 3]::oid[])[1] as first_element,
           (ARRAY[1, 2, 3]::oid[])[2] as second_element,
           (ARRAY[1, 2, 3]::oid[])[3] as third_element
@@ -5820,7 +5915,7 @@ CREATE TABLE ${table_name} (
       test("oid[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2, 3]::oid[] @> ARRAY[1]::oid[] as contains_first,
           ARRAY[1, 2, 3]::oid[] @> ARRAY[2]::oid[] as contains_second,
           ARRAY[1, 2, 3]::oid[] @> ARRAY[4]::oid[] as contains_none,
@@ -5836,7 +5931,7 @@ CREATE TABLE ${table_name} (
       test("oid[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::oid[] && ARRAY[2, 3]::oid[] as has_overlap,
           ARRAY[1, 2]::oid[] && ARRAY[3, 4]::oid[] as no_overlap
       `;
@@ -5848,7 +5943,7 @@ CREATE TABLE ${table_name} (
       test("oid[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::oid[] || ARRAY[3, 4]::oid[] as concatenated,
           ARRAY[1]::oid[] || ARRAY[2]::oid[] || ARRAY[3]::oid[] as triple_concat
       `;
@@ -5870,7 +5965,7 @@ CREATE TABLE ${table_name} (
       test("oid[] - array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2]::oid[] = ARRAY[1, 2]::oid[] as equal_arrays,
           ARRAY[1, 2]::oid[] = ARRAY[2, 1]::oid[] as different_order,
           ARRAY[1, 2]::oid[] < ARRAY[2, 2]::oid[] as less_than,
@@ -5886,7 +5981,7 @@ CREATE TABLE ${table_name} (
       test("oid[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[1, 2, 3]::oid[], 1) as array_length,
           array_dims(ARRAY[1, 2, 3]::oid[]) as dimensions,
           array_upper(ARRAY[1, 2, 3]::oid[], 1) as upper_bound,
@@ -5902,7 +5997,7 @@ CREATE TABLE ${table_name} (
       test("oid[] - type casting", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1, 2, 3]::int4[] = ARRAY[1, 2, 3]::oid[]::int4[] as cast_to_int4,
           ARRAY[1, 2, 3]::int8[] = ARRAY[1, 2, 3]::oid[]::int8[] as cast_to_int8
       `;
@@ -5919,7 +6014,7 @@ CREATE TABLE ${table_name} (
           relowner::oid,
           relnamespace::oid
         ]::oid[] as class_oids
-        FROM pg_class 
+        FROM pg_class
         WHERE relname = 'pg_class'
       `;
 
@@ -5979,7 +6074,7 @@ CREATE TABLE ${table_name} (
       test("tid[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[])[1] as first_element,
           (ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[])[2] as second_element,
           (ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[])[3] as third_element
@@ -5993,7 +6088,7 @@ CREATE TABLE ${table_name} (
       test("tid[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[] @> ARRAY['(0,1)']::tid[] as contains_first,
           ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[] @> ARRAY['(0,2)']::tid[] as contains_second,
           ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[] @> ARRAY['(0,4)']::tid[] as contains_none,
@@ -6009,7 +6104,7 @@ CREATE TABLE ${table_name} (
       test("tid[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['(0,1)', '(0,2)']::tid[] && ARRAY['(0,2)', '(0,3)']::tid[] as has_overlap,
           ARRAY['(0,1)', '(0,2)']::tid[] && ARRAY['(0,3)', '(0,4)']::tid[] as no_overlap
       `;
@@ -6021,7 +6116,7 @@ CREATE TABLE ${table_name} (
       test("tid[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['(0,1)', '(0,2)']::tid[] || ARRAY['(0,3)', '(0,4)']::tid[] as concatenated,
           ARRAY['(0,1)']::tid[] || ARRAY['(0,2)']::tid[] || ARRAY['(0,3)']::tid[] as triple_concat
       `;
@@ -6043,7 +6138,7 @@ CREATE TABLE ${table_name} (
       test("tid[] - array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['(0,1)', '(0,2)']::tid[] = ARRAY['(0,1)', '(0,2)']::tid[] as equal_arrays,
           ARRAY['(0,1)', '(0,2)']::tid[] = ARRAY['(0,2)', '(0,1)']::tid[] as different_order,
           ARRAY['(0,1)', '(0,2)']::tid[] < ARRAY['(0,2)', '(0,2)']::tid[] as less_than,
@@ -6059,7 +6154,7 @@ CREATE TABLE ${table_name} (
       test("tid[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[], 1) as array_length,
           array_dims(ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[]) as dimensions,
           array_upper(ARRAY['(0,1)', '(0,2)', '(0,3)']::tid[], 1) as upper_bound,
@@ -6146,7 +6241,7 @@ CREATE TABLE ${table_name} (
       test("xid[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[])[1] as first_element,
           (ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[])[2] as second_element,
           (ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[])[3] as third_element
@@ -6160,7 +6255,7 @@ CREATE TABLE ${table_name} (
       test("xid[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[] @> ARRAY['1'::xid]::xid[] as contains_first,
           ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[] @> ARRAY['2'::xid]::xid[] as contains_second,
           ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[] @> ARRAY['4'::xid]::xid[] as contains_none,
@@ -6176,7 +6271,7 @@ CREATE TABLE ${table_name} (
       test("xid[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['1'::xid, '2'::xid]::xid[] && ARRAY['2'::xid, '3'::xid]::xid[] as has_overlap,
           ARRAY['1'::xid, '2'::xid]::xid[] && ARRAY['3'::xid, '4'::xid]::xid[] as no_overlap
       `;
@@ -6188,7 +6283,7 @@ CREATE TABLE ${table_name} (
       test("xid[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['1'::xid, '2'::xid]::xid[] || ARRAY['3'::xid, '4'::xid]::xid[] as concatenated,
           ARRAY['1'::xid]::xid[] || ARRAY['2'::xid]::xid[] || ARRAY['3'::xid]::xid[] as triple_concat
       `;
@@ -6200,7 +6295,7 @@ CREATE TABLE ${table_name} (
       test("xid[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[], 1) as array_length,
           array_dims(ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[]) as dimensions,
           array_upper(ARRAY['1'::xid, '2'::xid, '3'::xid]::xid[], 1) as upper_bound,
@@ -6285,7 +6380,7 @@ CREATE TABLE ${table_name} (
       test("cid[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[])[1] as first_element,
           (ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[])[2] as second_element,
           (ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[])[3] as third_element
@@ -6299,7 +6394,7 @@ CREATE TABLE ${table_name} (
       test("cid[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[] @> ARRAY['0'::cid]::cid[] as contains_first,
           ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[] @> ARRAY['1'::cid]::cid[] as contains_second,
           ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[] @> ARRAY['3'::cid]::cid[] as contains_none,
@@ -6315,7 +6410,7 @@ CREATE TABLE ${table_name} (
       test("cid[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['0'::cid, '1'::cid]::cid[] && ARRAY['1'::cid, '2'::cid]::cid[] as has_overlap,
           ARRAY['0'::cid, '1'::cid]::cid[] && ARRAY['2'::cid, '3'::cid]::cid[] as no_overlap
       `;
@@ -6327,7 +6422,7 @@ CREATE TABLE ${table_name} (
       test("cid[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['0'::cid, '1'::cid]::cid[] || ARRAY['2'::cid, '3'::cid]::cid[] as concatenated,
           ARRAY['0'::cid]::cid[] || ARRAY['1'::cid]::cid[] || ARRAY['2'::cid]::cid[] as triple_concat
       `;
@@ -6339,7 +6434,7 @@ CREATE TABLE ${table_name} (
       test("cid[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[], 1) as array_length,
           array_dims(ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[]) as dimensions,
           array_upper(ARRAY['0'::cid, '1'::cid, '2'::cid]::cid[], 1) as upper_bound,
@@ -6454,7 +6549,7 @@ CREATE TABLE ${table_name} (
       test("json[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[])[1] as first_element,
           (ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[])[2] as second_element,
           (ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[])[3] as third_element
@@ -6468,8 +6563,8 @@ CREATE TABLE ${table_name} (
       test("json[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['{"a": 1}', '{"b": 2}']::json[] || 
+        SELECT
+          ARRAY['{"a": 1}', '{"b": 2}']::json[] ||
           ARRAY['{"c": 3}', '{"d": 4}']::json[] as concatenated
       `;
 
@@ -6512,7 +6607,7 @@ CREATE TABLE ${table_name} (
       test("json[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[], 1) as array_length,
           array_dims(ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[]) as dimensions,
           array_upper(ARRAY['{"a": 1}', '{"b": 2}', '{"c": 3}']::json[], 1) as upper_bound,
@@ -6601,7 +6696,7 @@ CREATE TABLE ${table_name} (
       test("xml[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[])[1] as first_element,
           (ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[])[2] as second_element,
           (ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[])[3] as third_element
@@ -6615,8 +6710,8 @@ CREATE TABLE ${table_name} (
       test("xml[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['<a>1</a>', '<b>2</b>']::xml[] || 
+        SELECT
+          ARRAY['<a>1</a>', '<b>2</b>']::xml[] ||
           ARRAY['<c>3</c>', '<d>4</d>']::xml[] as concatenated
       `;
 
@@ -6641,7 +6736,7 @@ CREATE TABLE ${table_name} (
       test("xml[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[], 1) as array_length,
           array_dims(ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[]) as dimensions,
           array_upper(ARRAY['<a>1</a>', '<b>2</b>', '<c>3</c>']::xml[], 1) as upper_bound,
@@ -6765,7 +6860,7 @@ CREATE TABLE ${table_name} (
       test("point[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['(1,2)', '(3,4)', '(5,6)']::point[])[1] as first_element,
           (ARRAY['(1,2)', '(3,4)', '(5,6)']::point[])[2] as second_element,
           (ARRAY['(1,2)', '(3,4)', '(5,6)']::point[])[3] as third_element
@@ -6779,7 +6874,7 @@ CREATE TABLE ${table_name} (
       test("point[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['(1,2)', '(3,4)']::point[] || ARRAY['(5,6)', '(7,8)']::point[] as concatenated
       `;
 
@@ -6789,7 +6884,7 @@ CREATE TABLE ${table_name} (
       test("point[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['(1,2)', '(3,4)', '(5,6)']::point[], 1) as array_length,
           array_dims(ARRAY['(1,2)', '(3,4)', '(5,6)']::point[]) as dimensions,
           array_upper(ARRAY['(1,2)', '(3,4)', '(5,6)']::point[], 1) as upper_bound,
@@ -6902,7 +6997,7 @@ CREATE TABLE ${table_name} (
       test("lseg[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[])[1] as first_element,
           (ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[])[2] as second_element,
           (ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[])[3] as third_element
@@ -6916,8 +7011,8 @@ CREATE TABLE ${table_name} (
       test("lseg[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]']::lseg[] || 
+        SELECT
+          ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]']::lseg[] ||
           ARRAY['[(9,10),(11,12)]', '[(13,14),(15,16)]']::lseg[] as concatenated
       `;
 
@@ -6931,7 +7026,7 @@ CREATE TABLE ${table_name} (
       test("lseg[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[], 1) as array_length,
           array_dims(ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[]) as dimensions,
           array_upper(ARRAY['[(1,2),(3,4)]', '[(5,6),(7,8)]', '[(9,10),(11,12)]']::lseg[], 1) as upper_bound,
@@ -7052,7 +7147,7 @@ CREATE TABLE ${table_name} (
       test("path[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[])[1] as first_element,
           (ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[])[2] as second_element,
           (ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[])[3] as third_element
@@ -7066,8 +7161,8 @@ CREATE TABLE ${table_name} (
       test("path[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))']::path[] || 
+        SELECT
+          ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))']::path[] ||
           ARRAY['[(9,10),(11,12)]']::path[] as concatenated
       `;
 
@@ -7077,7 +7172,7 @@ CREATE TABLE ${table_name} (
       test("path[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[], 1) as array_length,
           array_dims(ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[]) as dimensions,
           array_upper(ARRAY['[(1,2),(3,4)]', '((5,6),(7,8))', '[(9,10),(11,12)]']::path[], 1) as upper_bound,
@@ -7181,7 +7276,7 @@ CREATE TABLE ${table_name} (
       test("box[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['((0,0),(1,1))', '((2,2),(3,3))', '((4,4),(5,5))']::box[])[1] as first_element,
           (ARRAY['((0,0),(1,1))', '((2,2),(3,3))', '((4,4),(5,5))']::box[])[2] as second_element,
           (ARRAY['((0,0),(1,1))', '((2,2),(3,3))', '((4,4),(5,5))']::box[])[3] as third_element
@@ -7195,8 +7290,8 @@ CREATE TABLE ${table_name} (
       test("box[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[] || 
+        SELECT
+          ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[] ||
           ARRAY['((4,4),(5,5))']::box[] as concatenated
       `;
 
@@ -7206,7 +7301,7 @@ CREATE TABLE ${table_name} (
       test("box[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[], 1) as array_length,
           array_dims(ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[]) as dimensions,
           array_upper(ARRAY['((0,0),(1,1))', '((2,2),(3,3))']::box[], 1) as upper_bound,
@@ -7222,7 +7317,7 @@ CREATE TABLE ${table_name} (
       test("box[] - box operators", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           box '((0,0),(1,1))' = box '((1,1),(0,0))' as same_box,
           box '((0,0),(2,2))' @> box '((1,1),(1.5,1.5))' as contains_box,
           box '((0,0),(2,2))' && box '((1,1),(3,3))' as overlaps_box
@@ -7328,7 +7423,7 @@ CREATE TABLE ${table_name} (
       test("polygon[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[])[1] as first_element,
           (ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[])[2] as second_element
       `;
@@ -7340,8 +7435,8 @@ CREATE TABLE ${table_name} (
       test("polygon[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['((0,0),(1,1),(2,0))']::polygon[] || 
+        SELECT
+          ARRAY['((0,0),(1,1),(2,0))']::polygon[] ||
           ARRAY['((0,0),(0,1),(1,1),(1,0))']::polygon[] as concatenated
       `;
 
@@ -7351,7 +7446,7 @@ CREATE TABLE ${table_name} (
       test("polygon[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[], 1) as array_length,
           array_dims(ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[]) as dimensions,
           array_upper(ARRAY['((0,0),(1,1),(2,0))', '((0,0),(0,1),(1,1),(1,0))']::polygon[], 1) as upper_bound,
@@ -7367,7 +7462,7 @@ CREATE TABLE ${table_name} (
       test("polygon[] - polygon operators", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           '((0,0),(1,1),(1,0))'::polygon @> point '(0.5,0.5)' as contains_point,
           '((0,0),(2,2),(2,0))'::polygon @> '((0.5,0.5),(1.5,1.5),(1.5,0.5))'::polygon as contains_polygon,
           '((0,0),(2,2),(2,0))'::polygon && '((1,1),(3,3),(3,1))'::polygon as overlaps_polygon
@@ -7460,7 +7555,7 @@ CREATE TABLE ${table_name} (
       test("line[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['{1,2,3}', '{4,5,6}', '{7,8,9}']::line[])[1] as first_element,
           (ARRAY['{1,2,3}', '{4,5,6}', '{7,8,9}']::line[])[2] as second_element,
           (ARRAY['{1,2,3}', '{4,5,6}', '{7,8,9}']::line[])[3] as third_element
@@ -7474,8 +7569,8 @@ CREATE TABLE ${table_name} (
       test("line[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['{1,2,3}', '{4,5,6}']::line[] || 
+        SELECT
+          ARRAY['{1,2,3}', '{4,5,6}']::line[] ||
           ARRAY['{7,8,9}']::line[] as concatenated
       `;
 
@@ -7485,7 +7580,7 @@ CREATE TABLE ${table_name} (
       test("line[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['{1,2,3}', '{4,5,6}']::line[], 1) as array_length,
           array_dims(ARRAY['{1,2,3}', '{4,5,6}']::line[]) as dimensions,
           array_upper(ARRAY['{1,2,3}', '{4,5,6}']::line[], 1) as upper_bound,
@@ -7603,7 +7698,7 @@ CREATE TABLE ${table_name} (
       test("cidr[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['192.168.1.0/24', '10.0.0.0/8', '172.16.0.0/16']::cidr[])[1] as first_element,
           (ARRAY['192.168.1.0/24', '10.0.0.0/8', '172.16.0.0/16']::cidr[])[2] as second_element,
           (ARRAY['192.168.1.0/24', '10.0.0.0/8', '172.16.0.0/16']::cidr[])[3] as third_element
@@ -7617,8 +7712,8 @@ CREATE TABLE ${table_name} (
       test("cidr[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[] || 
+        SELECT
+          ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[] ||
           ARRAY['172.16.0.0/16']::cidr[] as concatenated
       `;
 
@@ -7628,7 +7723,7 @@ CREATE TABLE ${table_name} (
       test("cidr[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[], 1) as array_length,
           array_dims(ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[]) as dimensions,
           array_upper(ARRAY['192.168.1.0/24', '10.0.0.0/8']::cidr[], 1) as upper_bound,
@@ -7758,7 +7853,7 @@ CREATE TABLE ${table_name} (
       test("float4[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[1.1, 2.2, 3.3]::float4[])[1] as first_element,
           (ARRAY[1.1, 2.2, 3.3]::float4[])[2] as second_element,
           (ARRAY[1.1, 2.2, 3.3]::float4[])[3] as third_element
@@ -7772,7 +7867,7 @@ CREATE TABLE ${table_name} (
       test("float4[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.1, 2.2, 3.3]::float4[] @> ARRAY[1.1]::float4[] as contains_first,
           ARRAY[1.1, 2.2, 3.3]::float4[] @> ARRAY[2.2]::float4[] as contains_second,
           ARRAY[1.1, 2.2, 3.3]::float4[] @> ARRAY[4.4]::float4[] as contains_none,
@@ -7788,7 +7883,7 @@ CREATE TABLE ${table_name} (
       test("float4[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.1, 2.2]::float4[] && ARRAY[2.2, 3.3]::float4[] as has_overlap,
           ARRAY[1.1, 2.2]::float4[] && ARRAY[3.3, 4.4]::float4[] as no_overlap
       `;
@@ -7800,7 +7895,7 @@ CREATE TABLE ${table_name} (
       test("float4[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.1, 2.2]::float4[] || ARRAY[3.3, 4.4]::float4[] as concatenated
       `;
 
@@ -7810,7 +7905,7 @@ CREATE TABLE ${table_name} (
       test("float4[] - mathematical operations", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (SELECT array_agg((value * 2)::float4) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float4[]) as value) as multiplication,
           (SELECT array_agg((value + 1)::float4) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float4[]) as value) as addition
       `;
@@ -7822,7 +7917,7 @@ CREATE TABLE ${table_name} (
       test("float4[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[1.1, 2.2, 3.3]::float4[], 1) as array_length,
           array_dims(ARRAY[1.1, 2.2, 3.3]::float4[]) as dimensions,
           array_upper(ARRAY[1.1, 2.2, 3.3]::float4[], 1) as upper_bound,
@@ -7838,7 +7933,7 @@ CREATE TABLE ${table_name} (
       test("float4[] - precision comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.23456789::float4]::float4[] as high_precision,
           ARRAY[1.23456789::float8::float4]::float4[] as converted_precision
       `;
@@ -7969,7 +8064,7 @@ CREATE TABLE ${table_name} (
       test("float8[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[1.1, 2.2, 3.3]::float8[])[1] as first_element,
           (ARRAY[1.1, 2.2, 3.3]::float8[])[2] as second_element,
           (ARRAY[1.1, 2.2, 3.3]::float8[])[3] as third_element
@@ -7983,7 +8078,7 @@ CREATE TABLE ${table_name} (
       test("float8[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.1, 2.2, 3.3]::float8[] @> ARRAY[1.1]::float8[] as contains_first,
           ARRAY[1.1, 2.2, 3.3]::float8[] @> ARRAY[2.2]::float8[] as contains_second,
           ARRAY[1.1, 2.2, 3.3]::float8[] @> ARRAY[4.4]::float8[] as contains_none,
@@ -7999,7 +8094,7 @@ CREATE TABLE ${table_name} (
       test("float8[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.1, 2.2]::float8[] && ARRAY[2.2, 3.3]::float8[] as has_overlap,
           ARRAY[1.1, 2.2]::float8[] && ARRAY[3.3, 4.4]::float8[] as no_overlap
       `;
@@ -8011,7 +8106,7 @@ CREATE TABLE ${table_name} (
       test("float8[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.1, 2.2]::float8[] || ARRAY[3.3, 4.4]::float8[] as concatenated
       `;
 
@@ -8021,7 +8116,7 @@ CREATE TABLE ${table_name} (
       test("float8[] - mathematical operations", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (SELECT array_agg((value * 2)::float8) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float8[]) as value) as multiplication,
           (SELECT array_agg((value + 1)::float8) FROM unnest(ARRAY[1.1, 2.2, 3.3]::float8[]) as value) as addition,
           (SELECT array_agg(round(value::numeric, 10)) FROM unnest(ARRAY[1.1111111111, 2.2222222222]::float8[]) as value) as rounding
@@ -8035,7 +8130,7 @@ CREATE TABLE ${table_name} (
       test("float8[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[1.1, 2.2, 3.3]::float8[], 1) as array_length,
           array_dims(ARRAY[1.1, 2.2, 3.3]::float8[]) as dimensions,
           array_upper(ARRAY[1.1, 2.2, 3.3]::float8[], 1) as upper_bound,
@@ -8051,7 +8146,7 @@ CREATE TABLE ${table_name} (
       test("float8[] - precision comparison with float4", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.23456789012345::float8]::float8[] as double_precision,
           ARRAY[1.23456789012345::float4::float8]::float8[] as converted_precision
       `;
@@ -8147,7 +8242,7 @@ CREATE TABLE ${table_name} (
       test("circle[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['<(0,0),1>', '<(1,1),2>', '<(2,2),3>']::circle[])[1] as first_element,
           (ARRAY['<(0,0),1>', '<(1,1),2>', '<(2,2),3>']::circle[])[2] as second_element,
           (ARRAY['<(0,0),1>', '<(1,1),2>', '<(2,2),3>']::circle[])[3] as third_element
@@ -8161,8 +8256,8 @@ CREATE TABLE ${table_name} (
       test("circle[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['<(0,0),1>', '<(1,1),2>']::circle[] || 
+        SELECT
+          ARRAY['<(0,0),1>', '<(1,1),2>']::circle[] ||
           ARRAY['<(2,2),3>']::circle[] as concatenated
       `;
 
@@ -8172,7 +8267,7 @@ CREATE TABLE ${table_name} (
       test("circle[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['<(0,0),1>', '<(1,1),2>']::circle[], 1) as array_length,
           array_dims(ARRAY['<(0,0),1>', '<(1,1),2>']::circle[]) as dimensions,
           array_upper(ARRAY['<(0,0),1>', '<(1,1),2>']::circle[], 1) as upper_bound,
@@ -8282,7 +8377,7 @@ CREATE TABLE ${table_name} (
       test("macaddr8[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[])[1] as first_element,
           (ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[])[2] as second_element
       `;
@@ -8294,8 +8389,8 @@ CREATE TABLE ${table_name} (
       test("macaddr8[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['08:00:2b:01:02:03:04:05']::macaddr8[] || 
+        SELECT
+          ARRAY['08:00:2b:01:02:03:04:05']::macaddr8[] ||
           ARRAY['08:00:2b:01:02:03:04:06']::macaddr8[] as concatenated
       `;
 
@@ -8305,7 +8400,7 @@ CREATE TABLE ${table_name} (
       test("macaddr8[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[], 1) as array_length,
           array_dims(ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[]) as dimensions,
           array_upper(ARRAY['08:00:2b:01:02:03:04:05', '08:00:2b:01:02:03:04:06']::macaddr8[], 1) as upper_bound,
@@ -8429,7 +8524,7 @@ CREATE TABLE ${table_name} (
       test("money[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['$100.00', '$200.00', '$300.00']::money[])[1] as first_element,
           (ARRAY['$100.00', '$200.00', '$300.00']::money[])[2] as second_element,
           (ARRAY['$100.00', '$200.00', '$300.00']::money[])[3] as third_element
@@ -8443,7 +8538,7 @@ CREATE TABLE ${table_name} (
       test("money[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['$100.00', '$200.00']::money[] || ARRAY['$300.00']::money[] as concatenated
       `;
 
@@ -8456,7 +8551,7 @@ CREATE TABLE ${table_name} (
         WITH money_values AS (
           SELECT unnest(ARRAY['$100.00', '$200.00', '$300.00']::money[]) as amount
         )
-        SELECT 
+        SELECT
           sum(amount)::money as total,
           min(amount)::money as minimum,
           max(amount)::money as maximum
@@ -8471,7 +8566,7 @@ CREATE TABLE ${table_name} (
       test("money[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['$100.00', '$200.00']::money[], 1) as array_length,
           array_dims(ARRAY['$100.00', '$200.00']::money[]) as dimensions,
           array_upper(ARRAY['$100.00', '$200.00']::money[], 1) as upper_bound,
@@ -8576,7 +8671,7 @@ CREATE TABLE ${table_name} (
       test("macaddr[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[])[1] as first_element,
           (ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[])[2] as second_element
       `;
@@ -8588,8 +8683,8 @@ CREATE TABLE ${table_name} (
       test("macaddr[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['08:00:2b:01:02:03']::macaddr[] || 
+        SELECT
+          ARRAY['08:00:2b:01:02:03']::macaddr[] ||
           ARRAY['08:00:2b:01:02:04']::macaddr[] as concatenated
       `;
 
@@ -8599,7 +8694,7 @@ CREATE TABLE ${table_name} (
       test("macaddr[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[], 1) as array_length,
           array_dims(ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[]) as dimensions,
           array_upper(ARRAY['08:00:2b:01:02:03', '08:00:2b:01:02:04']::macaddr[], 1) as upper_bound,
@@ -8732,7 +8827,7 @@ CREATE TABLE ${table_name} (
       test("inet[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['192.168.1.1', '10.0.0.1']::inet[])[1] as first_element,
           (ARRAY['192.168.1.1', '10.0.0.1']::inet[])[2] as second_element
       `;
@@ -8744,7 +8839,7 @@ CREATE TABLE ${table_name} (
       test("inet[] - network containment operators", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           '192.168.1.0/24'::inet << '192.168.1.1'::inet as network_contains_address,
           '192.168.1.0/24'::inet <<= '192.168.1.0/24'::inet as network_contains_equals,
           '192.168.1.1'::inet >> '192.168.1.0/24'::inet as address_contained_by,
@@ -8760,8 +8855,8 @@ CREATE TABLE ${table_name} (
       test("inet[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['192.168.1.1', '10.0.0.1']::inet[] || 
+        SELECT
+          ARRAY['192.168.1.1', '10.0.0.1']::inet[] ||
           ARRAY['172.16.0.1']::inet[] as concatenated
       `;
 
@@ -8771,7 +8866,7 @@ CREATE TABLE ${table_name} (
       test("inet[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['192.168.1.1', '10.0.0.1']::inet[], 1) as array_length,
           array_dims(ARRAY['192.168.1.1', '10.0.0.1']::inet[]) as dimensions,
           array_upper(ARRAY['192.168.1.1', '10.0.0.1']::inet[], 1) as upper_bound,
@@ -8894,7 +8989,7 @@ CREATE TABLE ${table_name} (
       test("bpchar[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['A', 'B', 'C']::bpchar[])[1] as first_element,
           (ARRAY['A', 'B', 'C']::bpchar[])[2] as second_element,
           (ARRAY['A', 'B', 'C']::bpchar[])[3] as third_element
@@ -8908,7 +9003,7 @@ CREATE TABLE ${table_name} (
       test("bpchar[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['A', 'B', 'C']::bpchar[], 1) as array_length,
           array_dims(ARRAY['A', 'B', 'C']::bpchar[]) as dimensions,
           array_upper(ARRAY['A', 'B', 'C']::bpchar[], 1) as upper_bound,
@@ -8924,7 +9019,7 @@ CREATE TABLE ${table_name} (
       test("bpchar[] - string comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY['abc'::char(5)] = ARRAY['abc  '::char(5)]::bpchar[] as equal_with_padding,
           ARRAY['abc'::char(5)] = ARRAY['def  '::char(5)]::bpchar[] as not_equal,
           ARRAY['abc'::char(5)] < ARRAY['def  '::char(5)]::bpchar[] as less_than,
@@ -9047,7 +9142,7 @@ CREATE TABLE ${table_name} (
       test("varchar[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['first', 'second', 'third']::varchar[])[1] as first_element,
           (ARRAY['first', 'second', 'third']::varchar[])[2] as second_element,
           (ARRAY['first', 'second', 'third']::varchar[])[3] as third_element
@@ -9061,8 +9156,8 @@ CREATE TABLE ${table_name} (
       test("varchar[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['first', 'second']::varchar[] || 
+        SELECT
+          ARRAY['first', 'second']::varchar[] ||
           ARRAY['third']::varchar[] as concatenated
       `;
 
@@ -9072,7 +9167,7 @@ CREATE TABLE ${table_name} (
       test("varchar[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['first', 'second', 'third']::varchar[], 1) as array_length,
           array_dims(ARRAY['first', 'second', 'third']::varchar[]) as dimensions,
           array_upper(ARRAY['first', 'second', 'third']::varchar[], 1) as upper_bound,
@@ -9091,7 +9186,7 @@ CREATE TABLE ${table_name} (
         WITH test_array AS (
           SELECT ARRAY['test1', 'test2', 'other', 'test3']::varchar[] as values
         )
-        SELECT 
+        SELECT
           array_agg(v ORDER BY v) FILTER (WHERE v LIKE 'test%') as filtered
         FROM test_array, unnest(values) as v
       `;
@@ -9243,7 +9338,7 @@ CREATE TABLE ${table_name} (
       test("date[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['2024-01-01', '2024-01-02', '2024-01-03']::date[])[1] as first_element,
           (ARRAY['2024-01-01', '2024-01-02', '2024-01-03']::date[])[2] as second_element,
           (ARRAY['2024-01-01', '2024-01-02', '2024-01-03']::date[])[3] as third_element
@@ -9257,14 +9352,14 @@ CREATE TABLE ${table_name} (
       test("date[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['2024-01-01', '2024-01-02']::date[] @> 
+        SELECT
+          ARRAY['2024-01-01', '2024-01-02']::date[] @>
           ARRAY['2024-01-01']::date[] as contains_first,
-          
-          ARRAY['2024-01-01', '2024-01-02']::date[] @> 
+
+          ARRAY['2024-01-01', '2024-01-02']::date[] @>
           ARRAY['2024-01-02']::date[] as contains_second,
-          
-          ARRAY['2024-01-01', '2024-01-02']::date[] @> 
+
+          ARRAY['2024-01-01', '2024-01-02']::date[] @>
           ARRAY['2024-01-03']::date[] as contains_none
       `;
 
@@ -9276,11 +9371,11 @@ CREATE TABLE ${table_name} (
       test("date[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['2024-01-01', '2024-01-02']::date[] && 
+        SELECT
+          ARRAY['2024-01-01', '2024-01-02']::date[] &&
           ARRAY['2024-01-02', '2024-01-03']::date[] as has_overlap,
-          
-          ARRAY['2024-01-01', '2024-01-02']::date[] && 
+
+          ARRAY['2024-01-01', '2024-01-02']::date[] &&
           ARRAY['2024-01-03', '2024-01-04']::date[] as no_overlap
       `;
 
@@ -9291,8 +9386,8 @@ CREATE TABLE ${table_name} (
       test("date[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['2024-01-01', '2024-01-02']::date[] || 
+        SELECT
+          ARRAY['2024-01-01', '2024-01-02']::date[] ||
           ARRAY['2024-01-03']::date[] as concatenated
       `;
 
@@ -9306,14 +9401,14 @@ CREATE TABLE ${table_name} (
       test("date[] - array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['2024-01-01', '2024-01-02']::date[] = 
+        SELECT
+          ARRAY['2024-01-01', '2024-01-02']::date[] =
           ARRAY['2024-01-01', '2024-01-02']::date[] as equal_arrays,
-          
-          ARRAY['2024-01-01', '2024-01-02']::date[] < 
+
+          ARRAY['2024-01-01', '2024-01-02']::date[] <
           ARRAY['2024-01-02', '2024-01-02']::date[] as less_than,
-          
-          ARRAY['2024-01-02', '2024-01-02']::date[] > 
+
+          ARRAY['2024-01-02', '2024-01-02']::date[] >
           ARRAY['2024-01-01', '2024-01-02']::date[] as greater_than
       `;
 
@@ -9325,7 +9420,7 @@ CREATE TABLE ${table_name} (
       test("date[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['2024-01-01', '2024-01-02']::date[], 1) as array_length,
           array_dims(ARRAY['2024-01-01', '2024-01-02']::date[]) as dimensions,
           array_upper(ARRAY['2024-01-01', '2024-01-02']::date[], 1) as upper_bound,
@@ -9458,7 +9553,7 @@ CREATE TABLE ${table_name} (
       test("time[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['12:34:56', '15:45:32', '23:59:59']::time[])[1] as first_element,
           (ARRAY['12:34:56', '15:45:32', '23:59:59']::time[])[2] as second_element,
           (ARRAY['12:34:56', '15:45:32', '23:59:59']::time[])[3] as third_element
@@ -9472,8 +9567,8 @@ CREATE TABLE ${table_name} (
       test("time[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['12:34:56', '15:45:32']::time[] || 
+        SELECT
+          ARRAY['12:34:56', '15:45:32']::time[] ||
           ARRAY['23:59:59']::time[] as concatenated
       `;
 
@@ -9483,14 +9578,14 @@ CREATE TABLE ${table_name} (
       test("time[] - array comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['12:34:56', '15:45:32']::time[] = 
+        SELECT
+          ARRAY['12:34:56', '15:45:32']::time[] =
           ARRAY['12:34:56', '15:45:32']::time[] as equal_arrays,
-          
-          ARRAY['12:34:56', '15:45:32']::time[] < 
+
+          ARRAY['12:34:56', '15:45:32']::time[] <
           ARRAY['15:45:32', '15:45:32']::time[] as less_than,
-          
-          ARRAY['15:45:32', '15:45:32']::time[] > 
+
+          ARRAY['15:45:32', '15:45:32']::time[] >
           ARRAY['12:34:56', '15:45:32']::time[] as greater_than
       `;
 
@@ -9502,7 +9597,7 @@ CREATE TABLE ${table_name} (
       test("time[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['12:34:56', '15:45:32']::time[], 1) as array_length,
           array_dims(ARRAY['12:34:56', '15:45:32']::time[]) as dimensions,
           array_upper(ARRAY['12:34:56', '15:45:32']::time[], 1) as upper_bound,
@@ -9660,7 +9755,7 @@ CREATE TABLE ${table_name} (
       test("timestamp[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[])[1] as first_element,
           (ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[])[2] as second_element
       `;
@@ -9672,8 +9767,8 @@ CREATE TABLE ${table_name} (
       test("timestamp[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[] || 
+        SELECT
+          ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[] ||
           ARRAY['2024-01-03 14:00:00']::timestamp[] as concatenated
       `;
 
@@ -9687,7 +9782,7 @@ CREATE TABLE ${table_name} (
       test("timestamp[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[], 1) as array_length,
           array_dims(ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[]) as dimensions,
           array_upper(ARRAY['2024-01-01 12:00:00', '2024-01-02 13:00:00']::timestamp[], 1) as upper_bound,
@@ -9879,7 +9974,7 @@ CREATE TABLE ${table_name} (
       test("timestamptz[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[])[1] as first_element,
           (ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[])[2] as second_element
       `;
@@ -9891,14 +9986,14 @@ CREATE TABLE ${table_name} (
       test("timestamptz[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @> 
+        SELECT
+          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @>
           ARRAY['2024-01-01 12:00:00+00']::timestamptz[] as contains_first,
-          
-          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @> 
+
+          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @>
           ARRAY['2024-01-02 13:00:00+00']::timestamptz[] as contains_second,
-          
-          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @> 
+
+          ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[] @>
           ARRAY['2024-01-03 14:00:00+00']::timestamptz[] as contains_none
       `;
 
@@ -9910,7 +10005,7 @@ CREATE TABLE ${table_name} (
       test("timestamptz[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[], 1) as array_length,
           array_dims(ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[]) as dimensions,
           array_upper(ARRAY['2024-01-01 12:00:00+00', '2024-01-02 13:00:00+00']::timestamptz[], 1) as upper_bound,
@@ -10054,7 +10149,7 @@ CREATE TABLE ${table_name} (
       test("timetz[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['12:00:00+00', '13:00:00+00']::timetz[])[1] as first_element,
           (ARRAY['12:00:00+00', '13:00:00+00']::timetz[])[2] as second_element
       `;
@@ -10066,14 +10161,14 @@ CREATE TABLE ${table_name} (
       test("timetz[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @> 
+        SELECT
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @>
           ARRAY['12:00:00+00']::timetz[] as contains_first,
-          
-          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @> 
+
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @>
           ARRAY['13:00:00+00']::timetz[] as contains_second,
-          
-          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @> 
+
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] @>
           ARRAY['14:00:00+00']::timetz[] as contains_none
       `;
 
@@ -10085,11 +10180,11 @@ CREATE TABLE ${table_name} (
       test("timetz[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] && 
+        SELECT
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] &&
           ARRAY['13:00:00+00', '14:00:00+00']::timetz[] as has_overlap,
-          
-          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] && 
+
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] &&
           ARRAY['14:00:00+00', '15:00:00+00']::timetz[] as no_overlap
       `;
 
@@ -10100,8 +10195,8 @@ CREATE TABLE ${table_name} (
       test("timetz[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] || 
+        SELECT
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] ||
           ARRAY['14:00:00+00']::timetz[] as concatenated
       `;
 
@@ -10111,11 +10206,11 @@ CREATE TABLE ${table_name} (
       test("timetz[] - comparison of same time different zones", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] = 
+        SELECT
+          ARRAY['12:00:00+00', '13:00:00+00']::timetz[] =
           ARRAY['12:00:00+01', '13:00:00+01']::timetz[] as equal_arrays,
-          
-          ARRAY['12:00:00+00']::timetz[] = 
+
+          ARRAY['12:00:00+00']::timetz[] =
           ARRAY['13:00:00+01']::timetz[] as different_times
       `;
 
@@ -10127,7 +10222,7 @@ CREATE TABLE ${table_name} (
       test("timetz[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['12:00:00+00', '13:00:00+00']::timetz[], 1) as array_length,
           array_dims(ARRAY['12:00:00+00', '13:00:00+00']::timetz[]) as dimensions,
           array_upper(ARRAY['12:00:00+00', '13:00:00+00']::timetz[], 1) as upper_bound,
@@ -10299,7 +10394,7 @@ CREATE TABLE ${table_name} (
       test("interval[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['1 year', '2 months']::interval[])[1] as first_element,
           (ARRAY['1 year', '2 months']::interval[])[2] as second_element
       `;
@@ -10311,14 +10406,14 @@ CREATE TABLE ${table_name} (
       test("interval[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['1 year', '2 months']::interval[] @> 
+        SELECT
+          ARRAY['1 year', '2 months']::interval[] @>
           ARRAY['1 year']::interval[] as contains_first,
-          
-          ARRAY['1 year', '2 months']::interval[] @> 
+
+          ARRAY['1 year', '2 months']::interval[] @>
           ARRAY['2 months']::interval[] as contains_second,
-          
-          ARRAY['1 year', '2 months']::interval[] @> 
+
+          ARRAY['1 year', '2 months']::interval[] @>
           ARRAY['3 months']::interval[] as contains_none
       `;
 
@@ -10330,11 +10425,11 @@ CREATE TABLE ${table_name} (
       test("interval[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['1 year', '2 months']::interval[] && 
+        SELECT
+          ARRAY['1 year', '2 months']::interval[] &&
           ARRAY['2 months', '3 months']::interval[] as has_overlap,
-          
-          ARRAY['1 year', '2 months']::interval[] && 
+
+          ARRAY['1 year', '2 months']::interval[] &&
           ARRAY['3 months', '4 months']::interval[] as no_overlap
       `;
 
@@ -10345,8 +10440,8 @@ CREATE TABLE ${table_name} (
       test("interval[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['1 year', '2 months']::interval[] || 
+        SELECT
+          ARRAY['1 year', '2 months']::interval[] ||
           ARRAY['3 days']::interval[] as concatenated
       `;
 
@@ -10356,7 +10451,7 @@ CREATE TABLE ${table_name} (
       test("interval[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['1 year', '2 months']::interval[], 1) as array_length,
           array_dims(ARRAY['1 year', '2 months']::interval[]) as dimensions,
           array_upper(ARRAY['1 year', '2 months']::interval[], 1) as upper_bound,
@@ -10455,7 +10550,7 @@ CREATE TABLE ${table_name} (
       test("bit[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[B'101', B'111', B'000']::bit(3)[])[1] as first_element,
           (ARRAY[B'101', B'111', B'000']::bit(3)[])[2] as second_element,
           (ARRAY[B'101', B'111', B'000']::bit(3)[])[3] as third_element
@@ -10469,7 +10564,7 @@ CREATE TABLE ${table_name} (
       test("bit[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[B'101', B'111']::bit(3)[] @> ARRAY[B'101']::bit(3)[] as contains_first,
           ARRAY[B'101', B'111']::bit(3)[] @> ARRAY[B'111']::bit(3)[] as contains_second,
           ARRAY[B'101', B'111']::bit(3)[] @> ARRAY[B'000']::bit(3)[] as contains_none
@@ -10483,11 +10578,11 @@ CREATE TABLE ${table_name} (
       test("bit[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY[B'101', B'111']::bit(3)[] && 
+        SELECT
+          ARRAY[B'101', B'111']::bit(3)[] &&
           ARRAY[B'111', B'000']::bit(3)[] as has_overlap,
-          
-          ARRAY[B'101', B'111']::bit(3)[] && 
+
+          ARRAY[B'101', B'111']::bit(3)[] &&
           ARRAY[B'000', B'010']::bit(3)[] as no_overlap
       `;
 
@@ -10498,8 +10593,8 @@ CREATE TABLE ${table_name} (
       test("bit[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY[B'101', B'111']::bit(3)[] || 
+        SELECT
+          ARRAY[B'101', B'111']::bit(3)[] ||
           ARRAY[B'000']::bit(3)[] as concatenated
       `;
 
@@ -10509,7 +10604,7 @@ CREATE TABLE ${table_name} (
       test("bit[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[B'101', B'111']::bit(3)[], 1) as array_length,
           array_dims(ARRAY[B'101', B'111']::bit(3)[]) as dimensions,
           array_upper(ARRAY[B'101', B'111']::bit(3)[], 1) as upper_bound,
@@ -10654,7 +10749,7 @@ CREATE TABLE ${table_name} (
       test("varbit[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[B'101', B'11', B'1']::varbit[])[1] as first_element,
           (ARRAY[B'101', B'11', B'1']::varbit[])[2] as second_element,
           (ARRAY[B'101', B'11', B'1']::varbit[])[3] as third_element
@@ -10668,7 +10763,7 @@ CREATE TABLE ${table_name} (
       test("varbit[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[B'101', B'11']::varbit[] @> ARRAY[B'101']::varbit[] as contains_first,
           ARRAY[B'101', B'11']::varbit[] @> ARRAY[B'11']::varbit[] as contains_second,
           ARRAY[B'101', B'11']::varbit[] @> ARRAY[B'1111']::varbit[] as contains_none
@@ -10682,11 +10777,11 @@ CREATE TABLE ${table_name} (
       test("varbit[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY[B'101', B'11']::varbit[] && 
+        SELECT
+          ARRAY[B'101', B'11']::varbit[] &&
           ARRAY[B'11', B'1']::varbit[] as has_overlap,
-          
-          ARRAY[B'101', B'11']::varbit[] && 
+
+          ARRAY[B'101', B'11']::varbit[] &&
           ARRAY[B'000', B'0000']::varbit[] as no_overlap
       `;
 
@@ -10697,8 +10792,8 @@ CREATE TABLE ${table_name} (
       test("varbit[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY[B'101', B'11']::varbit[] || 
+        SELECT
+          ARRAY[B'101', B'11']::varbit[] ||
           ARRAY[B'1']::varbit[] as concatenated
       `;
 
@@ -10708,7 +10803,7 @@ CREATE TABLE ${table_name} (
       test("varbit[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[B'101', B'11']::varbit[], 1) as array_length,
           array_dims(ARRAY[B'101', B'11']::varbit[]) as dimensions,
           array_upper(ARRAY[B'101', B'11']::varbit[], 1) as upper_bound,
@@ -10859,7 +10954,7 @@ CREATE TABLE ${table_name} (
       test("numeric[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY[1.23, 4.56, 7.89]::numeric[])[1] as first_element,
           (ARRAY[1.23, 4.56, 7.89]::numeric[])[2] as second_element,
           (ARRAY[1.23, 4.56, 7.89]::numeric[])[3] as third_element
@@ -10873,7 +10968,7 @@ CREATE TABLE ${table_name} (
       test("numeric[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           ARRAY[1.23, 4.56]::numeric[] @> ARRAY[1.23]::numeric[] as contains_first,
           ARRAY[1.23, 4.56]::numeric[] @> ARRAY[4.56]::numeric[] as contains_second,
           ARRAY[1.23, 4.56]::numeric[] @> ARRAY[7.89]::numeric[] as contains_none
@@ -10887,11 +10982,11 @@ CREATE TABLE ${table_name} (
       test("numeric[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY[1.23, 4.56]::numeric[] && 
+        SELECT
+          ARRAY[1.23, 4.56]::numeric[] &&
           ARRAY[4.56, 7.89]::numeric[] as has_overlap,
-          
-          ARRAY[1.23, 4.56]::numeric[] && 
+
+          ARRAY[1.23, 4.56]::numeric[] &&
           ARRAY[7.89, 0.12]::numeric[] as no_overlap
       `;
 
@@ -10902,8 +10997,8 @@ CREATE TABLE ${table_name} (
       test("numeric[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY[1.23, 4.56]::numeric[] || 
+        SELECT
+          ARRAY[1.23, 4.56]::numeric[] ||
           ARRAY[7.89]::numeric[] as concatenated
       `;
 
@@ -10913,7 +11008,7 @@ CREATE TABLE ${table_name} (
       test("numeric[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY[1.23, 4.56]::numeric[], 1) as array_length,
           array_dims(ARRAY[1.23, 4.56]::numeric[]) as dimensions,
           array_upper(ARRAY[1.23, 4.56]::numeric[], 1) as upper_bound,
@@ -10932,7 +11027,7 @@ CREATE TABLE ${table_name} (
         WITH numbers AS (
           SELECT unnest(ARRAY[1.23, 4.56, 7.89]::numeric[]) as num
         )
-        SELECT 
+        SELECT
           sum(num) as total,
           avg(num) as average,
           min(num) as minimum,
@@ -11052,7 +11147,7 @@ CREATE TABLE ${table_name} (
       test("jsonb[] - array operators", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           '{"a": 1, "b": 2}'::jsonb ? 'a' as has_key_a,
           '{"a": 1, "b": 2}'::jsonb ? 'c' as has_key_c,
           '{"a": 1, "b": 2}'::jsonb @> '{"a": 1}'::jsonb as contains_object,
@@ -11081,7 +11176,7 @@ CREATE TABLE ${table_name} (
       test("jsonb[] - array element access", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           (ARRAY['{"a": 1}', '{"b": 2}']::jsonb[])[1] as first_element,
           (ARRAY['{"a": 1}', '{"b": 2}']::jsonb[])[2] as second_element
       `;
@@ -11093,14 +11188,14 @@ CREATE TABLE ${table_name} (
       test("jsonb[] - array contains operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @> 
+        SELECT
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @>
           ARRAY['{"a": 1}']::jsonb[] as contains_first,
-          
-          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @> 
+
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @>
           ARRAY['{"b": 2}']::jsonb[] as contains_second,
-          
-          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @> 
+
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] @>
           ARRAY['{"c": 3}']::jsonb[] as contains_none
       `;
 
@@ -11112,11 +11207,11 @@ CREATE TABLE ${table_name} (
       test("jsonb[] - array overlap operator", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] && 
+        SELECT
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] &&
           ARRAY['{"b": 2}', '{"c": 3}']::jsonb[] as has_overlap,
-          
-          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] && 
+
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] &&
           ARRAY['{"c": 3}', '{"d": 4}']::jsonb[] as no_overlap
       `;
 
@@ -11127,8 +11222,8 @@ CREATE TABLE ${table_name} (
       test("jsonb[] - array concatenation", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] || 
+        SELECT
+          ARRAY['{"a": 1}', '{"b": 2}']::jsonb[] ||
           ARRAY['{"c": 3}']::jsonb[] as concatenated
       `;
 
@@ -11138,7 +11233,7 @@ CREATE TABLE ${table_name} (
       test("jsonb[] - array dimensions", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
+        SELECT
           array_length(ARRAY['{"a": 1}', '{"b": 2}']::jsonb[], 1) as array_length,
           array_dims(ARRAY['{"a": 1}', '{"b": 2}']::jsonb[]) as dimensions,
           array_upper(ARRAY['{"a": 1}', '{"b": 2}']::jsonb[], 1) as upper_bound,
@@ -11228,11 +11323,11 @@ CREATE TABLE ${table_name} (
       test("jsonb[] - unicode objects comparison", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`
-        SELECT 
-          '{"键": "值", "キー": "値"}'::jsonb = 
+        SELECT
+          '{"键": "值", "キー": "値"}'::jsonb =
           '{"キー": "値", "键": "值"}'::jsonb as equal_objects,
-          
-          '{"配列": [1, 2]}'::jsonb @> 
+
+          '{"配列": [1, 2]}'::jsonb @>
           '{"配列": [1]}'::jsonb as contains_check
       `;
 
@@ -12342,5 +12437,322 @@ CREATE TABLE ${table_name} (
         });
       });
     }); // Close "Misc" describe
+    test("sql.begin rejects transaction option strings containing statement separators", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const marker = "inj_" + randomUUIDv7("hex").replaceAll("-", "");
+
+      // The transaction-mode string is interpolated into `BEGIN ${options}` and sent
+      // down the simple-query path, which accepts multiple semicolon-separated
+      // statements. Anything other than keyword lists must be refused up front.
+      const error = await sql
+        .begin(`; CREATE TABLE ${marker} (a int)`, async tx => {
+          await tx`select 1`;
+        })
+        .catch(e => e);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("Transaction options can only contain letters, spaces, and commas.");
+
+      // The statement embedded in the options string must not have executed.
+      const [{ found }] = await sql`SELECT to_regclass(${marker}) IS NOT NULL AS found`;
+      expect(found).toBe(false);
+
+      // Legitimate transaction modes still work.
+      const [{ x }] = await sql.begin("read only", async tx => await tx`select 1 as x`);
+      expect(x).toBe(1);
+      const [{ y }] = await sql.begin("isolation level serializable, read only", async tx => await tx`select 2 as y`);
+      expect(y).toBe(2);
+    });
+    test("Handles empty integer array stored as {}", async () => {
+      await using db = postgres(options);
+      const tableName = `test_${randomUUIDv7("hex").replaceAll("-", "")}`;
+
+      await db`CREATE TEMPORARY TABLE ${db(tableName)} (id SERIAL PRIMARY KEY, numbers INTEGER[])`;
+
+      // Inserting using the SQL array constructor triggers the "Failed to read data" error on SELECT.
+      await db`INSERT INTO ${db(tableName)} (numbers) VALUES (ARRAY[]::integer[])`;
+
+      // Read back - this succeeds on the first try
+      const result1 = await db`SELECT * FROM ${db(tableName)}`;
+      expect(result1).toBeArray();
+      expect(Array.from(result1[0].numbers)).toEqual([]);
+
+      // Second read to trigger connection reuse issue
+      // This is where it fails with ERR_POSTGRES_INVALID_BINARY_DATA in bun 1.3.5
+      const result2 = await db`SELECT * FROM ${db(tableName)}`;
+      expect(result2).toBeArray();
+      expect(Array.from(result2[0].numbers)).toEqual([]);
+    });
+    test("throws clear error when query exceeds 65535 parameter limit", async () => {
+      await using db = postgres(options);
+      const tableName = `test_${randomUUIDv7("hex").replaceAll("-", "")}`;
+
+      await db`CREATE TEMPORARY TABLE ${db(tableName)} (a INT, b INT, c INT)`;
+
+      // 3 columns * 21845 rows = 65535 parameters, exactly at the limit - should succeed
+      const maxRows = Array.from({ length: 21845 }, (_, i) => ({ a: i, b: i, c: i }));
+      await db`INSERT INTO ${db(tableName)} ${db(maxRows)}`;
+      const [{ count }] = await db`SELECT count(*)::int as count FROM ${db(tableName)}`;
+      expect(count).toBe(21845);
+
+      // 3 columns * 21846 rows = 65538 parameters, just over the limit - should throw
+      const overLimitRows = Array.from({ length: 21846 }, (_, i) => ({ a: i, b: i, c: i }));
+      try {
+        await db`INSERT INTO ${db(tableName)} ${db(overLimitRows)}`;
+        expect.unreachable("should have thrown");
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_POSTGRES_TOO_MANY_PARAMETERS");
+        expect(e.message).toContain("65535");
+      }
+    });
+    // A simple-query response can contain several result sets. The first one
+    // here has zero columns (a real zero-column Postgres table), which caches a
+    // zero-property row Structure when its DataRow is materialized. The next
+    // RowDescription widens the field list to three named columns; the cached
+    // structure must be invalidated so the second result set's rows are built
+    // with the new column layout instead of writing the new cells past the
+    // inline capacity of an empty object. Runs in a subprocess because a
+    // regression corrupts the JS heap of the process that parses the response.
+    test("result set following a zero-column result set uses its own column layout", async () => {
+      const tableName = `t_${randomUUIDv7("hex").replaceAll("-", "")}`;
+      const fixtureDir = tempDirWithFiles("pg-zero-column-then-wide", {
+        "fixture.ts": `
+import { SQL } from "bun";
+
+const sql = new SQL({ url: process.env.DATABASE_URL!, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+try {
+  await sql\`CREATE TEMPORARY TABLE ${tableName} ()\`.simple();
+  await sql\`INSERT INTO ${tableName} DEFAULT VALUES\`.simple();
+  // First result set: zero columns, one row. Second result set: three named
+  // columns, one row.
+  const result = await sql\`SELECT * FROM ${tableName}; SELECT '1' AS a, '2' AS b, '3' AS c\`.simple();
+  console.log("SECOND_RESULT_SET " + JSON.stringify(result[1]));
+  console.log("SECOND_RESULT_SET_KEYS " + Object.keys(result[1][0]).sort().join(","));
+} finally {
+  await sql\`DROP TABLE IF EXISTS ${tableName}\`.simple().catch(() => {});
+  await sql.close().catch(() => {});
+}
+console.log("FIXTURE_DONE");
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts"],
+        cwd: fixtureDir,
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const filteredStderr = stderr
+        .split(/\r?\n/)
+        .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+        .join("\n");
+
+      // The second result set must expose all three named columns with their
+      // values; reusing the zero-property structure from the first result set
+      // would yield a row object with no own properties.
+      expect(stdout).toContain('SECOND_RESULT_SET [{"a":"1","b":"2","c":"3"}]');
+      expect(stdout).toContain("SECOND_RESULT_SET_KEYS a,b,c");
+      expect(stdout).toContain("FIXTURE_DONE");
+      expect(filteredStderr).toBe("");
+      expect(exitCode).toBe(0);
+    }, 30_000);
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
+// A malicious or buggy Postgres server can send a text-format json[]/jsonb[]
+// DataRow whose array literal contains an unquoted element starting with 'f' or
+// 't' that is not exactly "false"/"true". The array parser must reject it;
+// previously it consumed no input and re-entered the element loop forever,
+// blocking the JS thread. The fixture runs in a subprocess so a regression
+// shows up as a killed child instead of a hung test file.
+test("text-format json[] with a malformed boolean literal returns an error instead of looping", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "sql-postgres-json-array-bool-literal.fixture.ts")],
+    cwd: import.meta.dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if the array parser regresses into an unbounded loop.
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  expect(stdout).toContain("REJECTED {falsy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
+  expect(stdout).toContain("REJECTED {truthy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
+  expect(stdout).toContain("ROWS {false,true} => [false,true]");
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// Connection options are serialized into the NUL-delimited Postgres
+// StartupMessage as `key\0value\0`. A key or value containing a NUL byte
+// would be parsed by the server as additional startup parameters (an injected
+// `user`, `options`, etc.), so it must be refused before any connection is
+// attempted. The username/password/database fields already get this check
+// natively; the pre-encoded options blob must get it too.
+test("rejects Postgres connection options containing null bytes", async () => {
+  const url = "postgres://bun_sql_test@127.0.0.1:5432/bun_sql_test";
+
+  // NUL inside an option value splits it into extra key/value pairs.
+  expect(() => new SQL(url, { max: 1, connection: { application_name: "x\0user\0postgres" } })).toThrow(
+    "must not contain null bytes",
+  );
+  // NUL inside an option key does the same.
+  expect(() => new SQL(url, { max: 1, connection: { ["application_name\0user"]: "postgres" } })).toThrow(
+    "must not contain null bytes",
+  );
+  // The same options arriving through the connection URL's query string.
+  expect(() => new SQL(url + "?application_name=x%00user%00postgres", { max: 1 })).toThrow(
+    "must not contain null bytes",
+  );
+
+  let err: any;
+  try {
+    new SQL(url, { max: 1, connection: { application_name: "x\0user\0postgres" } });
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+
+  // A normal application_name is still accepted. Construction is lazy, so no
+  // server needs to be listening for this to succeed.
+  const ok = new SQL(url, { max: 1, connection: { application_name: "bun_sql_test_app" } });
+  expect(ok).toBeDefined();
+  await ok.close();
+});
+
+// Native createInstance argument validation (src/sql_jsc/shared/
+// ConnectionCtorArgs.rs / QueryCtorArgs.rs, and the Postgres null-byte guard
+// in PostgresSQLConnection.rs). Every error here is thrown by the native
+// parser before any socket is created, so no server needs to be listening:
+// the address below is never dialed.
+describe("shared createInstance validation (no server)", () => {
+  const base = { adapter: "postgres", hostname: "127.0.0.1", port: 1, max: 1 } as const;
+
+  // Credentials are written into the NUL-delimited Postgres StartupMessage as
+  // `key\0value\0`; a NUL byte inside one would inject extra parameters, so
+  // the native parser must refuse it before connecting. The rejection is an
+  // ERR_INVALID_ARG_TYPE TypeError, matching the MySQL adapter and the Zig
+  // reference (`PostgresSQLConnection.zig` `throwInvalidArguments`). `path`
+  // is guarded the same way natively, but the JS layer drops it via
+  // `existsSync` before it ever reaches createInstance.
+  test.concurrent.each(["username", "password", "database"] as const)(
+    "rejects %s containing null bytes",
+    async field => {
+      await using sql = new SQL({ ...base, username: "u", [field]: "a\0b" });
+      // `Query` is a lazy thenable, so collect the rejection explicitly.
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe(`${field} must not contain null bytes`);
+      expect(err?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(err instanceof TypeError).toBe(true);
+    },
+  );
+
+  test.concurrent("SSL_CTX creation failure throws the structured BoringSSL error", async () => {
+    // An unparseable CA makes `SSL_CTX` creation fail synchronously inside
+    // createInstance, before any socket exists. The failure carries
+    // `code: "ERR_BORINGSSL"` like the MySQL adapter and the Zig reference
+    // (`err.toJS(globalObject)`).
+    await using sql = new SQL({ ...base, username: "u", tls: { ca: "not a pem" } });
+    const err: any = await sql`select 1`.then(
+      () => null,
+      e => e,
+    );
+    expect(err?.message).toBe("Invalid CA");
+    expect(err?.code).toBe("ERR_BORINGSSL");
+  });
+
+  test.concurrent.each(["postgres", "mysql"] as const)(
+    "%s: rejects tls that is neither a boolean nor an object",
+    async adapter => {
+      // A truthy non-boolean/non-object upgrades sslMode to `require` in JS and
+      // reaches the native parser as-is. The constructor throws synchronously,
+      // and createPooledConnectionHandle defers onClose via process.nextTick so
+      // the pending query rejects cleanly instead of hanging (see #32145).
+      await using sql = new SQL({ ...base, adapter, username: "u", tls: 1 as any });
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe("tls must be a boolean or an object");
+    },
+  );
+
+  test.concurrent("rejects simple queries with parameters", async () => {
+    await using sql = new SQL({ ...base, username: "u" });
+    // Query-handle creation fails before the pool ever connects.
+    const err: any = await sql
+      .unsafe("select $1", [1])
+      .simple()
+      .then(
+        () => null,
+        e => e,
+      );
+    expect(err?.message).toBe("simple query cannot have parameters");
+  });
+});
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
+// A Postgres server controls two independent column counts: the
+// RowDescription's field list (which sizes the per-row cell buffer and the
+// cached row Structure) and each DataRow's own column count. When a DataRow
+// declares fewer columns than the RowDescription, the unfilled cells stay in
+// their default "named null" state; building the row object must only write
+// as many properties as the Structure actually has, leaving the missing
+// columns as null instead of writing past the row object's property storage.
+// The row description here uses 62 identically-named fields so the cached
+// Structure has a single property while the cell buffer has 62 entries.
+// Runs in a subprocess because a regression corrupts the JS heap of the
+// process that parses the response.
+test("data row that omits columns declared in the row description yields nulls for the missing columns", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "sql-postgres-short-data-row.fixture.ts")],
+    cwd: import.meta.dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  // The row built from the short DataRow has exactly the structure's one
+  // property, valued null; the fully-populated row still maps the duplicate
+  // column name to the last column's value (last one wins, matching the
+  // existing duplicate-column-name behavior).
+  expect(stdout).toContain('EMPTY_ROW {"c":null}');
+  expect(stdout).toContain('FULL_ROW {"c":"v61"}');
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);

@@ -40,6 +40,18 @@ bun run <file or script>
   Run a script in all workspace packages (from the <code>workspaces</code> field in <code>package.json</code>)
 </ParamField>
 
+<ParamField path="--parallel" type="boolean">
+  Run multiple scripts or workspace scripts concurrently with prefixed output
+</ParamField>
+
+<ParamField path="--sequential" type="boolean">
+  Run multiple scripts or workspace scripts one after another with prefixed output
+</ParamField>
+
+<ParamField path="--no-exit-on-error" type="boolean">
+  When using <code>--parallel</code> or <code>--sequential</code>, continue running other scripts when one fails
+</ParamField>
+
 ### Runtime &amp; Process Control
 
 <ParamField path="--bun" type="boolean">

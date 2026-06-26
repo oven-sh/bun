@@ -1,6 +1,10 @@
 import { Socket } from "bun";
-import { beforeAll, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, gcTick } from "harness";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
+import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import path from "path";
 
 const gzipped = path.join(import.meta.dir, "fixture.html.gz");
@@ -120,13 +124,149 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
   expect(text).toEqual(htmlText);
 });
 
+// RFC 9110 §8.4.1: content codings are case-insensitive. `x-gzip` is a
+// registered deprecated alias of `gzip`. Node/undici lowercase the
+// Content-Encoding value before matching and accept `x-gzip`; we must too,
+// otherwise res.text()/res.json() silently return raw compressed bytes.
+describe("fetch() decodes Content-Encoding case-insensitively", () => {
+  const payload = JSON.stringify({ hello: "world", n: 42 });
+  const bodies = {
+    gzip: gzipSync(payload),
+    deflate: deflateSync(payload),
+    br: brotliCompressSync(payload),
+    zstd: zstdCompressSync(payload),
+  };
+  // [Content-Encoding header value as sent on the wire, compressor]
+  const cases: Array<[string, keyof typeof bodies]> = [
+    ["gzip", "gzip"],
+    ["GZIP", "gzip"],
+    ["Gzip", "gzip"],
+    ["x-gzip", "gzip"],
+    ["X-Gzip", "gzip"],
+    ["X-GZIP", "gzip"],
+    ["deflate", "deflate"],
+    ["Deflate", "deflate"],
+    ["DEFLATE", "deflate"],
+    ["br", "br"],
+    ["BR", "br"],
+    ["Br", "br"],
+    ["zstd", "zstd"],
+    ["ZSTD", "zstd"],
+    ["Zstd", "zstd"],
+  ];
+
+  it.each(cases)("Content-Encoding: %s", async (enc, kind) => {
+    // Use node:http so the header value reaches the wire exactly as written.
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", enc);
+      res.setHeader("Content-Type", "application/json");
+      res.end(bodies[kind]);
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.status).toBe(200);
+      // Must be the decoded JSON, not the raw compressed bytes.
+      expect(await res.json()).toEqual({ hello: "world", n: 42 });
+    } finally {
+      server.close();
+    }
+  });
+
+  // The subprocess reads via `res.body` (ReadableStream) so the
+  // ResponseBodyStreaming signal is set, which makes the chunked-encoding
+  // handler call `decompress_chunk` per on_data instead of buffering the
+  // whole body first. Server writes yield to the event loop between chunks
+  // so they arrive in separate TCP segments / on_data callbacks, driving
+  // the decoder across multiple calls.
+  describe.each(["gzip", "deflate", "br", "zstd"] as const)(
+    "streaming %s decompression over multiple chunks",
+    encoding => {
+      it.concurrent.each(["0", "1"])("BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s", async noLibdeflate => {
+        // Body large enough that the compressed form spans many 17-byte writes.
+        const expected = JSON.stringify({
+          data: Array.from({ length: 64 }, (_, i) => ({ i, s: `item-${i}` })),
+        });
+        const compress = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync, zstd: zstdCompressSync };
+        const compressed = compress[encoding](expected);
+        const server = createNetServer(socket => {
+          socket.setNoDelay(true);
+          socket.write(
+            "HTTP/1.1 200 OK\r\n" +
+              `Content-Encoding: ${encoding}\r\n` +
+              "Transfer-Encoding: chunked\r\n" +
+              "Content-Type: application/json\r\n" +
+              "Connection: close\r\n\r\n",
+          );
+          (async () => {
+            for (let i = 0; i < compressed.length; i += 17) {
+              const chunk = compressed.subarray(i, i + 17);
+              socket.write(chunk.length.toString(16) + "\r\n");
+              socket.write(chunk);
+              socket.write("\r\n");
+              await new Promise(r => setImmediate(r));
+            }
+            socket.end("0\r\n\r\n");
+          })().catch(() => socket.destroy());
+        });
+        await once(server.listen(0), "listening");
+        try {
+          const { port } = server.address() as import("node:net").AddressInfo;
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const res = await fetch(process.argv[1]);
+               if (res.status !== 200) throw new Error("status " + res.status);
+               const chunks = [];
+               for await (const c of res.body) chunks.push(c);
+               process.stdout.write(Buffer.concat(chunks).toString("utf8"));`,
+              `http://127.0.0.1:${port}/`,
+            ],
+            env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({
+            stdout: expected,
+            stderr: expect.not.stringContaining("error"),
+            exitCode: 0,
+          });
+        } finally {
+          server.close();
+        }
+      });
+    },
+  );
+
+  it("unknown Content-Encoding still passes through untouched", async () => {
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", "foobar");
+      res.setHeader("Content-Type", "text/plain");
+      res.end("plain-text-body");
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("plain-text-body");
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {
   const compressed = await Bun.file(gzipped).arrayBuffer();
   var socketToClose!: Socket;
   let pending,
     pendingChunks = [];
   const server = Bun.listen({
-    hostname: "localhost",
+    // Explicit IPv4 loopback: "localhost" may bind only ::1 while fetch()
+    // resolves it to 127.0.0.1, giving ConnectionRefused on some hosts.
+    hostname: "127.0.0.1",
     port: 0,
     socket: {
       drain(socket) {
@@ -221,4 +361,91 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   socketToClose.end();
   server.stop();
   done();
+});
+
+// A buffered (non-streaming) fetch() must be able to decompress a response
+// body larger than 1 GiB. The HTTP client's Decompressor runs unbounded, the
+// same as the original Zig implementation; only available memory limits it.
+// Run in a subprocess so the ~1 GiB output buffer does not linger in the test
+// process.
+it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB works", async () => {
+  const fixture = /* js */ `
+      import { createGzip } from "node:zlib";
+
+      const CHUNK = Buffer.alloc(1024 * 1024);
+      const N = 1025; // 1 GiB + 1 MiB
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        const gz = createGzip();
+        gz.on("data", c => chunks.push(c));
+        gz.on("end", resolve);
+        gz.on("error", reject);
+        let i = 0;
+        const pump = () => {
+          while (i < N) {
+            i++;
+            if (!gz.write(CHUNK)) return void gz.once("drain", pump);
+          }
+          gz.end();
+        };
+        pump();
+      });
+      const body = Buffer.concat(chunks);
+
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch() {
+          return new Response(body, {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Length": String(body.length),
+            },
+          });
+        },
+      });
+      try {
+        const res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+        const buf = await res.arrayBuffer();
+        console.log("OK", buf.byteLength);
+      } finally {
+        server.stop(true);
+      }
+    `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: `OK ${1025 * 1024 * 1024}`,
+    stderr: expect.not.stringContaining("error"),
+    exitCode: 0,
+  });
+}, 60_000);
+
+describe("empty compressed responses", () => {
+  // A response that declares Content-Encoding but sends zero body bytes must
+  // resolve as an empty body, like Node — not fail with ZlibError.
+  // https://github.com/oven-sh/bun/issues/23149
+  for (const [name, write] of Object.entries({
+    "chunked": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`,
+    "content-length-0": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n`,
+  })) {
+    it(`empty gzip body via ${name} resolves as empty`, async () => {
+      // end() rather than write(): FIN the connection after the response so
+      // nothing is left parked in the keep-alive pool when the server closes.
+      const raw = createNetServer(socket => void socket.end(write));
+      await new Promise<void>(resolve => raw.listen(0, () => resolve()));
+      const port = (raw.address() as { port: number }).port;
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        expect(await res.text()).toBe("");
+      } finally {
+        raw.close();
+      }
+    });
+  }
 });

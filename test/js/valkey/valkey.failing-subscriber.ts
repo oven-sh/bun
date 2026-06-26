@@ -41,6 +41,7 @@ const subscriber = new RedisClient(url, {
         cert: Bun.file(tlsPaths.cert),
         key: Bun.file(tlsPaths.key),
         ca: Bun.file(tlsPaths.ca),
+        rejectUnauthorized: false,
       }
     : undefined,
 });

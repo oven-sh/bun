@@ -15,7 +15,7 @@ Bun implements the Web APIs [`ReadableStream`](https://developer.mozilla.org/en-
   to the [Node.js docs](https://nodejs.org/api/stream.html).
 </Note>
 
-To create a simple `ReadableStream`:
+To create a `ReadableStream`:
 
 ```ts
 const stream = new ReadableStream({
@@ -68,13 +68,37 @@ const stream = new ReadableStream({
 });
 ```
 
-When using a direct `ReadableStream`, all chunk queueing is handled by the destination. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
+When using a direct `ReadableStream`, the destination handles all chunk queueing. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
+
+### Handling backpressure
+
+`controller.write()` returns the number of bytes written. When the destination's internal buffer is full (for example, a slow HTTP client), it returns a **negative number** instead. The chunk is still accepted — the negative return is a signal to pause and wait for the destination to drain.
+
+To wait for the drain, `await controller.flush(true)`:
+
+```ts
+const stream = new ReadableStream({
+  type: "direct",
+  async pull(controller) {
+    for (const chunk of chunks) {
+      const n = controller.write(chunk);
+      if (typeof n === "number" && n < 0) {
+        // destination is backed up; wait for it to drain before writing more
+        await controller.flush(true);
+      }
+    }
+    controller.close();
+  },
+});
+```
+
+For default (non-`direct`) `ReadableStream`s and async-generator response bodies, Bun applies this backpressure automatically — the producer is paused while the destination is backed up.
 
 ---
 
 ## Async generator streams
 
-Bun also supports async generator functions as a source for `Response` and `Request`. This is an easy way to create a `ReadableStream` that fetches data from an asynchronous source.
+Bun also supports async generator functions as a source for `Response` and `Request`. Use async generators to create a `ReadableStream` that fetches data from an asynchronous source.
 
 ```ts
 const response = new Response(

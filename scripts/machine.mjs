@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { spawn as nodeSpawn } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
+import { azure } from "./azure.mjs";
 import { docker } from "./docker.mjs";
 import { tart } from "./tart.mjs";
 import {
@@ -12,6 +15,7 @@ import {
   curlSafe,
   escapePowershell,
   getBootstrapVersion,
+  getBranch,
   getBuildNumber,
   getGithubApiUrl,
   getGithubUrl,
@@ -35,7 +39,6 @@ import {
   spawnSshSafe,
   spawnSyncSafe,
   startGroup,
-  tmpdir,
   waitForPort,
   which,
   writeFile,
@@ -387,9 +390,6 @@ const aws = {
         owner = "amazon";
         name = `Windows_Server-${release || "*"}-English-Full-Base-*`;
       }
-    } else if (os === "freebsd") {
-      owner = "782442783595"; // upstream member of FreeBSD team, likely Colin Percival
-      name = `FreeBSD ${release}-STABLE-${{ "aarch64": "arm64", "x64": "amd64" }[arch] ?? "amd64"}-* UEFI-PREFERRED cloud-init UFS`;
     }
 
     if (!name) {
@@ -676,10 +676,6 @@ function getCloudInit(cloudInit) {
     case "windows":
       // handled above
       break;
-    case "freebsd":
-      sftpPath = "/usr/libexec/openssh/sftp-server";
-      shell = "/bin/csh";
-      break;
     default:
       throw new Error(`Unsupported os: ${cloudInit["os"]}`);
   }
@@ -712,7 +708,7 @@ write_files:
       HostKey /etc/ssh/ssh_host_ed25519_key
       SyslogFacility AUTHPRIV
       PermitRootLogin yes
-      AuthorizedKeysFile .ssh/authorized_keys
+      AuthorizedKeysFile %h/.ssh/authorized_keys
       PasswordAuthentication no
       ChallengeResponseAuthentication no
       GSSAPIAuthentication yes
@@ -824,7 +820,10 @@ export function getDiskSize(options) {
     return 60;
   }
 
-  return 40;
+  // 40 was enough before the prefetch cache. x64 has ~2× the WebKit variants
+  // (baseline) so its prefetch layer is large enough that `docker buildx
+  // --load`'s export+import doubling needs real headroom.
+  return 100;
 }
 
 /**
@@ -883,8 +882,7 @@ function getSshKeys() {
     const sshFiles = readdirSync(sshPath, { withFileTypes: true, encoding: "utf-8" });
     const publicPaths = sshFiles
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
-      .map(({ name }) => join(sshPath, name))
-      .filter(path => !readFile(path, { cache: true }).startsWith("ssh-ed25519"));
+      .map(({ name }) => join(sshPath, name));
 
     sshKeys.push(
       ...publicPaths.map(publicPath => ({
@@ -960,10 +958,11 @@ async function getGithubOrgSshKeys(organization) {
  * @returns {Promise<void>}
  */
 async function spawnScp(options) {
-  const { hostname, port, username, identityPaths, password, source, destination, retries = 10 } = options;
+  const { hostname, port, username, identityPaths, password, source, destination, retries = 3 } = options;
   await waitForPort({ hostname, port: port || 22 });
 
   const command = ["scp", "-o", "StrictHostKeyChecking=no"];
+  command.push("-O"); // use SCP instead of SFTP
   if (!password) {
     command.push("-o", "BatchMode=yes");
   }
@@ -1054,16 +1053,14 @@ function getRdpFile(hostname, username) {
  * @property {(options: MachineOptions) => Promise<Machine>} createMachine
  */
 
-/**
- * @param {string} name
- * @returns {Cloud}
- */
 function getCloud(name) {
   switch (name) {
     case "docker":
       return docker;
     case "aws":
       return aws;
+    case "azure":
+      return azure;
     case "tart":
       return tart;
   }
@@ -1071,7 +1068,7 @@ function getCloud(name) {
 }
 
 /**
- * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os
+ * @typedef {"linux" | "darwin" | "windows"} Os
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"macos" | "windowsserver" | "debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
  */
@@ -1133,6 +1130,230 @@ function getCloud(name) {
  * @property {string} [userData]
  * @property {SshKey[]} sshKeys
  */
+
+async function getAzureToken(tenantId, clientId, clientSecret) {
+  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}&scope=https://management.azure.com/.default`,
+  });
+  if (!response.ok) throw new Error(`Azure auth failed: ${response.status}`);
+  const data = await response.json();
+  return data.access_token;
+}
+
+/**
+ * Build a Windows image using Packer (Azure only).
+ * Packer handles VM creation, bootstrap, sysprep, and gallery capture via WinRM.
+ * This eliminates all the Azure Run Command issues (output truncation, x64 emulation,
+ * PATH not refreshing, stderr false positives, quote escaping).
+ */
+async function buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath }) {
+  const { getSecret } = await import("./utils.mjs");
+
+  // Determine Packer template
+  const templateName = arch === "aarch64" ? "windows-arm64" : "windows-x64";
+  const templateDir = resolve(import.meta.dirname, "packer");
+  const templateFile = join(templateDir, `${templateName}.pkr.hcl`);
+
+  if (!existsSync(templateFile)) {
+    throw new Error(`Packer template not found: ${templateFile}`);
+  }
+
+  // Get Azure credentials from Buildkite secrets
+  const clientId = await getSecret("AZURE_CLIENT_ID");
+  const clientSecret = await getSecret("AZURE_CLIENT_SECRET");
+  const subscriptionId = await getSecret("AZURE_SUBSCRIPTION_ID");
+  const tenantId = await getSecret("AZURE_TENANT_ID");
+  const resourceGroup = await getSecret("AZURE_RESOURCE_GROUP");
+  const location = (await getSecret("AZURE_LOCATION")) || "eastus2";
+  const galleryName = (await getSecret("AZURE_GALLERY_NAME")) || "bunCIGallery2";
+
+  // Image naming must match getImageName() in ci.mjs:
+  //   [publish images] / normal CI: "windows-x64-2019-v13"
+  //   [build images]:               "windows-x64-2019-build-37194"
+  const imageKey = arch === "aarch64" ? "windows-aarch64-11" : "windows-x64-2019";
+  const imageDefName =
+    command === "publish-image"
+      ? `${imageKey}-v${getBootstrapVersion(os)}`
+      : ci
+        ? `${imageKey}-build-${getBuildNumber()}`
+        : `${imageKey}-build-draft-${Date.now()}`;
+  const galleryArch = arch === "aarch64" ? "Arm64" : "x64";
+  console.log(`[packer] Ensuring gallery image definition: ${imageDefName}`);
+  const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}`;
+  const token = await getAzureToken(tenantId, clientId, clientSecret);
+  const defResponse = await fetch(`https://management.azure.com${galleryPath}?api-version=2024-03-03`, {
+    method: "PUT",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: location,
+      properties: {
+        osType: "Windows",
+        osState: "Generalized",
+        hyperVGeneration: "V2",
+        architecture: galleryArch,
+        identifier: { publisher: "bun", offer: `${os}-${arch}-ci`, sku: imageDefName },
+        features: [
+          { name: "DiskControllerTypes", value: "SCSI, NVMe" },
+          { name: "SecurityType", value: "TrustedLaunch" },
+        ],
+      },
+    }),
+  });
+  if (!defResponse.ok && defResponse.status !== 409) {
+    throw new Error(`Failed to create gallery image definition: ${defResponse.status} ${await defResponse.text()}`);
+  }
+
+  // Packer's azure-arm shared_image_gallery_destination always writes
+  // image_version 1.0.0 and 409s if it already exists, so a re-run of
+  // [publish images] would fail on every Windows variant that already
+  // succeeded. Match the AWS path's deregister-then-recreate.
+  // CAUTION: unlike the AWS path (which only deregisters after the new
+  // create-image collides), this deletes the live version BEFORE Packer
+  // has produced a replacement. If this job is canceled or dies mid-bake,
+  // CI is left with no Windows image until a publish run completes.
+  const versionPath = `${galleryPath}/versions/1.0.0`;
+  const existing = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (existing.ok) {
+    console.log(`[packer] Deleting existing gallery image version 1.0.0 of ${imageDefName} before re-publish`);
+    const del = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (del.status === 202) {
+      const op = del.headers.get("Azure-AsyncOperation") ?? del.headers.get("Location");
+      for (let i = 0; op && i < 120; i++) {
+        await new Promise(r => setTimeout(r, 10_000));
+        const poll = await fetch(op, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await poll.json().catch(() => ({}));
+        if (body.status === "Succeeded") break;
+        if (body.status === "Failed") throw new Error(`Delete of ${versionPath} failed: ${JSON.stringify(body)}`);
+      }
+    } else if (!del.ok && del.status !== 404) {
+      throw new Error(`Failed to delete existing gallery image version: ${del.status} ${await del.text()}`);
+    }
+  }
+
+  // Install Packer if not available
+  const packerBin = await ensurePacker();
+
+  // Initialize plugins
+  console.log("[packer] Initializing plugins...");
+  await spawnSafe([packerBin, "init", templateDir], { stdio: "inherit" });
+
+  // Build the image
+  console.log(`[packer] Building ${templateName} image: ${imageDefName}`);
+  const packerArgs = [
+    packerBin,
+    "build",
+    "-only",
+    `azure-arm.${templateName}`,
+    "-var",
+    `client_id=${clientId}`,
+    "-var",
+    `client_secret=${clientSecret}`,
+    "-var",
+    `subscription_id=${subscriptionId}`,
+    "-var",
+    `tenant_id=${tenantId}`,
+    "-var",
+    // Dedicated build RG in southcentralus so Packer's 4-core bake VMs don't
+    // contend with robobun CI runners for the eastus2 Ddsv6/Dpdsv6 quota.
+    `resource_group=${resourceGroup}-PACKER`,
+    "-var",
+    `gallery_resource_group=${resourceGroup}`,
+    "-var",
+    `location=${location}`,
+    "-var",
+    `gallery_name=${galleryName}`,
+    "-var",
+    `image_name=${imageDefName}`,
+    "-var",
+    `bootstrap_script=${bootstrapPath}`,
+    "-var",
+    `agent_script=${agentPath}`,
+    "-var",
+    `repo_ref=${/^[\w./-]+$/.test(getBranch() ?? "") ? getBranch() : "main"}`,
+    templateDir,
+  ];
+
+  // Packer's azure-arm builder cleans up its temp pkr* resources on SIGINT/SIGTERM, but only
+  // if the signal actually reaches the packer process and it is given time to finish the Azure
+  // deletes. spawnSafe() does not forward signals, so a Buildkite cancel would orphan the whole
+  // VM/NIC/IP/disk/vnet/NSG/keyvault stack in the build RG. Spawn directly and forward.
+  const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ARM_CLIENT_ID: clientId,
+      ARM_CLIENT_SECRET: clientSecret,
+      ARM_SUBSCRIPTION_ID: subscriptionId,
+      ARM_TENANT_ID: tenantId,
+    },
+  });
+  let cancelled = false;
+  const forward = signal => {
+    cancelled = true;
+    console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
+    child.kill(signal);
+  };
+  process.on("SIGINT", forward);
+  process.on("SIGTERM", forward);
+  const [code, signal] = await new Promise(done => child.on("close", (c, s) => done([c, s])));
+  process.off("SIGINT", forward);
+  process.off("SIGTERM", forward);
+  if (cancelled) {
+    console.log("[packer] cleanup after cancel finished");
+    process.exit(1);
+  }
+  if (code !== 0) {
+    throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
+  }
+
+  console.log(`[packer] Image built successfully: ${imageDefName}`);
+}
+
+/**
+ * Download and install Packer if not already available.
+ */
+async function ensurePacker() {
+  // Check if packer is already in PATH
+  const packerPath = which("packer");
+  if (packerPath) {
+    console.log("[packer] Found:", packerPath);
+    return packerPath;
+  }
+
+  // Check if we have a local copy
+  const localPacker = join(tmpdir(), "packer");
+  if (existsSync(localPacker)) {
+    return localPacker;
+  }
+
+  // Download Packer
+  const version = "1.15.0";
+  const platform = process.platform === "win32" ? "windows" : process.platform;
+  const packerArch = process.arch === "arm64" ? "arm64" : "amd64";
+  const url = `https://releases.hashicorp.com/packer/${version}/packer_${version}_${platform}_${packerArch}.zip`;
+
+  console.log(`[packer] Downloading Packer ${version}...`);
+  const zipPath = join(tmpdir(), "packer.zip");
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to download Packer: ${response.status}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  writeFileSync(zipPath, buffer);
+
+  // Extract
+  await spawnSafe(["unzip", "-o", zipPath, "-d", tmpdir()], { stdio: "inherit" });
+  chmodSync(localPacker, 0o755);
+
+  console.log(`[packer] Installed Packer ${version}`);
+  return localPacker;
+}
 
 async function main() {
   const { positionals } = parseArgs({
@@ -1228,7 +1449,6 @@ async function main() {
   };
 
   let { detached, bootstrap, ci, os, arch, distro, release, features } = options;
-  if (os === "freebsd") bootstrap = false;
 
   let name = `${os}-${arch}-${(release || "").replace(/\./g, "")}`;
 
@@ -1275,6 +1495,13 @@ async function main() {
         throw new Error(`Dockerfile not found: ${dockerfilePath}`);
       }
     }
+  }
+
+  // Use Packer for Windows Azure image builds — it handles VM creation,
+  // bootstrap, sysprep, and gallery capture via WinRM (no Run Command hacks).
+  if (args["cloud"] === "azure" && os === "windows" && (command === "create-image" || command === "publish-image")) {
+    await buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath });
+    return;
   }
 
   /** @type {Machine} */
@@ -1350,18 +1577,37 @@ async function main() {
       });
     }
 
-    await startGroup("Connecting with SSH...", async () => {
+    await startGroup(`Connecting${options.cloud === "azure" ? "" : " with SSH"}...`, async () => {
       const command = os === "windows" ? ["cmd", "/c", "ver"] : ["uname", "-a"];
       await machine.spawnSafe(command, { stdio: "inherit" });
     });
 
     if (bootstrapPath) {
+      // Tell bootstrap which ref of the repo to shallow-clone for
+      // prefetch_build_deps — the dep version pins live in scripts/build/deps/
+      // and aren't uploaded with bootstrap. Pinning to the triggering branch
+      // means a PR that bumps a dep also bakes the new tarball into the image
+      // it builds.
+      //
+      // The value reaches a remote shell, so reject anything outside the
+      // git-ref character set rather than try to quote it. A non-matching
+      // branch (or no branch detected) just falls back to main; the prefetch
+      // cache becomes a partial hit, which is fine.
+      const branch = getBranch();
+      const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
       if (os === "windows") {
         const remotePath = "C:\\Windows\\Temp\\bootstrap.ps1";
         const args = ci ? ["-CI"] : [];
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
-          await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
+          // Set $env: in the SAME process that runs the script — a separate
+          // Machine-scope registry write wouldn't reach this session's env.
+          // repoRef is already validated against /^[\w./-]+$/ above, so the
+          // single-quoted literal can't break out.
+          await machine.spawnSafe(
+            ["powershell", "-Command", `$env:BUN_BOOTSTRAP_REPO_REF='${repoRef}'; & '${remotePath}' ${args.join(" ")}`],
+            { stdio: "inherit" },
+          );
         });
       } else {
         if (!features?.includes("docker")) {
@@ -1372,7 +1618,9 @@ async function main() {
           }
           await startGroup("Running bootstrap...", async () => {
             await machine.upload(bootstrapPath, remotePath);
-            await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
+            await machine.spawnSafe(["env", `BUN_BOOTSTRAP_REPO_REF=${repoRef}`, "sh", remotePath, ...args], {
+              stdio: "inherit",
+            });
           });
         } else if (dockerfilePath) {
           const remotePath = "/tmp/bootstrap.sh";
@@ -1386,7 +1634,10 @@ async function main() {
             console.log("Uploaded agent.mjs");
             agentPath = "";
             bootstrapPath = "";
-            await machine.spawnSafe(["sudo", "bash", remotePath], { stdio: "inherit", cwd: "/tmp" });
+            await machine.spawnSafe(["sudo", "env", `BUN_BOOTSTRAP_REPO_REF=${repoRef}`, "bash", remotePath], {
+              stdio: "inherit",
+              cwd: "/tmp",
+            });
           });
         }
       }
@@ -1400,7 +1651,12 @@ async function main() {
           if (cloud.name === "docker" || features?.includes("docker")) {
             return;
           }
-          await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });
+          // Refresh PATH from registry before running agent.mjs — bootstrap added
+          // buildkite-agent to PATH but Azure Run Command sessions have stale PATH.
+          const cmd = `$env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User'); C:\\Scoop\\apps\\nodejs\\current\\node.exe ${remotePath} install`;
+          await machine.spawnSafe(["powershell", "-NoProfile", "-Command", cmd], {
+            stdio: "inherit",
+          });
         });
       } else {
         const tmpPath = "/tmp/agent.mjs";

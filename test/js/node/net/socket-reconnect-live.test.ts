@@ -37,8 +37,7 @@ describe("socket.connect() on an already-connected socket", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "first second", exitCode: 0 });
-    expect(stderr).not.toContain("assertion failed");
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "first second", stderr, exitCode: 0 });
   });
 
   it("does not crash when reconnecting while the first connect is still in flight", async () => {
@@ -74,8 +73,7 @@ describe("socket.connect() on an already-connected socket", () => {
     // Node emits EALREADY here; Bun drops the first in-flight connect and
     // completes the second. Either is acceptable so long as the process
     // exits cleanly.
-    expect(exitCode).toBe(0);
     expect(["connect", "err:EALREADY"]).toContain(stdout);
-    expect(stderr).not.toContain("assertion failed");
+    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
   });
 });

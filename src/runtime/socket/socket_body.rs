@@ -1209,16 +1209,17 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// slot is nulled before closing so the synchronous `on_close` /
     /// `on_connecting_error` dispatch early-returns and no JS callback fires;
     /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
-    /// took. Caller must hold an independent +1 across this call.
+    /// took. Caller must hold an independent +1 across this call. Only
+    /// handles Connected/Connecting; Pipe/UpgradedDuplex back-pointers do
+    /// not live in the ext slot so those are left for the caller's existing
+    /// `debug_assert!` to catch.
     pub fn detach_for_reconnect(&self) {
         let old = self.socket.get();
-        if old.is_detached() {
+        let Some(ext) = old.ext::<*mut c_void>() else {
             return;
-        }
-        if let Some(ext) = old.ext::<*mut c_void>() {
-            // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
-            unsafe { *ext = core::ptr::null_mut() };
-        }
+        };
+        // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
+        unsafe { *ext = core::ptr::null_mut() };
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());

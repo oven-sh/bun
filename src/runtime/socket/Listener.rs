@@ -1111,7 +1111,6 @@ impl Listener {
                     let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &*prev_ptr };
-                        prev.detach_for_reconnect();
                         if let Some(prev_handlers) = prev.handlers.get() {
                             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
                                 // SAFETY: prev_handlers was heap-allocated; shared
@@ -1214,7 +1213,6 @@ impl Listener {
                         // SAFETY: caller passes a live TCPSocket
                         let prev = unsafe { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
-                        prev.detach_for_reconnect();
                         if let Some(prev_handlers) = prev.handlers.get() {
                             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
                                 // SAFETY: prev_handlers was heap-allocated; shared

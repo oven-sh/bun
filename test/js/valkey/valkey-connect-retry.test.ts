@@ -3,14 +3,15 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // A `redis+unix://` path with no listener makes `connect()` fail synchronously
 // (inside the `.connect()` call itself) instead of via a deferred socket error.
-// That branch of `do_connect` used to leave the already-rejected
-// `connectionPromise` in its cached slot, so:
+// A synchronous `connect()` failure used to leave the cached `connectionPromise`
+// in a state nothing would ever repair:
 //   1. a later `.connect()` returned the stale rejected promise and never retried
 //   2. once a later connection attempt (started by any command) progressed,
 //      `on_valkey_connect` / `on_valkey_close` settled that same promise again:
 //        ASSERTION FAILED: arg0->status() == JSC::JSPromise::Status::Pending
 //        void JSC__JSPromise__reject(JSC::JSPromise*, JSGlobalObject*, EncodedJSValue)
 //        src/jsc/bindings/bindings.cpp:3733
+//   3. on the reconnect paths the promise simply never settled
 // Each case runs in its own process because the second settle aborts the whole
 // process under ASSERT-enabled builds.
 
@@ -65,12 +66,14 @@ async function run(name: string, reproTs: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
+  // `stderr` is not asserted (ASAN/debug builds emit benign noise); it is
+  // passed as expect()'s failure message so the aborting assertion is visible.
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
 }
 
 test.skipIf(isWindows).concurrent("RedisClient.connect() retries after a synchronous connect failure", async () => {
-  const { stdout, exitCode, signalCode } = await run(
+  const { stdout, stderr, exitCode, signalCode } = await run(
     "vk-retry",
     /* ts */ `
         import { RedisClient } from "bun";
@@ -90,7 +93,7 @@ test.skipIf(isWindows).concurrent("RedisClient.connect() retries after a synchro
         server.stop(true);
       `,
   );
-  expect({ stdout, exitCode, signalCode }).toEqual({
+  expect({ stdout, exitCode, signalCode }, stderr).toEqual({
     stdout: JSON.stringify({
       first: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
       wasConnected: false,
@@ -108,7 +111,7 @@ test.skipIf(isWindows).concurrent("RedisClient.connect() retries after a synchro
 test
   .skipIf(isWindows)
   .concurrent("a later successful connection does not settle the stale connectionPromise", async () => {
-    const { stdout, exitCode, signalCode } = await run(
+    const { stdout, stderr, exitCode, signalCode } = await run(
       "vk-resolve",
       /* ts */ `
         import { RedisClient } from "bun";
@@ -126,20 +129,20 @@ test
         server.stop(true);
       `,
     );
-    expect({ stdout, exitCode, signalCode }).toEqual({
+    expect({ stdout, exitCode, signalCode }, stderr).toEqual({
       stdout: JSON.stringify({ first: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION", got: "OK" }),
       exitCode: 0,
       signalCode: null,
     });
   });
 
-// do_connect's other connect path: once a client has connected (so
+// do_connect's second connect path: once a client has connected (so
 // needs_to_open_socket is false), a later .connect() routes through
 // reconnect(). Its synchronous connect() failure used to be swallowed into the
 // onclose callback, leaving the cached connectionPromise pending forever, so
 // .connect() hung and every later .connect() returned the same stale promise.
 test.skipIf(isWindows).concurrent("connect() rejects when a synchronous reconnect attempt fails", async () => {
-  const { stdout, exitCode, signalCode } = await run(
+  const { stdout, stderr, exitCode, signalCode } = await run(
     "vk-reconnect",
     /* ts */ `
         import { RedisClient } from "bun";
@@ -160,12 +163,47 @@ test.skipIf(isWindows).concurrent("connect() rejects when a synchronous reconnec
         console.log(JSON.stringify({ first, second }));
       `,
   );
-  expect({ stdout, exitCode, signalCode }).toEqual({
+  expect({ stdout, exitCode, signalCode }, stderr).toEqual({
     stdout: JSON.stringify({ first: "OK", second: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION" }),
     exitCode: 0,
     signalCode: null,
   });
 });
+
+// The third connect path: on_close()'s auto-reconnect branch schedules
+// on_reconnect_timer without ever reaching on_valkey_close(), so the .connect()
+// promise is still cached when the timer fires. If reconnect()'s connect(2)
+// then fails synchronously, that promise must still settle.
+test
+  .skipIf(isWindows)
+  .concurrent("connect() rejects when the auto-reconnect timer's attempt fails synchronously", async () => {
+    const { stdout, stderr, exitCode, signalCode } = await run(
+      "vk-reconnect-timer",
+      /* ts */ `
+        import { rmSync } from "node:fs";
+        import { RedisClient } from "bun";
+        import { join } from "node:path";
+        import { listenRespOk } from "./server.ts";
+        const sock = join(import.meta.dir, "s");
+        const server = listenRespOk(sock);
+        // connectionTimeout: 0 disables the connection-timeout timer so the
+        // process can exit naturally once the promise settles.
+        const client = new RedisClient(\`redis+unix://\${sock}\`, { connectionTimeout: 0 });
+        const pending = client.connect().then(() => "resolved", (e) => e?.code);
+        // Kill the target in the same tick, before the handshake can complete.
+        // The socket close takes the auto-reconnect branch; the reconnect timer
+        // then retries connect(2) against a path that no longer exists.
+        server.stop(true);
+        rmSync(sock, { force: true });
+        console.log(JSON.stringify({ first: await pending }));
+      `,
+    );
+    expect({ stdout, exitCode, signalCode }, stderr).toEqual({
+      stdout: JSON.stringify({ first: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION" }),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 
 // on_valkey_close also re-reads the cached connectionPromise. close() while a
 // later attempt is still mid-connect rejects the stale promise a second time
@@ -173,7 +211,7 @@ test.skipIf(isWindows).concurrent("connect() rejects when a synchronous reconnec
 test
   .skipIf(isWindows)
   .concurrent("close() during a later connection attempt does not reject the stale connectionPromise", async () => {
-    const { stdout, exitCode, signalCode } = await run(
+    const { stdout, stderr, exitCode, signalCode } = await run(
       "vk-reject",
       /* ts */ `
         import { RedisClient } from "bun";
@@ -191,7 +229,7 @@ test
         server.stop(true);
       `,
     );
-    expect({ stdout, exitCode, signalCode }).toEqual({
+    expect({ stdout, exitCode, signalCode }, stderr).toEqual({
       stdout: JSON.stringify({ first: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION", got: "ERR_REDIS_CONNECTION_CLOSED" }),
       exitCode: 0,
       signalCode: null,

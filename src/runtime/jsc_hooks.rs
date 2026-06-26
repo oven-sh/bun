@@ -35,8 +35,8 @@ use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
 use bun_jsc::{
-    AnyPromise, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
-    JSInternalPromise, JSModuleLoader, JSValue, JsResult, ResolvedSource,
+    ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
+    JSModuleLoader, JSValue, JsResult, ResolvedSource,
 };
 
 use bun_ast::ImportKind;
@@ -641,8 +641,9 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
     ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
 }
 
-/// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-/// preload promise if any, else null.
+/// `loadPreloads()` — runs `--preload` scripts. Returns the first
+/// non-fulfilled preload promise (rejected, or still pending with an idle
+/// event loop — unsettled TLA) if any, else null.
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `Pending`/`NotFound` returns `error.ModuleNotFound`,
@@ -651,7 +652,7 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
-    // Note: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`
+    // Note: reshaped for borrowck — `wait_for_module_promise` / `event_loop().tick()`
     // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
     // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via
     // the raw `vm` ptr; iterate preloads by index (the `Box<[u8]>` payloads are
@@ -780,7 +781,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
         // ── wait ────────────────────────────────────────────────────────
         // HMR `pending_internal_promise` swap loop; non-watcher path uses
-        // `wait_for_promise` directly.
+        // `wait_for_module_promise` directly.
         {
             // SAFETY: per fn contract.
             if unsafe { &*vm }.is_watcher_enabled() {
@@ -808,7 +809,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     if unsafe { &*pip }.status() == PromiseStatus::Pending {
                         // SAFETY: per fn contract — short-lived `&mut *vm` for the
                         // dispatched `auto_tick` hook (same shape as the
-                        // non-watcher `wait_for_promise` arm).
+                        // non-watcher `wait_for_module_promise` arm).
                         unsafe { (*vm).auto_tick() };
                     }
                 }
@@ -817,13 +818,37 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 unsafe { (*(*vm).event_loop()).perform_gc() };
                 // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
                 // live protected JSC heap cell.
-                unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+                unsafe { (*vm).wait_for_module_promise(promise) };
             }
         }
 
+        // Propagate both rejection and still-pending (unsettled TLA on an
+        // idle loop) so callers report it instead of silently continuing to
+        // later preloads / the entry point. For `Pending`, name the preload
+        // here — downstream reporting only knows the entry path.
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
-        if unsafe { &*promise }.status() == PromiseStatus::Rejected {
-            return Ok(promise);
+        match unsafe { &*promise }.status() {
+            PromiseStatus::Fulfilled => {}
+            PromiseStatus::Rejected => return Ok(promise),
+            PromiseStatus::Pending => {
+                // SAFETY: per fn contract.
+                if let Some(log) = unsafe { &*vm }.log {
+                    // SAFETY: `preload` points at a live boxed slice for this
+                    // iteration (heap-stable `Box<[u8]>`; nothing above
+                    // mutates `vm.preload`).
+                    let preload_name = unsafe { &*preload };
+                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Top-level await in preload {} never resolved",
+                            bun_core::fmt::format_json_string_latin1(preload_name),
+                        ),
+                    );
+                }
+                return Ok(promise);
+            }
         }
         // `_protected` drops here → unprotect.
     }

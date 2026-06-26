@@ -129,8 +129,8 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser`'s error type: the union
-/// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
+/// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
+/// with the parser-specific `{ StackOverflow, InputTooLarge }`.
 // (`bun_jsc::JsError` covers the first three, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;
@@ -152,6 +152,14 @@ impl From<ParserError> for bun_core::Error {
     fn from(e: ParserError) -> Self {
         bun_core::err!(from e)
     }
+}
+
+/// Every offset, mark and span boundary in the parser is an `OFF` (u32), so an
+/// input of 2^32 bytes or more cannot be indexed. Callers that size anything
+/// from the input length must reject it with this before allocating.
+#[inline]
+pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
+    OFF::try_from(text.len()).map_err(|_| ParserError::InputTooLarge)
 }
 
 impl<'a> Parser<'a> {
@@ -178,12 +186,7 @@ impl<'a> Parser<'a> {
     }
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
-        // Every offset, mark and span boundary in the parser is an `OFF`
-        // (u32). An input of 2^32 bytes or more cannot be indexed, so refuse
-        // it up front instead of panicking on the cast.
-        let Ok(size) = OFF::try_from(text.len()) else {
-            return Err(ParserError::InputTooLarge);
-        };
+        let size = input_size(text)?;
         let mut p = Parser {
             text,
             size,

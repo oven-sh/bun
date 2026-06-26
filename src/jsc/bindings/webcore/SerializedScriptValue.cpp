@@ -2014,6 +2014,8 @@ private:
                 const bool isTransferCompatible = m_forTransfer == SerializationForCrossProcessTransfer::Yes ? cloneable.isForTransfer : true;
                 const bool isStorageCompatible = m_forStorage == SerializationForStorage::Yes ? cloneable.isForStorage : true;
                 if (!isTransferCompatible || !isStorageCompatible) {
+                    if (!startObjectInternal(obj)) // handle duplicates
+                        return true;
                     write(ObjectTag);
                     write(TerminatorTag);
                     return true;

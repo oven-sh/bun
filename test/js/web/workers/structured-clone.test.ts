@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, tls } from "harness";
 import { bunExe } from "js/bun/shell/test_builder";
 import { X509Certificate } from "node:crypto";
+import { BlockList } from "node:net";
 import { join } from "path";
 function jscSerializeRoundtrip(value: any) {
   const serialized = serialize(value);
@@ -447,6 +448,15 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       const c = structuredCloneFn([b, b]);
       expect(c[0].valueOf()).toBe(5n);
       expect(c[1]).toBe(c[0]);
+    });
+
+    // Serializing a non-storable Bun cloneable (BlockList) for storage writes an
+    // empty-object placeholder; the serializer must still record it in its pool.
+    test("a duplicated object after a net.BlockList keeps its identity", () => {
+      const o = { x: 1 };
+      const c = structuredCloneFn([new BlockList(), o, o]);
+      expect(c[1]).toEqual({ x: 1 });
+      expect(c[2]).toBe(c[1]);
     });
 
     test("a back-reference past 255 interleaved BigInts", () => {

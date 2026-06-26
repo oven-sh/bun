@@ -420,7 +420,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-                        us_poll_start(accepted_p, loop, LIBUS_SOCKET_READABLE);
+                        if (us_poll_start_rc(accepted_p, loop, LIBUS_SOCKET_READABLE) != 0) {
+                            /* EPOLL_CTL_ADD failed (e.g. ENOSPC). Close the fd so the
+                             * peer sees a RST instead of a connection that silently
+                             * never answers. */
+                            bsd_close_socket(client_fd);
+                            us_poll_free(accepted_p, loop);
+                            continue;
+                        }
 
                         struct us_socket_t *s = (struct us_socket_t *) accepted_p;
 
@@ -614,10 +621,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
+                        /* Stop if on_data paused us (us_socket_pause from the data
+                         * handler, e.g. fetch() receive backpressure or
+                         * net.Socket#pause) — keep honoring the pause instead of
+                         * pulling bytes the caller asked to defer. */
                         if (
                             s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH &&
                             (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) &&
-                            !us_socket_is_closed(s)
+                            !us_socket_is_closed(s) && !s->flags.is_paused
                         ) {
                             repeat_recv_count += error == 0;
 

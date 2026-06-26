@@ -2862,7 +2862,9 @@ where
 
         stream_log!("onReject()");
 
-        if !req.flags.has_written_status() {
+        // `resp` must not be dereferenced once the sink has already ended the
+        // response (see `end_already_responded_stream`).
+        if !ended_response && !req.flags.has_written_status() {
             req.render_metadata();
         }
 

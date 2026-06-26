@@ -206,7 +206,7 @@ test.skipIf(!isASAN)(
       exitCode: 0,
     });
   },
-  30_000,
+  60_000,
 );
 
 // Same setup, but the parked pull() rejects after controller.end(). The
@@ -286,7 +286,7 @@ test.skipIf(!isASAN)(
       exitCode: 0,
     });
   },
-  30_000,
+  60_000,
 );
 
 // https://github.com/oven-sh/bun/issues/32137

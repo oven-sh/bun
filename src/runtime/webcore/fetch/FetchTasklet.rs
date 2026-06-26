@@ -2088,10 +2088,10 @@ impl FetchTasklet {
 
         if needs_schedule {
             // wakeup the http thread to write the data
-            if let Some(http_) = self.http.as_mut() {
-                http::http_thread()
-                    .schedule_request_write(http_, http::http_thread::WriteMessageType::Data);
-            }
+            http::http_thread().schedule_request_write(
+                self.http.as_mut().unwrap(),
+                http::http_thread::WriteMessageType::Data,
+            );
         }
 
         // pause the stream if we hit the high water mark
@@ -2188,20 +2188,14 @@ impl FetchTasklet {
         // explicit field-subset copy (`AsyncHTTP` is not `Copy`:
         // `HTTPClient: Drop`, owned Vecs); see `AsyncHTTP::sync_progress_from`
         // for the field list.
-        if let Some(http_) = task_ref.http.as_mut() {
-            // SAFETY: `async_http` is the HTTP-thread copy passed by
-            // `on_async_http_callback`; it is alive for the duration of this
-            // call and not mutated concurrently (HTTP thread is blocked in
-            // the callback).
-            http_.sync_progress_from(unsafe { &*async_http });
-        } else {
-            // `http` is assigned once in `get()` and never cleared; `None`
-            // means the tasklet was freed under us. Bail instead of writing
-            // result state / enqueueing a stale concurrent task.
-            debug_assert!(false, "FetchTasklet::callback: http=None (tasklet freed?)");
-            task_ref.mutex.unlock();
-            return;
-        }
+        // SAFETY: `async_http` is the HTTP-thread copy passed by `on_async_http_callback`;
+        // it is alive for the duration of this call and not mutated concurrently (HTTP
+        // thread is blocked in the callback).
+        task_ref
+            .http
+            .as_mut()
+            .unwrap()
+            .sync_progress_from(unsafe { &*async_http });
 
         bun_output::scoped_log!(
             FetchTasklet,

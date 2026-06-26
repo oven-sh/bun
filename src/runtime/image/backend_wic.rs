@@ -853,7 +853,7 @@ unsafe extern "system" {
 }
 
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
-/// need. Loaded lazily (LoadLibraryExA inside `loadFactory`) so the binary
+/// need. Loaded lazily (LoadLibraryExA inside `load_factory`) so the binary
 /// carries no import-table dependency on windowscodecs — nano-server / stripped
 /// containers without the WIC feature still launch and just fall back.
 type WICConvertBitmapSourceFn = unsafe extern "system" fn(

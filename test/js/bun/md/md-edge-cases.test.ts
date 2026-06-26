@@ -1189,3 +1189,91 @@ describe("pathological autolink opener inputs", () => {
     );
   }, 90_000);
 });
+
+// A non-shared resizable ArrayBuffer can shrink its backing store from a JS
+// getter that runs *after* Bun.markdown has formed a Rust &[u8] over it but
+// *before* the parser reads it (options getters, render callbacks, react
+// components all run user JS at that point). Pinning prevents detach but not
+// resize, so the input must be snapshotted up front. Each test resizes the
+// backing buffer to 0 from a getter and asserts the *submitted* bytes were
+// still parsed (and that the resize really happened).
+describe("resizable ArrayBuffer input across JS reentry", () => {
+  function makeView() {
+    const text = Buffer.from("# hello\n\nworld\n");
+    const rab = new ArrayBuffer(text.length, { maxByteLength: 1024 });
+    const view = new Uint8Array(rab);
+    view.set(text);
+    return { rab, view };
+  }
+
+  test("html snapshots input before option getters can resize", () => {
+    const { rab, view } = makeView();
+    const html = Markdown.html(view, {
+      get autolinks() {
+        rab.resize(0);
+        return false;
+      },
+    });
+    expect(rab.byteLength).toBe(0);
+    expect(html).toContain("<h1>hello</h1>");
+    expect(html).toContain("world");
+  });
+
+  test("ansi snapshots input before theme getters can resize", () => {
+    const { rab, view } = makeView();
+    const ansi = Markdown.ansi(view, {
+      get colors() {
+        rab.resize(0);
+        return false;
+      },
+    });
+    expect(rab.byteLength).toBe(0);
+    expect(ansi).toContain("hello");
+    expect(ansi).toContain("world");
+  });
+
+  test("render snapshots input before callback getters can resize", () => {
+    const { rab, view } = makeView();
+    const rendered = Markdown.render(view, {
+      get heading() {
+        rab.resize(0);
+        return (children: string, { level }: any) => `<h${level}>${children}</h${level}>`;
+      },
+      paragraph: (children: string) => `<p>${children}</p>`,
+    });
+    expect(rab.byteLength).toBe(0);
+    expect(rendered).toContain("<h1>hello</h1>");
+    expect(rendered).toContain("<p>world</p>");
+  });
+
+  test("react snapshots input before option getters can resize", () => {
+    const { rab, view } = makeView();
+    const element = Markdown.react(view, undefined, {
+      reactVersion: 18,
+      get headings() {
+        rab.resize(0);
+        return false;
+      },
+    });
+    const rendered = renderToString(element);
+    expect(rab.byteLength).toBe(0);
+    expect(rendered).toContain("hello");
+    expect(rendered).toContain("world");
+  });
+
+  // A non-shared resizable ArrayBuffer can also be grown, which may reallocate
+  // and move the backing store (same UB class as shrink). The snapshot is taken
+  // before reentry, so the original input still renders.
+  test("html snapshots input before a getter grows the buffer", () => {
+    const { rab, view } = makeView();
+    const html = Markdown.html(view, {
+      get autolinks() {
+        rab.resize(rab.maxByteLength);
+        return false;
+      },
+    });
+    expect(rab.byteLength).toBe(rab.maxByteLength);
+    expect(html).toContain("<h1>hello</h1>");
+    expect(html).toContain("world");
+  });
+});

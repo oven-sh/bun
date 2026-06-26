@@ -270,6 +270,8 @@ describe("Bun.Transpiler", () => {
       exp("const \\u{66} = 1; export default \\u{66};", "const f = 1;\nexport default f;\n");
       exp("export default (function \\u{66}() {})", "export default (function f() {})");
       exp("export default (class \\u{66} {})", "export default (class f {\n})");
+      exp("export default function \\u{66}() {}", "export default function f() {}");
+      exp("export default class \\u{66} {}", "export default class f {\n}");
 
       // The exact fuzz repro used the ts loader with target:"node".
       const node = new Bun.Transpiler({ loader: "ts", target: "node" });

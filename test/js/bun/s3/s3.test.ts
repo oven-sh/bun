@@ -1801,3 +1801,71 @@ describe("s3 multipart upload id validation", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 });
+
+describe("S3File.write(ReadableStream)", () => {
+  // S3File.write() used to coerce a bare ReadableStream via toString(), uploading the
+  // literal "[object ReadableStream]" instead of the stream contents.
+  it("uploads the stream body, not its toString()", async () => {
+    const fixture = `
+        let received = "";
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const url = new URL(req.url);
+            if (req.method === "POST" && url.search.startsWith("?uploads")) {
+              return new Response(
+                "<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+                { status: 200, headers: { "Content-Type": "text/xml" } },
+              );
+            }
+            if (req.method === "POST" && url.searchParams.has("uploadId")) {
+              return new Response(
+                '<CompleteMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><ETag>"etag"</ETag></CompleteMultipartUploadResult>',
+                { status: 200, headers: { "Content-Type": "text/xml" } },
+              );
+            }
+            if (req.method === "PUT") {
+              received += await req.text();
+              return new Response(null, { status: 200, headers: { ETag: '"etag"' } });
+            }
+            return new Response(null, { status: 200 });
+          },
+        });
+
+        const client = new Bun.S3Client({
+          accessKeyId: "test",
+          secretAccessKey: "test",
+          endpoint: server.url.href,
+          bucket: "bucket",
+        });
+
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hello "));
+            controller.enqueue(new TextEncoder().encode("from "));
+            controller.enqueue(new TextEncoder().encode("stream"));
+            controller.close();
+          },
+        });
+
+        await client.file("key.txt").write(stream);
+        console.log(JSON.stringify({ received }));
+        server.stop(true);
+      `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ received: "hello from stream" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

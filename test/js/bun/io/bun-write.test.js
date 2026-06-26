@@ -594,4 +594,87 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
     expect(f.name).toBe(filePath);
   });
+
+  it("Bun.write(path, ReadableStream) streams the body instead of stringifying", async () => {
+    using dir = tempDir("bun-write-readablestream", {});
+    const filePath = join(String(dir), "out.txt");
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hello "));
+        controller.enqueue(new TextEncoder().encode("from "));
+        controller.enqueue(new TextEncoder().encode("stream"));
+        controller.close();
+      },
+    });
+    const n = await Bun.write(filePath, stream);
+    expect(await Bun.file(filePath).text()).toBe("hello from stream");
+    expect(n).toBe(17);
+  });
+
+  it("BunFile.write(ReadableStream) streams the body instead of stringifying", async () => {
+    using dir = tempDir("bun-file-write-readablestream", {});
+    const filePath = join(String(dir), "out.txt");
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hello from stream"));
+        controller.close();
+      },
+    });
+    const n = await Bun.file(filePath).write(stream);
+    expect(await Bun.file(filePath).text()).toBe("hello from stream");
+    expect(n).toBe(17);
+  });
+
+  it("Bun.write(path, ReadableStream) rejects a disturbed stream", async () => {
+    using dir = tempDir("bun-write-readablestream-disturbed", {});
+    const filePath = join(String(dir), "out.txt");
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hello"));
+        controller.close();
+      },
+    });
+    await stream.getReader().read();
+    let err;
+    try {
+      await Bun.write(filePath, stream);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain("ReadableStream has already been used");
+  });
+
+  it("Bun.write(path, ReadableStream) rejects with the stream's error and exits 0", async () => {
+    // Uses a subprocess so the exit code proves the rejection was handled and
+    // did not also escape as an unhandled rejection.
+    using dir = tempDir("bun-write-readablestream-errored", {});
+    const filePath = join(String(dir), "out.txt");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const rs = new ReadableStream({ start(c) { c.error(new Error("boom")); } });
+         try { await Bun.write(${JSON.stringify(filePath)}, rs); console.log("resolved"); }
+         catch (e) { console.log("rejected:", e.message); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "rejected: boom\n", stderr: "", exitCode: 0 });
+  });
+
+  it("Bun.write(path, asyncIterable) streams the body", async () => {
+    using dir = tempDir("bun-write-async-iterable", {});
+    const filePath = join(String(dir), "out.txt");
+    async function* body() {
+      yield new TextEncoder().encode("hello ");
+      yield new TextEncoder().encode("from ");
+      yield new TextEncoder().encode("async generator");
+    }
+    await Bun.write(filePath, body());
+    expect(await Bun.file(filePath).text()).toBe("hello from async generator");
+  });
 });

@@ -638,6 +638,7 @@ declare module "bun" {
         | BunFile
         | S3File
         | Blob
+        | ReadableStream
         | Archive,
       options?: S3Options,
     ): Promise<number>;
@@ -950,6 +951,7 @@ declare module "bun" {
         | S3File
         | Blob
         | File
+        | ReadableStream
         | Archive,
       options?: S3Options,
     ): Promise<number>;
@@ -1001,6 +1003,7 @@ declare module "bun" {
         | S3File
         | Blob
         | File
+        | ReadableStream
         | Archive,
       options?: S3Options,
     ): Promise<number>;

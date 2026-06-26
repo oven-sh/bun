@@ -304,6 +304,48 @@ describe("Bun.Transpiler", () => {
       exp("f<T>`ok`", "f`ok`;\n");
     });
 
+    it("reports a parse error for a truncated class-in-extends without tripping the scope-order assert", async () => {
+      // lexer.expect() logs and continues on a token mismatch, so an unterminated
+      // class expression in the extends clause and the outer class both push a
+      // ClassBody scope at the same EOF location during error recovery. Run in a
+      // subprocess so the debug-only scope-order assert surfaces as a test failure
+      // instead of taking down the runner.
+      const cases = {
+        "class o extends class": 'Expected "{" but found end of file',
+        "(class extends class": 'Expected "{" but found end of file',
+        "class o extends (class": 'Expected "{" but found end of file',
+        "class o extends class extends class": 'Expected "{" but found end of file',
+      };
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const t = new Bun.Transpiler({ loader: "tsx", target: "bun" });
+            const out = [];
+            for (const input of ${JSON.stringify(Object.keys(cases))}) {
+              try {
+                t.transformSync(input);
+                out.push("<no error>");
+              } catch (e) {
+                out.push((e instanceof AggregateError ? e.errors[0] : e).message);
+              }
+            }
+            process.stdout.write(JSON.stringify(out));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: Object.values(cases),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("should parse infer extends ternary correctly #9959", () => {
       ts.expectPrinted_("type Foo<T> = T extends infer U ? U : never;", "");
       ts.expectPrinted_("var foo: Foo extends string | infer Foo extends string ? Foo : never", "var foo");

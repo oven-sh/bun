@@ -3605,8 +3605,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if cfg!(debug_assertions) {
             // Enforce that scope locations are strictly increasing to help catch bugs
-            // where the pushed scopes are mismatched between the first and second passes
-            if !self.scopes_in_order.is_empty() {
+            // where the pushed scopes are mismatched between the first and second passes.
+            // Skip once a parse error exists: error recovery past a soft-failing expect()
+            // can push two scopes at one loc, and the visit pass won't run anyway.
+            if self.log().errors == 0 && !self.scopes_in_order.is_empty() {
                 let mut last_i = self.scopes_in_order.len() - 1;
                 while self.scopes_in_order[last_i].is_none() && last_i > 0 {
                     last_i -= 1;

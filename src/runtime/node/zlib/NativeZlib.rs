@@ -130,6 +130,9 @@ mod _impl {
                 )
                 .throw());
             }
+            // A closed `Context` is in `NodeMode::NONE`, which `Context::init`
+            // cannot re-initialize.
+            CompressionStream::<Self>::throw_if_closed(self, global)?;
 
             let window_bits =
                 validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
@@ -183,6 +186,18 @@ mod _impl {
                         ));
                     }
                 };
+                // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
+                // length; reject anything larger before `Context::init` copies it.
+                if dictionary_buf.byte_len > u32::MAX as usize {
+                    return Err(global.throw_range_error(
+                        dictionary_buf.byte_len as i64,
+                        bun_jsc::RangeErrorOptions {
+                            field_name: b"dictionary.byteLength",
+                            max: i64::from(u32::MAX),
+                            ..Default::default()
+                        },
+                    ));
+                }
                 Some(dictionary_buf.byte_slice())
             };
 

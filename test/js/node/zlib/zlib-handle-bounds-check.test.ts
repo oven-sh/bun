@@ -146,3 +146,134 @@ describe("zlib native handle writeState", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// The zlib.ts wrapper always drives the native handle as
+// constructor -> init() -> write*() -> close(), caches onerror/writeCallback
+// in init(), and nulls `_handle` on close. The native binding assumed that
+// protocol: driving a handle outside it (reachable through `_handle` and
+// `_handle.constructor`) used to abort the whole process with a Rust
+// `unreachable!()` / `unwrap()` on `None`, or hand a null state pointer
+// straight into brotli/zstd. Each case runs in a subprocess so a regression
+// fails one test instead of taking down the runner. `handled` means the child
+// reached the statement after the call; `threw ...` echoes the JS error.
+describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", () => {
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const zlib = require("node:zlib");\n${body}`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode };
+  }
+
+  const CLOSED = "threw ERR_INVALID_STATE: zlib binding closed";
+  const cases: [name: string, body: string, expected: string][] = [
+    // init() after close(): the Context is in NodeMode::NONE, which
+    // Context::init treats as unreachable.
+    [
+      "zlib: init() after close() throws",
+      `const h = zlib.createDeflate()._handle;
+       h.close();
+       try { h.init(15, 6, 8, 0, new Uint32Array(2), () => {}, undefined); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
+    [
+      "brotli: init() after close() throws",
+      `const h = zlib.createBrotliCompress()._handle;
+       h.close();
+       try { h.init(new Uint32Array(0), new Uint32Array(2), () => {}); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
+    [
+      "zstd: init() after close() throws",
+      `const h = zlib.createZstdCompress()._handle;
+       h.close();
+       try { h.init(new Uint32Array(0), undefined, new Uint32Array(2), () => {}); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
+    // write/writeSync after close(): brotli/zstd do_work() treated
+    // NodeMode::NONE as unreachable; zlib silently no-op'd on an ended stream.
+    [
+      "zlib: writeSync() after close() throws",
+      `const h = zlib.createDeflate()._handle;
+       h.close();
+       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
+    [
+      "brotli: writeSync() after close() throws",
+      `const h = zlib.createBrotliCompress()._handle;
+       h.close();
+       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
+    [
+      "zstd: writeSync() after close() throws",
+      `const h = zlib.createZstdCompress()._handle;
+       h.close();
+       try { h.writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      CLOSED,
+    ],
+    // writeSync() before init(): brotli/zstd were handed a null state
+    // pointer, which their C APIs dereference unconditionally.
+    [
+      "brotli: writeSync() before init() does not dereference a null encoder",
+      `const C = zlib.createBrotliCompress()._handle.constructor;
+       new C(8).writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled");`,
+      "handled",
+    ],
+    [
+      "zstd: writeSync() before init() does not dereference a null CCtx",
+      `const C = zlib.createZstdCompress()._handle.constructor;
+       new C(10).writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled");`,
+      "handled",
+    ],
+    // With no onerror / writeCallback cached (init() never ran), an error or
+    // an async write completion had no callback to unwrap.
+    [
+      "zlib: an error with no onerror cached is dropped, not fatal",
+      `const C = zlib.createDeflate()._handle.constructor;
+       new C(1).reset(); console.log("handled");`,
+      "handled",
+    ],
+    [
+      "brotli: async write() with no writeCallback cached completes",
+      `const C = zlib.createBrotliDecompress()._handle.constructor;
+       const h = new C(9);
+       h.reset();
+       h.write(0, null, 0, 0, new Uint8Array(64), 0, 64);
+       console.log("handled");`,
+      "handled",
+    ],
+  ];
+
+  for (const [name, body, expected] of cases) {
+    test.concurrent(name, async () => {
+      expect(await run(body)).toEqual({ stdout: expected, exitCode: 0 });
+    });
+  }
+
+  // deflateSetDictionary / inflateSetDictionary take a `uInt` length; a 2**32
+  // byte dictionary overflowed the cast after the native handle had already
+  // copied it. The length is now rejected before the copy, so the Uint8Array
+  // below is never read and stays virtual (cheap).
+  test.concurrent("zlib: a 2**32-byte dictionary throws instead of overflowing a u32", async () => {
+    expect(
+      await run(
+        `try { zlib.deflateSync(Buffer.from("hello"), { dictionary: new Uint8Array(2 ** 32) }); console.log("handled"); }
+         catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      ),
+    ).toEqual({
+      stdout:
+        'threw ERR_OUT_OF_RANGE: The value of "dictionary.byteLength" is out of range. It must be <= 4294967295. Received 4294967296',
+      exitCode: 0,
+    });
+  });
+});

@@ -152,6 +152,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // A closed `Context` is in `NodeMode::NONE`, which `Context::init`
+            // cannot re-initialize.
+            CompressionStream::<Self>::throw_if_closed(self, global)?;
 
             let init_params_array_value = arguments[0];
             let pledged_src_size_value = arguments[1];
@@ -420,6 +423,11 @@ mod _impl {
         }
 
         pub fn do_work(&mut self) {
+            // A handle driven before `init()` has no CCtx/DCtx; zstd
+            // dereferences the context pointer unconditionally.
+            if self.state.is_none() {
+                return;
+            }
             self.remaining = match self.mode {
                 // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
                 NodeMode::ZSTD_COMPRESS => unsafe {

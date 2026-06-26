@@ -189,6 +189,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // A closed `Context` is in `NodeMode::NONE`, which `Context::init`
+            // cannot re-initialize.
+            CompressionStream::<Self>::throw_if_closed(self, global_this)?;
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
@@ -429,6 +432,11 @@ mod _impl {
         }
 
         pub fn do_work(&mut self) {
+            // A handle driven before `init()` has no encoder/decoder state;
+            // brotli dereferences the state pointer unconditionally.
+            if self.state.is_none() {
+                return;
+            }
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
                     let mut next_in = self.next_in;

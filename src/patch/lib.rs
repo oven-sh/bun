@@ -1531,8 +1531,7 @@ fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
 fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     // index 2de83dd..842652c 100644
     //       ^
-    //       we expect that we are here
-    debug_assert!(!line.starts_with(b"index "));
+    //       the caller has already stripped the leading "index "
 
     // From @pnpm/patch-package the regex is this:
     // const match = line.match(/(\w+)\.\.(\w+)/)

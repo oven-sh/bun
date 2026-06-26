@@ -304,6 +304,46 @@ describe("Bun.Transpiler", () => {
       exp("f<T>`ok`", "f`ok`;\n");
     });
 
+    it("reports a parse error for a truncated class-in-extends without tripping the scope-order assert", async () => {
+      // An unterminated class-in-extends pushes two ClassBody scopes at the same
+      // EOF loc during error recovery. Run in a subprocess so the debug-only
+      // scope-order assert surfaces as a test failure instead of killing the runner.
+      const cases = {
+        "class o extends class": 'Expected "{" but found end of file',
+        "(class extends class": 'Expected "{" but found end of file',
+        "class o extends (class": 'Expected "{" but found end of file',
+        "class o extends class extends class": 'Expected "{" but found end of file',
+      };
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const t = new Bun.Transpiler({ loader: "tsx", target: "bun" });
+            const out = [];
+            for (const input of ${JSON.stringify(Object.keys(cases))}) {
+              try {
+                t.transformSync(input);
+                out.push("<no error>");
+              } catch (e) {
+                out.push((e instanceof AggregateError ? e.errors[0] : e).message);
+              }
+            }
+            process.stdout.write(JSON.stringify(out));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: Object.values(cases),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("should parse infer extends ternary correctly #9959", () => {
       ts.expectPrinted_("type Foo<T> = T extends infer U ? U : never;", "");
       ts.expectPrinted_("var foo: Foo extends string | infer Foo extends string ? Foo : never", "var foo");
@@ -2202,6 +2242,16 @@ console.log(<div {...obj} key="after" />);`),
     });
     it("import with quote", () => {
       expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
+    });
+
+    it("empty string as import/export clause alias", () => {
+      // ModuleExportName may be any well-formed string literal, including "".
+      expectPrinted_(`import { "" as z } from "m"; z`, `import { "" as z } from "m";\nz`);
+      expectPrinted_(`let z = 1; export { z as "" }`, `let z = 1;\n\nexport { z as "" }`);
+      expectPrinted_(`export { "" as z } from "m"`, `export { "" as z } from "m"`);
+      expectPrinted_(`export { z as "" } from "m"`, `export { z as "" } from "m"`);
+      expectPrinted_(`export { "" as "" } from "m"`, `export { "" } from "m"`);
+      expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
     });
 
     it("string quote selection", () => {

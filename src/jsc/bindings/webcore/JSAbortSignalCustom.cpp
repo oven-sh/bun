@@ -55,7 +55,9 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
             return true;
         }
         if (abortSignal.isDependent()) {
-            if (!abortSignal.sourceSignals().isEmptyIgnoringNullReferences()) {
+            // This runs on GC marker threads, so it must not mutate the signal:
+            // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.
+            if (abortSignal.hasAliveSourceSignals()) {
                 if (reason) [[unlikely]]
                     *reason = "Has Source Signals And Abort Event Listener"_s;
                 return true;

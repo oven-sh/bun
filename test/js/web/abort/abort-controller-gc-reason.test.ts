@@ -99,6 +99,61 @@ describe("AbortController GC", () => {
     expect(exitCode).toBe(0);
   });
 
+  // AbortSignal.any(): JSAbortSignalOwner::isReachableFromOpaqueRoots probed the dependent
+  // signal's source set with WeakListHashSet::isEmptyIgnoringNullReferences(), which prunes
+  // dead entries. It runs on JSC's parallel marker threads, so once every source controller
+  // had been collected, a HeapHelper thread destroyed WeakPtrImpls owned by the JS thread
+  // ("ASSERTION FAILED: m_creationThread == currentThreadID()"; a data race in release).
+  test("AbortSignal.any() dependent signals survive parallel GC after their sources are collected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const noop = () => {};
+          function makeBatch(n) {
+            const out = [];
+            for (let i = 0; i < n; i++) {
+              // The controllers (and their signals) are dropped, so every source of the
+              // dependent signal is collected, leaving only dead weak references behind.
+              const a = new AbortController();
+              const b = new AbortController();
+              const c = new AbortController();
+              const dep = AbortSignal.any([a.signal, b.signal, c.signal]);
+              dep.addEventListener("abort", noop);
+              out.push(dep);
+            }
+            return out;
+          }
+          const keep = [];
+          for (let round = 0; round < 24; round++) {
+            keep.push(makeBatch(100));
+            if (keep.length > 6) keep.shift();
+            Bun.gc(true);
+          }
+          console.log("PASS");
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // `bun -e` defaults to a single GC marker; the weak-handle visit has to happen on
+        // the parallel marker threads to reach the cross-thread mutation.
+        BUN_JSC_numberOfGCMarkers: "8",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is only reported for diagnostics; debug/ASAN builds may emit benign warnings.
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
+      stdout: "PASS",
+      exitCode: 0,
+      stderr: expect.any(String),
+    });
+  });
+
   test("signal.reason survives GC with many controllers", async () => {
     await using proc = Bun.spawn({
       cmd: [

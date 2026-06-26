@@ -2205,9 +2205,6 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("import with separator-only or trailing-separator path", () => {
-      // PathName::init used to leave the full input in `base` when the path was
-      // entirely separators (or had only trailing separators after the basename),
-      // tripping a debug assertion when deriving the namespace symbol name.
       expectPrinted_(`import "/"`, `import"/"`);
       expectPrinted_(`import "//"`, `import"//"`);
       expectPrinted_(`import "///"`, `import"///"`);

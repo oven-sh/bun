@@ -137,6 +137,7 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+new!(pub NODE_OPTIONS: string, "NODE_OPTIONS", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.

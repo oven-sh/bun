@@ -4050,11 +4050,22 @@ fn argv_view_init() {
     let storage: &'static [ZBox] = argv_storage();
     // ARGV_STORAGE is process-static via `Once`; `as_zstr` borrows for `'static`.
     let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
+    let argv0_len = view.len();
     // Splice BUN_OPTIONS tokens after argv[0].
     if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
-        let original_len = view.len();
         append_options_env::<&'static ZStr>(opts, &mut view);
-        set_bun_options_argc(view.len() - original_len);
+    }
+    // NODE_OPTIONS: Node.js-compatible env var for injecting CLI flags,
+    // filtered through an allowlist. Counted toward bun_options_argc (alongside
+    // BUN_OPTIONS) so standalone binaries compute the correct passthrough
+    // offset (see offset_for_passthrough in runtime/cli).
+    if let Some(opts) = crate::env_var::NODE_OPTIONS.get() {
+        if !opts.is_empty() {
+            append_node_options_env::<&'static ZStr>(opts, &mut view);
+        }
+    }
+    if view.len() != argv0_len {
+        set_bun_options_argc(view.len() - argv0_len);
     }
     let view: &'static [&'static ZStr] = ARGV_VIEW.get_or_init(move || view);
     // SAFETY: single-threaded lazy init guarded by Once.
@@ -4316,6 +4327,168 @@ pub fn append_options_env<A: OptionsEnvArg>(env: &[u8], args: &mut Vec<A>) {
 
         args.insert(offset_in_args, A::from_buf(buf));
         offset_in_args += 1;
+    }
+}
+
+// ─── NODE_OPTIONS argv injection ─────────────────────────────────────────────
+
+/// Kind of flag accepted from `NODE_OPTIONS`. Controls how the filter treats a
+/// bare (no `=value`) occurrence:
+///   - `BoolFlag`: takes no value; emitted bare.
+///   - `OptionalValue`: value is optional (e.g. `--inspect`); emitted bare or
+///     with an inline `=value`, never consuming a following token.
+///   - `RequiredValue`: must have a value. Emitted with an inline `=value`, or
+///     with the following token as its value. If neither is present the flag
+///     is DROPPED — never emitted bare, so it can't bind a later argv token
+///     (e.g. the entrypoint) as the missing value.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NodeOptionKind {
+    BoolFlag,
+    OptionalValue,
+    RequiredValue,
+}
+
+/// Allowlist of flags Bun honors from `NODE_OPTIONS`. Matches Node.js's
+/// behavior of restricting `NODE_OPTIONS` to a known subset; flags Bun does
+/// not implement (or that could inject a script) are dropped. Each entry's
+/// kind mirrors how Bun's own CLI parser declares the flag.
+fn node_option_kind(name: &[u8]) -> Option<NodeOptionKind> {
+    use NodeOptionKind::{BoolFlag, OptionalValue, RequiredValue};
+    Some(match name {
+        // Boolean flags (no value)
+        b"--expose-gc"
+        | b"--no-addons"
+        | b"--no-deprecation"
+        | b"--preserve-symlinks"
+        | b"--preserve-symlinks-main"
+        | b"--throw-deprecation"
+        | b"--use-bundled-ca"
+        | b"--use-openssl-ca"
+        | b"--use-system-ca"
+        | b"--zero-fill-buffers"
+        | b"--cpu-prof"
+        | b"--cpu-prof-md"
+        | b"--heap-prof"
+        | b"--heap-prof-md" => BoolFlag,
+
+        // Optional-value flags (Bun declares these as `<STR>?`). Bare usage
+        // like `NODE_OPTIONS=--inspect` is the canonical form, so never drop.
+        b"--inspect" | b"--inspect-brk" | b"--inspect-wait" => OptionalValue,
+
+        // Required-value flags. The bare form (no `=value` and no following
+        // value token) is dropped so it cannot bind the user's entrypoint.
+        b"--conditions"
+        | b"--cpu-prof-dir"
+        | b"--cpu-prof-interval"
+        | b"--cpu-prof-name"
+        | b"--dns-result-order"
+        | b"--heap-prof-dir"
+        | b"--heap-prof-name"
+        | b"--import"
+        | b"--max-http-header-size"
+        | b"--require"
+        | b"-r"
+        | b"--title"
+        | b"--unhandled-rejections" => RequiredValue,
+
+        _ => return None,
+    })
+}
+
+/// Parse `NODE_OPTIONS` into tokens filtered by [`node_option_kind`] and insert
+/// each accepted token into `args` starting at index 1 (callers keep argv[0]).
+///
+/// Tokenization matches Node.js's `ParseNodeOptionsEnvVar` exactly: only the
+/// double quote toggles string mode (single quotes are literal), a backslash
+/// escapes the next character only inside double quotes (a Windows path like
+/// `--require C:\foo.js` keeps its backslashes), and only ASCII space separates
+/// arguments. Positional tokens, unknown flags, and bare required-value flags
+/// (no value present) are dropped, so the environment can't inject a script or
+/// hijack the entrypoint.
+pub fn append_node_options_env<A: OptionsEnvArg>(env: &[u8], args: &mut Vec<A>) {
+    // Tokenize like Node's ParseNodeOptionsEnvVar.
+    let mut tokens: Vec<Vec<u8>> = Vec::new();
+    let mut is_in_string = false;
+    let mut will_start_new_arg = true;
+    let mut i = 0;
+    while i < env.len() {
+        let mut c = env[i];
+        if c == b'\\' && is_in_string {
+            // Backslash escapes the following character (only inside a string).
+            if i + 1 >= env.len() {
+                break; // trailing escape: Node treats this as an error; stop.
+            }
+            i += 1;
+            c = env[i];
+        } else if c == b' ' && !is_in_string {
+            will_start_new_arg = true;
+            i += 1;
+            continue;
+        } else if c == b'"' {
+            is_in_string = !is_in_string;
+            i += 1;
+            continue;
+        }
+        if will_start_new_arg {
+            tokens.push(vec![c]);
+            will_start_new_arg = false;
+        } else {
+            // will_start_new_arg is only false after a token has been pushed.
+            tokens.last_mut().unwrap().push(c);
+        }
+        i += 1;
+    }
+
+    // Filter tokens through the allowlist and insert into args.
+    let mut offset = 1;
+    let mut j = 0;
+    while j < tokens.len() {
+        let token = &tokens[j];
+        if token.is_empty() || token[0] != b'-' {
+            // Positional args are not allowed in NODE_OPTIONS.
+            j += 1;
+            continue;
+        }
+
+        // Split --flag=value into name and inline value.
+        let eq_idx = token.iter().position(|&c| c == b'=');
+        let flag_name = match eq_idx {
+            Some(idx) => &token[..idx],
+            None => &token[..],
+        };
+
+        let Some(kind) = node_option_kind(flag_name) else {
+            j += 1;
+            continue;
+        };
+
+        if kind == NodeOptionKind::RequiredValue && eq_idx.is_none() {
+            // Space-separated required-value flag: only emit it if a value
+            // token follows. If none (or the next token is itself a flag),
+            // DROP it — never emit a bare required-value flag, or clap would
+            // bind the user's entrypoint as the value.
+            if j + 1 >= tokens.len() {
+                j += 1;
+                continue;
+            }
+            let next_tok = &tokens[j + 1];
+            if !next_tok.is_empty() && next_tok[0] == b'-' {
+                j += 1;
+                continue;
+            }
+            args.insert(offset, A::from_slice(token));
+            offset += 1;
+            args.insert(offset, A::from_slice(next_tok));
+            offset += 1;
+            j += 2;
+            continue;
+        }
+
+        // BoolFlag, OptionalValue, or RequiredValue with inline `--flag=value`:
+        // emit the token as-is.
+        args.insert(offset, A::from_slice(token));
+        offset += 1;
+        j += 1;
     }
 }
 

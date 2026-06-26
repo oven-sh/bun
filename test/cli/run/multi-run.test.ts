@@ -2110,8 +2110,8 @@ describe.skipIf(isWindows)("parallel: pane renderer", () => {
     const frames = completeFrames(raw);
     expect(frames.length).toBeGreaterThan(0);
     return (
-      frames[frames.length - 1]!// The erase-previous-frame prefix and every other escape sequence.
-      .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+      frames[frames.length - 1]! // The erase-previous-frame prefix and every other escape sequence.
+        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
         // The pty's ONLCR maps the renderer's `\n` to `\r\n`.
         .replaceAll("\r\n", "\n")
     );

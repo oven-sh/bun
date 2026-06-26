@@ -69,7 +69,8 @@ unsafe extern "C" {
     // Raw AsyncSocket::write so res.socket.write() shares the HTTP response
     // body's backpressure buffer (AsyncSocketData::buffer) and drain path
     // instead of going straight to the fd. True when backpressure remains.
-    safe fn uws_async_socket_write(
+    // Not `safe fn`: (ptr, len) shims stay unsafe per the us_socket_t.rs rule.
+    fn uws_async_socket_write(
         ssl: i32,
         socket: &mut us_socket_t,
         data: *const u8,
@@ -161,7 +162,8 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
         // total_bytes_written is touched (the list is never populated now
         // that AsyncSocket::write buffers the remainder natively).
         unsafe { (*buffer).wrote(data_slice.len()) };
-        uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), data_slice.len())
+        // SAFETY: data_slice is a live &[u8]; ptr valid for len bytes.
+        unsafe { uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), data_slice.len()) }
     } else {
         false
     };

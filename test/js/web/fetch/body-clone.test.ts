@@ -520,6 +520,54 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
   expect(text).toContain("Здравствуй, мир!");
 });
 
+// clone() on a body whose stream is locked must throw a single, catchable
+// TypeError. It must not also report the same error as an uncaught exception:
+// that sets the process exit code to 1 even though the user handled the throw,
+// and the swallowed exception made clone() surface a bogus "Value is not a
+// sequence" instead.
+test.each(["Request", "Response"])(
+  "%s.clone() on a locked stream body throws a catchable TypeError and does not fail the process",
+  async kind => {
+    const construct =
+      kind === "Request"
+        ? `new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" })`
+        : `new Response(stream)`;
+    const script = `
+      const stream = new ReadableStream({ start() {} });
+      const target = ${construct};
+      target.body.getReader(); // lock the body stream
+      try {
+        target.clone();
+        console.log("no throw");
+      } catch (e) {
+        console.log("caught " + e.constructor.name + ": " + e.message);
+      }
+      // Give the event loop a turn so a deferred error report would surface.
+      await new Promise(resolve => setImmediate(resolve));
+      console.log("done");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+      stdout: ["caught TypeError: ReadableStream is locked", "done"],
+      exitCode: 0,
+    });
+    expect(stderr).not.toContain("ReadableStream is locked");
+  },
+);
+
 test("Blob type from a consumed Response keeps the original content-type after clones with different content-types are consumed", async () => {
   // The Response and its clones share one underlying body store. Consuming a clone
   // with a different Content-Type must not change (or invalidate) the type of a Blob

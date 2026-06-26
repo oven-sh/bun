@@ -765,10 +765,9 @@ it.skipIf(isFFIUnavailable)("JSCallback tolerates worker.terminate() arriving in
         { returns: "void", args: [], threadsafe: true },
       );
 
-      // CFunction turns the callback's native function pointer back into a callable, so
-      // fire() re-enters JS through the native FFI trampoline. A threadsafe callback
-      // enqueues a task instead of calling synchronously, so it runs at the top of the
-      // worker's event loop once this module finishes evaluating.
+      // CFunction makes the callback's native function pointer callable from JS. A threadsafe
+      // JSCallback enqueues a task instead of running synchronously, so the callback runs at
+      // the top of the worker's event loop once this module finishes evaluating.
       const fire = new CFunction({ ptr: callback.ptr, returns: "void", args: [] });
       fire();
 

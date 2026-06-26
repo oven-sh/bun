@@ -1111,6 +1111,7 @@ impl Listener {
                     let tls: *mut TLSSocket = if let Some(prev_ptr) = prev_maybe_tls {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &*prev_ptr };
+                        prev.detach_for_reconnect();
                         if let Some(prev_handlers) = prev.handlers.get() {
                             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
                                 // SAFETY: prev_handlers was heap-allocated; shared
@@ -1213,6 +1214,7 @@ impl Listener {
                         // SAFETY: caller passes a live TCPSocket
                         let prev = unsafe { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.detach_for_reconnect();
                         if let Some(prev_handlers) = prev.handlers.get() {
                             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
                                 // SAFETY: prev_handlers was heap-allocated; shared
@@ -1469,6 +1471,11 @@ fn connect_finish<const IS_SSL: bool>(
         // SAFETY: caller passes a live NewSocket<IS_SSL>
         let prev = unsafe { &*prev_ptr };
         debug_assert!(prev.this_value.get().is_not_empty());
+        // `node:net` allows `socket.connect()` on an already-connected /
+        // still-connecting socket. Close the previous native socket before
+        // reusing this wrapper so `do_connect` does not alias two native
+        // sockets onto one ext slot.
+        prev.detach_for_reconnect();
         if let Some(prev_handlers) = prev.handlers.get() {
             // Only free the previous Handlers when no callback scope is still
             // holding it. If a `data`/`close` handler synchronously re-entered

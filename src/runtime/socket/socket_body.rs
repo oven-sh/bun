@@ -1201,6 +1201,43 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket.close(code);
     }
 
+    /// Discard a still-live native socket so this wrapper can be reused for a
+    /// fresh connect. `node:net` permits `socket.connect()` on an
+    /// already-connected socket; without this the previous `us_socket_t`'s
+    /// ext slot keeps pointing at `self` while `do_connect` overwrites
+    /// `self.socket`, aliasing two native sockets onto one wrapper. The ext
+    /// slot is nulled before closing so the synchronous `on_close` /
+    /// `on_connecting_error` dispatch early-returns and no JS callback fires;
+    /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
+    /// took. Caller must hold an independent +1 across this call.
+    pub fn detach_for_reconnect(&self) {
+        let old = self.socket.get();
+        if old.is_detached() {
+            return;
+        }
+        if let Some(ext) = old.ext::<*mut c_void>() {
+            // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
+            unsafe { *ext = core::ptr::null_mut() };
+        }
+        self.socket.set(SocketHandler::<SSL>::DETACHED);
+        self.buffered_data_for_node_net
+            .with_mut(|b| b.clear_and_free());
+        self.detach_native_callback();
+        old.close(uws::CloseCode::Failure);
+        self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        if self.flags.get().contains(Flags::IS_ACTIVE) {
+            self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+            if let Some(h) = self.handlers.get() {
+                // SAFETY: `h` is the live client-mode `Handlers` box; see
+                // `Handlers::mark_inactive` contract.
+                if unsafe { Handlers::mark_inactive(h.as_ptr()) } {
+                    self.handlers.set(None);
+                }
+            }
+        }
+        self.deref();
+    }
+
     pub fn mark_inactive(&self) {
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             // we have to close the socket before the socket context is closed
@@ -1463,7 +1500,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             }
         }
-        if scope.exit() {
+        // Only null if the cell still points at the Handlers `exit()` just
+        // freed; a synchronous reconnect from inside the open callback
+        // repoints it at a fresh allocation (same guard as `on_close`).
+        let captured_handlers = handlers.as_ptr();
+        if scope.exit() && this.handlers.get().map(|n| n.as_ptr()) == Some(captured_handlers) {
             this.handlers.set(None);
         }
         this.deref();

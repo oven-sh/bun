@@ -1319,7 +1319,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
 
     auto value = callFrame->uncheckedArgument(0);
     // Capture byteLength up front for two orthogonal purposes:
-    //  1. The upper-bound argument to validateNumber(end) so `end >
+    //  1. The upper-bound argument to validateInteger(end) so `end >
     //     buf.length` throws ERR_OUT_OF_RANGE with Node's wording and
     //     against the length the caller saw (matches Node: parseEncoding
     //     may run a user toString before this check, but the Node-
@@ -1362,7 +1362,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     }
 
     // ── 1. Encoding parse (FIRST validation) ────────────────────────────
-    // Node validates encoding before either `validateNumber` call, so
+    // Node validates encoding before either `validateInteger` call, so
     // `fill("a", 0, buf.length + 1, "bogus")` and `fill("a", -1, 0,
     // "bogus")` throw ERR_UNKNOWN_ENCODING (not ERR_OUT_OF_RANGE) — the
     // encoding error wins. parseEncoding is also the first
@@ -2685,25 +2685,22 @@ static size_t validateOffsetBigInt64(JSC::JSGlobalObject* lexicalGlobalObject, J
     }
 
     auto offsetD = offsetVal.asNumber();
-    // Node checks integer-ness before the sign, so -1.5 reports "an integer".
-    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]] {
+    // Node's boundsError tests `Math.floor(value) !== value` before the range,
+    // so -1.5 and NaN report "an integer" while +-Infinity (for which floor is
+    // an identity) fall through to the range message.
+    if (std::floor(offsetD) != offsetD) [[unlikely]] {
         Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
         return 0;
     }
 
-    if (offsetD < 0) [[unlikely]] {
+    // Range-check the double before truncating so +-Infinity never reaches
+    // truncateDoubleToUint64.
+    if (offsetD < 0 || offsetD > static_cast<double>(maxOffset)) [[unlikely]] {
         Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, maxOffset, offsetVal);
         return 0;
     }
 
-    offset = truncateDoubleToUint64(offsetD);
-
-    if (offset > maxOffset) [[unlikely]] {
-        Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, maxOffset, offsetVal);
-        return 0;
-    }
-
-    return offset;
+    return truncateDoubleToUint64(offsetD);
 }
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))

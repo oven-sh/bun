@@ -360,7 +360,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         }
       });
 
-      it("write BigInt64 with a negative offset throws ERR_OUT_OF_RANGE", () => {
+      it("write BigInt64 with an out-of-range or non-integer offset throws ERR_OUT_OF_RANGE", () => {
         // Node's boundsError reports a negative offset as ERR_OUT_OF_RANGE
         // (">= 0 and <= max"), not ERR_BUFFER_OUT_OF_BOUNDS.
         const buf = Buffer.alloc(16);
@@ -371,11 +371,32 @@ for (let withOverridenBufferWrite of [false, true]) {
               message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received -1',
             }),
           );
-          // A fractional offset reports "an integer", even when negative.
+          // A fractional or NaN offset reports "an integer", even when negative.
           expect(() => buf[fn](1n, -1.5)).toThrow(
             expect.objectContaining({
               code: "ERR_OUT_OF_RANGE",
               message: 'The value of "offset" is out of range. It must be an integer. Received -1.5',
+            }),
+          );
+          expect(() => buf[fn](1n, NaN)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be an integer. Received NaN',
+            }),
+          );
+          // +-Infinity are NOT "an integer" to Node's boundsError (its
+          // Math.floor(value) !== value test is false for them), so they
+          // get the range message instead.
+          expect(() => buf[fn](1n, Infinity)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received Infinity',
+            }),
+          );
+          expect(() => buf[fn](1n, -Infinity)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received -Infinity',
             }),
           );
           // The too-large path is unchanged.

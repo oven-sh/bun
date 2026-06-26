@@ -14,6 +14,13 @@ namespace Bun {
 // `disarm()` must be called on the JS thread once the evaluation has returned;
 // after that `expired()` reports whether the deadline was hit.
 //
+// Armed deadlines form an intrusive per-VM stack (evaluations nest strictly).
+// The NeedTermination trap they fire is a single coalescing per-VM signal, so
+// when an evaluation consumes it for its own expired deadline, disarm()
+// re-raises it if an enclosing armed deadline has also expired; otherwise that
+// enclosing evaluation would never be interrupted again (its timer is
+// one-shot).
+//
 // The JSC Watchdog is deliberately not used here. It measures CPU time while
 // Node's `timeout` is wall-clock, and it cannot be disarmed: its wall timer
 // stays in flight after `setTimeLimit(noTimeLimit)`, and servicing the
@@ -31,6 +38,15 @@ public:
     // NeedTermination trap it raised so it cannot leak into unrelated JS.
     void disarm();
 
+    // Must run after disarm(), once this evaluation's own timeout error has
+    // been thrown. If an enclosing armed deadline has also expired, disarm()
+    // consumed the (coalesced) termination request its one-shot timer had
+    // raised, so raise it again on its behalf. Deferring this until after
+    // the ERR_SCRIPT_EXECUTION_TIMEOUT has been created keeps the new
+    // termination request from being serviced in the middle of constructing
+    // that error.
+    void raiseExpiredEnclosingDeadline();
+
     // Only meaningful after disarm().
     bool expired() const { return m_expired; }
     int64_t milliseconds() const { return m_milliseconds; }
@@ -45,8 +61,12 @@ private:
         bool expired WTF_GUARDED_BY_LOCK(lock) { false };
     };
 
+    bool hasExpired() const;
+
     Ref<State> m_state;
     JSC::VM& m_vm;
+    // Next-innermost armed deadline on this VM when this one was armed.
+    NodeVMEvalTimeout* m_enclosing { nullptr };
     int64_t m_milliseconds;
     bool m_armed { true };
     bool m_expired { false };

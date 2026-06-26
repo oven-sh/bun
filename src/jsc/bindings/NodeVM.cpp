@@ -609,6 +609,10 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JS
     } else {
         throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, deadline->milliseconds(), "ms"_s));
     }
+    // Now that this evaluation's own error has been thrown, hand the shared
+    // termination signal back to any enclosing deadline that also expired.
+    if (deadline)
+        deadline->raiseExpiredEnclosingDeadline();
     return true;
 }
 

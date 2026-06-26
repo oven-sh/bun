@@ -1268,6 +1268,41 @@ describe("node:vm timeout option", () => {
     );
   });
 
+  // Every deadline's one-shot timer feeds the same per-VM NeedTermination
+  // signal. When an inner evaluation times out and consumes it, an enclosing
+  // deadline that also already expired must be raised again on its behalf,
+  // or the enclosing script (whose own timer will never fire again) runs
+  // forever once it catches the inner error. The inner evaluation blocks in
+  // a host call past both deadlines so both timers have fired by the time it
+  // returns.
+  test("nested: an inner timeout does not swallow an expired outer deadline", async () => {
+    const fixture = `
+      import vm from "node:vm";
+      const context = vm.createContext({
+        sleepSync: Bun.sleepSync,
+        runInner: () => vm.runInNewContext("sleepSync(600)", context, { timeout: 150 }),
+      });
+      try {
+        vm.runInNewContext("try { runInner() } catch (err) {} while (true) {}", context, { timeout: 250 });
+        console.log("UNEXPECTED_OK");
+      } catch (err) {
+        console.log(err.message);
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("Script execution timed out after 250ms\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("SourceTextModule.evaluate honors the timeout option", async () => {
     const fixture = `
       const vm = require("node:vm");

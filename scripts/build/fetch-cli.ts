@@ -242,6 +242,15 @@ function normalizeLf(s: string): string {
  * so a CRLF-mangled checkout still applies cleanly. --no-index: dest/ is
  * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
  * authored against upstream which may have different trailing whitespace.
+ *
+ * Patches MUST be in plain unified-diff format (`--- a/X` / `+++ b/X`),
+ * not `git format-patch`/`git diff` output with a `diff --git` header.
+ * `dest/` sits inside bun's own git worktree, and `git apply` treats
+ * git-header patch paths as repo-toplevel-relative: `build.zig` resolves
+ * to `<repo>/build.zig`, falls outside the cwd, and is SILENTLY skipped
+ * with exit 0. Traditional diffs get the cwd prefix prepended instead,
+ * which is the behavior we want. The skip check below catches a
+ * regression either way.
  */
 function applyPatch(dest: string, patchPath: string, patchBody: string): void {
   const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
@@ -262,6 +271,17 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
     throw new BuildError(`Patch failed: ${result.stderr}`, {
       file: patchPath,
       hint: "The patch may be out of date with the pinned commit",
+    });
+  }
+
+  // `git apply` reports a path it decided not to touch with exit 0; that
+  // would leave the source unpatched while `.ref` claims otherwise.
+  if (result.stderr.includes("Skipped patch")) {
+    throw new BuildError(`git apply silently skipped a path: ${result.stderr}`, {
+      file: patchPath,
+      hint:
+        "Patches must be plain unified diffs ('--- a/file'), not `git diff` output " +
+        "with a 'diff --git' header — see the comment on applyPatch in fetch-cli.ts",
     });
   }
 }

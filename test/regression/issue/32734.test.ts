@@ -17,10 +17,13 @@ test("node:http upgrade socket emits 'close' when the WebSocket peer closes", as
   const rawSocketClosed = Promise.withResolvers<void>();
 
   server.on("upgrade", (req, socket, head) => {
-    socket.once("error", rawSocketClosed.reject);
+    socket.once("error", err => rawSocketClosed.reject(err));
     socket.once("close", () => rawSocketClosed.resolve());
     wss.handleUpgrade(req, socket, head, ws => {
-      ws.on("error", err => (wsClosed.reject(err), echoed.reject(err)));
+      ws.on("error", err => {
+        echoed.reject(err);
+        wsClosed.reject(err);
+      });
       ws.on("message", m => ws.send("echo:" + String(m)));
       ws.on("close", () => wsClosed.resolve());
       ws.send("protocol:hi");
@@ -35,7 +38,9 @@ test("node:http upgrade socket emits 'close' when the WebSocket peer closes", as
     client = new WebSocket(`ws://127.0.0.1:${port}/`);
     client.addEventListener("error", () => {
       const err = new Error("client WebSocket error");
-      (echoed.reject(err), wsClosed.reject(err), rawSocketClosed.reject(err));
+      echoed.reject(err);
+      wsClosed.reject(err);
+      rawSocketClosed.reject(err);
     });
     client.addEventListener("message", e => {
       if (String(e.data).startsWith("protocol:")) client!.send("hello");
@@ -67,7 +72,7 @@ test("node:http CONNECT tunnel socket emits 'close' when the peer closes", async
   const connectClosed = Promise.withResolvers<void>();
 
   server.on("connect", (req, socket) => {
-    socket.once("error", connectClosed.reject);
+    socket.once("error", err => connectClosed.reject(err));
     socket.once("close", () => connectClosed.resolve());
     socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
   });
@@ -76,15 +81,34 @@ test("node:http CONNECT tunnel socket emits 'close' when the peer closes", async
   const port = (server.address() as AddressInfo).port;
 
   let client: net.Socket | undefined;
+  let tunnelEstablished = false;
   try {
     client = net.connect(port, "127.0.0.1", () => {
       client!.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
     });
-    client.on("error", err => (established.reject(err), connectClosed.reject(err)));
+    client.on("error", err => {
+      established.reject(err);
+      connectClosed.reject(err);
+    });
+    client.on("close", () => {
+      if (!tunnelEstablished) {
+        established.reject(new Error("CONNECT socket closed before the tunnel was established"));
+      }
+    });
+
+    // Buffer raw TCP chunks until the full CONNECT response header arrives, then
+    // inspect the status line instead of searching each chunk independently.
+    let response = "";
     client.on("data", d => {
-      if (d.toString().includes("200")) {
+      response += d.toString();
+      if (!response.includes("\r\n\r\n")) return;
+      const statusLine = response.slice(0, response.indexOf("\r\n"));
+      if (statusLine.includes(" 200 ")) {
+        tunnelEstablished = true;
         established.resolve();
         client!.destroy(); // peer tears down -> server tunnel socket must 'close'
+      } else {
+        established.reject(new Error(`unexpected CONNECT response: ${statusLine}`));
       }
     });
 

@@ -1816,12 +1816,6 @@ pub(super) fn generate_symbol_for_function(
         ));
     }
 
-    if function.threadsafe && return_type != ABIType::Void {
-        return Ok(Some(
-            ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
-        ));
-    }
-
     *function = Function::default();
     function.base_name = None;
     function.arg_types = abi_types;
@@ -2091,6 +2085,13 @@ impl Function {
         is_threadsafe: bool,
     ) -> Result<(), bun_core::Error> {
         jsc::mark_binding();
+        // FFI_Callback_threadsafe_call is void: it posts a task and returns
+        // before the JS function runs, so there is no return-value channel. A
+        // non-void trampoline would read an uninitialized EncodedJSValue.
+        if is_threadsafe && self.return_type != ABIType::Void {
+            self.fail(b"Threadsafe functions must return void");
+            return Ok(());
+        }
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
         let ffi_wrapper = unsafe { Bun__createFFICallbackFunction(js_context, js_function) };

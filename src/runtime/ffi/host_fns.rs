@@ -123,12 +123,6 @@ pub fn generate_symbol_for_function(
         ))));
     }
 
-    if function.threadsafe && return_type != ABIType::Void {
-        return Ok(Some(global.create_error_instance(format_args!(
-            "Threadsafe functions must return void"
-        ))));
-    }
-
     // `Function` has a `Drop` impl, so functional-record-update
     // (`..Default::default()`) is rejected (E0509). Reset to default and assign
     // the parsed fields individually instead.

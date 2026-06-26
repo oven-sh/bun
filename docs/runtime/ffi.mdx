@@ -315,12 +315,18 @@ When you're done with a JSCallback, you should call `close()` to free the memory
 
 Currently, thread-safe callbacks work best when run from another thread that is running JavaScript code, i.e. a [`Worker`](/runtime/workers). A future version of Bun will enable them to be called from any thread (such as new threads spawned by your native library that Bun is not aware of).
 
+A thread-safe callback is dispatched to the JavaScript thread asynchronously, so it has no way to hand a result back to the native caller. `returns` must be `"void"` (the default); any other return type throws at construction.
+
 ```ts
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-  returns: "bool",
-  args: ["ptr", "usize"],
-  threadsafe: true, // Optional. Defaults to `false`
-});
+const onMatch = new JSCallback(
+  (ptr, length) => {
+    console.log(new CString(ptr, length));
+  },
+  {
+    args: ["ptr", "usize"],
+    threadsafe: true, // Optional. Defaults to `false`
+  },
+);
 ```
 
 <Note>

@@ -515,6 +515,10 @@ declare module "bun:ffi" {
      * performance penalty needs to be less than the performance gain from
      * running the function in a separate thread.
      *
+     * A thread-safe callback is dispatched to the JavaScript thread
+     * asynchronously, so it cannot return a value to the native caller.
+     * `returns` must be `"void"` (the default).
+     *
      * @default false
      */
     readonly threadsafe?: boolean;
@@ -1106,6 +1110,11 @@ declare module "bun:ffi" {
      * If called multiple times, does nothing after the first call.
      */
     close(): void;
+
+    /**
+     * Calls {@link JSCallback.prototype.close}, so `using` releases the callback.
+     */
+    [Symbol.dispose](): void;
   }
 
   /**

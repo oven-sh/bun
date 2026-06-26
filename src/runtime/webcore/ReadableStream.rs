@@ -435,14 +435,9 @@ impl ReadableStream {
 
         let stream = source.to_readable_stream(global_this)?;
 
-        // The transferred reader already has a live poll registered with the
-        // event loop whose owner now points into this allocation. Take the
-        // across-read ref (and root the wrapper) immediately so a GC before
-        // JS first pulls cannot sweep the wrapper and free this box while the
-        // poll is still armed. `on_start` checks `waiting_for_on_reader_done`
-        // and will not take a second ref. Use the same predicate as
-        // `FileReader::on_start` so the ref is always paired with an eventual
-        // `on_reader_done`/`on_reader_error` release.
+        // The transferred poll's owner now points into this box; root the
+        // wrapper before JS can GC it. `on_start` skips a second ref via the
+        // same `waiting_for_on_reader_done` flag; `on_reader_done` releases.
         if !source.context.reader().is_done() {
             source.context.waiting_for_on_reader_done.set(true);
             source.increment_count();

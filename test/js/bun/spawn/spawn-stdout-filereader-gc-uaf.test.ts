@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // Accessing `proc.stdout` on a piped subprocess moves the already-registered
@@ -27,27 +27,28 @@ test.skipIf(isWindows)(
   "subprocess stdout FileReader is pinned while its pipe poll is live, then collectable after EOF",
   async () => {
     using dir = tempDir("fr-gc-uaf", {});
-    const flag = join(String(dir), "go");
     const started = join(String(dir), "started");
 
     const script = /* js */ `
       const { heapStats } = require("bun:jsc");
-      const { writeFileSync, readdirSync } = require("node:fs");
+      const { readdirSync } = require("node:fs");
       const ITERS = 4;
-      const flag = ${JSON.stringify(flag)};
       const startedDir = ${JSON.stringify(started)};
       require("node:fs").mkdirSync(startedDir, { recursive: true });
 
-      // The direct child spawns a detached shell that inherits stdout and
-      // waits for a flag file, keeping the pipe's write end open past the
-      // child's exit so the FileReader's poll is still armed while we GC.
-      // The loop is bounded so a fixture crash cannot leak the helper. Each
-      // grandchild touches a file in startedDir so the fixture can tell how
-      // many actually came up.
+      // The direct child spawns a detached sleep that inherits stdout,
+      // keeping the pipe's write end open past the child's exit so the
+      // FileReader's poll is still armed while we GC. The helper records
+      // its pid so the fixture can kill it to drive EOF, and the bounded
+      // sleep means nothing outlives the test even if that kill never runs.
       const childScript =
         "const { spawn } = require('child_process');" +
-        "spawn('sh', ['-c', ': > " + JSON.stringify(startedDir) + "/$$; n=0; while [ ! -e " + JSON.stringify(flag) + " ] && [ $n -lt 1500 ]; do sleep 0.02; n=$((n+1)); done; echo x']," +
-        "  { stdio: ['ignore', 'inherit', 'ignore'], detached: true }).unref();";
+        "const c = spawn('/bin/sh', ['-c', 'echo $$ > " + JSON.stringify(startedDir) + "/$$; exec sleep 30']," +
+        "  { stdio: ['ignore', 'inherit', 'ignore'], detached: true });" +
+        "c.unref();" +
+        // Wait one tick so posix_spawn has definitely handed fd 1 to the
+        // grandchild before this process closes its own copy on exit.
+        "setTimeout(() => {}, 10);";
 
       const count = () =>
         heapStats().objectTypeCounts.FileInternalReadableStreamSource ?? 0;
@@ -85,10 +86,13 @@ test.skipIf(isWindows)(
       // Direct children have exited; grandchildren still hold the write end.
       for (let i = 0; i < 20; i++) { Bun.gc(true); await Bun.sleep(1); }
       const duringLivePipe = count() - base;
-      const grandchildrenStarted = readdirSync(startedDir).length;
+      const pids = readdirSync(startedDir);
+      const grandchildrenStarted = pids.length;
 
-      // Release the grandchildren (including the warmup one).
-      writeFileSync(flag, "");
+      // Release the grandchildren (including the warmup one) so the pipes EOF.
+      for (const pid of pids) {
+        try { process.kill(Number(pid), "SIGTERM"); } catch {}
+      }
 
       let afterEof = -1;
       for (let i = 0; i < 100; i++) {
@@ -117,9 +121,19 @@ test.skipIf(isWindows)(
 
       [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     } finally {
-      // Always release the detached grandchildren so nothing outlives the test
-      // even if the fixture crashed before writing the flag itself.
-      writeFileSync(flag, "");
+      // Always reap any detached grandchildren so nothing outlives the test
+      // even if the fixture crashed before killing them itself.
+      for (const pid of (() => {
+        try {
+          return readdirSync(started);
+        } catch {
+          return [];
+        }
+      })()) {
+        try {
+          process.kill(Number(pid), "SIGKILL");
+        } catch {}
+      }
     }
 
     let result: { iters: number; duringLivePipe: number; afterEof: number };

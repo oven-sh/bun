@@ -1278,15 +1278,16 @@ function traceConnectEnd(req) {
 }
 
 function onDuplexTLSData(state, chunk) {
-  if (state.pending) state.pending.push(chunk);
+  const { pending } = state;
+  if (pending) pending.push(chunk);
   else state.events[0](chunk);
 }
 
 function flushPendingDuplexTLS(state) {
-  const chunks = state.pending;
+  const { events, pending: chunks } = state;
   state.pending = null;
   state.self[kflushPendingDuplexTLS] = undefined;
-  for (let i = 0; i < chunks.length; i++) state.events[0](chunks[i]);
+  for (let i = 0; i < chunks.length; i++) events[0](chunks[i]);
 }
 
 // The native SSL engine behind an upgraded Duplex is created by a deferred

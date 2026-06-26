@@ -460,19 +460,23 @@ namespace uWS
          * reusing the same consumeFieldName / tryConsumeFieldValue / OWS-trim primitives
          * that getHeaders uses for the main request header block. Wire casing of
          * field names is preserved (req.rawTrailers). Returns the number of fields
-         * written to out[]. On any malformed line the call returns 0 and the trailer
-         * fields are simply not surfaced (Node's llhttp aborts the message instead;
-         * the chunk-iterator validation already rejected NUL/bare-CR/LF before here).
-         * The section is guaranteed to end in CRLF CRLF (isCompleteTrailerSection),
-         * which is the only way getNextChunk transitions to STATE_IS_TRAILERS_DONE,
-         * so the trailing '\r' bytes stop consumeFieldName/tryConsumeFieldValue
-         * without any additional fencing. */
+         * written to out[]. The captured section is raw wire bytes (the chunk
+         * iterator only size-caps it), so this is also the only gate on NUL /
+         * bare-CR/LF in a trailer line: any malformed line makes the call return 0
+         * and no trailer is surfaced, where Node's llhttp rejects the message.
+         * Consumes the section: it is post-padded in place and the returned
+         * string_views point into it, so it must outlive their use. */
         static unsigned parseTrailerFields(std::string &section, std::pair<std::string_view, std::string_view> *out, unsigned outCapacity = MAX_TRAILER_FIELDS) {
             if (section.size() < 4) {
                 return 0;
             }
+            /* tryConsumeFieldValue stops at the 8-byte word CONTAINING the value's
+             * '\r', not at it, so its last load can reach 3 bytes past the final
+             * CRLF CRLF without this padding (the NULs stay past `end`). */
+            size_t length = section.size();
+            section.append(MINIMUM_HTTP_POST_PADDING, '\0');
             char *p = section.data();
-            char *end = p + section.size();
+            char *end = p + length;
             unsigned count = 0;
             while (count < outCapacity) {
                 /* Empty line (the section's terminating CRLF) - done. */

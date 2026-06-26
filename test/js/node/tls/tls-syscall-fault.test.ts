@@ -160,6 +160,10 @@ describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
     // have been read yet when the transport reports EOF.
     using p = await connectedTLSPair();
     p.client.on("error", () => {});
+    // The client must consume its readable side for the allowHalfOpen:false
+    // teardown to run: with "bye" left unread, Node never emits 'end' and never
+    // destroys (stream_base_commons.js defers kMaybeDestroy until 'end').
+    p.client.resume();
     fault.set({ syscall: "recv", action: "zero", after: 1, repeat: -1 });
     p.serverSock.end("bye");
     await once(p.client, "close");

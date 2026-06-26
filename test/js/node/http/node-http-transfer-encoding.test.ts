@@ -94,3 +94,42 @@ test("should not duplicate transfer-encoding header in response when explicitly 
   expect(bodySection).toContain("Hello, World!");
   expect(bodySection).toContain("Goodbye, World!");
 });
+
+// Value lengths landing parseTrailerFields' 8-byte field-value scan on the
+// alignments where its last load reaches past the terminating CRLF CRLF: that
+// read leaves the heap allocation without the section's post-padding (ASAN).
+test("chunked request trailers parse at every field-value scan boundary", async () => {
+  const seen: { trailers: Record<string, string | string[] | undefined>; raw: string[] }[] = [];
+  await using server = createServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      seen.push({ trailers: { ...req.trailers }, raw: [...req.rawTrailers] });
+      res.end("ok");
+    });
+  });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const values = [7, 8, 15, 31, 63].map(n => Buffer.alloc(n, "v").toString());
+  for (const value of values) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nTrailer: X-Boundary\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" +
+          "3\r\nabc\r\n" +
+          `0\r\nX-Boundary: ${value}\r\n\r\n`,
+      );
+    });
+
+    let rawResponse = "";
+    socket.on("data", (chunk: Buffer) => {
+      rawResponse += chunk.toString();
+    });
+    socket.on("end", () => resolve(rawResponse));
+    socket.on("error", reject);
+    expect((await promise).split("\r\n\r\n").at(-1)).toBe("ok");
+  }
+
+  expect(seen).toEqual(values.map(value => ({ trailers: { "x-boundary": value }, raw: ["X-Boundary", value] })));
+});

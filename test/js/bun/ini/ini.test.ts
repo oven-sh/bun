@@ -418,11 +418,6 @@ isbar = 'lol'
   });
 
   describe("empty single-quoted value", () => {
-    // A lone `'` (or `''`) strips to an empty string. JSON-parsing that
-    // used to return the JSON parser's shared static EMPTY_OBJECT, which a
-    // later `[section]` would then write into (mutating a process global
-    // and, with the right input, storing the object into itself).
-
     test.each([
       ["a='", { a: "" }],
       ["a=''", { a: "" }],
@@ -436,8 +431,6 @@ isbar = 'lol'
 
     test("section over empty-quote value does not mutate shared state", () => {
       expect(parse("a=''\n[a]\nhello=world")).toEqual({ a: "" });
-      // Previously the first parse wrote `hello` into the static empty
-      // object, and it leaked (with arena-freed key bytes) into this one.
       expect(parse("x=''")).toEqual({ x: "" });
     });
 

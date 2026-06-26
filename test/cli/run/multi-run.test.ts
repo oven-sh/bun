@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import path from "path";
 
 // Helper: spawn bun with multi-run flags, returns { stdout, stderr, exitCode }
@@ -2050,10 +2050,10 @@ describe("workspace integration", () => {
 // These tests give `bun run --parallel` a real pty via `Bun.Terminal`.
 describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
   /**
-   * Run `bun <args>` with its stdio on a fresh pty. `until(raw)` decides
-   * when every byte we intend to assert on has arrived — the pty read side
-   * races the child's exit, so waiting on the condition (never on time) is
-   * what makes this deterministic.
+   * Run `bun <args>` with its stdio on a fresh pty, wait for it to exit,
+   * and return everything it wrote. `until(raw)` asserts that the bytes
+   * a test means to inspect actually arrived; if it does not hold once
+   * the output is complete, the helper throws with what did arrive.
    *
    * `prelude` is a shell command to run *inside* the pty before exec'ing
    * bun (e.g. `stty rows 0` to give the pty a size `Bun.Terminal` refuses
@@ -2068,39 +2068,36 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
   ): Promise<{ raw: string; exitCode: number }> {
     let raw = "";
     const decoder = new TextDecoder();
-    const done = Promise.withResolvers<void>();
-    await using terminal = new Bun.Terminal({
-      cols,
-      rows,
-      data(_term: Bun.Terminal, chunk: Uint8Array) {
-        raw += decoder.decode(chunk, { stream: true });
-        if (until(raw)) done.resolve();
-      },
-      // The pty's read side ends once the child has exited and closed the
-      // slave, so no more bytes can arrive. If `until` never held by then,
-      // fail with what did arrive instead of hanging until the test
-      // timeout. (This also fires when `await using` disposes the
-      // terminal after a successful run; `done` is settled by then.)
-      exit() {
-        // Flush a trailing partial UTF-8 sequence the streaming decoder buffered.
-        raw += decoder.decode();
-        if (!until(raw)) {
-          done.reject(new Error(`pty stream ended before the expected output arrived; got:\n${raw}`));
-        }
-      },
-    });
-    await using proc = Bun.spawn({
-      cmd: prelude ? ["sh", "-c", `${prelude} && exec "$0" "$@"`, bunExe(), ...args] : [bunExe(), ...args],
-      // The pane renderer is gated on an ANSI-capable terminal, so the
-      // NO_COLOR/CI that bunEnv sets for every other test must come off.
-      env: { ...bunEnv, NO_COLOR: undefined, CI: undefined },
-      cwd: dir,
-      terminal,
-    });
-    // Awaited together: `exit()` rejects `done` from the event loop, and a
-    // sequential `await proc.exited` first would leave that rejection with
-    // no handler attached for a tick.
-    const [exitCode] = await Promise.all([proc.exited, done.promise]);
+    let exitCode: number;
+    {
+      await using terminal = new Bun.Terminal({
+        cols,
+        rows,
+        data(_term: Bun.Terminal, chunk: Uint8Array) {
+          raw += decoder.decode(chunk, { stream: true });
+        },
+      });
+      await using proc = Bun.spawn({
+        cmd: prelude ? ["sh", "-c", `${prelude} && exec "$0" "$@"`, bunExe(), ...args] : [bunExe(), ...args],
+        // The pane renderer is gated on an ANSI-capable terminal, so the
+        // NO_COLOR/CI that bunEnv sets for every other test must come off.
+        env: { ...bunEnv, NO_COLOR: undefined, CI: undefined },
+        cwd: dir,
+        terminal,
+      });
+      exitCode = await proc.exited;
+      // Leaving this block disposes the pty, which drains every byte still
+      // buffered on the master side into `data()` before it completes, so
+      // `raw` is final (and complete) once the block exits. Nothing here
+      // may wait on the Terminal's `exit` callback: `Bun.Terminal` keeps
+      // its own slave fd, so the master never sees EOF and `exit` never
+      // fires, not even at disposal.
+    }
+    // Flush a trailing partial UTF-8 sequence the streaming decoder buffered.
+    raw += decoder.decode();
+    if (!until(raw)) {
+      throw new Error(`pty stream ended before the expected output arrived; got:\n${raw}`);
+    }
     return { raw, exitCode };
   }
 
@@ -2355,7 +2352,11 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  test("a terminal reporting 0 rows keeps the prefix renderer", async () => {
+  // musl (Alpine) ships busybox, whose `stty` rejects `rows 0` outright
+  // ("stty: number 0 is not in 1..2147483647 range"); GNU and BSD stty
+  // accept it, and there is no other portable way to give a pty a 0-row
+  // winsize (`Bun.Terminal` refuses to create or resize one).
+  test.skipIf(isMusl)("a terminal reporting 0 rows keeps the prefix renderer", async () => {
     using dir = tempDir("mr-pane-zero-rows", {
       "package.json": JSON.stringify({
         scripts: {
@@ -2376,5 +2377,19 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
     expect(out).not.toContain("│");
     expect(out).not.toContain("└─");
     expect(exitCode).toBe(0);
+  });
+
+  test("runOnPty rejects with the captured output when `until` never holds", async () => {
+    using dir = tempDir("mr-pane-reject", {
+      "package.json": JSON.stringify({ scripts: { a: "echo hi" } }),
+    });
+    // An earlier shape of the helper waited on a promise that only the
+    // Terminal's never-firing `exit` callback could settle, so an `until`
+    // that never held burned the whole 90s test timeout (and hid a
+    // genuine failure behind it on Alpine). It must reject promptly,
+    // carrying the complete output that did arrive.
+    await expect(runOnPty(["run", "--parallel", "a"], String(dir), () => false)).rejects.toThrow(
+      /ended before the expected output arrived[\s\S]*hi/,
+    );
   });
 });

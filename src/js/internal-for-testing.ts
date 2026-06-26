@@ -300,17 +300,17 @@ export type SocketFaultRule = {
 
 export const socketFaultInjection = {
   /** True when the current binary was built with `--socket-fault-injection=on` (defaults to on for ASan builds). */
-  available: $newZigFunction(
-    "runtime/socket/socket.zig",
+  available: $newRustFunction(
+    "runtime/socket/socket.rs",
     "TestingAPIs.jsSocketFaultInjectionAvailable",
     0,
   ) as () => boolean,
   /** Arm a process-wide fault rule for one usockets bsd_* syscall. */
-  set: $newZigFunction("runtime/socket/socket.zig", "TestingAPIs.jsSetSocketFault", 1) as (
+  set: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetSocketFault", 1) as (
     rule: SocketFaultRule,
   ) => boolean,
   /** Disarm all fault rules. */
-  clear: $newZigFunction("runtime/socket/socket.zig", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
+  clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
 };
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (

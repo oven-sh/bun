@@ -67,7 +67,7 @@ struct State {
     wildcard: Wildcard,
     globstar: Wildcard,
 
-    brace_depth: u32,
+    brace_depth: u8,
 }
 
 impl State {
@@ -104,7 +104,7 @@ struct Wildcard {
     // Using u32 rather than usize for these results in 10% faster performance.
     glob_index: u32,
     path_index: u32,
-    brace_depth: u32,
+    brace_depth: u8,
 }
 
 /// This function checks returns a boolean value if the pathname `path` matches
@@ -530,7 +530,7 @@ fn match_brace_branch(
     // Clone state
     let mut branch_state = *state;
     branch_state.glob_index = branch_index;
-    branch_state.brace_depth = brace_stack.len() as u32;
+    branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
 
     let matched = glob_match_impl(
         &mut branch_state,
@@ -548,21 +548,24 @@ fn match_brace_branch(
 
 fn skip_branch(state: &mut State, glob: &[u8]) {
     let mut in_brackets = false;
-    let end_brace_depth = state.brace_depth - 1;
+    // `state.brace_depth` only counts groups entered via `match_brace_branch`,
+    // so nesting merely scanned over while skipping is tracked locally, not in state.
+    let mut nested: u32 = 0;
     while (state.glob_index as usize) < glob.len() {
         match glob[state.glob_index as usize] {
             b'{' => {
                 if !in_brackets {
-                    state.brace_depth += 1;
+                    nested += 1;
                 }
             }
             b'}' => {
                 if !in_brackets {
-                    state.brace_depth -= 1;
-                    if state.brace_depth == end_brace_depth {
+                    if nested == 0 {
+                        state.brace_depth -= 1;
                         state.glob_index += 1;
                         return;
                     }
+                    nested -= 1;
                 }
             }
             b'[' => {

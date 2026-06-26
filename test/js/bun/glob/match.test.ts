@@ -329,7 +329,7 @@ describe("Glob.match", () => {
     expect(glob.match("bde")).toBeTrue();
   });
 
-  test("deeply nested braces in skipped branch do not overflow depth counter", () => {
+  test("deeply nested braces do not overflow depth counters", () => {
     const opens = Buffer.alloc(300, "{").toString();
     const closes = Buffer.alloc(300, "}").toString();
 
@@ -352,6 +352,12 @@ describe("Glob.match", () => {
     // Same shape inside a wildcard backtrack.
     glob = new Glob("*{a," + opens + closes + "}");
     expect(glob.match("za")).toBeTrue();
+
+    // >32767 consecutive `{` overflows match_brace's group pre-scan counter.
+    // The group never closes, so nothing matches.
+    glob = new Glob(Buffer.alloc(40_000, "{").toString());
+    expect(glob.match("a")).toBeFalse();
+    expect(glob.match("{")).toBeFalse();
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

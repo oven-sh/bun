@@ -2583,7 +2583,13 @@ pub mod bv2_impl {
                 None => return Ok(None),
             };
 
-            path.assert_file_path_is_absolute();
+            // FileMap keys are user-supplied and may be relative; they are lookup
+            // identities, not real fs paths, so the absolute invariant does not apply.
+            if bun_core::Environment::CI_ASSERT
+                && !self.file_map.is_some_and(|fm| fm.contains(path.text))
+            {
+                path.assert_file_path_is_absolute();
+            }
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)

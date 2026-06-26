@@ -1774,10 +1774,12 @@ impl<'a> LinkerContext<'a> {
                                 .path_with_pretty_initialized(&source.path, arena)
                                 .expect("OOM");
                         }
-                        // Note: `Path::assert_pretty_is_valid` lives on the
-                        // resolver-side `Path<'a>`; the logger `Path` has no
-                        // such debug hook yet.
-                        debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
+                        // FileMap keys may be relative; when the computed pretty
+                        // equals text, `dupe_alloc` aliases them and that's fine.
+                        debug_assert!(
+                            source.path.text.as_ptr() != source.path.pretty.as_ptr()
+                                || !bun_paths::is_absolute(source.path.text)
+                        );
 
                         break 'brk source.path.pretty;
                     } else {

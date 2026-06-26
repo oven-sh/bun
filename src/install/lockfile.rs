@@ -924,6 +924,125 @@ impl Lockfile {
         Ok(())
     }
 
+    /// `bun add <url>` keys the new root dependency by its URL until the tarball
+    /// is fetched; `assign_root_resolution` then renames it to the resolved
+    /// name. If the package was already installed from a different URL, two root
+    /// dependencies now share one name but resolve to different packages, which
+    /// the tree hoister rejects as a dependency loop. The newly requested URL
+    /// supersedes the existing entry, so drop the stale one before the rebuild.
+    fn remove_superseded_root_dependencies(
+        old: &mut Lockfile,
+        manager: &mut PackageManager,
+        updates: &[UpdateRequest],
+    ) {
+        if updates.is_empty() {
+            return;
+        }
+
+        let workspace_package_id =
+            manager.root_package_id.get(old, manager.workspace_name_hash) as usize;
+        if workspace_package_id >= old.packages.len() {
+            return;
+        }
+
+        let dep_slice: DependencySlice =
+            old.packages.items_dependencies()[workspace_package_id];
+        let res_slice: PackageIDSlice =
+            old.packages.items_resolutions()[workspace_package_id];
+        let n = dep_slice.len as usize;
+        if n < 2
+            || dep_slice.off as usize + n > old.buffers.dependencies.len()
+            || res_slice.off as usize + n > old.buffers.resolutions.len()
+        {
+            return;
+        }
+
+        let keep: Vec<bool> = {
+            let string_buf = old.buffers.string_bytes.as_slice();
+            let deps: &[Dependency] = dep_slice.get(old.buffers.dependencies.as_slice());
+
+            // A root dependency is "requested" when it matches one of the
+            // update requests the user typed. Only non-aliased URL adds get
+            // renamed to the resolved name, so only those can collide.
+            let mut matched = vec![false; n];
+            let mut superseding: Vec<(PackageNameHash, bool)> = Vec::new();
+            for (i, dep) in deps.iter().enumerate() {
+                for update in updates.iter() {
+                    if update.matches(dep, string_buf) {
+                        matched[i] = true;
+                        if !update.is_aliased
+                            && !dep.behavior.is_peer()
+                            && matches!(
+                                dep.version.tag,
+                                dependency::Tag::Tarball
+                                    | dependency::Tag::Git
+                                    | dependency::Tag::Github
+                            )
+                        {
+                            superseding.push((dep.name_hash, dep.behavior.is_dev()));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            let mut keep = vec![true; n];
+            for (i, dep) in deps.iter().enumerate() {
+                if matched[i] || dep.behavior.is_peer() {
+                    continue;
+                }
+                for &(name_hash, is_dev) in &superseding {
+                    if dep.name_hash == name_hash && dep.behavior.is_dev() == is_dev {
+                        keep[i] = false;
+                        break;
+                    }
+                }
+            }
+            keep
+        };
+
+        let removed = keep.iter().filter(|k| !**k).count();
+        if removed == 0 {
+            return;
+        }
+
+        // Compact both parallel arrays in place (order-preserving retain). The
+        // trailing `removed` slots fall outside the shrunk slice and are never
+        // read again; the cloner rebuilds `buffers` compactly from the slice.
+        {
+            let deps = dep_slice.mut_(old.buffers.dependencies.as_mut_slice());
+            let mut w = 0;
+            for r in 0..n {
+                if keep[r] {
+                    if w != r {
+                        deps.swap(w, r);
+                    }
+                    w += 1;
+                }
+            }
+        }
+        {
+            let resolutions = res_slice.mut_(old.buffers.resolutions.as_mut_slice());
+            let mut w = 0;
+            for r in 0..n {
+                if keep[r] {
+                    if w != r {
+                        resolutions.swap(w, r);
+                    }
+                    w += 1;
+                }
+            }
+        }
+
+        let new_len = (n - removed) as u32;
+        old.packages
+            .items_mut::<"dependencies", DependencySlice>()[workspace_package_id]
+            .len = new_len;
+        old.packages
+            .items_mut::<"resolutions", PackageIDSlice>()[workspace_package_id]
+            .len = new_len;
+    }
+
     pub fn clean(
         &mut self,
         manager: &mut PackageManager,
@@ -1293,7 +1412,9 @@ fn clean_preprocess_update_requests_cold(
     updates: &mut [UpdateRequest],
     exact_versions: bool,
 ) -> Result<(), BunError> {
-    Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
+    Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)?;
+    Lockfile::remove_superseded_root_dependencies(old, manager, updates);
+    Ok(())
 }
 
 #[cold]

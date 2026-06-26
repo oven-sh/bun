@@ -18,6 +18,7 @@ import {
   toHaveBins,
 } from "harness";
 import { join, resolve, sep } from "path";
+import { realpathSync } from "fs";
 import {
   createTestContext,
   destroyTestContext,
@@ -27,6 +28,7 @@ import {
   setContextHandler,
   type TestContext,
 } from "./dummy.registry.js";
+import { constructStdCollision } from "./wyhash-std-collision.js";
 
 expect.extend({
   toBeWorkspaceLink,
@@ -9704,4 +9706,61 @@ it("does not create a cache index entry outside the cache directory for a depend
   expect(errOk).not.toContain("error:");
   expect(outOk).toContain("1 package installed");
   expect(exitCodeOk).toBe(0);
+});
+
+// Two distinct local `file:` dependencies whose absolute package.json paths
+// collide under the seed-0 std.Wyhash that keys the folder-resolution dedupe
+// map must each resolve to their own package, not share one identity.
+// https://github.com/oven-sh/bun/issues/32741
+it.skipIf(isWindows)("file: deps with colliding abs-path hashes resolve to distinct packages", async () => {
+  using dir = tempDir("folder-resolution-collision", {
+    "package.json": JSON.stringify({ name: "victim", version: "0.0.0" }),
+  });
+  // Use the canonical path so the folder resolver hashes the same bytes we
+  // construct the collision from (macOS /tmp -> /private/var symlink, etc.).
+  const victimDir = realpathSync(String(dir));
+  const prefix = `${victimDir}/`;
+  const suffix = "/package.json";
+
+  const collision = constructStdCollision({ seed: 0n, prefixStr: prefix, suffixStr: suffix });
+  const name1 = collision.str1.slice(prefix.length, collision.str1.length - suffix.length);
+  const name2 = collision.str2.slice(prefix.length, collision.str2.length - suffix.length);
+
+  // Confirm the collision holds against the exact hash the resolver uses before
+  // relying on it (Bun.hash.wyhash == bun.hash seed 0 == FolderResolution key).
+  const abs1 = `${victimDir}/${name1}/package.json`;
+  const abs2 = `${victimDir}/${name2}/package.json`;
+  expect(name1).not.toBe(name2);
+  expect(name1.includes("/")).toBe(false);
+  expect(name2.includes("/")).toBe(false);
+  expect(Bun.hash.wyhash(abs1, 0n)).toBe(Bun.hash.wyhash(abs2, 0n));
+
+  await write(join(victimDir, name1, "package.json"), JSON.stringify({ name: "pkg-alpha", version: "1.0.0" }));
+  await write(join(victimDir, name1, "index.js"), "module.exports = 'ALPHA';");
+  await write(join(victimDir, name2, "package.json"), JSON.stringify({ name: "pkg-beta", version: "2.0.0" }));
+  await write(join(victimDir, name2, "index.js"), "module.exports = 'BETA';");
+  await write(
+    join(victimDir, "package.json"),
+    JSON.stringify({
+      name: "victim",
+      version: "0.0.0",
+      dependencies: { alphadep: `file:./${name1}`, betadep: `file:./${name2}` },
+    }),
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: victimDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  // Each alias must carry its own package's identity despite the hash collision.
+  const alpha = await file(join(victimDir, "node_modules", "alphadep", "package.json")).json();
+  const beta = await file(join(victimDir, "node_modules", "betadep", "package.json")).json();
+  expect({ alpha: alpha.name, beta: beta.name }).toEqual({ alpha: "pkg-alpha", beta: "pkg-beta" });
 });

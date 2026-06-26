@@ -2873,8 +2873,6 @@ const ASSUMED_CELL_PX: u32 = 16;
 #[derive(Copy, Clone)]
 struct PngDims {
     width_px: u32,
-    #[allow(dead_code)]
-    height_px: u32,
 }
 
 /// Parse a PNG signature + IHDR width/height out of the first 24 bytes
@@ -2913,10 +2911,7 @@ fn parse_png_dims(header_bytes: &[u8]) -> Option<PngDims> {
     if width == 0 || height == 0 {
         return None;
     }
-    Some(PngDims {
-        width_px: width,
-        height_px: height,
-    })
+    Some(PngDims { width_px: width })
 }
 
 /// Read the PNG IHDR from `abs_path`. Returns None if the file doesn't

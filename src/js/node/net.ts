@@ -1295,6 +1295,9 @@ function flushPendingDuplexTLS(state) {
   for (let i = 0; i < chunks.length; i++) events[0](chunks[i]);
   state.pending = null;
   state.self[kflushPendingDuplexTLS] = undefined;
+  // Drop the back-reference: the duplex's long-lived 'data' listener holds
+  // `state`, which must not pin the wrapping socket after the flush.
+  state.self = undefined;
 }
 
 // The native SSL engine behind an upgraded Duplex is created by a deferred

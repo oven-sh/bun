@@ -16,7 +16,10 @@ describe("enum redeclared after a non-mergeable symbol reports an error instead 
     ["let then enum x2", "let X = 1;\nenum X {}\nenum X {}\n"],
     ["const then enum x2", "const X = 1;\nenum X {}\nenum X {}\n"],
     ["function then enum x3", "function X() {}\nenum X {}\nenum X {}\nenum X {}\n"],
-    ["fuzz repro (CRLF)", "function Reflect() {} // only)\r\nenum Reflect {} // collision\r\nenum Reflect {} // collision\r\n"],
+    [
+      "fuzz repro (CRLF)",
+      "function Reflect() {} // only)\r\nenum Reflect {} // collision\r\nenum Reflect {} // collision\r\n",
+    ],
   ];
 
   test.concurrent.each(cases)("%s", async (_label, source) => {

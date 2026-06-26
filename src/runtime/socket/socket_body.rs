@@ -689,13 +689,22 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn set_type_of_service(
         this: &Self,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         let args = callframe.arguments_old::<1>();
         let tos: i32 = if args.len >= 1 {
-            args.ptr[0].to_int32()
+            global.validate_integer_range(
+                args.ptr[0],
+                0i32,
+                bun_sql_jsc::jsc::IntegerRange {
+                    min: 0,
+                    max: 255,
+                    field_name: b"tos",
+                    ..Default::default()
+                },
+            )?
         } else {
             0
         };

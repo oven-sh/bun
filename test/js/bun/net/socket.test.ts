@@ -1558,3 +1558,76 @@ it("node:net connect() reusing a server-accepted handle keeps the listener's han
   expect(exitCode).toBe(0);
   void stderr;
 });
+
+it.concurrent("setTypeOfService validates its argument instead of asserting", async () => {
+  // The unfixed native binding called JSValue::asInt32() on the raw argument,
+  // which asserts isInt32() on assert builds and silently feeds garbage to
+  // setsockopt on release builds. It must throw a TypeError/RangeError.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open() {}, data() {}, close() {}, error() {} },
+        });
+        const done = Promise.withResolvers();
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open(s) {
+              const results = [];
+              const check = (label, fn) => {
+                try {
+                  fn();
+                  results.push(label + "=no-throw");
+                } catch (e) {
+                  results.push(label + "=" + (e?.code ?? e?.constructor?.name));
+                }
+              };
+              check("object", () => s.setTypeOfService({}));
+              check("string", () => s.setTypeOfService("x"));
+              check("neg", () => s.setTypeOfService(-1));
+              check("big", () => s.setTypeOfService(256));
+              check("float", () => s.setTypeOfService(1.5));
+              check("ok", () => s.setTypeOfService(0x10));
+              check("get", () => {
+                const v = s.getTypeOfService();
+                if (!Number.isInteger(v)) throw new TypeError("not an int");
+              });
+              console.log(results.join("\\n"));
+              done.resolve();
+            },
+            data() {},
+            close() {},
+            error(_s, e) { done.reject(e); },
+            connectError(_s, e) { done.reject(e); },
+          },
+        });
+        await done.promise;
+        client.end();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: [
+      "object=ERR_INVALID_ARG_TYPE",
+      "string=ERR_INVALID_ARG_TYPE",
+      "neg=ERR_OUT_OF_RANGE",
+      "big=ERR_OUT_OF_RANGE",
+      "float=ERR_INVALID_ARG_TYPE",
+      "ok=no-throw",
+      "get=no-throw",
+    ],
+    exitCode: 0,
+  });
+  void stderr;
+});

@@ -18,7 +18,9 @@ NodeVMEvalTimeout::NodeVMEvalTimeout(VM& vm, int64_t milliseconds)
     // TerminationException to exist, and it can only be created on this
     // thread.
     vm.ensureTerminationException();
-    WebCore::clientData(vm)->nodeVMEvalTimeoutDepth++;
+    auto* clientData = WebCore::clientData(vm);
+    m_enclosing = clientData->nodeVMEvalTimeouts;
+    clientData->nodeVMEvalTimeouts = this;
     {
         WTF::Locker locker { m_state->lock };
         m_state->vm = &vm;
@@ -37,23 +39,49 @@ NodeVMEvalTimeout::~NodeVMEvalTimeout()
     disarm();
 }
 
+bool NodeVMEvalTimeout::hasExpired() const
+{
+    WTF::Locker locker { m_state->lock };
+    return m_state->expired;
+}
+
 void NodeVMEvalTimeout::disarm()
 {
     if (!m_armed)
         return;
     m_armed = false;
-    WebCore::clientData(m_vm)->nodeVMEvalTimeoutDepth--;
+    // Evaluations nest strictly, so this is the innermost armed deadline.
+    auto* clientData = WebCore::clientData(m_vm);
+    ASSERT(clientData->nodeVMEvalTimeouts == this);
+    clientData->nodeVMEvalTimeouts = m_enclosing;
     {
         WTF::Locker locker { m_state->lock };
         m_state->vm = nullptr;
         m_expired = m_state->expired;
     }
+    if (!m_expired)
+        return;
     // If the deadline passed after the evaluation's last trap check, the
     // NeedTermination trap is still pending and would terminate whatever JS
     // runs next. It was raised on behalf of this evaluation, so consume it;
     // the caller reports ERR_SCRIPT_EXECUTION_TIMEOUT either way.
-    if (m_expired)
-        m_vm.traps().clearTrap(VMTraps::NeedTermination);
+    m_vm.traps().clearTrap(VMTraps::NeedTermination);
+}
+
+void NodeVMEvalTimeout::raiseExpiredEnclosingDeadline()
+{
+    ASSERT(!m_armed);
+    if (!m_expired)
+        return;
+    // An enclosing deadline that expires after this check raises the
+    // request from its own timer, so nothing is lost by only checking
+    // deadlines that have already expired.
+    for (NodeVMEvalTimeout* enclosing = m_enclosing; enclosing; enclosing = enclosing->m_enclosing) {
+        if (enclosing->hasExpired()) {
+            m_vm.notifyNeedTermination();
+            return;
+        }
+    }
 }
 
 } // namespace Bun

@@ -1106,6 +1106,15 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onClose() {
     this[kHandle] = null;
     this.server?.[kTrackedConnections]?.delete(this);
+    // Settle a deferred _write callback so the Writable does not stall
+    // with kWriting set (and user write callbacks fire) when the socket
+    // closes before the native drain it was waiting for.
+    const pending = this.#pendingCallback;
+    if (pending) {
+      this.#pendingCallback = null;
+      this.#nativeBackpressure = false;
+      (pending as Function)(new ConnResetException("aborted"));
+    }
 
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
     // that are still in `state.incoming` — i.e. requests whose response has

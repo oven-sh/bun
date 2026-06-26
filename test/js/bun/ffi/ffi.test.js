@@ -711,7 +711,7 @@ it.skipIf(isFFIUnavailable)("JSCallback exceptions propagate out of the native c
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: "caught boom\n",
-    stderr: expect.any(String),
+    stderr: "",
     exitCode: 0,
   });
 });
@@ -785,11 +785,9 @@ it.skipIf(isFFIUnavailable)("JSCallback tolerates worker.terminate() arriving in
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // stderr is not asserted (debug builds write benign noise there), but including it in the
-  // received object surfaces the crash output whenever one of the other fields mismatches.
   expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: "done\n",
-    stderr: expect.any(String),
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });

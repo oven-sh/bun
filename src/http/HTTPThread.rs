@@ -828,6 +828,7 @@ impl HttpThread {
                                 client.drain_response_body::<true>(socket);
                             }
                             if let Some(session) = tagged.session_mut() {
+                                let _g = session.ref_scope();
                                 session.resume_receive_by_http_id(id);
                                 session.drain_response_body_by_http_id(id);
                             }
@@ -839,6 +840,7 @@ impl HttpThread {
                                 client.drain_response_body::<false>(socket);
                             }
                             if let Some(session) = tagged.session_mut() {
+                                let _g = session.ref_scope();
                                 session.resume_receive_by_http_id(id);
                                 session.drain_response_body_by_http_id(id);
                             }

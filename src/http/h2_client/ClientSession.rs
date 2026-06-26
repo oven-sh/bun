@@ -195,7 +195,7 @@ impl ClientSession {
     /// pointer (derived from `&mut self`) carries write provenance for the
     /// final `heap::take` in `deref`.
     #[inline]
-    fn ref_scope(&mut self) -> SessionRefGuard {
+    pub(crate) fn ref_scope(&mut self) -> SessionRefGuard {
         // SAFETY: `self` is a live heap-allocated ClientSession.
         unsafe { SessionRefGuard::new(self) }
     }

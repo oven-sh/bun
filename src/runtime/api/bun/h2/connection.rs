@@ -242,10 +242,13 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
-    /// The block's stream was refused (HEADERS past SETTINGS_MAX_CONCURRENT_STREAMS, §5.1.2, or
-    /// a PUSH_PROMISE past the reserved-stream cap): still decoded for HPACK sync (§4.3), then
-    /// answered with RST_STREAM(REFUSED_STREAM); on_stream_open/on_push_promise never fire.
-    header_refused: bool,
+    /// `Some(code)` when the block's stream was refused before any state was allocated: still
+    /// decoded for HPACK sync (§4.3), then answered with RST_STREAM(code), and
+    /// on_stream_open/on_push_promise never fire. REFUSED_STREAM for a HEADERS past
+    /// SETTINGS_MAX_CONCURRENT_STREAMS (§5.1.2); CANCEL for a PUSH_PROMISE past
+    /// maxReservedRemoteStreams (the code node/nghttp2 answer, which the JS layer treats as
+    /// a clean abort rather than a stream error).
+    header_refused: Option<ErrorCode>,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -289,7 +292,7 @@ impl Connection {
             header_target: 0,
             header_push_parent: 0,
             header_stream_closed: false,
-            header_refused: false,
+            header_refused: None,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -879,15 +882,36 @@ impl Connection {
             );
             return true;
         }
+        // §5.1.1 mirror for clients: a server only opens an even-id stream by RESERVING it
+        // with PUSH_PROMISE, never with HEADERS. A new even id at a client is either one we
+        // already released (a refused push whose response the server raced onto the wire —
+        // closed per §5.1, answer RST(STREAM_CLOSED) without allocating) or one the server
+        // never reserved at all (connection PROTOCOL_ERROR).
+        let late_push = is_new && !self.is_server && hdr.stream_id.is_multiple_of(2);
+        if late_push && hdr.stream_id > self.last_stream_id {
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"HEADERS on unreserved pushed stream",
+            );
+            return true;
+        }
         // §5.1.2: a HEADERS that would move a peer-initiated stream into the active set (a new
         // request, or a push response promoting a reserved-remote stream) is refused once
         // `peer_active_count` reaches our SETTINGS_MAX_CONCURRENT_STREAMS; see header_refused.
         let opens_peer_stream = self.is_peer_initiated(hdr.stream_id)
             && matches!(existing_state, None | Some(State::ReservedRemote));
-        let refused = opens_peer_stream
-            && self.peer_active_count >= self.local_settings.max_concurrent_streams;
+        let refused = if late_push {
+            Some(ErrorCode::StreamClosed)
+        } else if opens_peer_stream
+            && self.peer_active_count >= self.local_settings.max_concurrent_streams
+        {
+            Some(ErrorCode::RefusedStream)
+        } else {
+            None
+        };
         let mut stream_closed = false;
-        if refused {
+        if refused.is_some() {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
@@ -1005,7 +1029,7 @@ impl Connection {
                     }
                     // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
-                    if stream_closed || refused {
+                    if stream_closed || refused.is_some() {
                         continue;
                     }
                     // RFC 9113 §8.2.1/§8.2.2: connection-specific fields, a pseudo-header following a
@@ -1079,14 +1103,18 @@ impl Connection {
         if fatal {
             return true;
         }
-        if refused {
-            // §5.1.2 / §8.4: past our concurrent-stream limit or the reserved-stream cap —
-            // stream error REFUSED_STREAM, budgeted by on_stream_rejected. A refused push
-            // response still has its reserved-remote entry; set_stream_state closes it.
-            self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+        if let Some(code) = refused {
+            // The stream was refused before any state was allocated; answer with the code the
+            // admission path chose. A refused push response still has its reserved-remote
+            // entry; set_stream_state closes it.
+            self.send_rst_stream(sink, target, code);
             self.set_stream_state(target, State::Closed);
-            sink.on_stream_reset(target, ErrorCode::RefusedStream.as_u32());
-            sink.on_stream_rejected(target);
+            if code == ErrorCode::RefusedStream {
+                // §5.1.2: past our concurrent-stream limit. Budgeted by on_stream_rejected
+                // (maxSessionRejectedStreams) like the legacy JS-layer refusal.
+                sink.on_stream_reset(target, code.as_u32());
+                sink.on_stream_rejected(target);
+            }
             return false;
         }
         if stream_closed {
@@ -1475,7 +1503,9 @@ impl Connection {
         self.header_target = promised;
         self.header_push_parent = if refused { 0 } else { hdr.stream_id };
         self.header_stream_closed = false;
-        self.header_refused = refused;
+        // node/nghttp2 answer an excess PUSH_PROMISE with CANCEL, not REFUSED_STREAM: the
+        // server's pushed stream must see a clean abort (rstCode 8), never a stream error.
+        self.header_refused = refused.then_some(ErrorCode::Cancel);
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -1829,6 +1859,26 @@ mod tests {
         v
     }
 
+    /// Error codes of every RST_STREAM addressed to `stream_id` in the captured wire output.
+    fn rst_codes_for(out: &[u8], stream_id: u32) -> Vec<u32> {
+        let mut codes = Vec::new();
+        let mut i = 0usize;
+        while i + wire::FRAME_HEADER_SIZE <= out.len() {
+            let h = FrameHeader::parse(&out[i..]);
+            let total = wire::FRAME_HEADER_SIZE + h.length as usize;
+            if h.frame_type == FrameType::RstStream as u8 && h.stream_id == stream_id {
+                codes.push(u32::from_be_bytes([
+                    out[i + 9],
+                    out[i + 10],
+                    out[i + 11],
+                    out[i + 12],
+                ]));
+            }
+            i += total;
+        }
+        codes
+    }
+
     #[test]
     fn ping_is_acked_with_echo() {
         let sink = CaptureSink::default();
@@ -2113,21 +2163,10 @@ mod tests {
         assert_eq!(*sink.opens.borrow(), vec![1, 3, 7]);
         assert_eq!(c.peer_active_count, 2);
         // An RST_STREAM echoed out for stream 5 with REFUSED_STREAM.
-        let out = sink.out.borrow();
-        let mut saw_refused_rst = false;
-        let mut i = 0usize;
-        while i + wire::FRAME_HEADER_SIZE <= out.len() {
-            let h = FrameHeader::parse(&out[i..]);
-            let total = wire::FRAME_HEADER_SIZE + h.length as usize;
-            if h.frame_type == FrameType::RstStream as u8 && h.stream_id == 5 {
-                let code = u32::from_be_bytes([out[i + 9], out[i + 10], out[i + 11], out[i + 12]]);
-                if code == ErrorCode::RefusedStream.as_u32() {
-                    saw_refused_rst = true;
-                }
-            }
-            i += total;
-        }
-        assert!(saw_refused_rst);
+        assert_eq!(
+            rst_codes_for(&sink.out.borrow(), 5),
+            vec![ErrorCode::RefusedStream.as_u32()]
+        );
     }
 
     #[test]
@@ -2386,20 +2425,82 @@ mod tests {
         assert!(!fed.fatal);
         let over = 2 + 2 * cap;
         // Exactly the cap was reserved; the one past it never entered the map, never fired
-        // on_push_promise, never surfaced fields, and was answered with REFUSED_STREAM.
+        // on_push_promise, never surfaced fields. node/nghttp2 answer the excess reservation
+        // with RST_STREAM(CANCEL) - a clean abort, not a stream error - and it does NOT
+        // consume the maxSessionRejectedStreams budget or reach the embedder at all.
         assert_eq!(c.peer_reserved_count, cap);
         assert_eq!(sink.pushes.borrow().len(), cap as usize);
         assert!(!sink.pushes.borrow().iter().any(|(_, p)| *p == over));
         assert!(!c.streams.contains_key(&over));
         assert!(!sink.headers.borrow().iter().any(|(id, _, _)| *id == over));
-        assert_eq!(*sink.rejected.borrow(), vec![over]);
-        assert!(
-            sink.resets
-                .borrow()
-                .iter()
-                .any(|(id, code)| *id == over && *code == ErrorCode::RefusedStream.as_u32())
+        assert!(sink.rejected.borrow().is_empty());
+        assert!(sink.resets.borrow().is_empty());
+        assert_eq!(
+            rst_codes_for(&sink.out.borrow(), over),
+            vec![ErrorCode::Cancel.as_u32()]
         );
         assert!(sink.goaway.get().is_none());
+    }
+
+    #[test]
+    fn late_push_response_on_refused_reservation_is_stream_closed_not_a_new_stream() {
+        // After a client refuses a PUSH_PROMISE (reserved-stream cap), the server may have
+        // already raced a push-response HEADERS onto the wire for the promised id. That id was
+        // released, never allocated: the response is §5.1 closed (RST STREAM_CLOSED, decoded
+        // for HPACK sync only), never a brand-new inbound stream / on_stream_open.
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        c.max_reserved_remote_streams = 1;
+        let req = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let resp = encode_block(&[(b":status", b"200")]);
+        let mut bytes = Vec::new();
+        for promised in [2u32, 4] {
+            let mut payload = Vec::with_capacity(4 + req.len());
+            payload.extend_from_slice(&promised.to_be_bytes());
+            payload.extend_from_slice(&req);
+            bytes.extend_from_slice(&frame(
+                FrameType::PushPromise,
+                wire::flags::END_HEADERS,
+                1,
+                &payload,
+            ));
+        }
+        // Push 4 was refused; its response still arrives from the server.
+        bytes.extend_from_slice(&frame(FrameType::Headers, wire::flags::END_HEADERS, 4, &resp));
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
+        assert!(sink.opens.borrow().is_empty());
+        assert!(!c.streams.contains_key(&4));
+        assert!(!sink.headers_done.borrow().iter().any(|(id, _)| *id == 4));
+        // The refused reservation answered CANCEL, the raced response STREAM_CLOSED.
+        assert_eq!(
+            rst_codes_for(&sink.out.borrow(), 4),
+            vec![
+                ErrorCode::Cancel.as_u32(),
+                ErrorCode::StreamClosed.as_u32()
+            ]
+        );
+        assert!(sink.goaway.get().is_none());
+    }
+
+    #[test]
+    fn headers_on_unreserved_even_stream_at_client_is_protocol_error() {
+        // §5.1.1: a server only opens even-id streams via PUSH_PROMISE. A HEADERS opening an
+        // even id the client never saw reserved is a connection PROTOCOL_ERROR, not a new stream.
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        let resp = encode_block(&[(b":status", b"200")]);
+        let fed = c.receive(
+            &sink,
+            &frame(FrameType::Headers, wire::flags::END_HEADERS, 2, &resp),
+        );
+        assert!(fed.fatal);
+        assert!(sink.opens.borrow().is_empty());
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::ProtocolError.as_u32())
+        );
     }
 
     #[test]

@@ -594,6 +594,11 @@ pub mod kernel32 {
     }
     pub const MEM_FREE: u32 = 0x10000;
 
+    /// `LOAD_LIBRARY_SEARCH_SYSTEM32` (`libloaderapi.h`): restrict the DLL
+    /// search path to `%windir%\System32`. Passed to `SetDefaultDllDirectories`
+    /// (process-wide default) and to `LoadLibraryEx*` (per-call).
+    pub const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x0000_0800;
+
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
@@ -639,6 +644,11 @@ pub mod kernel32 {
             lpOverlapped: *mut c_void,
         ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
+        /// `SetDefaultDllDirectories` (`libloaderapi.h`): sets the process-wide
+        /// default DLL search path used by every `LoadLibrary[Ex]` call that does
+        /// not pass explicit `LOAD_LIBRARY_SEARCH_*` flags. No pointer
+        /// preconditions: `DirectoryFlags` is a by-value bitmask.
+        pub safe fn SetDefaultDllDirectories(DirectoryFlags: DWORD) -> BOOL;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
@@ -1329,6 +1339,11 @@ unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
 
     pub fn LoadLibraryA(name: *const c_char) -> *mut c_void;
+
+    /// `LoadLibraryExA` (`libloaderapi.h`). `hFile` is reserved and must be
+    /// null; `dwFlags` takes the `LOAD_LIBRARY_SEARCH_*` /
+    /// `LOAD_WITH_ALTERED_SEARCH_PATH` bits.
+    pub fn LoadLibraryExA(name: *const c_char, hFile: *mut c_void, dwFlags: DWORD) -> *mut c_void;
 }
 
 // Declared as `extern "system"` so the callconv is correct on all targets

@@ -114,7 +114,13 @@ test.skipIf(isWindows)(
     try {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--smol", "-e", script],
-        env: bunEnv,
+        // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which
+        // kills a detached grandchild the moment its intermediate parent exits
+        // (PR_SET_CHILD_SUBREAPER). This test needs that grandchild to outlive
+        // its parent and hold the pipe open; orphan cleanup is handled
+        // explicitly instead (the fixture kills by pid, the finally below
+        // reaps survivors).
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
         stdout: "pipe",
         stderr: "pipe",
       });

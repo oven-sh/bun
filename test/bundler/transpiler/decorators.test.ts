@@ -1019,6 +1019,24 @@ test("export default class works (anonymous name)", () => {
   expect(new DecoratedAnonClass()["methoddecorated"]).toBe(true);
 });
 
+test("field with supra-BMP string-literal key and initializer is assigned under the correct key", () => {
+  function dec(_t: any, _k: any) {}
+  class Foo {
+    @dec "\u{20BB7}\u{91BB6}": number = 42;
+    @dec static "\u{20BB7}\u{91BB6}": number = 7;
+  }
+  const f = new Foo();
+  expect({
+    instance: f["\u{20BB7}\u{91BB6}"],
+    instanceKeys: Object.getOwnPropertyNames(f),
+    staticVal: Foo["\u{20BB7}\u{91BB6}"],
+  }).toEqual({
+    instance: 42,
+    instanceKeys: ["\u{20BB7}\u{91BB6}"],
+    staticVal: 7,
+  });
+});
+
 test("decorator and declare", () => {
   let counter = 0;
   function d1() {

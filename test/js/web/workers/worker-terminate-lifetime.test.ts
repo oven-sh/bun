@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -81,6 +81,43 @@ test(
   },
   timeout,
 );
+
+// WebWorker::flush_logs re-enters JS to report any diagnostics left in the
+// worker VM's log, and its error arm was `panic!("unhandled exception")`.
+// worker.terminate() arms a TerminationException on that VM, so every JS entry
+// inside flush_logs (Error#toString) threw, and the panic aborted the whole
+// process. The malformed package.json next to the worker's entry point makes
+// entry-point resolution record a non-fatal diagnostic in vm.log (nothing ever
+// clears it), so the final flush_logs on the way out always hits this.
+test("terminate() while the worker has pending log diagnostics does not abort the process", async () => {
+  using dir = tempDir("worker-terminate-flush-logs", {
+    "main.ts": `
+      const w = new Worker("./app/w.ts");
+      // entry-point resolution reports the malformed package.json as a
+      // (non-fatal) error event; the worker still loads and runs.
+      w.addEventListener("error", () => {});
+      await new Promise(resolve => w.addEventListener("message", resolve, { once: true }));
+      w.terminate();
+      await new Promise(resolve => w.addEventListener("close", resolve, { once: true }));
+      console.log("done");
+    `,
+    "app/package.json": "{invalid",
+    "app/w.ts": `postMessage("up");\nsetInterval(() => {}, 1000);\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // stderr is drained but not asserted: debug/sanitizer lanes may write to it.
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("done\n");
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+});
 
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and

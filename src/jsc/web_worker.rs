@@ -1395,6 +1395,12 @@ impl WebWorker {
         if vm_log.msgs.is_empty() {
             return;
         }
+        // terminate() arms a TerminationException on this VM (cleared later in
+        // shutdown()); every JS entry below would rethrow it, and one may
+        // already be pending. The worker is being torn down: drop the report.
+        if vm.jsc_vm().has_termination_request() {
+            return;
+        }
         let global = vm.global();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
             let err = vm_log.to_js(global, "Error in worker")?;
@@ -1404,7 +1410,13 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
+            // A terminate() that lands after the check above, or a throw while
+            // stringifying the error. Neither is reportable without re-entering
+            // JS, and an error reporter must never take down the process.
+            Err(JsError::Thrown | JsError::Terminated) => {
+                let _ = global.try_take_exception();
+                return;
+            }
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {

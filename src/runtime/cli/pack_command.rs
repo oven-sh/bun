@@ -3088,7 +3088,8 @@ fn tarball_destination<'a>(
         let mut cursor = std::io::Cursor::new(&mut dest_buf[dir_len_trimmed..]);
         let res = write!(
             &mut cursor,
-            "/{}\x00",
+            "{}{}\x00",
+            SEP_STR,
             fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize),
         );
         if res.is_err() {

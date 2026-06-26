@@ -1383,19 +1383,23 @@ extern "C"
   // Returns true when backpressure is present after the call.
   bool uws_async_socket_write(int ssl, us_socket_t *s, const char *data, size_t length)
   {
-    // AsyncSocket::write takes an int length.
-    int len = (int) std::min(length, (size_t) INT_MAX);
-    if (ssl)
-    {
-      auto *asyncSocket = reinterpret_cast<uWS::AsyncSocket<true> *>(s);
-      auto [written, backpressure] = asyncSocket->write(data, len);
-      (void) written;
+    // AsyncSocket::write takes an int length and always accepts the full
+    // chunk (buffering in asyncSocketData->buffer on backpressure), so
+    // iterate INT_MAX-sized pieces until the whole input is handed over.
+    auto body = [&](auto *asyncSocket) {
+      bool backpressure = false;
+      do {
+        int len = (int) std::min(length, (size_t) INT_MAX);
+        auto [written, bp] = asyncSocket->write(data, len);
+        (void) written;
+        backpressure |= bp;
+        data += (size_t) len;
+        length -= (size_t) len;
+      } while (length > 0);
       return backpressure || asyncSocket->getBufferedAmount() > 0;
-    }
-    auto *asyncSocket = reinterpret_cast<uWS::AsyncSocket<false> *>(s);
-    auto [written, backpressure] = asyncSocket->write(data, len);
-    (void) written;
-    return backpressure || asyncSocket->getBufferedAmount() > 0;
+    };
+    return ssl ? body(reinterpret_cast<uWS::AsyncSocket<true> *>(s))
+               : body(reinterpret_cast<uWS::AsyncSocket<false> *>(s));
   }
 
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length) nonnull_fn_decl;

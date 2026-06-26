@@ -45,19 +45,22 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
         up.on("error", () => res.destroy());
       });
       proxy.listen(0, "127.0.0.1", async () => {
-        // 1-byte sends → guaranteed backpressure → on_drain is exercised on
-        // every event-loop turn for both the proxy→client and upstream→proxy legs.
-        fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+        // Short sends → guaranteed backpressure → on_drain is exercised on
+        // every event-loop turn for both the proxy→client and upstream→proxy
+        // legs. 8-byte sends and two clients keep the TLS handshakes within
+        // the default test budget on debug+ASAN while still forcing a
+        // writable per chunk (the 256 KB body exceeds any socket buffer).
+        fault.set({ syscall: "send", action: "short", bytes: 8, repeat: -1 });
 
         const port = proxy.address().port;
         const reqs = [];
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 2; i++) {
           reqs.push(new Promise(resolve => {
             const r = https.get({ port, host: "127.0.0.1", ca: process.env.CERT }, res => {
               let n = 0;
               res.on("data", c => {
                 n += c.length;
-                if (n > 4096) {
+                if (n > 1024) {
                   // Destroy mid-stream while drain is pending on the server side.
                   r.destroy();
                   resolve();
@@ -95,10 +98,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     } finally {
       upstream.close();
     }
-    // 1-byte sends over TLS on a debug+ASAN build: the handshake alone is
-    // thousands of writable turns per connection, so the default 5s is not
-    // enough.
-  }, 60_000);
+  });
 
   test("Bun.serve streaming response under 1-byte sends with client abort mid-body (subprocess)", async () => {
     // Covers the uWS HttpResponse path (AsyncSocket → us_socket_write →

@@ -15,12 +15,6 @@ use super::ArrayList;
 /// A property within an `@font-face` rule.
 ///
 /// See [FontFaceRule](FontFaceRule).
-//
-// blocked_on: properties::font::{FontFamily,FontWeight,FontStretch} +
-// properties::custom::CustomProperty (both `gated_prop!`-stubbed in
-// properties/mod.rs). The enum body un-gates with the variant payloads
-// once those leaves un-gate.
-
 pub enum FontFaceProperty {
     /// The `src` property.
     Source(ArrayList<Source>),
@@ -40,7 +34,6 @@ pub enum FontFaceProperty {
 
 impl FontFaceProperty {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // Local helpers mirroring the Zig `Helpers.writeProperty` with `comptime multi: bool`.
         macro_rules! write_property_single {
             ($d:expr, $prop:expr, $value:expr) => {{
                 $d.write_str($prop)?;
@@ -89,7 +82,6 @@ impl FontFaceProperty {
     }
 
     pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` field-walk, hand-expanded.
         match self {
             FontFaceProperty::Source(v) => {
                 FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(arena)).collect())
@@ -135,11 +127,6 @@ pub struct UnicodeRange {
     /// Inclusive end of the range. In [0, 0x10FFFF].
     pub end: u32,
 }
-
-// blocked_on: Printer::write_fmt, Parser::{expect_ident_matching,position,
-// slice_from,next_including_whitespace,state,reset,
-// new_basic_unexpected_token_error}, Token shape (Dimension/Number/Delim
-// payloads), bun_core::{split_first,split_first_with_expected}.
 
 impl UnicodeRange {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -228,7 +215,7 @@ impl UnicodeRange {
 
     fn parse_tokens(input: &mut css::Parser) -> css::Result<()> {
         let tok = input.next_including_whitespace()?.clone();
-        // TODO(port): verify exact `Token` variant shapes (Dimension/Number payloads).
+        // Tag-only matches on `Dimension`/`Number` — payloads are never inspected.
         match tok {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
             css::Token::Number { .. } => {
@@ -279,7 +266,6 @@ impl UnicodeRange {
         }
     }
 
-    // PORT NOTE: Zig `css.Maybe(UnicodeRange, void)` carries no error payload → `Option<UnicodeRange>`.
     fn parse_concatenated(text_: &[u8]) -> Option<UnicodeRange> {
         let mut text = if !text_.is_empty() && text_[0] == b'+' {
             &text_[1..]
@@ -334,8 +320,8 @@ impl UnicodeRange {
     }
 
     fn consume_hex(text: &mut &[u8]) -> (u32, usize) {
-        // Cap at 8: caller validates `<= 6` post-hoc; the unbounded Zig original
-        // panic-overflows u32 in debug on >8 hex chars (malformed input).
+        // Cap at 8: caller validates `<= 6` post-hoc; an unbounded parse
+        // would overflow u32 on >8 hex chars (malformed input).
         let (value, n) = bun_core::fmt::parse_hex_prefix(text, 8);
         *text = &text[n..];
         (value, n)
@@ -354,9 +340,6 @@ pub enum FontStyle {
     /// Oblique font style, with a custom angle.
     Oblique(Size2D<Angle>),
 }
-
-// blocked_on: properties::font::FontStyle (gated_prop!), Angle::parse,
-// Size2D::{eql,to_css}.
 
 impl FontStyle {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<FontStyle> {
@@ -426,12 +409,9 @@ pub enum FontFormat {
     /// An SVG font.
     Svg,
     /// An unknown format.
-    // PORT NOTE: arena-owned slice from parser input; TODO(refactor): thread `'i`.
+    // Arena-owned slice from parser input; TODO(refactor): thread `'i`.
     String(&'static [u8]),
 }
-
-// blocked_on: Parser::expect_ident_or_string, bun_core ASCII-eq fn name,
-// DeepClone.
 
 impl FontFormat {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
@@ -464,7 +444,7 @@ impl FontFormat {
     }
 
     pub(crate) fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk. All payloads are
+        // `css.implementDeepClone` variant-walk. All payloads are
         // `Copy` / arena-slice idents → identity copy.
         match self {
             FontFormat::Woff => FontFormat::Woff,
@@ -485,9 +465,6 @@ impl FontFormat {
 
 /// A value for the [src](https://drafts.csswg.org/css-fonts/#src-desc)
 /// property in an `@font-face` rule.
-//
-// blocked_on: properties::font::FontFamily (gated_prop!).
-
 pub enum Source {
     /// A `url()` with optional format metadata.
     Url(UrlSource),
@@ -501,7 +478,6 @@ impl Source {
         match input.try_parse(UrlSource::parse) {
             Ok(url) => return Ok(Source::Url(url)),
             Err(e) => {
-                // Zig: `e.kind == .basic and e.kind.basic == .at_rule_body_invalid`
                 if matches!(
                     e.kind,
                     css::ParseErrorKind::basic(css::BasicParseErrorKind::at_rule_body_invalid)
@@ -529,7 +505,7 @@ impl Source {
     }
 
     pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk, hand-expanded.
+        // `css.implementDeepClone` variant-walk, hand-expanded.
         match self {
             Source::Url(u) => Source::Url(u.deep_clone(arena)),
             Source::Local(l) => Source::Local(l.deep_clone(arena)),
@@ -589,11 +565,6 @@ pub struct UrlSource {
     pub tech: ArrayList<FontTechnology>,
 }
 
-// blocked_on: Url::{parse,to_css}, FontFormat::{parse,to_css},
-// FontTechnology::{parse,to_css}, Parser::{try_parse_with,
-// expect_function_matching,parse_nested_block,parse_list},
-// css::{void_wrap,to_css::from_list}, DeepClone.
-
 impl UrlSource {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<UrlSource> {
         let url = Url::parse(input)?;
@@ -638,7 +609,7 @@ impl UrlSource {
     }
 
     pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk, hand-expanded.
+        // `css.implementDeepClone` field-walk, hand-expanded.
         Self {
             url: self.url.deep_clone(arena),
             format: self.format.as_ref().map(|f| f.deep_clone(arena)),
@@ -684,9 +655,6 @@ impl FontFaceRule {
 
 impl FontFaceRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `FontFaceProperty`'s
-        // variant-walk lands when its enum body un-gates (properties::{font,
-        // custom}); the gated stub above panics with the blocker named.
         Self {
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
             loc: self.loc,
@@ -699,16 +667,6 @@ impl FontFaceRule {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct FontFaceDeclarationParser;
-
-// PORT NOTE: Zig modeled `AtRuleParser` / `QualifiedRuleParser` /
-// `DeclarationParser` / `RuleBodyItemParser` as nested namespaces with
-// associated consts + fns. In Rust these are trait impls on
-// `FontFaceDeclarationParser`.
-//
-// blocked_on: css::{AtRuleParser,QualifiedRuleParser,DeclarationParser,
-// RuleBodyItemParser} trait signatures, properties::font::* +
-// properties::custom::CustomProperty, Size2D::parse, Parser surface,
-// FontFaceProperty enum body.
 
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
@@ -831,5 +789,3 @@ const _: () = {
         }
     }
 };
-
-// ported from: src/css/rules/font_face.zig

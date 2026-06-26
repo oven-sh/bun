@@ -13,9 +13,8 @@ use super::ArrayList;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `<keyframes-name> = <custom-ident> | <string>`
-// PORT NOTE: Zig threaded the parser-input lifetime; this stores
-// `&'static [u8]` per PORTING.md §AST crates and the rules/mod.rs
-// `CssRule<R>` lifetime-erasure note.
+// Stores `&'static [u8]` per the rules/mod.rs `CssRule<R>` lifetime-erasure
+// note (mod.rs:37-41).
 // TODO(refactor): re-thread `'bump` here.
 pub enum KeyframesName {
     /// `<custom-ident>` of a `@keyframes` name.
@@ -24,14 +23,12 @@ pub enum KeyframesName {
     Custom(&'static [u8]),
 }
 
-// Zig: `pub fn HashMap(comptime V: type) type { return std.ArrayHashMapUnmanaged(...) }`
-// → a generic type alias keyed by `KeyframesName` with the custom hash/eq below.
+// A generic type alias keyed by `KeyframesName` with the custom hash/eq below.
 pub type KeyframesNameHashMap<V> = bun_collections::ArrayHashMap<KeyframesName, V>;
 
 impl Hash for KeyframesName {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Matches Zig: hash only the underlying string bytes; variant tag does NOT
-        // participate (Zig's `hash` switches and calls `hashString` on the slice).
+        // Hash only the underlying string bytes; the variant tag does NOT participate.
         match self {
             KeyframesName::Ident(ident) => state.write(ident.v()),
             KeyframesName::Custom(s) => state.write(s),
@@ -94,8 +91,7 @@ impl KeyframesName {
 
 impl KeyframesName {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk. `Custom(&'static [u8])`
-        // is an arena-owned slice → identity copy (generics.zig "const strings").
+        // `Custom(&'static [u8])` is an arena-owned slice → identity copy.
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
             Self::Custom(s) => Self::Custom(s),
@@ -167,8 +163,6 @@ impl KeyframeSelector {
 
 impl KeyframeSelector {
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk. `Percentage` is
-        // `Copy` (`{ v: f32 }`) → identity.
         match self {
             Self::Percentage(p) => Self::Percentage(*p),
             Self::From => Self::From,
@@ -178,13 +172,10 @@ impl KeyframeSelector {
 }
 
 // ─── KeyframeSelector parse ───────────────────────────────────────────────
-// blocked_on: css::derive_parse (DeriveParse comptime macro replacement).
 
 impl KeyframeSelector {
-    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
-    // PORT NOTE: `DeriveParse` is a comptime type-generator producing `parse` from
-    // variant introspection. Expanded by hand here: try the tuple variant
-    // (`Percentage`) first, then fall back to keyword idents (`from`/`to`).
+    // Try the tuple variant (`Percentage`) first, then fall back to keyword
+    // idents (`from`/`to`).
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
         if let Ok(p) = input.try_parse(Percentage::parse) {
             return Ok(KeyframeSelector::Percentage(p));
@@ -212,7 +203,7 @@ pub struct Keyframe {
     /// A list of keyframe selectors to associate with the declarations in this keyframe.
     pub selectors: ArrayList<KeyframeSelector>,
     /// The declarations for this keyframe.
-    // PORT NOTE: lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
+    // Lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
     pub declarations: DeclarationBlock<'static>,
 }
 
@@ -225,7 +216,6 @@ impl Keyframe {
 
 impl Keyframe {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -256,9 +246,8 @@ impl KeyframesRule {
 
         let mut first_rule = true;
 
-        // Zig: `inline for (.{ "webkit", "moz", "ms", "o", "none" }) |prefix_name|` with
-        // `@field(this.vendor_prefix, prefix_name)`. VendorPrefix is a packed-bool struct
-        // (→ `bitflags!`), so iterate the flag constants directly and use `.contains()`.
+        // VendorPrefix is `bitflags!`, so iterate the flag constants directly
+        // and use `.contains()`.
         const PREFIXES: [VendorPrefix; 5] = [
             VendorPrefix::WEBKIT,
             VendorPrefix::MOZ,
@@ -311,8 +300,6 @@ impl KeyframesRule {
 
 impl KeyframesRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
-        // `Copy` bitflag (generics.zig "simple copy types" → identity).
         Self {
             name: self.name.deep_clone(bump),
             keyframes: self.keyframes.iter().map(|k| k.deep_clone(bump)).collect(),
@@ -327,15 +314,6 @@ impl KeyframesRule {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct KeyframesListParser;
-
-// PORT NOTE: in Zig these are nested `pub const DeclarationParser = struct { ... }`
-// namespaces that the css parser duck-types via `@hasDecl`. In Rust they become
-// trait impls on `KeyframesListParser`.
-//
-// blocked_on: css::{DeclarationParser, AtRuleParser, QualifiedRuleParser,
-// RuleBodyItemParser} trait signatures (css_parser.rs round-5 surface),
-// Parser::parse_comma_separated, DeclarationBlock::parse, ParserOptions::default
-// arena threading.
 
 const _: () = {
     use css::css_parser::{
@@ -428,5 +406,3 @@ const _: () = {
         }
     }
 };
-
-// ported from: src/css/rules/keyframes.zig

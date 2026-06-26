@@ -1,7 +1,7 @@
 use core::ffi::c_int;
 
 // ─── MOVE-IN: Winsize (TYPE_ONLY from bun_sys → bun_core) ─────────────────
-// Zig: `std.posix.winsize` — used by output.rs::TERMINAL_SIZE. Field names
+// Used by output.rs::TERMINAL_SIZE. Field names
 // match the move-out forward-ref in output.rs (row/col, not ws_row/ws_col).
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
@@ -29,8 +29,7 @@ pub fn set_mode(fd: c_int, mode: Mode) -> c_int {
 }
 
 /// RAII guard: sets `fd` to [`Mode::Raw`] on construction and restores
-/// [`Mode::Normal`] on `Drop`. Replaces the Zig
-/// `defer { _ = bun.tty.set_mode(0, .Normal); }` pattern at call sites.
+/// [`Mode::Normal`] on `Drop`.
 pub struct RawModeGuard {
     fd: c_int,
 }
@@ -50,9 +49,6 @@ impl Drop for RawModeGuard {
     }
 }
 
-// TODO(port): move to bun_core_sys (or appropriate *_sys crate)
 unsafe extern "C" {
     safe fn Bun__ttySetMode(fd: c_int, mode: c_int) -> c_int;
 }
-
-// ported from: src/bun_core/tty.zig

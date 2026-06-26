@@ -38,9 +38,7 @@ fs.symlink(linkData, linkPath, 'junction', common.mustSucceed(() => {
     assert.ok(stats.isSymbolicLink());
 
     fs.readlink(linkPath, common.mustSucceed((destination) => {
-      // BUN: It was observed that Node.js 22 fails on this line, bun includes the trailing \ too. Make this test looser.
-      const withoutTrailingSlash = str => str.replace(/\\$/, '');
-      assert.strictEqual(withoutTrailingSlash(destination), withoutTrailingSlash(linkData));
+      assert.strictEqual(destination, linkData);
 
       fs.unlink(linkPath, common.mustSucceed(() => {
         assert(!fs.existsSync(linkPath));

@@ -104,7 +104,7 @@ pub(crate) fn array_to_js(
 }
 
 pub(crate) fn number_to_js(this: E::Number) -> JSValue {
-    JSValue::js_number(this.value)
+    JSValue::js_number(this.value())
 }
 
 pub(crate) fn object_to_js(
@@ -143,8 +143,23 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
-/// `E.String.toJS` (src/js_parser_jsc/expr_jsc.zig:79).
-///
+/// Serialize UTF-8 bytes to a JS string, transcoding to UTF-16 only when the
+/// bytes are not pure ASCII (`to_utf16_alloc` returns `Ok(None)` for
+/// pure-ASCII, in which case the 8-bit Latin-1 form is kept).
+fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+    let utf16 = strings::to_utf16_alloc(bytes, false, false).map_err(|_| ToJSError::OutOfMemory)?;
+    if let Some(utf16) = utf16 {
+        let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
+        chars.copy_from_slice(&utf16);
+        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+    } else {
+        let (mut out, chars) = BunString::create_uninitialized_latin1(bytes.len());
+        chars.copy_from_slice(bytes);
+        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+    }
+}
+
+/// `E.String` → JS string conversion.
 /// Stamps the body for both `EString` nominal types: the full T4
 /// `bun_ast::E::String` (used by `data_to_js` / macros) and the
 /// value-subset T2 `bun_ast::E::EString` (used by the YAML / JSON5
@@ -154,34 +169,29 @@ pub(crate) fn object_to_js(
 macro_rules! impl_string_to_js {
     ($name:ident, $ty:ty) => {
         pub fn $name(s: &$ty, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-            // TODO(port): Zig mutates `s` via `resolveRopeIfNeeded(allocator)`;
-            // callers only have `&` and there is no bump arena in scope here.
-            // Either thread a bump arena + interior-mut rope or resolve ropes
-            // before reaching here. For now, assert non-rope (current callers
-            // feed resolved literals).
-            debug_assert!(
-                s.next.is_none(),
-                "string_to_js: rope EString reached without resolveRopeIfNeeded; thread a bump arena"
-            );
+            // Callers here only have `&s` and no bump arena, so flatten the
+            // rope into a temporary heap buffer and serialize from that
+            // instead. Ropes are only ever built from UTF-8 parts
+            // (`resolve_rope_if_needed` is a no-op for UTF-16).
+            if s.next.is_some() && s.is_utf8() {
+                let mut bytes: Vec<u8> = Vec::with_capacity(s.rope_len as usize);
+                bytes.extend_from_slice(s.slice8());
+                let mut next = s.next;
+                while let Some(part) = next {
+                    let part = part.get();
+                    bytes.extend_from_slice(&part.data);
+                    next = part.next;
+                }
+                return utf8_bytes_to_js(&bytes, global);
+            }
+
             if !s.is_present() {
                 let emp = BunString::EMPTY;
                 return bun_string_jsc::to_js(&emp, global).map_err(js_err);
             }
 
             if s.is_utf8() {
-                // `to_utf16_alloc` returns `Ok(None)` for pure-ASCII (keep 8-bit form).
-                let utf16 = strings::to_utf16_alloc(s.slice8(), false, false)
-                    .map_err(|_| ToJSError::OutOfMemory)?;
-                if let Some(utf16) = utf16 {
-                    let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
-                    chars.copy_from_slice(&utf16);
-                    bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
-                } else {
-                    let bytes = s.slice8();
-                    let (mut out, chars) = BunString::create_uninitialized_latin1(bytes.len());
-                    chars.copy_from_slice(bytes);
-                    bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
-                }
+                utf8_bytes_to_js(s.slice8(), global)
             } else {
                 let utf16 = s.slice16();
                 let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
@@ -193,5 +203,3 @@ macro_rules! impl_string_to_js {
 }
 impl_string_to_js!(string_to_js, E::String);
 impl_string_to_js!(value_string_to_js, bun_ast::E::EString);
-
-// ported from: src/js_parser_jsc/expr_jsc.zig

@@ -10,7 +10,7 @@ use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 use bun_core::strings;
 
-// Re-exports (thin aliases matching the Zig file's top-level `pub const X = @import(...)`)
+// Re-exports (thin aliases)
 pub use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 pub use crate::webcore::s3::multipart::{self, MultiPartUpload};
 pub use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
@@ -18,10 +18,10 @@ pub use bun_s3_signing::acl::ACL;
 pub use bun_s3_signing::storage_class::StorageClass;
 
 pub use bun_s3_signing::error as Error;
-// PORT NOTE: `throwSignError` / `getJSSignError` live in `error_jsc.zig` (jsc-side
+// `throw_sign_error` / `get_js_sign_error` live in `error_jsc.rs` (jsc-side
 // of the s3_signing error tables). The pure error module is `bun_s3_signing::error`;
-// the jsc helpers are mounted here as a child module so the umbrella re-export hub
-// matches the Zig `s3/client.zig` shape.
+// the jsc helpers are mounted here as a child module of this umbrella
+// re-export hub.
 #[path = "error_jsc.rs"]
 pub mod error_jsc;
 pub use error_jsc::S3ErrorJsc;
@@ -61,7 +61,6 @@ use bun_io::StreamBuffer;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
-// TODO(port): `bun.JSTerminated!T` is not in the type map; assuming a thin alias in bun_jsc.
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
 pub(crate) fn stat(
@@ -179,10 +178,9 @@ pub(crate) fn delete(
 
 pub(crate) fn list_objects(
     this: &S3Credentials,
-    // PORT NOTE: Zig took `S3ListObjectsOptions` by-value (implicit struct
-    // copy at the call site). The Rust struct owns `Utf8Slice`s and is not
+    // The struct owns `Utf8Slice`s and is not
     // `Clone`, but this fn only reads fields synchronously to build the
-    // search-params string — borrow instead so the caller (Store::S3::
+    // search-params string — borrow so the caller (Store::S3::
     // list_objects) can retain ownership in its async Wrapper for `Drop`.
     list_options: &S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
@@ -191,37 +189,37 @@ pub(crate) fn list_objects(
 ) -> JsTerminatedResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
-    let _ = search_params.append_slice(b"?"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+    let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
 
-    if let Some(continuation_token) = list_options.continuation_token.as_deref() {
+    if let Some(continuation_token) = list_options.continuation_token.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; continuation_token.len() * 3];
         let encoded =
             encode_uri_component::<true>(continuation_token, &mut buff).expect("unreachable");
-        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        // OOM/capacity: fire-and-forget
         let _ = search_params.append_fmt(format_args!(
             "continuation-token={}",
             bstr::BStr::new(encoded)
         ));
     }
 
-    if let Some(delimiter) = list_options.delimiter.as_deref() {
+    if let Some(delimiter) = list_options.delimiter.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; delimiter.len() * 3];
         let encoded = encode_uri_component::<true>(delimiter, &mut buff).expect("unreachable");
 
         if list_options.continuation_token.is_some() {
             let _ =
-                search_params.append_fmt(format_args!("&delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                search_params.append_fmt(format_args!("&delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
         } else {
             let _ =
-                search_params.append_fmt(format_args!("delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                search_params.append_fmt(format_args!("delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
         }
     }
 
     if list_options.encoding_type.is_some() {
         if list_options.continuation_token.is_some() || list_options.delimiter.is_some() {
-            let _ = search_params.append_slice(b"&encoding-type=url"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = search_params.append_slice(b"&encoding-type=url"); // OOM/capacity: fire-and-forget
         } else {
-            let _ = search_params.append_slice(b"encoding-type=url"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = search_params.append_slice(b"encoding-type=url"); // OOM/capacity: fire-and-forget
         }
     }
 
@@ -230,9 +228,9 @@ pub(crate) fn list_objects(
             || list_options.delimiter.is_some()
             || list_options.encoding_type.is_some()
         {
-            let _ = search_params.append_fmt(format_args!("&fetch-owner={}", fetch_owner)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = search_params.append_fmt(format_args!("&fetch-owner={}", fetch_owner)); // OOM/capacity: fire-and-forget
         } else {
-            let _ = search_params.append_fmt(format_args!("fetch-owner={}", fetch_owner)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = search_params.append_fmt(format_args!("fetch-owner={}", fetch_owner)); // OOM/capacity: fire-and-forget
         }
     }
 
@@ -241,25 +239,25 @@ pub(crate) fn list_objects(
         || list_options.encoding_type.is_some()
         || list_options.fetch_owner.is_some()
     {
-        let _ = search_params.append_slice(b"&list-type=2"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = search_params.append_slice(b"&list-type=2"); // OOM/capacity: fire-and-forget
     } else {
-        let _ = search_params.append_slice(b"list-type=2"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = search_params.append_slice(b"list-type=2"); // OOM/capacity: fire-and-forget
     }
 
     if let Some(max_keys) = list_options.max_keys {
-        let _ = search_params.append_fmt(format_args!("&max-keys={}", max_keys)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = search_params.append_fmt(format_args!("&max-keys={}", max_keys)); // OOM/capacity: fire-and-forget
     }
 
-    if let Some(prefix) = list_options.prefix.as_deref() {
+    if let Some(prefix) = list_options.prefix.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; prefix.len() * 3];
         let encoded = encode_uri_component::<true>(prefix, &mut buff).expect("unreachable");
-        let _ = search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
     }
 
-    if let Some(start_after) = list_options.start_after.as_deref() {
+    if let Some(start_after) = list_options.start_after.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; start_after.len() * 3];
         let encoded = encode_uri_component::<true>(start_after, &mut buff).expect("unreachable");
-        let _ = search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
     }
 
     let result = match this.sign_request::<true>(
@@ -300,7 +298,7 @@ pub(crate) fn list_objects(
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
-        // Zig used `= undefined`; written below via `MaybeUninit::write` before any read.
+        // Written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
         range: None,
         sign_result: result,
@@ -312,6 +310,7 @@ pub(crate) fn list_objects(
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
         proxy_url: Box::default(),
+        body: Box::default(),
         poll_ref: bun_io::KeepAlive::init(),
     }));
     // SAFETY: just allocated, non-null
@@ -432,7 +431,7 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper (Zig: `const Wrapper = struct { pub fn callback(...) }`)
+    // Local callback wrapper
     fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> JsTerminatedResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
         // re-borrow does not hold `&sink` across the `&mut sink` calls below.
@@ -444,7 +443,7 @@ pub(crate) fn writable_stream(
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
             let event_loop = global.bun_vm().as_mut().event_loop();
             // SAFETY: event_loop is initialised for the lifetime of the VM.
-            // RAII: `enter()` now, `exit()` on drop (Zig: `defer event_loop.exit()`).
+            // RAII: `enter()` now, `exit()` on drop.
             let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
@@ -475,7 +474,7 @@ pub(crate) fn writable_stream(
     }
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
-    // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
+    // MultiPartUpload.
     fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
         wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
@@ -493,7 +492,7 @@ pub(crate) fn writable_stream(
     // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // JSC_BORROW: `global_this` outlives the task (it owns the VM/heap that owns the JS
     // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
-    // MultiPartUpload, matching the Zig pointer field.
+    // MultiPartUpload.
     let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
@@ -510,8 +509,7 @@ pub(crate) fn writable_stream(
         poll_ref: KeepAlive::init(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload (the VM owns the heap that owns the JS objects
-        // keeping this task alive). Dereference to `&'static` for storage, matching the
-        // Zig pointer field.
+        // keeping this task alive). Dereference to `&'static` for storage.
         vm: VirtualMachine::get(),
         global_this: global_static,
         buffered: StreamBuffer::default(),
@@ -538,7 +536,7 @@ pub(crate) fn writable_stream(
 
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
-    // `NetworkSink.new(.{...}).toSink()` — heap-allocate; `JSSink<NetworkSink>` is layout-
+    // Heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink =
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
@@ -580,7 +578,6 @@ pub struct S3UploadStreamWrapper {
 /// finalizer body when the last ref is released.
 pub type S3UploadStreamWrapperRef = *mut S3UploadStreamWrapper;
 
-// Zig: `pub const ResumableSink = @import("../ResumableSink.zig").ResumableS3UploadSink;`
 // Inherent associated types are unstable; expose as a module-level alias instead.
 pub(crate) type ResumableSink = ResumableS3UploadSink;
 
@@ -647,7 +644,7 @@ impl S3UploadStreamWrapper {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
         self.detach_sink();
-        // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref()`
+        // scope-exit deref via guard (keeps borrowck happy)
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
             // SAFETY: s points to self which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
@@ -668,14 +665,14 @@ impl S3UploadStreamWrapper {
                 }); // TODO: properly propagate exception upwards
             }
         } else {
-            // Zig spec: `_ = bun.handleOom(this.task.writeBytes("", true))` — abort on OOM.
+            // abort on OOM
             let _ = self.task_mut().write_bytes(b"", true).expect("OOM");
         }
     }
 
     pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
-        // PORT NOTE: reshaped for borrowck — Zig used `defer self.deref()`
+        // scope-exit deref via guard (keeps borrowck happy)
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
             // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
@@ -725,7 +722,7 @@ impl ResumableSinkContext for S3UploadStreamWrapper {
 }
 
 impl Drop for S3UploadStreamWrapper {
-    /// Zig: `fn deinit(this: *@This())` — RefCount finalizer body. Allocation is freed by
+    /// RefCount finalizer body. Allocation is freed by
     /// `deref_()` when the last ref is dropped; this `Drop` only handles side effects.
     fn drop(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "deinit {}", self.sink.is_some());
@@ -779,9 +776,9 @@ pub fn upload_stream(
             )
             .to_js());
         }
-        // TODO(port): Zig used `inline .File, .Bytes => |stream|` — File/Bytes payload types
-        // differ (`*FileReader` vs `*ByteStream`), so the inline-captured `stream` has different
-        // types per arm. Manual unroll once both have a `.pending` accessor.
+        // The File/Bytes payload types
+        // differ (`*FileReader` vs `*ByteStream`), so the arms are
+        // unrolled here.
         ReadableStreamPtr::Bytes(_) => {
             // BACKREF: see `Source::bytes()` — payload live while the
             // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
@@ -801,10 +798,7 @@ pub fn upload_stream(
                     result: crate::webcore::streams::StreamResult::Done,
                     ..Default::default()
                 });
-                let (js_err, was_strong) = err.to_js_weak(global_this);
-                if was_strong == crate::webcore::streams::WasStrong::Strong {
-                    js_err.unprotect();
-                }
+                let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
                 credentials.deref();
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
@@ -829,10 +823,7 @@ pub fn upload_stream(
                     result: crate::webcore::streams::StreamResult::Done,
                     ..Default::default()
                 });
-                let (js_err, was_strong) = err.to_js_weak(global_this);
-                if was_strong == crate::webcore::streams::WasStrong::Strong {
-                    js_err.unprotect();
-                }
+                let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
                 credentials.deref();
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
@@ -842,7 +833,7 @@ pub fn upload_stream(
     }
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
-    // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
+    // MultiPartUpload.
     fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: ctx was set to `*mut S3UploadStreamWrapper` below.
         S3UploadStreamWrapper::resolve(result, unsafe {
@@ -858,12 +849,8 @@ pub fn upload_stream(
         );
     }
 
-    // PORT NOTE: Zig calls `this.ref()` *before* the is_disturbed/Invalid/pending-err early
-    // returns above (client.zig:465), leaking a credential ref on every early-return path.
-    // Here `credentials` is owned-by-value and explicitly `.deref()`ed on each early
-    // return — strictly an improvement.
-    //
-    // `credentials` ref adopted by value — moved into the MultiPartUpload below.
+    // `credentials` is owned-by-value and explicitly `.deref()`ed on each early
+    // return above; the ref is adopted by value — moved into the MultiPartUpload below.
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static = GlobalRef::from(global_this);
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
@@ -879,8 +866,7 @@ pub fn upload_stream(
         credentials,
         poll_ref: KeepAlive::init(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
-        // outlives every MultiPartUpload. Dereference to `&'static` for storage, matching
-        // the Zig pointer field.
+        // outlives every MultiPartUpload. Dereference to `&'static` for storage.
         vm: VirtualMachine::get(),
         global_this: global_static,
         buffered: StreamBuffer::default(),
@@ -1039,7 +1025,7 @@ pub(crate) fn download_stream(
             response_buffer: MutableString::default(),
             mutex: Default::default(),
             reported_response_buffer: MutableString::default(),
-            // Zig: `state: State.AtomicType = .init(@bitCast(State{}))` — `State{}` defaults
+            // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with
             // `has_more == false`, tripping the `assert(state.has_more)` in
             // `process_http_callback` on the very first HTTP-thread callback.
@@ -1047,6 +1033,7 @@ pub(crate) fn download_stream(
                 crate::webcore::s3::download_stream::State::default().0,
             ),
             concurrent_task: Default::default(),
+            async_http_id: 0,
         },
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
@@ -1103,6 +1090,7 @@ pub(crate) fn download_stream(
     ));
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     let http = unsafe { task.http.assume_init_mut() };
+    task.async_http_id = http.async_http_id;
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
@@ -1144,7 +1132,7 @@ pub fn readable_stream(
             request_err: Option<Error::S3Error>,
             self_: &mut Self,
         ) -> JsTerminatedResult<()> {
-            // PORT NOTE: reshaped for borrowck — Zig used `defer if (!has_more) self.deinit()`
+            // scope-exit cleanup via guard (keeps borrowck happy)
             let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
                 if !has_more {
                     // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
@@ -1159,11 +1147,12 @@ pub fn readable_stream(
                 if let Some(bytes) = readable.ptr.bytes() {
                     if let Some(err) = request_err {
                         bytes.on_data(crate::webcore::streams::StreamResult::Err(
-                            crate::webcore::streams::StreamError::JSValue(s3_error_to_js(
-                                &err,
-                                &self_.global,
-                                Some(&self_.path),
-                            )),
+                            crate::webcore::streams::StreamError::JSValue(
+                                bun_jsc::strong::Optional::create(
+                                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
+                                    &self_.global,
+                                ),
+                            ),
                         ))?;
                         return Ok(());
                     }
@@ -1220,6 +1209,10 @@ pub fn readable_stream(
                         .signal_store
                         .aborted
                         .store(true, core::sync::atomic::Ordering::Relaxed);
+                    // Wake the HTTP thread so it observes the abort even when the
+                    // socket is idle; otherwise the final `has_more == false`
+                    // callback never fires and both the task and wrapper leak.
+                    bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
                 }
             }
         }
@@ -1237,7 +1230,7 @@ pub fn readable_stream(
     }
 
     impl Drop for S3DownloadStreamWrapper {
-        /// Zig: `fn deinit(self: *@This())`. readable_stream_ref / path are freed by their own field Drop.
+        /// readable_stream_ref / path are freed by their own field Drop.
         fn drop(&mut self) {
             self.clear_stream_cancel_handler();
         }
@@ -1245,7 +1238,7 @@ pub fn readable_stream(
 
     // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
     // owns the readable stream which keeps the wrapper reachable via cancel_ctx); store as
-    // `'static` for the heap-allocated wrapper, matching the Zig pointer field.
+    // `'static` for the heap-allocated wrapper.
     let global_static = GlobalRef::from(global_this);
 
     // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
@@ -1298,5 +1291,3 @@ pub fn readable_stream(
     }
     Ok(readable_value)
 }
-
-// ported from: src/runtime/webcore/s3/client.zig

@@ -27,9 +27,8 @@ use bun_sourcemap as SourceMap;
 
 use crate::IndexInt;
 
-/// Move the printed code out of a `PrintResult`. Mirrors Zig
-/// `j.push(result.code, worker.allocator)` where the joiner takes ownership of
-/// the slice — the Rust `PrintResultSuccess.code` is a `Box<[u8]>` that would
+/// Move the printed code out of a `PrintResult` so the joiner takes ownership
+/// of the slice — `PrintResultSuccess.code` is a `Box<[u8]>` that would
 /// otherwise drop at end of `post_process_js_chunk` and leave the deferred
 /// `IntermediateOutput::Joiner` path holding freed memory.
 fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
@@ -46,7 +45,6 @@ pub fn post_process_js_chunk(
     chunk: &mut Chunk,
     chunk_index: usize,
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
     let _ = chunk_index;
@@ -63,11 +61,12 @@ pub fn post_process_js_chunk(
     // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
     let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
 
-    // TODO(port): `defer chunk.renamer.deinit(bun.default_allocator)` — Zig explicitly
-    // tears down the renamer at end of scope. In Rust this should be handled by Drop on
-    // the renamer field, or an explicit `chunk.renamer.take()` at fn exit. Verify.
+    // The renamer is
+    // not used after this function, so it is reset to `None` before returning
+    // (success path below). `ChunkRenamer`'s variants free their owned storage
+    // via Drop; the `symbols` view inside is `ManuallyDrop` (non-owning), so
+    // graph storage is never freed.
 
-    // PERF(port): was arena bulk-free — profile if hot.
     let arena = Arena::new();
 
     // Also generate the cross-chunk binding code
@@ -103,8 +102,7 @@ pub fn post_process_js_chunk(
     let loader =
         c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
     let is_typescript = loader.is_type_script();
-    // Zig: ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
-    // later stored on chunk.content.javascript.module_info — OWNED → Box<ModuleInfo>.
+    // Stored on chunk.content.javascript.module_info — owned `Box<ModuleInfo>`.
     let mut module_info: Option<Box<ModuleInfo>> = if generate_module_info {
         Some(ModuleInfo::create(is_typescript))
     } else {
@@ -115,8 +113,7 @@ pub fn post_process_js_chunk(
     let worker_arena: &Arena = worker.arena();
 
     {
-        // PORT NOTE: Zig builds one `print_options` and passes it by-value twice.
-        // Rust `Options` is not `Copy` (holds `&mut ModuleInfo`), and a closure
+        // `Options` is not `Copy` (holds `&mut ModuleInfo`), and a closure
         // taking `&mut ModuleInfo` can't express "output lifetime = input
         // lifetime" — so build a base with `module_info: None` and override it
         // via FRU at each call site.
@@ -139,9 +136,7 @@ pub fn post_process_js_chunk(
 
         let mut cross_chunk_import_records: Vec<ImportRecord> =
             Vec::with_capacity(chunk.cross_chunk_imports.len() as usize);
-        // PERF(port): was initCapacity catch unreachable
         for import_record in chunk.cross_chunk_imports.slice() {
-            // PERF(port): was appendAssumeCapacity
             cross_chunk_import_records.push(ImportRecord {
                 kind: import_record.import_kind,
                 // `ctx.chunks` is a `BackRef<[Chunk]>` (safe `Deref`); chunk_index is
@@ -150,17 +145,16 @@ pub fn post_process_js_chunk(
                     ctx.chunks[import_record.chunk_index as usize].unique_key,
                 ),
                 range: bun_ast::Range::NONE,
-                // Remaining fields take their Zig defaults (no Default impl):
+                // Remaining fields (`ImportRecord` has no `Default` impl):
                 tag: ImportRecordTag::None,
                 loader: None,
                 source_index: Index::INVALID,
-                module_id: 0,
                 original_path: b"",
                 flags: ImportRecordFlags::default(),
             });
         }
 
-        // PORT NOTE: `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` —
+        // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` —
         // the storage retains ownership of every Drop field (`named_imports`,
         // `parts`, `top_level_symbols_to_parts`, …), so the gathered struct
         // must NOT run Drop. `to_ast` consumes by value, so unwrap, convert,
@@ -324,7 +318,7 @@ pub fn post_process_js_chunk(
                                 continue;
                             }
                             // Skip barrel-optimized-away imports — marked is_unused by
-                            // barrel_imports.zig. Never resolved (source_index invalid),
+                            // `barrel_imports`. Never resolved (source_index invalid),
                             // and removed by convertStmtsForChunk. Not in emitted code.
                             if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
                                 continue;
@@ -338,7 +332,7 @@ pub fn post_process_js_chunk(
                             );
 
                             if let Some(name) = &s.default_name {
-                                if let Some(name_ref) = name.ref_ {
+                                if let Some(name_ref) = name.ref_.to_nullable() {
                                     let local_name_id = {
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);
                                         mi.str(local_name)
@@ -359,7 +353,7 @@ pub fn post_process_js_chunk(
 
                             // `S::Import.items: StoreSlice<ClauseItem>` — safe `Deref`.
                             for item in s.items.iter() {
-                                if let Some(name_ref) = item.name.ref_ {
+                                if let Some(name_ref) = item.name.ref_.to_nullable() {
                                     let local_name_id = {
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);
                                         mi.str(local_name)
@@ -523,7 +517,6 @@ pub fn post_process_js_chunk(
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
     if is_bun {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
-            // Zig `++` literal concat → single byte literal (concat! yields &str, not &[u8])
             const INPUT: &[u8] =
                 b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
             j.push_static(INPUT);
@@ -602,7 +595,6 @@ pub fn post_process_js_chunk(
     }
 
     {
-        // PORT NOTE: Zig `j.push(code, worker.allocator)` transferred ownership;
         // `cross_chunk_prefix` is a local that drops at fn exit, but the joiner
         // may be stashed on `chunk.intermediate_output` and consumed later
         // (`IntermediateOutput::Joiner` path). Move the Box into the joiner.
@@ -753,10 +745,9 @@ pub fn post_process_js_chunk(
     }
 
     {
-        // PORT NOTE: `entry_point_tail` is a local `CompileResult` whose `code`
-        // is a `Box<[u8]>`; Zig `j.push(tail_code, worker.allocator)` handed
-        // ownership to the joiner. Move it so the deferred-joiner path doesn't
-        // read freed memory after this fn returns.
+        // `entry_point_tail` is a local `CompileResult` whose `code`
+        // is a `Box<[u8]>`. Move it into the joiner so the deferred-joiner
+        // path doesn't read freed memory after this fn returns.
         let tail_code = entry_point_tail.into_code();
         if !tail_code.is_empty() {
             // Stick the entry point tail at the end of the file. Deliberately don't
@@ -768,7 +759,7 @@ pub fn post_process_js_chunk(
 
     // Put the cross-chunk suffix inside the IIFE
     {
-        // PORT NOTE: see cross_chunk_prefix above — move ownership into joiner.
+        // See cross_chunk_prefix above — move ownership into joiner.
         let code = print_result_take_code(&mut cross_chunk_suffix);
         if !code.is_empty() {
             if newline_before_comment {
@@ -801,9 +792,7 @@ pub fn post_process_js_chunk(
                     [chunk.entry_point.source_index() as usize]
                     .path;
                 let mut buf = MutableString::init_empty();
-                // PERF(port): worker.arena is an arena in Zig
                 let _ = js_printer::quote_for_json(input.pretty, &mut buf, true); // fmt::Result into Vec<u8> is infallible
-                // bun.handleOom dropped — Rust aborts on OOM
                 let quoted = buf.take_slice();
                 line_offset.advance(&quoted);
                 j.push_owned(quoted.into_boxed_slice());
@@ -880,6 +869,10 @@ pub fn post_process_js_chunk(
         )?;
     }
 
+    // Free the renamer now that printing is done; nothing reads it after
+    // post-processing.
+    chunk.renamer = Default::default();
+
     Ok(())
 }
 
@@ -914,7 +907,7 @@ fn add_binding_vars_to_module_info(
     }
 }
 
-// PORT NOTE: `js_printer::print` ties bump/Options/import_records/renamer to a
+// `js_printer::print` ties bump/Options/import_records/renamer to a
 // single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
 // renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
 // share that lifetime.
@@ -923,17 +916,14 @@ pub fn generate_entry_point_tail_js<'a>(
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,
-    // bundler is an AST crate: std.mem.Allocator param → &'bump Bump (Arena)
-    // TODO(port): thread &'bump Bump from worker.arena end-to-end.
     arena: &'a Arena,
     temp_arena: &Arena,
     mut r: js_printer::renamer::Renamer<'a, 'a>,
     mut module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
-    // PERF(port): was arena-backed ArrayList(Stmt) — profile if hot.
     let mut stmts: Vec<Stmt> = Vec::new();
-    // PORT NOTE: `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
+    // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
     // storage retains ownership of every Drop field, so neither this
     // `BundledAst` nor the `ast_view: Ast` derived from it below may run Drop.
     let ast = c.graph.ast.get(source_index as usize);
@@ -947,7 +937,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
                                 loc: bun_ast::Loc::EMPTY,
-                                ref_: Some(ast.wrapper_ref),
+                                ref_: ast.wrapper_ref,
                             },
                             value: StmtOrExpr::Expr(Expr::init(
                                 E::Call {
@@ -1024,7 +1014,6 @@ pub fn generate_entry_point_tail_js<'a>(
                         // entry point is a CommonJS-style module, since that would generate an ES6
                         // export statement that's not top-level. Instead, we will export the CommonJS
                         // exports as a default export later on.
-                        // PERF(port): was arena-backed ArrayList(ClauseItem) — profile if hot.
                         let mut items: Vec<bun_ast::ClauseItem> = Vec::new();
                         let cjs_export_copies =
                             &c.graph.meta.items_cjs_export_copies()[source_index as usize];
@@ -1032,9 +1021,9 @@ pub fn generate_entry_point_tail_js<'a>(
                         let mut had_default_export = false;
 
                         for (i, alias) in sorted_and_filtered_export_aliases.iter().enumerate() {
-                            // PORT NOTE: Zig `resolved_exports.get(alias).?` returns a by-value
-                            // copy of `ExportData`; only `.data` (an `ImportTracker`, `Copy`) is
-                            // read/mutated below, so copy that field instead of the whole struct.
+                            // Only `.data` (an `ImportTracker`, `Copy`) is
+                            // read/mutated below, so copy that field instead of
+                            // the whole `ExportData`.
                             let mut resolved_export_data =
                                 resolved_exports.get(alias).unwrap().data;
 
@@ -1122,7 +1111,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
                                 items.push(bun_ast::ClauseItem {
                                     name: bun_ast::LocRef {
-                                        ref_: Some(temp_ref),
+                                        ref_: temp_ref,
                                         loc: bun_ast::Loc::EMPTY,
                                     },
                                     alias: bun_ast::StoreStr::new(alias),
@@ -1155,7 +1144,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                 //
                                 items.push(bun_ast::ClauseItem {
                                     name: bun_ast::LocRef {
-                                        ref_: Some(resolved_export_data.import_ref),
+                                        ref_: resolved_export_data.import_ref,
                                         loc: resolved_export_data.name_loc,
                                     },
                                     alias: bun_ast::StoreStr::new(alias),
@@ -1165,9 +1154,8 @@ pub fn generate_entry_point_tail_js<'a>(
                             }
                         }
 
-                        // PORT NOTE: arena-owned `*mut [ClauseItem]` — move the
-                        // collected Vec into the linker arena (Zig used
-                        // `c.arena().alloc`). The arena slice is also iterated
+                        // arena-owned `*mut [ClauseItem]` — move the
+                        // collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.
                         let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
                         stmts.push(Stmt::alloc(
@@ -1180,10 +1168,8 @@ pub fn generate_entry_point_tail_js<'a>(
 
                         if flags.needs_synthetic_default_export && !had_default_export {
                             let mut properties = G::PropertyList::init_capacity(items.len());
-                            // PERF(port): was initCapacity catch unreachable
                             let getter_fn_body: &mut [Stmt] =
                                 arena.alloc_slice_fill_default(items.len());
-                            // TODO(port): arena.alloc(Stmt, n) — needs arena slice alloc API
                             let mut remain_getter_fn_body = &mut getter_fn_body[..];
                             for export_item in items.iter() {
                                 let (fn_body, rest) = remain_getter_fn_body.split_at_mut(1);
@@ -1192,10 +1178,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                     S::Return {
                                         value: Some(Expr::init(
                                             E::Identifier {
-                                                ref_: export_item
-                                                    .name
-                                                    .ref_
-                                                    .expect("infallible: ref bound"),
+                                                ref_: export_item.name.ref_,
                                                 ..Default::default()
                                             },
                                             export_item.name.loc,
@@ -1203,7 +1186,6 @@ pub fn generate_entry_point_tail_js<'a>(
                                     },
                                     bun_ast::Loc::EMPTY,
                                 );
-                                // PERF(port): was appendAssumeCapacity
                                 VecExt::append(
                                     &mut properties,
                                     G::Property {
@@ -1239,7 +1221,7 @@ pub fn generate_entry_point_tail_js<'a>(
                             stmts.push(Stmt::alloc(
                                 S::ExportDefault {
                                     default_name: bun_ast::LocRef {
-                                        ref_: Some(Ref::NONE),
+                                        ref_: Ref::NONE,
                                         loc: bun_ast::Loc::EMPTY,
                                     },
                                     value: StmtOrExpr::Expr(Expr::init(
@@ -1325,7 +1307,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
     // Add generated local declarations from entry point tail to module_info.
     // This captures vars like `var export_foo = cjs.foo` for CJS export copies.
-    // PORT NOTE: reshaped for borrowck — reborrow via as_deref_mut so module_info
+    // Reshaped for borrowck — reborrow via as_deref_mut so module_info
     // remains usable for print_options below.
     if let Some(mi) = module_info.as_mut() {
         let mi: &mut ModuleInfo = &mut **mi;
@@ -1408,5 +1390,3 @@ pub fn generate_entry_point_tail_js<'a>(
         decls: Box::default(),
     }
 }
-
-// ported from: src/bundler/linker_context/postProcessJSChunk.zig

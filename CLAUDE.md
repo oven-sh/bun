@@ -15,7 +15,7 @@ BUN_JSC_dumpSimulatedThrows=1 bun bd <command>`
 
 Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.json script.
 
-**All build scripts support build-then-exec.** Any `bun run build*` command (and `bun bd`, and `bun scripts/build.ts` directly) accepts trailing args which are passed to the built executable after building. This is the recommended way to run your build — you never invoke `./build/debug/bun-debug` directly.
+**All build scripts support build-then-exec.** Any `bun run build*` command (and `bun bd`) accepts trailing args which are passed to the built executable after building — you never invoke `./build/debug/bun-debug` directly.
 
 ```sh
 bun bd test foo.test.ts                    # debug build + quiet debug logs
@@ -26,15 +26,11 @@ bun run build:local run script.ts          # debug build with local WebKit
 
 When exec args are present, build output is suppressed unless the build fails — you see only the binary's output. Build flags (e.g. `--asan=off`) go before the exec args; see `scripts/build.ts` header for the full arg routing rules.
 
-**Comparing builds:** normally use the default `build/<profile>/` dir. If you need to preserve a build as a comparison point (rare — e.g. benchmarking before/after a change), `--build-dir` parks it somewhere the next build won't overwrite:
-
-```sh
-bun run build:release --build-dir=build/baseline
 ```
 
 ### Changes that don't require a build
 
-Edits to **TypeScript type declarations** (`packages/bun-types/**/*.d.ts`) do not touch any compiled code, so `bun bd` is unnecessary. The types test just packs the `.d.ts` files and runs `tsc` against fixtures — it never executes your build. Run it directly with the system Bun:
+Edits to **TypeScript type declarations** (`packages/bun-types/**/*.d.ts`) do not touch any compiled code, so `bun bd` is unnecessary. The types test just packs the `.d.ts` files and runs `tsc` against fixtures — it never executes your build. Run it directly with the system Bun (an explicit exception to the "never use `bun test` directly" rule):
 
 ```sh
 bun test test/integration/bun-types/bun-types.test.ts
@@ -63,43 +59,23 @@ This is an explicit exception to the "never use `bun test` directly" rule. There
 - `test/napi/` - N-API compatibility tests
 - `test/v8/` - V8 C++ API compatibility tests
 
-**Exception:** `test/regression/issue/${issueNumber}.test.ts` is reserved for bugs that have a GitHub issue number **and** are true regressions (worked in a previous release, then broke). An issue number alone is not enough — if the behavior was never correct, it's not a regression and the test belongs in the existing file for that module. The issue number must be **REAL**, not a placeholder.
+**Exception:** `test/regression/issue/${issueNumber}.test.ts` is reserved for bugs with a GitHub issue number **and** that are true regressions (worked in a previous release, then broke). If the behavior was never correct, it's not a regression — the test belongs in the existing file for that module. The issue number must be **REAL**, not a placeholder.
 
 ### Writing Tests
 
-Tests use Bun's Jest-compatible test runner with proper test fixtures.
-
-- For **single-file tests**, prefer `-e` over `tempDir`.
-- For **multi-file tests**, prefer `tempDir` and `Bun.spawn`.
+Tests use Bun's Jest-compatible test runner. For **single-file tests**, prefer spawning with `-e`; for **multi-file tests**, prefer `tempDir` and `Bun.spawn`:
 
 ```typescript
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
-test("(single-file test) my feature", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", "console.log('Hello, world!')"],
-    env: bunEnv,
-  });
-
   const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
-
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"Hello, world!"`);
-  expect(exitCode).toBe(0);
-});
-
 test("(multi-file test) my feature", async () => {
-  // Create temp directory with test files
   using dir = tempDir("test-prefix", {
     "index.js": `import { foo } from "./foo.ts"; foo();`,
     "foo.ts": `export function foo() { console.log("foo"); }`,
   });
-
-  // Spawn Bun process
+  // For a single-file test, use: cmd: [bunExe(), "-e", `console.log("foo")`] and omit cwd.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     env: bunEnv,
@@ -114,7 +90,7 @@ test("(multi-file test) my feature", async () => {
   ]);
 
   // Prefer snapshot tests over expect(stdout).toBe("hello\n");
-  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"hello"`);
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"foo"`);
 
   // Assert the exit code last. This gives you a more useful error message on test failure.
   expect(exitCode).toBe(0);
@@ -138,29 +114,19 @@ test("(multi-file test) my feature", async () => {
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
 - **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.classes.ts` and other sources. The build regenerates them automatically when their inputs change.
 
-You will see `.zig` files alongside many `.rs` files (e.g. `fetch.zig` next to `fetch.rs`). These are the **original Zig implementation, kept only as a porting reference** — they are **not compiled** and **not shipped**. New code goes in `.rs`. When fixing a bug or porting a behavior, the `.zig` sibling is the source of truth for *intended semantics*: read it, then make the `.rs` match. Never add new behavior to a `.zig` file.
-
 ### Core Source Organization
 
 The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The key ones:
 
-#### Foundation crates
-
 - `src/bun_core/` - The `bun.*`-namespace foundation: strings/`String` (`string/`), formatting (`fmt.rs`), logging (`output.rs`), feature flags, env vars, allocator helpers
 - `src/sys/` - Cross-platform syscall wrappers (`file.rs`, `dir.rs`, `fd.rs`, `Error.rs`, `tmp.rs`) — the `bun.sys` equivalent
 - `src/collections/`, `src/threading/`, `src/paths/`, `src/semver/`, `src/sourcemap/` - shared utilities
-
-#### Runtime Core (`src/`)
-
 - `src/bun_bin/` - Cargo entrypoint; produces `libbun_rust.a`, linked into the final binary
 - `src/runtime/cli/` - CLI argument parsing and command dispatch
 - `src/js_parser/`, `src/js_printer/` - JavaScript/TypeScript parsing and printing (each is its own crate; the lexer is `src/js_parser/lexer.rs`)
 - `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
 - `src/resolver/` - Module resolution system
 - `src/ast/` - AST node types and arena allocation
-
-#### JavaScript Runtime (`src/jsc/` + `src/runtime/`)
-
 - `src/jsc/bindings/` - C++ JavaScriptCore bindings (generated classes from `.classes.ts` + manual bindings)
 - `src/jsc/` - Rust-side JSC glue (`VirtualMachine.rs`, `web_worker.rs`, `event_loop.rs`, FFI imports)
 - `src/runtime/api/` - Bun-specific JS-visible APIs (`BunObject.rs`, `JSBundler.rs`, `Glob`, `Archive`, …)
@@ -169,14 +135,8 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/runtime/crypto/` - WebCrypto + `node:crypto` (`EVP.rs`, `HMAC.rs`, `CryptoHasher.rs`, …)
 - `src/runtime/webcore/` - Web API implementations (`fetch.rs`, `streams.rs`, `Blob.rs`, `Response.rs`, `Request.rs`, …)
 - `src/event_loop/` - Event loop and task management
-
-#### Build Tools & Package Manager
-
 - `src/bundler/` - JavaScript bundler (tree-shaking, CSS processing, HTML handling)
 - `src/install/` - Package manager (`lockfile/`, `npm.rs` registry client, `lifecycle_script_runner.rs`)
-
-#### Other Key Components
-
 - `src/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
 - `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
@@ -185,30 +145,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party C/C++ libraries are vendored locally and can be read from disk (these are not git submodules):
-
-- `vendor/boringssl/` - BoringSSL (TLS/crypto)
-- `vendor/brotli/` - Brotli compression
-- `vendor/cares/` - c-ares (async DNS)
-- `vendor/hdrhistogram/` - HdrHistogram (latency tracking)
-- `vendor/highway/` - Google Highway (SIMD)
-- `vendor/libarchive/` - libarchive (tar/zip)
-- `vendor/libdeflate/` - libdeflate (fast deflate)
-- `vendor/libuv/` - libuv (Windows event loop)
-- `vendor/lolhtml/` - lol-html (HTML rewriter)
-- `vendor/lshpack/` - ls-hpack (HTTP/2 HPACK)
-- `vendor/lsqpack/` - ls-qpack (HTTP/3 QPACK)
-- `vendor/lsquic/` - lsquic (QUIC / HTTP/3)
-- `vendor/mimalloc/` - mimalloc (memory allocator)
-- `vendor/nodejs/` - Node.js headers (compatibility)
-- `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
-- `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
-- `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
-- `vendor/zig/` - Zig toolchain (legacy; not used by the Rust build)
-- `vendor/zlib/` - zlib-ng (compression, zlib-compat mode)
-- `vendor/zstd/` - Zstandard (compression)
-
-Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party C/C++ libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 
@@ -218,7 +155,6 @@ When implementing JavaScript classes in C++:
    - `class Foo : public JSC::JSDestructibleObject` (if has C++ fields)
    - `class FooPrototype : public JSC::JSNonFinalObject`
    - `class FooConstructor : public JSC::InternalFunction`
-
 2. Define properties using HashTableValue arrays
 3. Add iso subspaces for classes with C++ fields
 4. Cache structures in `ZigGlobalObject`
@@ -244,11 +180,76 @@ Built-in JavaScript modules use special syntax and are organized as:
 - `internal/` - Internal modules not exposed to users
 - `builtins/` - Core JavaScript builtins (streams, console, etc.)
 
-## Code Review Self-Check
+## Landing PRs: What Bun Reviewers Catch
 
-- Before writing code that makes a non-obvious choice, pre-emptively ask "why this and not the alternative?" If you can't answer, research until you can — don't write first and justify later.
-- Don't take a bug report's suggested fix at face value; verify it's the right layer.
-- If neighboring code does something differently than you're about to, find out _why_ before deviating — its choices are often load-bearing, not stylistic.
+Distilled from the review history of ~2,500 merged PRs where review feedback led to fix commits; everything here has blocked merges. Before writing code that makes a non-obvious choice, pre-emptively ask "why this and not the alternative?" — if you can't answer, research until you can.
+
+Several situational sections live in `.claude/docs/landing-prs.md` — read the relevant one before the work it covers: **Node/Web compat** (touching `node:*` modules, Web APIs, or `src/runtime/node/`), **API design** (adding or changing user-facing API surface), **Performance** (optimizing, touching hot paths, or making perf claims), **Cross-platform** (platform-gated code, FFI/ABI, or platform-sensitive tests), **Dependencies & vendoring** (bumping deps or touching `vendor/`), **Docs, types, and comments** (docs, `.d.ts`, JSDoc), and **PR process** (opening or responding to a PR).
+
+### Tests reviewers reject
+
+- **Await conditions, wire failures to reject.** Await the actual observable condition (promise resolved from the event handler, ack handshake, readiness line from child stdout). Wire EVERY failure event (`error`, `close`, `abort`, process exit) to reject the awaited promise — never throw inside event callbacks. Don't raise per-test timeouts to make a slow test pass; shrink the workload. Buffer raw socket/stdout chunks to the protocol's framing before asserting. For "X does not happen", poll a bounded window rather than sleep-then-check.
+- **Prove the test fails for the RIGHT reason.** Beyond `USE_SYSTEM_BUN=1`: trace the fixture through every earlier guard/threshold using real constants from source; check that OS fast paths (clonefile, sendfile), error-swallowing APIs (`existsSync`), and build-time fast paths can't satisfy the test without running your code; confirm env knobs the test sets are actually read by `src/`; assert that setup created the precondition. Hang-guard tests assert the process exited on its own (`signalCode === null`). Confirm deleting each load-bearing clause of your fix breaks at least one test — a test that passes both ways is worse than no test.
+- **Every assertion must be able to fail, and assert the strongest invariant.** Hunt vacuous patterns: un-awaited `.rejects`/`.resolves`, expects inside catch blocks or callbacks that may never fire, async arrows passed to `toThrow()`, loops over possibly-empty collections, conditional assertions. Assert exact values on normalized output: specific error class/code/message (never bare `toThrow()`), `toBe` over `toContain`, actual bytes not lengths. Read snapshot contents before committing — a snapshot captured from buggy code certifies the bug. Never combine `--update` with a name filter.
+- **Cover the variant matrix, not just the repro.** Every sibling entry point receiving the same fix (CLI flag AND JS API), both states of every flag, exact limit boundaries (at the limit succeeds, one past fails), every overload, ESM and CJS, alternate modes (`--compile`, `--bytecode`, watch), error paths, the negative contract (sibling files unmodified, callbacks NOT fired), adversarial inputs for anything parsing user data. Add new variants ALONGSIDE existing tests — never mutate an existing test's input to the new case.
+- **Subprocess tests: drain pipes concurrently.** `Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited])` — an unread pipe fills the ~64KB OS buffer and deadlocks the child. Never assert stderr is exactly empty (ASAN/debug builds emit benign warnings); assert a combined `{ stdout, stderr, exitCode }` object. In multi-stage tests, assert each stage's output in order.
+- **Tests must be hermetic and leave nothing behind.** Never contact external network hosts or live registries — reproduce the condition with a local in-process server or the container harness. Isolate process-global flags by running each case in a fresh subprocess. Release every resource via `using`/`await using` or try/finally registered BEFORE the assertions (cleanup after expectations leaks on the first failure and poisons later tests on persistent CI runners); no manual close alongside `using`; `server.close()` does not terminate live connections; restore mutated globals in finally.
+- **Every behavioral change ships an automated test in the same PR.** "Verified manually", unnamed "existing tests", and benchmarks don't count, even for one-liners. Crash fixes need the crashing input as a spawned fixture; UAF/leak fixes need an ASan repro on the unfixed build or a leak regression test (`Bun.gc(true)` + `heapStats` objectTypeCounts; RSS thresholds need ~2x headroom). Include every reproduction from the linked issue. Never add production code solely to make a test writable — use `bun:internal-for-testing` or externally observable behavior.
+- **Never silently weaken, skip, or delete an existing test or safety net.** Every deletion needs a stated reason or replacement; every skip/todo needs a comment with the observed failure. When de-flaking, keep asserting the property the original assertion protected — branch per-platform rather than dropping precision. Never disable sanitizers or weaken CI verification to get green. When changing output/defaults/messages, grep the suite for assertions on the old behavior and update them in the same PR. Un-skip `.todo` tests your fix makes pass. Never edit a test to route around a runtime bug it exposed.
+- **Copy harness conventions exactly.** Spread `bunEnv` when modifying it (`{...bunEnv, KEY: undefined}`). `Buffer.alloc(n, fill).toString()` instead of `"x".repeat(n)` (slow in debug JSC). `test.each` for matrices; `test.concurrent` for independent subprocess suites; `jest.fn()` over boolean flags; async spawns over `spawnSync`. Use harness skip mechanisms with a reason — a bare top-level `return` reports PASSED. Check `harness.ts` for platform helpers before writing your own. Keep tests fast (~1s budget; debug+ASAN runs 10-100x slower) — a correct but slow test still gets changes-requested.
+
+### Native code: memory safety (the most-blocked category)
+
+- **Pair every acquisition with its release at the acquisition site.** Arm a Drop/RAII guard before any fallible call; disarm only after ownership provably transfers. New early returns or fallible calls → re-audit everything acquired above them. A struct gaining an owning field wires its release into the owner's Drop and ALL lifecycle exits (VM deinit, worker termination, process exit, transfer, close) in the same commit. Prefer validate-first-allocate-last. Free each element of a collection, not just the container. Check the SUCCESS path for leaks too.
+- **Every allocation has exactly one named owner, released exactly once, with the allocator that allocated it.** Be able to answer "who frees this, when, on which paths, with which allocator" in one sentence — comment it when non-local, especially across FFI. Arenas, worker-local mimalloc heaps, and per-subsystem allocators are not interchangeable. Neutralize the source handle when ownership transfers; gate deallocation on an ownership indicator, never a content heuristic; never blanket-free a field that sometimes borrows.
+- **Treat all size/index/length arithmetic on external data as adversarial.** Bounds-check the TOTAL bytes of a record before reading fields; re-establish bounds after every re-slice; validate header-derived counts before using them as loop bounds. Size output buffers for worst-case OUTPUT expansion, not input size. Widen before multiplying untrusted quantities; clamp kernel/peer-reported lengths to capacity. Debug assertions compile out — validation of untrusted input must survive release builds. Zero-init out-params and every slot a GC visitor or destructor can walk.
+- **Exception checks after every call that can enter JS.** Every call that can throw or run user code (toString/toNumber, getIfPropertyExists, getIndex, coercions, callbacks) needs RETURN_IF_EXCEPTION under a ThrowScope (C++) or JSError propagation (Rust) before its result is used. Never call non-throwing accessors (asNumber, jsCast, getDirect) on user values without validating type first. Never clearException(). Throwing tail calls go through RELEASE_AND_RETURN; no check macros inside lambdas. Verify with `BUN_JSC_validateExceptionChecks=1` instead of adding suppression-list entries; for calls that provably cannot throw, use scope.assertNoException() with a comment.
+- **Never let a pointer or slice outlive the memory it points into** (unsafe Rust, C++, FFI). Rejected shapes: slices of stack buffers; pointers into growable containers held across any call that can append; network/parser callback buffers stored without cloning (they are reused); `.data()` of a dead temporary; slices of small-string-optimized values; buffers handed to layers that store them past the call. If background threads reference stack state, every exit path must join them first.
+- **Root or copy every JSValue held beyond the current call.** WriteBarrier members declared in `.classes.ts` and visited in visitChildrenImpl (same change); Strong/protect only for justified self-keepalive; MarkedArgumentBuffer for values accumulated across slow calls — never raw JSValues in malloc'd memory or std containers. A Strong ref does not prevent ArrayBuffer detach; pin() is not a GC root; hasPendingActivity uses a counter; zero-copy toSlice-style helpers return borrowed views — consume synchronously or clone. Prove GC-safety with a stress test (thousands of iterations + `Bun.gc(true)`). Don't add Strong refs or ensureStillAlive you can't justify — and don't silently delete existing ones.
+- **Anything that can run user JS can synchronously free your state** — toString/valueOf, getters, Proxy traps, event emits, close(). Do all coercions first while holding no raw pointers; read mutable state (byteLength, typed-array vectors) once, after all observable side effects; re-validate liveness guards after every callback; copy-and-null stored one-shot callbacks before calling them; bracket entry points that can reach synchronous teardown with ref()/defer deref(); register state and listeners BEFORE the call that can trigger them; null member fields before calling close on a local copy.
+- **Know the thread affinity of every line you touch.** JS-heap operations run only on the JS thread — marshal raw data and enqueue a task. Atomics for every shared counter (even metrics); a mutex only counts if EVERY accessor takes it; benign same-value races are still UB. Copy or `toThreadSafe` strings before another thread touches them; default to seq_cst and comment any weakened ordering. Cross-thread lifetime needs refcounts — a "finalized" boolean cannot prevent UAF. Never invoke callbacks while holding a non-recursive lock. Never back per-VM state with globals or thread-locals — workers share them.
+- **Reference counts provably balanced on every terminal path** — success, error, cancellation, finalize. Map each ref to a named owner; take a ref only after a fallible enqueue succeeds; never use saturating arithmetic on counts; never add a ref just to silence ASAN — find the actual imbalance. The released ref may be the last one mid-callback; dropping the final reference while holding the object's own lock is UB.
+
+### Correctness: the bug class, not the bug
+
+- **Fix the whole class in the same PR** (same-class sites are ONE concern, not scope creep). Grep for every sibling site sharing the pattern: parallel switch arms, sync/async twins, fast/slow paths, POSIX/Windows branches, SSL/non-SSL variants, copy-pasted blocks, every caller of a changed helper. Prefer moving the guard into the shared helper. If a site is intentionally excluded, say so in the PR.
+- **Enumerate the input space deliberately.** Empty input, lone `.`, delimiter-only, inputs that become empty after processing, CRLF, IPv6 literals, integer max, every accepted spelling of an option. Treat "empty", "zero", and "unset" as three distinct states — gate on presence, not truthiness. Use real parsers, never prefix-stripping or regex heuristics over user-controlled input. When tightening validation, enumerate every legitimate input class and prove each still passes.
+- **Every line you add must be demonstrably live.** Trace any flag you gate on through every context that sets it; trace new state to an actual consumer — parsed-but-never-read is a red flag; check for an unconditional overwrite after a new conditional; manually exercise the failure path of any checker whose purpose is to fail. Delete defensive code only when you can show the condition cannot occur; when a new assertion trips, fix the violating call sites.
+- **Verify semantics empirically, never from names or intuition.** Read the implementation of every helper, macro, and sentinel you rely on. For protocols, derive behavior from the spec and cite the upstream source line for every magic number. For ported code, the reference implementation (esbuild, Node) is the spec — diff control flow against it before "fixing" apparent bugs. For codecs, a self-round-trip proves nothing — validate against external known-answer vectors. Settle behavioral disputes by running the scenario.
+- **Validate representation at every boundary.** Numbers from JS or the wire: handle NaN, ±Infinity, negatives, out-of-range before casting; compare in the wide type, cast last; coercing conversions (`toInt32(global)`, never `asInt32` on user values); 64-bit types for byte lengths. Strings: never run byte-level checks without branching on encoding (JSC 8-bit strings are Latin1, not UTF-8); never compare byte counts to code-unit counts across a conversion; WTF-8 helpers for lone surrogates (real Windows paths contain them); test with non-ASCII beyond emoji.
+- **Treat every refactor as guilty until proven behavior-preserving.** Diff the old path's complete behavior — out-parameter writes, error-path side effects, condition polarity, defaults, unconditional operations becoming conditional. Test status flags with bitwise-AND, not equality. Audit every hit of bulk find-and-replace. Before deleting odd-looking code, git-blame why it was written — it is usually load-bearing. If neighboring code does something differently than you're about to, find out why.
+- **One source of truth; update every consumer atomically.** When a fact lives in two places (mirrored tables, encode/decode pairs), derive one from the other. New enum variant or struct field → audit every switch on the discriminant, every constructor/clone site, every hasher/serialization pair. Signature changes and renames → grep the whole repo including cfg-gated code and generated-binding inputs; stale call sites compile fine and silently miss the new behavior.
+- **Cache keys cover every input that shapes the output** (target OS/arch, config, registry of origin; for pooled connections, establishment-time TLS mode/SNI/credentials). A false hit is far worse than a false miss. Completion markers are written only after the last mutation. Any change to cached/serialized output bumps the format version constant. File-keyed caches include mtime/size or content hash.
+
+### Error handling
+
+- **Never swallow a failure or signal success on one.** `catch {}`, catch-return-default, discarded I/O results, and unchecked syscall returns convert diagnosable errors into silent corruption. Exit nonzero after printing an error; never let a trailing cleanup command be the last statement in a pipeline. Operations the user explicitly requested fail the whole command on any failure — never warn-and-exit-zero; best-effort auxiliary steps (hints, optional deps) degrade quietly instead of aborting.
+- **Error messages are reviewed word-for-word as code.** Name what failed and why: the specific resource (quoted path/URL), the violated constraint with the rejected value echoed back, the underlying cause (errno), a concrete remedy. User-facing API names, not internal field names. Repo voice: no "Please", recovery hints on a `note:` line, quoting via `bun.fmt.quote`, stderr not stdout. Don't wrap foreign error messages in `new Error()`. Never genericize a rich existing message during refactors.
+- **User-reachable failures are recoverable errors, never panics.** Anything reachable from user input, syscalls, network bytes, file contents, CLI args, or env vars surfaces as a catchable error — a reachable `unreachable` is release-build UB and a panic on user input is a DoS. Route allocation failure through `bun_core::handle_oom`. Reserve loud panics for true internal invariants — where they're then required. New invariant checks on existing code default to debug-only unless continuing would corrupt memory.
+- **Every error/abort/timeout path actively completes the operation.** Settle every pending promise slot (an unsettled promise pins objects and hangs callers forever). Invoke the done/completion callback on every path; send protocol cancels; clear timers; mirror the success path's release ordering. Set "in-progress" flags only after the fallible step succeeds; do all fallible work before irreversible buffer writes. Invoke user callbacks through `event_loop.runCallback` so microtasks drain and one throwing callback doesn't skip the rest.
+- **Propagate the actual error through typed channels.** Widen the return type and `try` rather than catching locally with a default; typed errors, never magic sentinels. Route user-facing JS errors through the centralized ErrorCode machinery (`src/jsc/bindings/ErrorCode.ts`, `$ERR_*`) — never inline `new Error` with a hand-assigned `.code`. Pass the original error object through rather than stringifying early. Map only the specific expected errno (ENOENT) to the benign path; everything else stays loud. Place validation at the layer whose caller implements the recovery you intend.
+
+### Code style & idioms reviewers enforce
+
+- **In runtime native code, grep for the in-tree helper before hand-writing anything.** File I/O, paths, strings, hashing, formatting, validation, spawning, timers — use the most specific existing helper: `bun.sys`/FD syscall wrappers (never raw std fs/posix), bun_core strings/fmt/Output, shared ref-count helpers, WTF:: containers over std:: in C++ bindings. Being the only file touching a raw primitive is a red flag. New helpers go on the type that owns the concept; extend a maintained in-tree equivalent rather than forking. Verify the helper's actual semantics fit.
+- **Match the exact file's local conventions:** the namespace aliases the neighboring lines actually use, import placement, canonical parameter names, the same error-path sequence as sibling exit sites, formatter output. Name things truthfully: booleans state the invariant positively; no numeric-suffix variants (create2); magic numbers become named constants derived from what they describe (`".tgz".len`, not 4).
+- **Built-in JS modules (`src/js/`) are hot-path code in a hostile environment.** Tamper-resistance: $-prefixed intrinsics and primordial-safe calls (`$isJSArray`, `map.$get`, `$call`), globals captured at module load, `require` with the `node:` prefix, never route internal logic through user-overridable machinery (`Array.isArray`, never `instanceof Array`). Performance: heavy requires stay inside the branch that needs them (`x ??= require(...)`); named functions over inline closures; `Promise.$resolve`/withResolvers over `new Promise` executors; `createFIFO` over `Array#shift` queues; declare every instance field with a default in the class body; cache repeated property reads in locals; `process.platform === 'win32'` for platform checks (tree-shaken per platform).
+- **Delete dead code in the same PR that makes it dead** (required scope — name the deletions in the description): superseded implementations, helpers whose last caller you rewired, fields nothing reads, parameters discarded in the body, guards a new validator makes redundant. Public items escape dead-code lints — grep for callers manually. Prefer deleting an unmaintained dead feature over renaming it.
+- **Simplest honest shape; deduplicate within your own diff.** Early returns over else-after-return; `if let`/`?` over null-check-then-unwrap; exhaustive match over equality chains. Don't condense working explicit code into clever one-liners, and don't ride file-wide standardization on a focused bugfix. The second time a multi-line block appears in your diff, extract a named helper and use it at EVERY parallel site. If your fix makes two functions byte-identical, delete one.
+- **Comments carry only durable non-obvious content:** invariants, ownership/lifetime contracts, SAFETY justifications, deliberate deviations from upstream. No narrating what the code does, no bug history — that belongs in the PR description. Regression tests get exactly one comment: the issue URL. Don't delete existing why-comments in cleanup passes.
+
+### Architecture & layering
+
+- **Fix bugs at the layer that owns the violated invariant, never where the symptom appears.** If a shared helper produces wrong output, fix the helper, not one call site; escaping/serialization lives in the output layer that sees every producer; a downstream null-check or isDead() probe on a possibly-freed object is papering over the defect. Prove the mechanism, don't correlate — "the crash goes away" is not a root cause, and a fix you can't explain hides an adjacent unhandled case. Before changing anything shared, enumerate every consumer; prefer scoping the change to your one caller via an explicit flag. Never change a Bun-native default to fix Node compatibility — that belongs in the node: compat layer.
+- **One implementation, in the right place.** Never copy a helper or constant table between modules or between the read and write sides of a format — share or derive it. Parameterize the existing path rather than cloning a parallel branch; when your change supersedes a mechanism, delete the old path in the same PR. Place new code in the module that owns the feature, never god files (no new fields on ZigGlobalObject, no bindings in monolithic bindings.cpp). Substantial subsystems get their own globally-unique filename. No re-export shim files.
+- **Store state on the object whose lifetime matches it.** Per-VM state goes on VirtualMachine/RareData, never process globals or thread-locals (workers share globals; pool threads are reused). Per-connection facts live on the socket, never a shared context. Reset per-operation state at the start of each use of a reusable object; update every lifecycle method (reset/init/drop/clone) when adding mutable state; prune bookkeeping keyed by recyclable identifiers (PIDs, fds) on every path that learns of death. Don't add fields mirroring recoverable information — compute from the source of truth at use.
+- **Use the simplest mechanism the invariants allow.** No vtables when the implementation set is closed at compile time; no bit-packing or lock-free tricks when a stated invariant makes plain code correct; no speculative edge-case handling nobody filed an issue for. When a heuristic keeps sprouting counterexamples in review, redesign structurally instead of adding tie-breakers. If a maintainer doesn't understand your logic after one explanation, simplify rather than justify. New cross-cutting abstractions need maintainer agreement before appearing inside a feature PR.
+
+### Security
+
+- **Validate untrusted input BEFORE any processing, allocation, or side effect.** Verify integrity hashes before extraction; check bounds before base64/decompression allocates; enforce resource limits on bytes actually received, never only a client-declared header; clamp user-controllable limits including Infinity and negatives. Attack your own guard with degenerate inputs — empty values that short-circuit a check are bypasses (`.every()` is vacuously true on empty); tokens split across read boundaries must still validate. Any string from an archive or lockfile that becomes a path rejects empty, `.`, `..`, NUL, absolute paths, and both separators; lexical containment is defeated by symlinks — re-verify after realpath, prefer O_NOFOLLOW-style atomic flags over check-then-act. Reject embedded NULs in strings passed to C APIs. Never hand-roll security-sensitive parsing — use the hardened in-tree library and replicate the FULL verification path existing clients use.
+- **Security checks fail closed and cover every path to the protected effect.** If a check's prerequisite is missing or its setup fails (null TLS handle, OOM), fail the operation — never fall back to a laxer default. Never carry credentials across an https→http downgrade. Key pools/caches on every parameter that influenced establishment; security flags on pooled sessions are monotonic — once tainted, always tainted. When adding a security gate, enumerate every route to the effect (h2/h3, streaming vs buffered, upgrade paths) and enforce through one shared predicate. Never remove a flag you don't understand in a TLS/crypto path.
+- **Assume userland is hostile on security-relevant paths.** Prototype-pollution-safe own-property lookups for flags like rejectUnauthorized; merged option objects built with `{ __proto__: null, ... }`; security options read as strict booleans (never `!!`-coerced); never call user-overridable JS methods from native code or builtins — use engine intrinsics.
 
 ## Important Development Notes
 
@@ -259,11 +260,12 @@ Built-in JavaScript modules use special syntax and are organized as:
 5. **Create tests in the right folder** in `test/` and the test must end in `.test.ts` or `.test.tsx`
 6. **Use absolute paths** - Always use absolute paths in file operations
 7. **Avoid shell commands** - Don't use `find` or `grep` in tests; use Bun's Glob and built-in tools
-8. **Memory management** - Prefer RAII (`Drop`) over manual cleanup. Watch the arena edge case: values allocated in an arena (`Arena<T>`/`bumpalo`) do **not** run `Drop` when the arena is reset — if a type owns a heap allocation or a refcount, it must be freed/deref'd explicitly before the arena resets, mirroring the original Zig `deinit()` order.
+8. **Memory management** - Prefer RAII (`Drop`) over manual cleanup. Arena edge case: values allocated in an arena (`Arena<T>`/`bumpalo`) do **not** run `Drop` on arena reset — types owning a heap allocation or refcount must be freed/deref'd explicitly first, mirroring the original Zig `deinit()` order.
 9. **Cross-platform** - Run `bun run rust:check-all` to compile across all targets (linux/macos/windows × x64/aarch64) when making platform-specific changes. `#[cfg(...)]`-gated code is not type-checked unless the matching target is built.
 10. **Debug builds** - Use `BUN_DEBUG_QUIET_LOGS=1` to disable debug logging, or `BUN_DEBUG_<SCOPE>=1` to enable a specific `bun_core::output` scoped logger
 11. **Be humble & honest** - NEVER overstate what you got done or what actually works in commits, PRs or in messages to the user.
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
+13. **Keep code comments to 3 lines max** - Comments must be concise. If the code needs more explanation than that, it belongs in docs — and only when explicitly asked for.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
 
@@ -272,45 +274,28 @@ Built-in JavaScript modules use special syntax and are organized as:
 Requires the BuildKite CLI (`brew install buildkite/buildkite/bk`) and a read-scoped token in `BUILDKITE_API_TOKEN`. The repo's `.bk.yaml` sets the org/pipeline so `-p bun` is not needed.
 
 ```bash
-# Show rendered test-failure output for the current branch's latest build,
-# tagged [new] vs [also on main]
-bun run ci:errors
+bun run ci:errors    # rendered test-failure output for this branch's latest build, [new] vs [also on main]
 bun run ci:errors '#26173'          # or a PR number / URL / branch / build number
-
-# One-screen progress summary (job counts, failed jobs, failing tests so far)
-bun run ci:status
-
-# Save full logs for every failed job to ./tmp/ci-<build>/
-bun run ci:logs
-
-# Just the build number, for composing with raw `bk`
-bun run ci:find
-bk job log <job-uuid> -b $(bun run ci:find)
-
-# Watch the current branch's build until it finishes
-bun run ci:watch
+bun run ci:status    # one-screen progress summary (job counts, failed jobs, failing tests so far)
+bun run ci:logs      # save full logs for every failed job to ./tmp/ci-<build>/
+bun run ci:find      # just the build number, e.g. bk job log <job-uuid> -b $(bun run ci:find)
+bun run ci:watch     # watch the current branch's build until it finishes
 ```
 
 For anything else, use `bk` directly — `bk build list`, `bk api`, `bk artifacts`, etc.
 
-If output from these commands looks wrong — mis-parsed annotation HTML, confusing wording, a field BuildKite changed shape on — fix `scripts/find-build.ts` directly rather than working around it. It's a thin presenter over `bk`; keep it accurate.
+If output from these commands looks wrong (mis-parsed annotation HTML, a field BuildKite changed shape on), fix `scripts/find-build.ts` directly rather than working around it — it's a thin presenter over `bk`.
 
 ## Reading PR Feedback
 
-`gh pr view --comments` is fine for a quick look at the Conversation tab, but it has a footgun worth knowing about: it only returns issue-stream comments and silently omits review summaries and line-level review comments. If a reviewer leaves an inline comment on a specific file line, it will not show up — no error, no hint that anything is missing.
-
-When you want the complete picture — especially when responding to a review or checking whether anyone requested changes — use `bun run pr:comments`. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
+`gh pr view --comments` silently omits review summaries and line-level review comments. For the complete picture — especially when responding to a review — use `bun run pr:comments`, which fetches issue comments, reviews, and line comments in one chronological, labelled listing.
 
 ```bash
-bun run pr:comments                    # current branch's PR — XML, resolved threads hidden
-bun run pr:comments 28838              # by PR number
-bun run pr:comments '#28838'           # also works
-bun run pr:comments https://github.com/oven-sh/bun/pull/28838
+bun run pr:comments                    # current branch's PR — resolved threads hidden
+bun run pr:comments 28838              # by PR number; '#28838' and full URLs also work
 bun run pr:comments --include-resolved # also show threads already marked resolved
 
-# Machine-readable output for jq pipelines — one object per entry with
-# { when, user, tag, state?, suggestion?, location?, body, url?, resolved?, outdated? }.
-# Resolved threads and bot noise (robobun's CI status comment, CodeRabbit
-# body-level summaries) are filtered out; --include-resolved restores the former.
+# Machine-readable output for jq pipelines — one object per entry.
+# Resolved threads and bot noise (robobun CI status, CodeRabbit summaries) are filtered out.
 bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
 ```

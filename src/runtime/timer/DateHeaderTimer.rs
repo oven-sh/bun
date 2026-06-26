@@ -30,5 +30,3 @@ pub(super) extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mu
         unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
     }
 }
-
-// ported from: src/runtime/timer/DateHeaderTimer.zig

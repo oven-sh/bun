@@ -1,6 +1,5 @@
 //! One TCP+TLS connection running the HTTP/2 protocol for `fetch()`. Owns the
 //! socket, the connection-scoped HPACK tables, and a map of active `Stream`s.
-//! See `src/http/H2Client.zig` for the module-level overview.
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -26,7 +25,7 @@ pub type Socket = HTTPSocket<true>;
 
 const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
 
-// PORT NOTE: Zig `u31`/`u24` widened to u32; range asserts at use sites.
+// 31-/24-bit wire fields stored as u32; range asserts at use sites.
 #[allow(non_camel_case_types)]
 type u31 = u32;
 #[allow(non_camel_case_types)]
@@ -189,14 +188,14 @@ fn drop_stream(stream: *mut Stream) {
 impl ClientSession {
     /// Bump the refcount and return a guard that releases it on Drop, so
     /// reentrant callbacks (delivering bodies, failing clients) cannot free
-    /// `*self` mid-call. Zig: `this.ref(); defer this.deref();`.
+    /// `*self` mid-call.
     ///
     /// Captures a raw pointer (not a borrow) so the guard does not borrow the
     /// session — the guarded scope may freely take fresh `&mut self`, and the
     /// pointer (derived from `&mut self`) carries write provenance for the
     /// final `heap::take` in `deref`.
     #[inline]
-    fn ref_scope(&mut self) -> SessionRefGuard {
+    pub(crate) fn ref_scope(&mut self) -> SessionRefGuard {
         // SAFETY: `self` is a live heap-allocated ClientSession.
         unsafe { SessionRefGuard::new(self) }
     }
@@ -420,7 +419,16 @@ impl ClientSession {
         }
 
         self.rearm_timeout();
-        let request = client.h2_build_request(client.state.original_request_body.len());
+        // DATA-frame encoding may yield mid-body — compress into the Vec so the
+        // cursor stays valid across event-loop ticks.
+        if let Err(e) = client.compress_body_for_send(false) {
+            self.streams.swap_remove(&stream_ref.id);
+            drop_stream(stream);
+            client.h2 = None;
+            client.fail(e);
+            return;
+        }
+        let request = client.h2_build_request(client.body_len_for_send());
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // encodeHeader pushes into the HPACK encoder's dynamic table per
             // call, so a mid-encode failure leaves entries the server will
@@ -549,11 +557,30 @@ impl ClientSession {
         }
     }
 
+    pub fn resume_receive_by_http_id(&mut self, async_http_id: u32) {
+        let _guard = self.ref_scope();
+        let found = self.streams.values().iter().any(|&s| {
+            stream_mut(s)
+                .client_ref()
+                .is_some_and(|c| c.async_http_id == async_http_id)
+        });
+        if !found {
+            return;
+        }
+        self.replenish_window();
+        if self.write_buffer.is_not_empty() {
+            if let Err(err) = self.flush() {
+                self.fail_all(err);
+            }
+        }
+    }
+
     /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
         let _guard = self.ref_scope();
-        // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
+        // Collect the target stream ptr first so no borrow of `self.streams`
+        // is held while mutating `self` below.
         let mut target: Option<*mut Stream> = None;
         for &stream in self.streams.values() {
             let Some(client) = stream_mut(stream).client_mut() else {
@@ -599,26 +626,32 @@ impl ClientSession {
             self.write_window_update(0, self.conn_unacked_bytes);
             self.conn_unacked_bytes = 0;
         }
-        // PORT NOTE: reshaped for borrowck — collect (id, unacked) pairs before mutating self.
+        // Collect (id, unacked) pairs before mutating self.
         let mut updates: Vec<(u32, u32)> = Vec::new();
         for &s in self.streams.values() {
             let s = stream_mut(s);
-            if s.unacked_bytes >= threshold && !s.remote_closed() {
-                updates.push((s.id, s.unacked_bytes));
-                s.unacked_bytes = 0;
+            if s.unacked_bytes < threshold || s.remote_closed() {
+                continue;
             }
+            if s.client_ref()
+                .is_some_and(|c| c.signals.is_receive_paused())
+            {
+                continue;
+            }
+            updates.push((s.id, s.unacked_bytes));
+            s.unacked_bytes = 0;
         }
         for (id, unacked) in updates {
             self.write_window_update(id, unacked);
         }
-        // PERF(port): Zig iterated and wrote in one pass; profile if extra Vec matters.
+        // PERF: could iterate and write in one pass; profile if extra Vec matters.
     }
 
     pub fn flush(&mut self) -> Result<bool, Error> {
-        // PORT NOTE: reshaped for borrowck — capture as `bun_ptr::RawSlice`
-        // (encapsulated outlives-holder invariant) so the loop can borrow
-        // `self.socket` while still subslicing `write_buffer`. The buffer is
-        // not reallocated until `wrote()` after the loop.
+        // Captured as `bun_ptr::RawSlice` (encapsulated outlives-holder
+        // invariant) so the loop can borrow `self.socket` while still
+        // subslicing `write_buffer`. The buffer is not reallocated until
+        // `wrote()` after the loop.
         let pending = bun_ptr::RawSlice::new(self.write_buffer.slice());
         if pending.is_empty() {
             return Ok(false);
@@ -658,11 +691,10 @@ impl ClientSession {
             }
         } else {
             self.read_buffer.extend_from_slice(incoming);
-            // PORT NOTE: reshaped for borrowck — `parse_frames` takes
-            // `&mut self` plus a view into `self.read_buffer`. Capture as
-            // `bun_ptr::RawSlice`: read_buffer is not reallocated during
-            // parse_frames (only consumed), so the outlives-holder invariant
-            // holds for the call.
+            // `parse_frames` takes `&mut self` plus a view into
+            // `self.read_buffer`, so capture the view as `bun_ptr::RawSlice`:
+            // read_buffer is not reallocated during parse_frames (only
+            // consumed), so the outlives-holder invariant holds for the call.
             let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
             let consumed = dispatch::parse_frames(self, buf.slice());
             self.read_buffer.drain_front(consumed);
@@ -821,9 +853,9 @@ impl ClientSession {
     /// Called from the HTTP thread's shutdown queue when a fetch on this
     /// session is aborted. RST_STREAMs that one request; siblings continue.
     pub fn abort_by_http_id(&mut self, async_http_id: u32) {
-        // PORT NOTE: reshaped for borrowck — find index via raw-ptr field read
-        // first, then swap_remove, so no `&mut HTTPClient` is held across the
-        // Vec mutation and no `&mut` is materialised during iteration.
+        // Find the index via a raw-ptr field read first, then swap_remove, so
+        // no `&mut HTTPClient` is held across the Vec mutation and no `&mut`
+        // is materialised during iteration.
         let found = self
             .pending_attach
             .iter()
@@ -835,7 +867,8 @@ impl ClientSession {
             self.maybe_release();
             return;
         }
-        // PORT NOTE: reshaped for borrowck — find target before detaching.
+        // Find the target before detaching so no borrow of `self.streams` is
+        // held across the mutation.
         let mut target: Option<*mut Stream> = None;
         for &e in self.streams.values() {
             if stream_ref(e)
@@ -981,8 +1014,8 @@ impl ClientSession {
                 }
             };
             // handleResponseMetadata set is_redirect_pending. The doRedirect
-            // contract assumes the caller already detached the stream
-            // (http.zig:1062). Detach + RST here unconditionally so the
+            // contract assumes the caller already detached the stream.
+            // Detach + RST here unconditionally so the
             // header_progress path below can never re-enter doRedirect via
             // progressUpdate while the old Stream still points at this
             // client — that path would attach a second Stream to the same
@@ -1013,7 +1046,7 @@ impl ClientSession {
                 return self.finish_stream(stream, client);
             }
             client.h2_clone_metadata();
-            // Mirror the h1 path (http.zig handleOnDataHeaders): deliver headers
+            // Mirror the h1 path: deliver headers
             // to JS now so `await fetch()` resolves and `getReader()` can enable
             // response_body_streaming. Without this, a content-length response
             // buffers the entire body before the Response promise settles.
@@ -1121,5 +1154,3 @@ impl Drop for ClientSession {
         // bun.destroy(this) — handled by heap::take in `deref`.
     }
 }
-
-// ported from: src/http/h2_client/ClientSession.zig

@@ -234,7 +234,7 @@ struct SecretsJobOptions {
     }
 };
 
-// C interface implementation for Zig binding
+// C interface implementation for the native binding
 extern "C" {
 
 // Runs on the threadpool - does the actual platform API work
@@ -281,7 +281,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
         }
         JSValue error = opts->error.toJS(vm, global);
         RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, promise->reject(vm, global, error));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, error));
     } else {
         // Success cases
         JSValue result;
@@ -315,7 +315,7 @@ void Bun__SecretsJobOptions__deinit(SecretsJobOptions* opts)
     delete opts;
 }
 
-// Zig binding exports
+// Native binding exports
 void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise);
 
 } // extern "C"

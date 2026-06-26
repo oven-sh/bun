@@ -236,7 +236,7 @@ WTF::String formatStackTrace(
     sb.append("\n"_s);
 
     // Pass 1: collect (line, col, source_url) for frames that should be
-    // source-mapped, then batch the remap so the Zig side can resolve each
+    // source-mapped, then batch the remap so the Rust side can resolve each
     // file's map once instead of per frame.
     WTF::Vector<ZigStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
@@ -250,7 +250,7 @@ WTF::String formatStackTrace(
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
         ZigStackFrame& remappedFrame = remappedFrames[i];
-        // Match `ZigStackFramePosition.invalid` exactly so the Zig batch loop's
+        // Match `ZigStackFramePosition::INVALID` exactly so the Rust batch loop's
         // `position.isInvalid()` skips frames we never populate (vm-context
         // frames, frames without line/col info). memset alone leaves
         // `line_start_byte = 0` which fails that byte-compare.

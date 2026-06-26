@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
 import { tls as cert1, isDebug } from "harness";
 import { AddressInfo } from "net";
@@ -700,6 +701,56 @@ it("connectionListener should emit the right amount of times, and with alpnProto
   expect(count).toBe(50);
 });
 
+it("destroying the socket from inside SNICallback or ALPNCallback does not crash the process", async () => {
+  // Both callbacks run synchronously from inside the native handshake; a
+  // destroy() there must defer the SSL teardown until the handshake call
+  // unwinds instead of freeing it out from under BoringSSL.
+  const connections: Array<{ destroy(): void }> = [];
+  for (const extra of [
+    {
+      ALPNCallback(this: unknown, { protocols }: { protocols: string[] }) {
+        (this as { destroy(): void }).destroy();
+        return protocols[0];
+      },
+    },
+    {
+      SNICallback(_name: string, cb: (err: Error | null, ctx?: unknown) => void) {
+        connections.at(-1)?.destroy();
+        cb(null, undefined);
+      },
+    },
+  ]) {
+    // Declared above the for-of's iterable so the SNICallback closure (built
+    // once when the array literal is evaluated) captures it; reset per case.
+    connections.length = 0;
+    const server = tls.createServer({ key: cert1.key, cert: cert1.cert, ...extra }, socket => socket.end());
+    server.on("connection", socket => connections.push(socket));
+    server.on("tlsClientError", () => {});
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>(resolve => {
+      const client = tls.connect(
+        {
+          port,
+          rejectUnauthorized: false,
+          ALPNProtocols: ["x/1"],
+          servername: "x.test",
+          checkServerIdentity: () => undefined,
+        },
+        () => {
+          client.end();
+          resolve();
+        },
+      );
+      client.on("error", () => resolve());
+      client.on("close", () => resolve());
+    });
+    server.close();
+  }
+  // Reaching here without an abort/ASAN report is the assertion.
+  expect(true).toBe(true);
+});
+
 it("leaves socket.authorized false unless a client certificate was requested and verified", async () => {
   // A server that never requested a client certificate must not report the
   // connection as authorized (matches Node.js fail-closed semantics).
@@ -770,4 +821,410 @@ it("leaves socket.authorized false unless a client certificate was requested and
       server.close();
     }
   }
+});
+
+it("createServer({pfx, requestCert}) verifies client certificates against the pfx-embedded CA", async () => {
+  // agent1.pfx bundles agent1's key/cert plus ca1; a server built from it must
+  // be able to verify a client certificate signed by that embedded CA.
+  const fixtures = join(import.meta.dir, "../test/fixtures/keys");
+  const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+  const server: Server = createServer(
+    {
+      pfx: readFileSync(join(fixtures, "agent1.pfx")),
+      passphrase: "sample",
+      requestCert: true,
+      rejectUnauthorized: false,
+    },
+    socket => {
+      resolve(socket.authorized);
+      socket.end();
+    },
+  );
+  server.on("error", reject);
+  server.listen(0);
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  const client = connect({
+    port: address.port,
+    host: "127.0.0.1",
+    key: readFileSync(join(fixtures, "agent1-key.pem"), "utf8"),
+    cert: readFileSync(join(fixtures, "agent1-cert.pem"), "utf8"),
+    rejectUnauthorized: false,
+  });
+  client.on("error", reject);
+  try {
+    expect(await promise).toBe(true);
+  } finally {
+    client.end();
+    server.close();
+  }
+});
+
+it("SNICallback errors abort the handshake and surface as tlsClientError", async () => {
+  // Node drops the connection before the handshake completes (no TLS alert is
+  // sent) and emits 'tlsClientError' on the server with the callback's error.
+  const cases: [string, (name: string, cb: (err: Error | null, ctx?: unknown) => void) => void, string][] = [
+    ["cb(error)", (_name, cb) => cb(new Error("sni rejected")), "sni rejected"],
+    ["invalid context", (_name, cb) => cb(null, {}), "Invalid SNI context"],
+    [
+      "throw",
+      () => {
+        throw new Error("sni threw");
+      },
+      "sni threw",
+    ],
+  ];
+  for (const [label, SNICallback, expectedMessage] of cases) {
+    const server: Server = createServer({ ...COMMON_CERT, SNICallback });
+    const tlsClientErrors: Error[] = [];
+    server.on("tlsClientError", err => tlsClientErrors.push(err));
+    server.on("secureConnection", () => {
+      throw new Error(`secureConnection must not fire (${label})`);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client = connect({ port, host: "127.0.0.1", servername: "a.example.com", rejectUnauthorized: false });
+    const [clientErr] = (await once(client, "error")) as [Error];
+    // The server dropped the connection before the handshake completed - the
+    // client must NOT see a TLS alert error.
+    expect(clientErr.message).toMatch(/disconnected before secure TLS connection was established|ECONNRESET/);
+    expect(tlsClientErrors.length).toBe(1);
+    expect(tlsClientErrors[0].message).toBe(expectedMessage);
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("SNICallback returning no context falls through to the default context", async () => {
+  const server: Server = createServer({ ...COMMON_CERT, SNICallback: (_name, cb) => cb(null, null) }, socket => {
+    socket.end();
+  });
+  server.on("tlsClientError", err => {
+    throw err;
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = connect({ port, host: "127.0.0.1", servername: "a.example.com", rejectUnauthorized: false });
+  await once(client, "secureConnect");
+  client.end();
+  server.close();
+  await once(server, "close");
+});
+
+it("ALPNCallback errors refuse the connection and surface as tlsClientError", async () => {
+  const cases: [
+    string,
+    (arg: { servername: string; protocols: string[] }) => string | undefined,
+    RegExp | undefined,
+    RegExp,
+  ][] = [
+    [
+      "invalid result",
+      () => "not-offered",
+      /ERR_TLS_ALPN_CALLBACK_INVALID_RESULT/,
+      /did not match any of the client's offered protocols/,
+    ],
+    [
+      "throw",
+      () => {
+        throw new Error("alpn threw");
+      },
+      undefined,
+      /alpn threw/,
+    ],
+  ];
+  for (const [label, ALPNCallback, codeRe, msgRe] of cases) {
+    const server: Server = createServer({ ...COMMON_CERT, ALPNCallback });
+    const tlsClientErrors: (Error & { code?: string })[] = [];
+    server.on("tlsClientError", err => tlsClientErrors.push(err));
+    server.on("secureConnection", () => {
+      throw new Error(`secureConnection must not fire (${label})`);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client = connect({
+      port,
+      host: "127.0.0.1",
+      ALPNProtocols: ["http/1.1", "h2"],
+      rejectUnauthorized: false,
+    });
+    // The client gets the fatal no_application_protocol alert (or sees the
+    // connection drop) - either way the connection must fail.
+    await once(client, "error");
+    expect(tlsClientErrors.length).toBe(1);
+    if (codeRe) expect(String(tlsClientErrors[0].code)).toMatch(codeRe);
+    expect(tlsClientErrors[0].message).toMatch(msgRe);
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("ALPNCallback returning an offered protocol completes the handshake with it", async () => {
+  const server: Server = createServer({ ...COMMON_CERT, ALPNCallback: () => "h2" }, socket => {
+    expect((socket as TLSSocket).alpnProtocol).toBe("h2");
+    socket.end();
+  });
+  server.on("tlsClientError", err => {
+    throw err;
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = connect({ port, host: "127.0.0.1", ALPNProtocols: ["http/1.1", "h2"], rejectUnauthorized: false });
+  await once(client, "secureConnect");
+  expect(client.alpnProtocol).toBe("h2");
+  client.end();
+  server.close();
+  await once(server, "close");
+});
+
+it("an asynchronous SNICallback suspends the handshake and resumes with the selected context", async () => {
+  // The callback resolves on a later tick - the handshake must wait for it
+  // (BoringSSL select-certificate retry) instead of falling through to the
+  // default context.
+  const sniCert = { ...COMMON_CERT };
+  let callbackRan = false;
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    SNICallback: (name, cb) => {
+      setTimeout(() => {
+        callbackRan = true;
+        expect(name).toBe("async.example.com");
+        cb(null, tls.createSecureContext(sniCert));
+      }, 50);
+    },
+  });
+  server.on("secureConnection", socket => {
+    expect((socket as TLSSocket).servername).toBe("async.example.com");
+    socket.end();
+  });
+  server.on("tlsClientError", err => {
+    throw err;
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = connect({ port, host: "127.0.0.1", servername: "async.example.com", rejectUnauthorized: false });
+  await once(client, "secureConnect");
+  expect(callbackRan).toBe(true);
+  client.end();
+  await once(client, "close");
+  server.close();
+  await once(server, "close");
+});
+
+it("an asynchronous SNICallback error aborts the suspended handshake with tlsClientError", async () => {
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    SNICallback: (_name, cb) => {
+      setTimeout(() => cb(new Error("async sni rejected")), 50);
+    },
+  });
+  const tlsClientErrors: Error[] = [];
+  server.on("tlsClientError", err => tlsClientErrors.push(err));
+  server.on("secureConnection", () => {
+    throw new Error("secureConnection must not fire");
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = connect({ port, host: "127.0.0.1", servername: "rejected.example.com", rejectUnauthorized: false });
+  await once(client, "error");
+  expect(tlsClientErrors.length).toBe(1);
+  expect(tlsClientErrors[0].message).toBe("async sni rejected");
+  server.close();
+  await once(server, "close");
+});
+
+it("destroying the connection while an asynchronous SNICallback is pending does not crash", async () => {
+  let resolveLater: (() => void) | undefined;
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    SNICallback: (_name, cb) => {
+      // Resolve only after the client is long gone.
+      resolveLater = () => cb(null, tls.createSecureContext({ ...COMMON_CERT }));
+    },
+  });
+  server.on("tlsClientError", () => {});
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = connect({ port, host: "127.0.0.1", servername: "gone.example.com", rejectUnauthorized: false });
+  client.on("error", () => {});
+  // Give the ClientHello time to reach the server and suspend, then kill the client.
+  await new Promise(r => setTimeout(r, 100));
+  client.destroy();
+  await new Promise(r => setTimeout(r, 100));
+  // The late resolution must be a harmless no-op.
+  resolveLater?.();
+  await new Promise(r => setTimeout(r, 100));
+  server.close();
+  await once(server, "close");
+  expect(true).toBe(true);
+});
+
+it("SNICallback accepts a raw native context (Node's context.context || context)", async () => {
+  // cb(null, secureContext.context) - passing the unwrapped native context -
+  // must select it, same as passing the wrapper.
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    SNICallback: (_name, cb) => {
+      cb(null, (tls.createSecureContext(COMMON_CERT) as any).context);
+    },
+  });
+  server.on("secureConnection", socket => socket.end());
+  server.on("tlsClientError", err => {
+    throw err;
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = connect({ port, host: "127.0.0.1", servername: "raw.example.com", rejectUnauthorized: false });
+  await once(client, "secureConnect");
+  expect(client.authorized).toBe(false); // self-signed, but the handshake completed
+  client.end();
+  await once(client, "close");
+  server.close();
+  await once(server, "close");
+});
+
+it("SNICallback runs even when the requested servername matches the bind hostname", async () => {
+  // Node calls a user SNICallback for every SNI; the listener's own bind
+  // hostname being pre-registered internally must not shadow it. The callback
+  // selects a DIFFERENT certificate (the RSA fixture) than the server's own
+  // (COMMON_CERT), and the client must actually receive the callback's pick -
+  // not just observe that the callback ran while the internal entry's cert
+  // got presented anyway.
+  let sniCalls = 0;
+  const sniCert = tls.createSecureContext({ key: rawKey, cert: cert });
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    SNICallback: (name, cb) => {
+      sniCalls++;
+      expect(name).toBe("localhost");
+      cb(null, sniCert);
+    },
+  });
+  server.on("secureConnection", socket => socket.end());
+  server.on("tlsClientError", err => {
+    throw err;
+  });
+  server.listen(0, "localhost");
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  // host: "localhost" defaults servername to "localhost" - the bind hostname.
+  const client = connect({ port, host: "localhost", rejectUnauthorized: false });
+  await once(client, "secureConnect");
+  expect(sniCalls).toBe(1);
+  // The peer certificate must be the SNICallback's RSA cert, not COMMON_CERT.
+  const peerCert = client.getPeerCertificate();
+  const expectedCert = new crypto.X509Certificate(cert);
+  expect(peerCert.fingerprint256).toBe(expectedCert.fingerprint256);
+  client.end();
+  await once(client, "close");
+  server.close();
+  await once(server, "close");
+});
+
+it("setSecureContext() clears omitted options instead of keeping stale values", async () => {
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    ca: [COMMON_CERT.cert],
+    ciphers: "TLS_AES_256_GCM_SHA384",
+  });
+  expect((server as any).ca).toEqual([COMMON_CERT.cert]);
+  expect((server as any).ciphers).toBe("TLS_AES_256_GCM_SHA384");
+  // Replacing the context without ca/ciphers must clear them (Node resets
+  // omitted fields), not silently keep the previous call's values.
+  server.setSecureContext({ ...COMMON_CERT });
+  expect((server as any).ca).toBeUndefined();
+  expect((server as any).ciphers).toBeUndefined();
+  expect((server as any).cert).toBe(COMMON_CERT.cert);
+  expect((server as any).key).toBe(COMMON_CERT.key);
+});
+
+it("SNICallback rejecting with a non-Error value drops the connection (no hang)", async () => {
+  // cb(true) / cb("reason"): Node treats any truthy err as an abort. The
+  // boolean form must not be confused with internal sentinels - the
+  // connection is dropped, not suspended.
+  for (const rejection of [true, "rejected", "throw"] as const) {
+    const server: Server = createServer({
+      ...COMMON_CERT,
+      SNICallback: (_name, cb) => {
+        // "throw" exercises the synchronous-throw path (throw true), which
+        // must be normalized the same way as cb(non-Error).
+        if (rejection === "throw") throw true;
+        cb(rejection as any);
+      },
+    });
+    const clientErrors: Error[] = [];
+    server.on("tlsClientError", err => clientErrors.push(err));
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client = connect({ port, host: "127.0.0.1", servername: "reject.example.com", rejectUnauthorized: false });
+    const [err] = await once(client, "error");
+    expect((err as Error).message).toMatch(/disconnected before secure|ECONNRESET/);
+    expect(clientErrors.length).toBe(1);
+    server.close();
+    await once(server, "close");
+  }
+});
+
+it("an asynchronous SNICallback resolving cb(null, null) falls back like the synchronous form", async () => {
+  // Async null selection must take the same fallback path as sync null - the
+  // handshake completes with the server's own certificate.
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    SNICallback: (_name, cb) => {
+      setTimeout(() => cb(null, null as any), 30);
+    },
+  });
+  server.on("secureConnection", socket => socket.end());
+  server.on("tlsClientError", err => {
+    throw err;
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = connect({ port, host: "127.0.0.1", servername: "fallback.example.com", rejectUnauthorized: false });
+  await once(client, "secureConnect");
+  const expectedCert = new crypto.X509Certificate(COMMON_CERT.cert);
+  expect(client.getPeerCertificate().fingerprint256).toBe(expectedCert.fingerprint256);
+  client.end();
+  await once(client, "close");
+  server.close();
+  await once(server, "close");
+});
+
+it("an asynchronous SNICallback resolving cb(null, null) still honors addContext entries", async () => {
+  // The async-null fallback must consult the static SNI tree with the
+  // servername, not just fall to the default context: addContext's cert is
+  // the one the client must receive.
+  const altCert = { key: rawKey, cert: cert };
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    SNICallback: (_name, cb) => {
+      setTimeout(() => cb(null, null as any), 30);
+    },
+  });
+  server.addContext("alt.example.com", altCert);
+  server.on("secureConnection", socket => socket.end());
+  server.on("tlsClientError", err => {
+    throw err;
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  const client = connect({ port, host: "127.0.0.1", servername: "alt.example.com", rejectUnauthorized: false });
+  await once(client, "secureConnect");
+  const expectedCert = new crypto.X509Certificate(cert);
+  expect(client.getPeerCertificate().fingerprint256).toBe(expectedCert.fingerprint256);
+  client.end();
+  await once(client, "close");
+  server.close();
+  await once(server, "close");
 });

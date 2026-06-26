@@ -15,7 +15,6 @@ workspace = true
 [dependencies]
 bun_opaque.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
@@ -30,6 +29,7 @@ bun_alloc.workspace = true
 bun_base64.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
+bun_highway.workspace = true
 # TODO(b2-blocked): bun_parsers — json::parse signature is live; wire in
 # once parse_json un-gates (currently blocked on bun_ast::Source lifetime,
 # not on bun_parsers).

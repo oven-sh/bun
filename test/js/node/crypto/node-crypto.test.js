@@ -331,6 +331,38 @@ describe("createHash", () => {
     });
   }
 
+  // https://github.com/oven-sh/bun/issues/18019
+  describe.each([
+    ["shake128", "7f9c2ba4e88f827d616045507605853e"],
+    ["shake-128", "7f9c2ba4e88f827d616045507605853e"],
+    ["SHAKE128", "7f9c2ba4e88f827d616045507605853e"],
+    ["SHAKE-128", "7f9c2ba4e88f827d616045507605853e"],
+    ["Shake-128", "7f9c2ba4e88f827d616045507605853e"],
+    ["shake256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["shake-256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["SHAKE256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["SHAKE-256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["Shake-256", "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f"],
+    ["blake2s256", "69217a3079908094e11121d042354a7c1f55b6482ca1a51e1b250dfd1ed0eef9"],
+    ["BLAKE2s256", "69217a3079908094e11121d042354a7c1f55b6482ca1a51e1b250dfd1ed0eef9"],
+  ])("accepts alias %s", (alias, expected) => {
+    it("via createHash", () => {
+      expect(crypto.createHash(alias).update("").digest("hex")).toBe(expected);
+    });
+    it("via crypto.hash", () => {
+      expect(crypto.hash(alias, "", "hex")).toBe(expected);
+    });
+    it("via Bun.CryptoHasher", () => {
+      expect(new Bun.CryptoHasher(alias).update("").digest("hex")).toBe(expected);
+    });
+  });
+
+  it("Bun.CryptoHasher HMAC accepts mixed-case algorithm", () => {
+    const expected = new Bun.CryptoHasher("sha256", "key").update("data").digest("hex");
+    expect(new Bun.CryptoHasher("SHA-256", "key").update("data").digest("hex")).toBe(expected);
+    expect(new Bun.CryptoHasher("SHA256", "key").update("data").digest("hex")).toBe(expected);
+  });
+
   it("update & digest", () => {
     const hash = crypto.createHash("sha256");
     hash.update("some data to hash");

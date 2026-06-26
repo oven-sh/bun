@@ -5,12 +5,12 @@ use crate::error::MinifyErr;
 use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
 
-// `fn StyleRule(comptime R: type) type { return struct {...} }` → generic struct.
+// `StyleRule` is generic over the custom at-rule type `R`.
 //
-// PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena (bumpalo Vecs).
+// `DeclarationBlock<'bump>` borrows the parser arena (bumpalo Vecs).
 // Threading `'bump` here cascades into `CssRule<'bump, R>` / `CssRuleList<'bump, R>`
-// (rules/mod.rs PORT NOTE) which is deferred until the leaf rules un-gate
-// together; for now the lifetime is erased to `'static`.
+// (see the rules/mod.rs lifetime-erasure note); for now the lifetime is erased
+// to `'static`.
 pub struct StyleRule<R> {
     /// The selectors for the style rule.
     pub selectors: selector::parser::SelectorList,
@@ -36,13 +36,11 @@ impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub fn hash_key(&self) -> u64 {
-        // std.hash.Wyhash.init(0) — same algorithm as bun.hash
+        // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // PORT NOTE: `DeclarationBlock::hash_property_ids` is still
-        // ``-gated in declaration.rs; inline its body here. The
-        // Zig `PropertyId.hash` is `hasher.update(asBytes(&@intFromEnum(self)))`
-        // — i.e. just the u16 tag bytes.
+        // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
+        // property-id tag bytes.
         for decl in self.declarations.declarations.iter() {
             let tag = decl.property_id().tag() as u16;
             hasher.update(&tag.to_ne_bytes());
@@ -175,7 +173,7 @@ impl<R> StyleRule<R> {
             //   #[cfg(feature = "sourcemap")]
             //   dest.add_mapping(self.loc);
 
-            // PORT NOTE: `dest.context()` borrows `dest`; copy the (Copy) raw
+            // `dest.context()` borrows `dest`; copy the (Copy) raw
             // ctx field out so it doesn't conflict with the `&mut *dest` below.
             let ctx = dest.ctx;
             // Each rule prelude gets its own budget for `&` substitutions when
@@ -192,8 +190,8 @@ impl<R> StyleRule<R> {
             dest.indent();
 
             let mut i: usize = 0;
-            // Zig: inline for (.{"declarations", "important_declarations"}) — @field reflection.
-            // Unrolled into a pair of (slice, important) tuples; same iteration order.
+            // A pair of (slice, important) tuples; declarations first, then
+            // important declarations.
             let decls_groups: [(&[Property], bool); 2] = [
                 (self.declarations.declarations.as_slice(), false),
                 (self.declarations.important_declarations.as_slice(), true),
@@ -211,10 +209,8 @@ impl<R> StyleRule<R> {
                         }
 
                         if dest.css_module.is_some() {
-                            // PORT NOTE: reshaped for borrowck — Zig
-                            // `if (dest.css_module) |*css_module|
-                            //     css_module.handleComposes(dest, ...)` overlaps
-                            // `&mut dest.css_module` with `&mut *dest`. Move the
+                            // `handle_composes` needs `&mut dest` while the
+                            // module also lives in `dest.css_module`. Move the
                             // module out for the duration of the call, then put
                             // it back before any `dest.new_error` early return.
                             let mut cm = dest.css_module.take();
@@ -250,7 +246,6 @@ impl<R> StyleRule<R> {
             }
         }
 
-        // Zig: local `Helpers` struct with two fns. Rust: nested fn items (no capture needed).
         fn helpers_newline<R>(
             self_: &StyleRule<R>,
             d: &mut Printer,
@@ -303,8 +298,7 @@ impl<R> StyleRule<R> {
                 helpers_newline(self, dest, supports_nesting, len)?;
             }
             dest.skip_prefixed_nested_rules = skip_prefixed_nested;
-            // Zig: dest.withContext(&this.selectors, this, struct { fn toCss(...) }.toCss)
-            // Rust `with_context` keeps the (closure-data, fn) split so the
+            // `with_context` keeps the (closure-data, fn) split so the
             // `Printer` reborrow lives only inside `func`.
             let result =
                 dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d));
@@ -327,13 +321,6 @@ impl<R> StyleRule<R> {
         use css::context::DeclarationContext;
 
         let mut unused = false;
-        // TODO(port): blocked_on key-type mismatch — `selector::is_unused` takes
-        // `&ArrayHashMap<&[u8], ()>` but `MinifyContext.unused_symbols` is
-        // `&ArrayHashMap<Box<[u8]>, ()>` (rules/mod.rs PORT NOTE: "reconcile when
-        // style.rs::minify un-gates — single key type, Borrow<[u8]> lookup").
-        // The reconciliation lives in rules/mod.rs + selectors/selector.rs, not
-        // here; gate the body until those agree.
-
         if context.unused_symbols.count() > 0 {
             if selector::is_unused(
                 self.selectors.v.slice(),
@@ -368,7 +355,7 @@ impl<R> StyleRule<R> {
         // }
 
         context.handler_context.context = DeclarationContext::StyleRule;
-        // PORT NOTE: `DeclarationBlock<'static>` (struct PORT NOTE above) forces
+        // `DeclarationBlock<'static>` (see the struct-level note above) forces
         // `minify` to want `DeclarationHandler<'static>`; route through the
         // single centralized `'bump`-erasure helper instead of open-coding the
         // lifetime cast. Collapses when `CssRule<'bump, R>`
@@ -484,13 +471,12 @@ impl<R> StyleRule<R> {
                     .declarations
                     .len()
                     .min(other.declarations.declarations.len());
-                // for (a, b) |*a, *b| → zip; Zig asserts equal length but here len is @min so truncation is intended.
+                // len is the min of the two lengths, so truncation is intended.
                 for (a, b) in self.declarations.declarations[..len]
                     .iter()
                     .zip(&other.declarations.declarations[..len])
                 {
-                    // PORT NOTE: Zig `PropertyId.eql` == tag+prefix compare;
-                    // that's exactly the `PartialEq` impl on `PropertyId`.
+                    // `PropertyId`'s `PartialEq` is a tag+prefix compare.
                     if a.property_id() != b.property_id() {
                         break 'brk false;
                     }
@@ -519,10 +505,7 @@ impl<R> StyleRule<R> {
     where
         R: crate::generics::DeepClone<'bump>,
     {
-        // css is an AST crate (PORTING.md §Allocators): std.mem.Allocator → &'bump Bump, threaded.
-        // PORT NOTE: `css.implementDeepClone` field-walk. `declarations` routes
-        // through `dc::decl_block` until `DeclarationBlock::deep_clone` un-gates
-        // (declaration.rs — bottoms out on `Property: DeepClone`).
+        // css is an AST crate (PORTING.md §Allocators): the allocator is &'bump Bump, threaded.
         Self {
             selectors: self.selectors.deep_clone(),
             vendor_prefix: self.vendor_prefix,
@@ -532,5 +515,3 @@ impl<R> StyleRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/style.zig

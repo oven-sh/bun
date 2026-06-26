@@ -1,14 +1,11 @@
-//! YAML parser ported from src/interchange/yaml.zig
+//! YAML parser.
 //!
-//! NOTE ON GENERICITY: Zig's `Parser(comptime enc: Encoding)` returns a type whose
-//! `enc.unit()` is `u8` or `u16`. Rust const generics cannot return types, so this
-//! port models `Encoding` as a trait with an associated `Unit` type, and `Parser<Enc>`
-//! is generic over `Enc: Encoding`.
+//! `Encoding` is modeled as a trait with an associated `Unit` type (`u8` or
+//! `u16`), and `Parser<Enc>` is generic over `Enc: Encoding`.
 //!
-//! NOTE ON LABELED SWITCH: Zig's `label: switch (x) { ... continue :label y; }` is a
-//! state-machine loop. These are ported as `let mut __c = x; loop { match __c { ... } }`
-//! with `__c = y; continue;` for `continue :label y`. Each is marked
-//! `// PORT NOTE: labeled-switch loop`.
+//! Several scanners are state-machine loops written as
+//! `let mut __c = x; loop { match __c { ... } }` with `__c = y; continue;`.
+//! Each is marked `// labeled-switch loop`.
 
 use core::cmp::Ordering;
 use core::fmt;
@@ -31,7 +28,6 @@ impl YAML {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<Expr, YamlParseError> {
-        // Zig: `bun.analytics.Features.yaml_parse += 1;`
         bun_core::analytics::Features::yaml_parse_inc();
 
         let mut parser: Parser<Utf8> = Parser::init(bump, source.contents());
@@ -56,7 +52,6 @@ impl YAML {
                     ast::ExprNodeList::init_capacity(stream.docs.len());
                 for doc in &stream.docs {
                     items.push(doc.root);
-                    // PERF(port): was appendAssumeCapacity
                 }
                 Ok(Expr::init(
                     E::Array {
@@ -83,11 +78,8 @@ pub enum YamlParseError {
 bun_core::oom_from_alloc!(YamlParseError);
 
 impl From<YamlParseError> for bun_core::Error {
-    // PORT NOTE: Zig `YAML.ParseError` is an `error{...}` set, so callers
-    // (e.g. `try YAML.parse(...)` in `ParseTask.getAST`) coerce it into the
-    // wider inferred error union. Mirror that by mapping each variant to its
-    // Zig-tag string via `bun.err!`, the same shape `json5::ExternalError`
-    // uses one file over.
+    // Map each variant to its tag string via `bun.err!`, the same shape
+    // `json5::ExternalError` uses one file over.
     fn from(e: YamlParseError) -> Self {
         match e {
             YamlParseError::OutOfMemory => bun_core::err!("OutOfMemory"),
@@ -101,7 +93,10 @@ impl From<YamlParseError> for bun_core::Error {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> ParseResult<Enc> {
+pub fn parse<'i, Enc: Encoding>(
+    bump: &'i bun_alloc::Arena,
+    input: &'i [Enc::Unit],
+) -> ParseResult<'i, Enc> {
     let mut parser: Parser<Enc> = Parser::init(bump, input);
 
     match parser.parse() {
@@ -110,16 +105,12 @@ pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> Par
     }
 }
 
-pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<Enc>, writer: &mut W) -> fmt::Result {
-    // Zig body (yaml.zig:44-53) constructs `Parser(encoding).Printer(@TypeOf(writer))`
-    // and calls `printer.print()`. The `Printer` type is commented out in the spec
-    // (yaml.zig:4927-5250) and operates on the removed `Node` enum, so any Zig
-    // call to `print()` is a compile error on instantiation. Rust eagerly checks
-    // generics, so we cannot mirror that; instead this is a hard panic on the
+pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<'_, Enc>, writer: &mut W) -> fmt::Result {
+    // The printer was never implemented; this is a hard panic on the
     // (currently unreachable — `rg yaml::print src/` has no callers) path.
     let _ = (stream, writer);
     panic!(
-        "yaml::print: Printer is commented out in yaml.zig (dead-by-spec; uses removed Node type)"
+        "yaml::print: Printer is commented out in the Zig original (dead-by-spec; uses removed Node type)"
     );
 }
 
@@ -271,8 +262,7 @@ impl IndentIndicator {
             7 => IndentIndicator::N7,
             8 => IndentIndicator::N8,
             9 => IndentIndicator::N9,
-            // Zig's safety-checked `@enumFromInt` traps on out-of-range; the
-            // only caller (`read_indentation_indicator`) passes `digit - b'0'`
+            // The only caller (`read_indentation_indicator`) passes `digit - b'0'`
             // after a `b'1'..=b'9'` guard, so this arm is unreachable.
             _ => panic!("invalid IndentIndicator"),
         }
@@ -393,11 +383,8 @@ impl Line {
     }
 }
 
-// Zig: comptime { bun.assert(Pos != Indent); ... } — type-distinctness checks.
-// Rust newtypes are already distinct; nothing to assert.
-
 // ───────────────────────────────────────────────────────────────────────────
-// Encoding trait (replaces Zig `Encoding` enum + `enc.unit()` type fn)
+// Encoding trait
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -407,11 +394,10 @@ pub enum EncodingKind {
     Utf16,
 }
 
-/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Replaces Zig's
-/// `enc.literal("...")` (a `comptime` utf8→utf16 transcode via
-/// `std.unicode.utf8ToUtf16LeStringLiteral`). Rust cannot do const transcoding
-/// behind a trait method, so the literal is widened at the call site into this
-/// inline buffer instead. All call sites in this file pass ≤4-byte ASCII; the
+/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Rust cannot do
+/// const transcoding behind a trait method, so the literal is widened at the
+/// call site into this inline buffer instead.
+/// All call sites in this file pass ≤4-byte ASCII; the
 /// cap of 8 leaves headroom for new literals.
 #[derive(Clone, Copy)]
 pub struct EncLit<U: Copy + Default> {
@@ -441,7 +427,7 @@ impl<U: Copy + Default> AsRef<[U]> for EncLit<U> {
     }
 }
 
-/// Trait modeling Zig's `Encoding` comptime enum where `unit()` returns a type.
+/// Code-unit encoding of the parser input; `Unit` is `u8` or `u16`.
 pub trait Encoding: Copy + 'static {
     type Unit: Copy + Eq + Ord + Default + fmt::Debug + Into<u32> + 'static;
 
@@ -458,19 +444,17 @@ pub trait Encoding: Copy + 'static {
         u.into()
     }
 
-    /// `enc.literal("...")` — Zig's comptime string literal in the target
-    /// encoding. Callers pass ASCII only; widened into an inline `EncLit`
-    /// buffer (see `EncLit` doc for the const-generics rationale).
+    /// A string literal in the target encoding. Callers pass ASCII only;
+    /// widened into an inline `EncLit` buffer (see `EncLit` doc for the
+    /// const-generics rationale).
     fn literal(s: &'static [u8]) -> EncLit<Self::Unit>;
 
     /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.
     fn bom_len(input: &[Self::Unit]) -> usize;
 
     /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
-    /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
-    /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
-    /// only type-check there for `unit() == u8` thanks to lazy generic
-    /// instantiation. Rust eagerly checks generics, so we route through this
+    /// (`anchors` / `tag_handles`). `StringHashMap` is keyed by `&[u8]`, so we
+    /// route through this
     /// method — identity for `u8` encodings, byte-reinterpret (`len * 2`) for
     /// `Utf16`. Byte-reinterpret preserves key uniqueness; do **not** use this
     /// for text (see `NodeScalar::to_expr` for the encoding-aware string path).
@@ -478,9 +462,7 @@ pub trait Encoding: Copy + 'static {
 
     /// Construct a Unit from a `u16` code unit. Only meaningful for `Utf16`
     /// (identity); the `u8` encodings mark this `unreachable!()` because every
-    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`. Mirrors Zig's
-    /// `text.append(@intCast(cp))` paths in `scanDoubleQuotedScalar` /
-    /// `decodeHexCodePoint` where `unit() == u16`.
+    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`.
     fn unit_from_u16(u: u16) -> Self::Unit;
 
     /// Reinterpret `&[Unit]` as `&[u16]`. Identity for `Utf16`; the `u8`
@@ -577,8 +559,7 @@ impl Encoding for Utf16 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u16> {
-        // Zig: `std.unicode.utf8ToUtf16LeStringLiteral` (comptime). All call
-        // sites pass ASCII, so widen byte-by-byte into the inline buffer.
+        // All call sites pass ASCII, so widen byte-by-byte into the inline buffer.
         debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
         let mut buf = [0u16; 8];
         let mut i = 0;
@@ -614,7 +595,7 @@ impl Encoding for Utf16 {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// chars — character classification (Zig: `Encoding.chars()` returned a type)
+// chars — character classification
 // ───────────────────────────────────────────────────────────────────────────
 
 pub mod chars {
@@ -846,8 +827,8 @@ impl StringRange {
     }
 }
 
-// PORT NOTE: reshaped for borrowck — Zig captured `parser.pos` lazily via a
-// pointer field; in Rust that pins an immutable borrow across mutating scans.
+// Capturing `parser.pos` lazily via a pointer field would pin an immutable
+// borrow across mutating scans.
 // Capture only `off` and have callers pass the end `Pos` explicitly.
 #[derive(Clone, Copy)]
 pub struct StringRangeStart {
@@ -861,6 +842,7 @@ impl StringRangeStart {
     }
 }
 
+#[derive(Clone)]
 pub enum YamlString<Enc: Encoding> {
     Range(StringRange),
     List(Vec<Enc::Unit>),
@@ -889,9 +871,6 @@ impl<Enc: Encoding> YamlString<Enc> {
     }
 
     pub fn eql(&self, r: &[u8], input: &[Enc::Unit]) -> bool {
-        // TODO(port): Zig compared []const enc.unit() against []const u8 via
-        // std.mem.eql(enc.unit(), ...) which only compiles when enc.unit() == u8.
-        // TODO(port): constrain or transcode.
         let l_slice = self.slice(input);
         if l_slice.len() != r.len() {
             return false;
@@ -903,51 +882,19 @@ impl<Enc: Encoding> YamlString<Enc> {
     }
 }
 
-// `String.Builder` — owns a back-reference into the parser. The Zig code stored
-// `parser: *Parser(enc)` and mutated `parser.whitespace_buf`. In Rust this is a
-// borrow-checker hazard (the builder borrows `&mut Parser` while the parser also
-// drives scanning). We keep a raw pointer with SAFETY notes.
-// TODO(port): refactor whitespace_buf out of Parser or pass &mut explicitly.
-pub struct StringBuilder<'a, Enc: Encoding> {
-    // PORT NOTE: a `&'a mut Parser<'a, Enc>` field would tie the borrow lifetime
-    // to Parser's input lifetime (invariant under &mut), which both fails
-    // borrowck at `string_builder()` and is exactly the aliasing the Zig already
-    // had. Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
-    // Private — invariant-bearing raw backref; reach via `parser()`/`parser_mut()`.
-    parser: *mut Parser<'a, Enc>,
+// Plain-scalar string builder. `whitespace_buf` is taken from the parser by
+// `string_builder()` and returned by `done()` for capacity reuse.
+pub struct StringBuilder<'i, Enc: Encoding> {
+    input: &'i [Enc::Unit],
+    whitespace_buf: Vec<Whitespace<Enc>>,
     pub str: YamlString<Enc>,
 }
 
-impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
-    #[inline]
-    fn parser(&self) -> &Parser<'a, Enc> {
-        // SAFETY: callers construct StringBuilder via Parser::string_builder{,_raw}()
-        // which stores `self as *mut Parser`; the builder never outlives the parser
-        // stack frame and is the sole mutator of `whitespace_buf` while live.
-        unsafe { &*self.parser }
-    }
-    #[inline]
-    fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
-        // SAFETY: same backref invariant as `parser()`; `&mut self` guarantees
-        // exclusive access to the builder so the derived `&mut Parser` does not
-        // alias another live borrow.
-        unsafe { &mut *self.parser }
-    }
-    /// Shortcut for `self.parser().input` that returns the slice with its
-    /// original `'a` lifetime (decoupled from `&self`), so it can be hoisted
-    /// above `match &mut self.str` without tripping borrowck.
-    #[inline]
-    fn input(&self) -> &'a [Enc::Unit] {
-        // SAFETY: same backref invariant as `parser()`; `input` is a `&'a`
-        // borrow stored in the Parser and is unaffected by any mutation this
-        // builder performs.
-        unsafe { (*self.parser).input }
-    }
-
+impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
     pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
-        assert!(self.parser().input[pos.cast()] == unit);
+        assert!(self.input[pos.cast()] == unit);
         match &mut self.str {
             YamlString::Range(range) => {
                 if range.is_empty() {
@@ -965,9 +912,8 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     }
 
     fn drain_whitespace(&mut self) -> Result<(), AllocError> {
-        // PORT NOTE: reshaped for borrowck — take ownership of buf, process, clear.
-        let buf = core::mem::take(&mut self.parser_mut().whitespace_buf);
-        let input = self.input();
+        let buf = core::mem::take(&mut self.whitespace_buf);
+        let input = self.input;
         for ws in &buf {
             match ws {
                 Whitespace::Source { pos, unit } => {
@@ -989,7 +935,6 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                         let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
                         list.extend_from_slice(range.slice(input));
                         list.push(*unit);
-                        // PERF(port): was assume_capacity
                         self.str = YamlString::List(list);
                     }
                     YamlString::List(list) => list.push(*unit),
@@ -998,8 +943,13 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         }
         let mut buf = buf;
         buf.clear();
-        self.parser_mut().whitespace_buf = buf;
+        self.whitespace_buf = buf;
         Ok(())
+    }
+
+    /// Discards pending (not yet drained) whitespace.
+    pub fn clear_whitespace(&mut self) {
+        self.whitespace_buf.clear();
     }
 
     pub fn append_source_whitespace(
@@ -1007,14 +957,12 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         unit: Enc::Unit,
         pos: Pos,
     ) -> Result<(), AllocError> {
-        self.parser_mut()
-            .whitespace_buf
-            .push(Whitespace::Source { unit, pos });
+        self.whitespace_buf.push(Whitespace::Source { unit, pos });
         Ok(())
     }
 
     pub fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
+        self.whitespace_buf.push(Whitespace::New(unit));
         Ok(())
     }
 
@@ -1024,14 +972,14 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         n: usize,
     ) -> Result<(), AllocError> {
         for _ in 0..n {
-            self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
+            self.whitespace_buf.push(Whitespace::New(unit));
         }
         Ok(())
     }
 
     pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
-        let input = self.input();
+        let input = self.input;
         match &mut self.str {
             YamlString::Range(range) => {
                 if range.is_empty() {
@@ -1056,7 +1004,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     ) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
-        let input = self.input();
+        let input = self.input;
         assert!(&input[off.cast()..end.cast()] == expected);
 
         match &mut self.str {
@@ -1077,13 +1025,12 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
 
     pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
         self.drain_whitespace()?;
-        let input = self.input();
+        let input = self.input;
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
                 list.extend_from_slice(range.slice(input));
                 list.push(unit);
-                // PERF(port): was assume_capacity
                 self.str = YamlString::List(list);
             }
             YamlString::List(list) => list.push(unit),
@@ -1096,13 +1043,12 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
             return Ok(());
         }
         self.drain_whitespace()?;
-        let input = self.input();
+        let input = self.input;
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + s.len());
                 list.extend_from_slice(range.slice(input));
                 list.extend_from_slice(s);
-                // PERF(port): was assume_capacity
                 self.str = YamlString::List(list);
             }
             YamlString::List(list) => list.extend_from_slice(s),
@@ -1115,7 +1061,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
             return Ok(());
         }
         self.drain_whitespace()?;
-        let input = self.input();
+        let input = self.input;
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + n);
@@ -1132,8 +1078,10 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         self.str.len()
     }
 
-    pub fn done(mut self) -> YamlString<Enc> {
-        self.parser_mut().whitespace_buf.clear();
+    /// Returns the built string and hands the whitespace buffer back to the parser.
+    pub fn done(mut self, parser: &mut Parser<'i, Enc>) -> YamlString<Enc> {
+        self.whitespace_buf.clear();
+        parser.whitespace_buf = core::mem::take(&mut self.whitespace_buf);
         self.str
     }
 }
@@ -1150,20 +1098,12 @@ pub enum FirstChar {
     Other,
 }
 
-// PORT NOTE: Zig defined this inline inside scanPlainScalar. Hoisted to module
-// scope so methods can be `impl`'d. `parser` is `*mut` because the outer
-// `&mut self` in scan_plain_scalar drives scanning concurrently — see
-// LIFETIMES.tsv BACKREF.
 pub struct ScalarResolverCtx<'i, Enc: Encoding> {
     pub str_builder: StringBuilder<'i, Enc>,
 
     pub resolved: bool,
     pub scalar: Option<NodeScalar<Enc>>,
     pub tag: NodeTag,
-
-    // Private — invariant-bearing raw backref (same pointer as
-    // `str_builder.parser`); never reassign independently.
-    parser: *mut Parser<'i, Enc>,
 
     pub resolved_scalar_len: usize,
 
@@ -1174,7 +1114,7 @@ pub struct ScalarResolverCtx<'i, Enc: Encoding> {
 }
 
 impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
-    pub fn done(self) -> Token<Enc> {
+    pub fn done(self, parser: &mut Parser<'i, Enc>) -> Token<Enc> {
         let multiline = self.multiline;
         let start = self.start;
         let line_indent = self.line_indent;
@@ -1183,7 +1123,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let scalar_opt = self.scalar;
 
         let scalar: TokenScalar<Enc> = 'scalar: {
-            let scalar_str = self.str_builder.done();
+            let scalar_str = self.str_builder.done(parser);
 
             if let Some(scalar) = scalar_opt {
                 if scalar_str.len() == resolved_scalar_len {
@@ -1213,9 +1153,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         })
     }
 
-    pub fn check_append(&mut self) {
-        // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
-        let parser = unsafe { &*self.parser };
+    pub fn check_append(&mut self, parser: &Parser<'i, Enc>) {
         if self.str_builder.len() == 0 {
             self.line_indent = parser.line_indent;
             self.line = parser.line;
@@ -1224,8 +1162,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
     }
 
-    pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
-        self.check_append();
+    pub fn append_source(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        unit: Enc::Unit,
+        pos: Pos,
+    ) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append_source(unit, pos)
     }
 
@@ -1237,23 +1180,32 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_source_whitespace(unit, pos)
     }
 
-    pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
-        self.check_append();
+    pub fn append_source_slice(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        off: Pos,
+        end: Pos,
+    ) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append_source_slice(off, end)
     }
 
     // may or may not contain whitespace
-    pub fn append_unknown_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
+    pub fn append_unknown_source_slice(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        off: Pos,
+        end: Pos,
+    ) -> Result<(), AllocError> {
         for _pos in off.cast()..end.cast() {
             let pos = Pos::from(_pos);
-            // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
-            let unit = unsafe { (*self.parser).input[pos.cast()] };
+            let unit = parser.input[pos.cast()];
             match Enc::wide(unit) {
                 0x20 | 0x09 | 0x0D | 0x0A => {
                     self.str_builder.append_source_whitespace(unit, pos)?;
                 }
                 _ => {
-                    self.check_append();
+                    self.check_append(parser);
                     self.str_builder.append_source(unit, pos)?;
                 }
             }
@@ -1261,8 +1213,8 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.check_append();
+    pub fn append(&mut self, parser: &Parser<'i, Enc>, unit: Enc::Unit) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append(unit)
     }
 
@@ -1270,16 +1222,25 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_whitespace(unit)
     }
 
-    pub fn append_slice(&mut self, str: &[Enc::Unit]) -> Result<(), AllocError> {
-        self.check_append();
+    pub fn append_slice(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        str: &[Enc::Unit],
+    ) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append_slice(str)
     }
 
-    pub fn append_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
+    pub fn append_n_times(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        unit: Enc::Unit,
+        n: usize,
+    ) -> Result<(), AllocError> {
         if n == 0 {
             return Ok(());
         }
-        self.check_append();
+        self.check_append(parser);
         self.str_builder.append_n_times(unit, n)
     }
 
@@ -1293,8 +1254,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
         self.str_builder.append_whitespace_n_times(unit, n)
     }
-
-    // PORT NOTE: Zig `Keywords` enum (yaml.zig:1862-1887) was unused; not ported.
 
     pub fn resolve(
         &mut self,
@@ -1350,130 +1309,116 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn try_resolve_number(&mut self, first_char: FirstChar) -> Result<(), AllocError> {
-        // SAFETY: `self.parser` was set from `&mut self` in scan_plain_scalar
-        // and ctx never outlives it. Route all parser access through the raw
-        // pointer instead of taking `&mut Parser` as an argument — holding an
-        // explicit `&mut Parser` across calls into `self.append_*` (which also
-        // derive `&mut Parser` via StringBuilder::parser_mut) would create two
-        // live `&mut` to the same object (Stacked Borrows UB). Re-deriving on
-        // every access keeps each borrow non-overlapping.
-        let raw_parser: *mut Parser<'i, Enc> = self.parser;
-        macro_rules! parser {
-            () => {
-                // SAFETY: `raw_parser` is `self.parser`, set from `&mut Parser`
-                // in `scan_plain_scalar`; ctx never outlives that borrow and each
-                // expansion's `&mut` is dropped before the next is derived.
-                unsafe { &mut *raw_parser }
-            };
-        }
-
+    pub fn try_resolve_number(
+        &mut self,
+        parser: &mut Parser<'i, Enc>,
+        first_char: FirstChar,
+    ) -> Result<(), AllocError> {
         let nan = f64::NAN;
         let inf = f64::INFINITY;
 
         match first_char {
-            FirstChar::Dot => match Enc::wide(parser!().next()) {
+            FirstChar::Dot => match Enc::wide(parser.next()) {
                 0x6E /* 'n' */ => {
-                    let n_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"an")) {
+                    let n_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"an")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"nan"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'n'), n_start)?;
+                    self.append_source(parser, Enc::ch(b'n'), n_start)?;
                     return Ok(());
                 }
                 0x4E /* 'N' */ => {
-                    let n_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"aN")) {
+                    let n_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"aN")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NaN"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    if parser!().remain_starts_with(Enc::literal(b"AN")) {
+                    if parser.remain_starts_with(Enc::literal(b"AN")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NAN"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'N'), n_start)?;
+                    self.append_source(parser, Enc::ch(b'N'), n_start)?;
                     return Ok(());
                 }
                 0x69 /* 'i' */ => {
-                    let i_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                    let i_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"nf")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"inf"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'i'), i_start)?;
+                    self.append_source(parser, Enc::ch(b'i'), i_start)?;
                     return Ok(());
                 }
                 0x49 /* 'I' */ => {
-                    let i_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                    let i_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"nf")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"Inf"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    if parser!().remain_starts_with(Enc::literal(b"NF")) {
+                    if parser.remain_starts_with(Enc::literal(b"NF")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"INF"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'I'), i_start)?;
+                    self.append_source(parser, Enc::ch(b'I'), i_start)?;
                     return Ok(());
                 }
                 _ => {}
             },
             FirstChar::Negative | FirstChar::Positive => {
-                if Enc::wide(parser!().next()) == 0x2E
-                    && (Enc::wide(parser!().peek(1)) == 0x69
-                        || Enc::wide(parser!().peek(1)) == 0x49)
+                if Enc::wide(parser.next()) == 0x2E
+                    && (Enc::wide(parser.peek(1)) == 0x69 || Enc::wide(parser.peek(1)) == 0x49)
                 {
-                    self.append_source(Enc::ch(b'.'), parser!().pos)?;
-                    parser!().inc(1);
-                    match Enc::wide(parser!().next()) {
+                    self.append_source(parser, Enc::ch(b'.'), parser.pos)?;
+                    parser.inc(1);
+                    match Enc::wide(parser.next()) {
                         0x69 /* 'i' */ => {
-                            let i_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                            let i_start = parser.pos;
+                            parser.inc(1);
+                            if parser.remain_starts_with(Enc::literal(b"nf")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"inf"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            self.append_source(Enc::ch(b'i'), i_start)?;
+                            self.append_source(parser, Enc::ch(b'i'), i_start)?;
                             return Ok(());
                         }
                         0x49 /* 'I' */ => {
-                            let i_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                            let i_start = parser.pos;
+                            parser.inc(1);
+                            if parser.remain_starts_with(Enc::literal(b"nf")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"Inf"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"NF")) {
+                            if parser.remain_starts_with(Enc::literal(b"NF")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"INF"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            self.append_source(Enc::ch(b'I'), i_start)?;
+                            self.append_source(parser, Enc::ch(b'I'), i_start)?;
                             return Ok(());
                         }
                         _ => {
@@ -1485,9 +1430,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             FirstChar::Other => {}
         }
 
-        let start = parser!().pos;
+        let start = parser.pos;
 
-        let mut decimal = Enc::wide(parser!().next()) == 0x2E /* '.' */;
+        let mut decimal = Enc::wide(parser.next()) == 0x2E /* '.' */;
         let mut x = false;
         let mut o = false;
         let mut e = false;
@@ -1501,13 +1446,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         // loop starts at the second body char with the `decimal`/digit flags
         // already reflecting the first.
         if !matches!(first_char, FirstChar::Negative | FirstChar::Positive) || decimal {
-            parser!().inc(1);
+            parser.inc(1);
         }
 
         let mut first = true;
 
-        // PORT NOTE: labeled-switch loop
-        let mut __c = Enc::wide(parser!().next());
+        // labeled-switch loop
+        let mut __c = Enc::wide(parser.next());
         let (end, valid): (Pos, bool) = 'end: loop {
             match __c {
                 // can only be valid if it ends on:
@@ -1519,28 +1464,28 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 // - ':'
                 0x20 | 0x09 | 0 | 0x0A | 0x0D | 0x3A => {
                     if first && (first_char == FirstChar::Positive || first_char == FirstChar::Negative) {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
-                    break 'end (parser!().pos, true);
+                    break 'end (parser.pos, true);
                 }
 
                 0x2C | 0x5D | 0x7D /* , ] } */ => {
-                    match parser!().context.get() {
+                    match parser.context.get() {
                         // it's valid for ',' ']' '}' to end the scalar
                         // in flow context
-                        Context::FlowIn | Context::FlowKey => break 'end (parser!().pos, true),
-                        Context::BlockIn | Context::BlockOut => break 'end (parser!().pos, false),
+                        Context::FlowIn | Context::FlowKey => break 'end (parser.pos, true),
+                        Context::BlockIn | Context::BlockOut => break 'end (parser.pos, false),
                     }
                 }
 
                 0x30 /* '0' */ => {
                     let was_first = first;
                     first = false;
-                    parser!().inc(1);
+                    parser.inc(1);
                     if was_first {
-                        match Enc::wide(parser!().next()) {
+                        match Enc::wide(parser.next()) {
                             0x62 | 0x42 /* 'b' 'B' */ => {
-                                break 'end (parser!().pos, false);
+                                break 'end (parser.pos, false);
                             }
                             c => {
                                 __c = c;
@@ -1548,14 +1493,14 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                             }
                         }
                     }
-                    __c = Enc::wide(parser!().next());
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x31..=0x39 /* '1'..'9' */ => {
                     first = false;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
@@ -1565,8 +1510,8 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                         hex = true;
                     }
                     e = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
@@ -1575,86 +1520,86 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
                     if first {
                         if __c == 0x62 || __c == 0x42 {
-                            break 'end (parser!().pos, false);
+                            break 'end (parser.pos, false);
                         }
                     }
                     first = false;
 
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x78 /* 'x' */ => {
                     first = false;
                     if x {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     x = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x6F /* 'o' */ => {
                     first = false;
                     if o {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     o = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x2E /* '.' */ => {
                     first = false;
                     if decimal {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     decimal = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x2B /* '+' */ => {
                     first = false;
                     if x {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
                     plus = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
                 0x2D /* '-' */ => {
                     first = false;
                     if minus {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
                     minus = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
                 _ => {
-                    break 'end (parser!().pos, false);
+                    break 'end (parser.pos, false);
                 }
             }
         };
         let _ = plus;
 
-        self.append_unknown_source_slice(start, end)?;
+        self.append_unknown_source_slice(parser, start, end)?;
 
         if !valid {
             return Ok(());
         }
 
-        let lexed = parser!().slice(start, end);
+        let lexed = parser.slice(start, end);
         let mut scalar: NodeScalar<Enc> = 'scalar: {
             if x || o || hex {
                 let unsigned = match parse_unsigned_radix0::<Enc>(lexed) {
@@ -1768,8 +1713,8 @@ fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     }
 }
 
-/// Port of `std.fmt.parseUnsigned(u64, slice, 0)` over an encoding-generic
-/// slice. Radix 0 = auto-detect `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
+/// Parses a `u64` from an encoding-generic slice with radix
+/// auto-detection: `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
 /// (bin), else decimal; `_` is a digit separator. Utf8/Latin1 narrow via
 /// `Enc::key_bytes`; Utf16 narrows via [`bun_core::strings::narrow_ascii_u16`].
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
@@ -1829,6 +1774,7 @@ impl NodeTag {
     }
 }
 
+#[derive(Clone)]
 pub enum NodeScalar<Enc: Encoding> {
     Null,
     Boolean(bool),
@@ -1841,22 +1787,16 @@ impl<Enc: Encoding> NodeScalar<Enc> {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
-            NodeScalar::Number(value) => Expr::init(E::Number { value: *value }, pos.loc()),
+            NodeScalar::Number(value) => Expr::init(E::Number::new(*value), pos.loc()),
             NodeScalar::String(value) => {
-                // Zig: `.init(E.String, .{ .data = value.slice(input) }, pos.loc())`.
-                // `E.String.data` is `[]const u8`, so the Zig source only
-                // type-checks for `unit() == u8`. For `Utf16` we route through
-                // `E::String::init_utf16` instead of mirroring the Zig compile
-                // error (Rust eagerly monomorphizes).
+                // For `Utf16` we route through `E::String::init_utf16`.
                 //
-                // LIFETIME: Zig's `String.list` is `array_list.Managed` backed
-                // by `parser.allocator` (the bump arena), so `list.items`
-                // outlives the scalar token. The Rust port uses a global-alloc
-                // `Vec` that is dropped with the local `scalar` immediately
-                // after this returns — the resulting `EString.data` would
-                // dangle. Dupe `.list` bytes into the bump arena to recover the
-                // Zig lifetime; `.range` already borrows `input` (source text)
-                // which outlives the Expr → JS conversion.
+                // LIFETIME: `YamlString::List` is a global-alloc `Vec` that is
+                // dropped with the local `scalar` immediately after this
+                // returns — the resulting `EString.data` would dangle. Dupe
+                // the list bytes into the bump arena; `.range` already borrows
+                // `input` (source text) which outlives the Expr → JS
+                // conversion.
                 let s: &[Enc::Unit] = match value {
                     YamlString::Range(range) => range.slice(input),
                     YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
@@ -1920,10 +1860,59 @@ pub struct Document {
 
 // impl Drop for Document — Vec<Directive> auto-drops; Expr is arena-backed.
 
-pub struct Stream<Enc: Encoding> {
+/// Should only be used with expressions created with the YAML parser. It assumes
+/// only null, boolean, number, string, array, object are possible. It also only
+/// does pointer comparison with arrays and objects (so exponential merges are avoided).
+/// Operates on already-built `Expr`s, so it is independent of the input encoding.
+fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
+    if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
+        return false;
+    }
+    match (&l.data, &r.data) {
+        (ast::ExprData::ENull(_), _) => true,
+        (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
+        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value() == rn.value(),
+        (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
+            // UTF-8/UTF-16-aware string equality.
+            if ls.is_utf16 != rs.is_utf16 {
+                if ls.is_utf16 {
+                    rs.eql_bytes(ls.data.slice())
+                } else {
+                    ls.eql_bytes(rs.data.slice())
+                }
+            } else if ls.is_utf16 {
+                ls.slice16() == rs.slice16()
+            } else {
+                ls.data == rs.data
+            }
+        }
+        // pointer comparison
+        (ast::ExprData::EArray(la), ast::ExprData::EArray(ra)) => la.as_ptr() == ra.as_ptr(),
+        (ast::ExprData::EObject(lo), ast::ExprData::EObject(ro)) => lo.as_ptr() == ro.as_ptr(),
+        _ => false,
+    }
+}
+
+/// Encoding-independent companion to [`yaml_merge_key_expr_eql`].
+fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
+    match &key.data {
+        ast::ExprData::ENull(_) => 0,
+        ast::ExprData::EBoolean(b) => 1 + b.value as u64,
+        ast::ExprData::ENumber(n) => {
+            let value = if n.value() == 0.0 { 0.0 } else { n.value() };
+            value.to_bits()
+        }
+        ast::ExprData::EString(s) => s.hash(),
+        ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
+        ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
+        _ => u64::MAX,
+    }
+}
+
+pub struct Stream<'i, Enc: Encoding> {
     pub docs: Vec<Document>,
-    pub input: *const [Enc::Unit],
-    // TODO(port): lifetime — Zig stored `[]const enc.unit()` borrowing parser input.
+    /// Borrows the parser input.
+    pub input: &'i [Enc::Unit],
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1937,6 +1926,9 @@ pub struct TokenInit {
     pub line: Line,
 }
 
+// `Clone` deep-copies the `Vec` inside `YamlString::List`, which is fine for
+// the read-only uses here.
+#[derive(Clone)]
 pub struct Token<Enc: Encoding> {
     pub start: Pos,
     pub indent: Indent,
@@ -1944,20 +1936,7 @@ pub struct Token<Enc: Encoding> {
     pub data: TokenData<Enc>,
 }
 
-impl<Enc: Encoding> Clone for Token<Enc> {
-    fn clone(&self) -> Self {
-        // TODO(port): TokenData contains NodeScalar<Enc> which holds a Vec for
-        // String::List. Zig copied tokens by value (struct copy). TODO(port):
-        // make Token cheaply-copyable or store scalars by index.
-        Token {
-            start: self.start,
-            indent: self.indent,
-            line: self.line,
-            data: self.data.clone(),
-        }
-    }
-}
-
+#[derive(Clone)]
 pub enum TokenData<Enc: Encoding> {
     Eof,
     /// `-`
@@ -1995,61 +1974,7 @@ pub enum TokenData<Enc: Encoding> {
     Scalar(TokenScalar<Enc>),
 }
 
-impl<Enc: Encoding> Clone for TokenData<Enc> {
-    fn clone(&self) -> Self {
-        // TODO(port): see Token::clone note
-        match self {
-            TokenData::Eof => TokenData::Eof,
-            TokenData::SequenceEntry => TokenData::SequenceEntry,
-            TokenData::MappingKey => TokenData::MappingKey,
-            TokenData::MappingValue => TokenData::MappingValue,
-            TokenData::CollectEntry => TokenData::CollectEntry,
-            TokenData::SequenceStart => TokenData::SequenceStart,
-            TokenData::SequenceEnd => TokenData::SequenceEnd,
-            TokenData::MappingStart => TokenData::MappingStart,
-            TokenData::MappingEnd => TokenData::MappingEnd,
-            TokenData::Anchor(r) => TokenData::Anchor(*r),
-            TokenData::Alias(r) => TokenData::Alias(*r),
-            TokenData::Tag(t) => TokenData::Tag(*t),
-            TokenData::Directive => TokenData::Directive,
-            TokenData::Reserved => TokenData::Reserved,
-            TokenData::DocumentStart => TokenData::DocumentStart,
-            TokenData::DocumentEnd => TokenData::DocumentEnd,
-            TokenData::Scalar(_) => {
-                // TODO(port): Scalar contains a Vec; Zig copied by value. Reshape to make it Copy.
-                unreachable!("Token<Scalar> should not be cloned")
-            }
-        }
-    }
-}
-
-impl<Enc: Encoding> TokenData<Enc> {
-    pub fn discriminant(&self) -> u8 {
-        // SAFETY: #[repr(...)] not declared; use mem::discriminant for comparisons instead.
-        // This helper exists only for the labeled-switch-loop ports below.
-        // TODO(port): replace with core::mem::discriminant comparisons.
-        match self {
-            TokenData::Eof => 0,
-            TokenData::SequenceEntry => 1,
-            TokenData::MappingKey => 2,
-            TokenData::MappingValue => 3,
-            TokenData::CollectEntry => 4,
-            TokenData::SequenceStart => 5,
-            TokenData::SequenceEnd => 6,
-            TokenData::MappingStart => 7,
-            TokenData::MappingEnd => 8,
-            TokenData::Anchor(_) => 9,
-            TokenData::Alias(_) => 10,
-            TokenData::Tag(_) => 11,
-            TokenData::Directive => 12,
-            TokenData::Reserved => 13,
-            TokenData::DocumentStart => 14,
-            TokenData::DocumentEnd => 15,
-            TokenData::Scalar(_) => 16,
-        }
-    }
-}
-
+#[derive(Clone)]
 pub struct TokenScalar<Enc: Encoding> {
     pub data: NodeScalar<Enc>,
     pub multiline: bool,
@@ -2224,13 +2149,13 @@ impl<Enc: Encoding> Token<Enc> {
 // ParseResult
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum ParseResult<Enc: Encoding> {
-    Result(ParseResultOk<Enc>),
+pub enum ParseResult<'i, Enc: Encoding> {
+    Result(ParseResultOk<'i, Enc>),
     Err(ParseResultError),
 }
 
-pub struct ParseResultOk<Enc: Encoding> {
-    pub stream: Stream<Enc>,
+pub struct ParseResultOk<'i, Enc: Encoding> {
+    pub stream: Stream<'i, Enc>,
     // allocator dropped — global mimalloc
 }
 
@@ -2317,12 +2242,12 @@ impl ParseResultError {
     }
 }
 
-impl<Enc: Encoding> ParseResult<Enc> {
-    pub fn success(stream: Stream<Enc>, _parser: &Parser<Enc>) -> Self {
+impl<'i, Enc: Encoding> ParseResult<'i, Enc> {
+    pub fn success(stream: Stream<'i, Enc>, _parser: &Parser<'_, Enc>) -> Self {
         ParseResult::Result(ParseResultOk { stream })
     }
 
-    pub fn fail(err: ParseError, parser: &Parser<Enc>) -> Self {
+    pub fn fail(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
         let e = match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
@@ -2410,7 +2335,7 @@ pub struct Parser<'i, Enc: Encoding> {
     pub line: Line,
     pub token: Token<Enc>,
 
-    /// Zig `parser.allocator`. Growable buffers in this port use the global
+    /// Growable buffers use the global
     /// allocator (and `Drop`); the arena is threaded for the few places that
     /// must hand a borrowed slice into the long-lived `Expr` tree (see
     /// `NodeScalar::to_expr`).
@@ -2422,10 +2347,9 @@ pub struct Parser<'i, Enc: Encoding> {
     pub explicit_document_start_line: Option<Line>,
 
     pub anchors: StringHashMap<Expr>,
-    // TODO(port): Zig key type was []const enc.unit(); StringHashMap keys are &[u8].
-    // For Utf16 this needs a different map type.
     pub tag_handles: StringHashMap<()>,
 
+    /// Backing storage lent to `StringBuilder`; empty while a builder is live.
     pub whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub stack_check: StackCheck,
@@ -2477,7 +2401,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ParseError::UnexpectedToken
     }
 
-    pub fn parse(&mut self) -> Result<Stream<Enc>, ParseError> {
+    pub fn parse(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         self.scan(ScanOptions {
             first_scan: true,
             ..Default::default()
@@ -2485,7 +2409,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.parse_stream()
     }
 
-    pub fn parse_stream(&mut self) -> Result<Stream<Enc>, ParseError> {
+    pub fn parse_stream(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
 
         // we want one null document if eof, not zero documents.
@@ -2498,11 +2422,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         Ok(Stream {
             docs,
-            input: std::ptr::from_ref::<[Enc::Unit]>(self.input),
+            input: self.input,
         })
     }
 
-    // PERF(port): was comptime monomorphization — profile
     fn peek(&self, n: usize) -> Enc::Unit {
         let pos = self.pos.add(n);
         if pos.is_less_than(self.input.len()) {
@@ -2608,7 +2531,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.try_skip_char(Enc::ch(b'!'))?;
             self.try_skip_s_white()?;
 
-            // TODO(port): StringHashMap key type; for Utf16 needs different keying.
             self.tag_handles
                 .put(Enc::key_bytes(handle.slice(self.input)), ())?;
 
@@ -2660,7 +2582,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub fn parse_document(&mut self) -> Result<Document, ParseError> {
         let mut directives: Vec<Directive> = Vec::new();
 
-        // Zig: `clearRetainingCapacity()` — `HashMap::clear()` already retains capacity.
         self.anchors.clear();
         self.tag_handles.clear();
 
@@ -2828,10 +2749,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.context.set(Context::FlowIn)?;
 
-        // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
-        // fallible body's result and unset on EVERY exit (including `?` paths).
-        // The post-`]` scan happens AFTER `.flow_in` is popped (yaml.zig:771),
-        // so only the loop body lives inside the closure.
+        // Capture the fallible body's result and unset `FlowIn` on EVERY exit
+        // (including `?` paths). The post-`]` scan happens AFTER `FlowIn` is
+        // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
             self.scan(ScanOptions::default())?;
             while !matches!(self.token.data, TokenData::SequenceEnd) {
@@ -2914,13 +2834,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.context.set(Context::FlowIn)?;
 
-        // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
-        // fallible body's result and unset on EVERY exit (including `?` paths).
-        // The post-`}` scan happens AFTER `.flow_in` is popped (yaml.zig:852),
-        // so only the loop body lives inside the closure.
+        // Capture the fallible body's result and unset `FlowIn` on EVERY exit
+        // (including `?` paths). The post-`}` scan happens AFTER `FlowIn` is
+        // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
             {
-                // Zig `defer self.context.unset(.flow_key)` — unset before propagating.
+                // Unset `FlowKey` before propagating.
                 self.context.set(Context::FlowKey)?;
                 let r = self.scan(ScanOptions::default());
                 self.context.unset(Context::FlowKey);
@@ -3043,8 +2962,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.block_indents.push(sequence_indent)?;
 
-        // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
-        // body's result and pop on EVERY exit (including `?` paths).
+        // Capture the fallible body's result and pop `block_indents` on EVERY
+        // exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
             let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
@@ -3096,53 +3015,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         result
     }
 
-    /// Should only be used with expressions created with the YAML parser. It assumes
-    /// only null, boolean, number, string, array, object are possible. It also only
-    /// does pointer comparison with arrays and objects (so exponential merges are avoided)
-    fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
-        if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
-            return false;
-        }
-        match (&l.data, &r.data) {
-            (ast::ExprData::ENull(_), _) => true,
-            (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
-            (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value == rn.value,
-            (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
-                // Zig: `ls.eqlEString(rs)` — inline the UTF-8/UTF-16 + slice-eq logic.
-                if ls.is_utf16 != rs.is_utf16 {
-                    if ls.is_utf16 {
-                        rs.eql_bytes(ls.data.slice())
-                    } else {
-                        ls.eql_bytes(rs.data.slice())
-                    }
-                } else if ls.is_utf16 {
-                    ls.slice16() == rs.slice16()
-                } else {
-                    ls.data == rs.data
-                }
-            }
-            // pointer comparison
-            (ast::ExprData::EArray(la), ast::ExprData::EArray(ra)) => la.as_ptr() == ra.as_ptr(),
-            (ast::ExprData::EObject(lo), ast::ExprData::EObject(ro)) => lo.as_ptr() == ro.as_ptr(),
-            _ => false,
-        }
-    }
-
-    fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
-        match &key.data {
-            ast::ExprData::ENull(_) => 0,
-            ast::ExprData::EBoolean(b) => 1 + b.value as u64,
-            ast::ExprData::ENumber(n) => {
-                let value = if n.value == 0.0 { 0.0 } else { n.value };
-                value.to_bits()
-            }
-            ast::ExprData::EString(s) => s.hash(),
-            ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
-            ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
-            _ => u64::MAX,
-        }
-    }
-
     fn parse_block_mapping(
         &mut self,
         first_key: Expr,
@@ -3168,8 +3040,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.block_indents.push(mapping_indent)?;
         }
 
-        // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
-        // body's result and pop on EVERY exit (including `?` paths).
+        // Capture the fallible body's result and pop `block_indents` on EVERY
+        // exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
             let mut props = MappingProps::init();
             let mut first_entry_end_line = mapping_line;
@@ -3247,8 +3119,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             self.context.set(Context::BlockIn)?;
 
-            // PORT NOTE: Zig `defer self.context.unset(.block_in)` — same
-            // capture-then-unset pattern, nested.
+            // Same capture-then-unset pattern, nested.
             let inner: Result<Expr, ParseError> = (|| {
                 let mut previous_line = first_entry_end_line;
 
@@ -3420,12 +3291,11 @@ impl MappingProps {
         budget: &mut usize,
     ) -> Result<(), AllocError> {
         self.list.reserve(merge_props.len().min(*budget));
-        // PERF(port): was ensureUnusedCapacity
 
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();
-            let hash = Parser::<Utf8>::yaml_merge_key_expr_hash(key);
+            let hash = yaml_merge_key_expr_hash(key);
             self.merge_index
                 .get_or_put(hash)?
                 .value_ptr
@@ -3435,19 +3305,17 @@ impl MappingProps {
 
         'next_merge_prop: for merge_prop in merge_props.iter().rev() {
             let merge_key = merge_prop.key.as_ref().unwrap();
-            let merge_hash = Parser::<Utf8>::yaml_merge_key_expr_hash(merge_key);
+            let merge_hash = yaml_merge_key_expr_hash(merge_key);
             if let Some(candidates) = self.merge_index.get(&merge_hash) {
                 for existing_idx in candidates.iter() {
                     let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
-                    if Parser::<Utf8>::yaml_merge_key_expr_eql(existing_key, merge_key) {
-                        // TODO(port): yaml_merge_key_expr_eql is generic-agnostic; using Utf8 monomorph here is a hack.
+                    if yaml_merge_key_expr_eql(existing_key, merge_key) {
                         continue 'next_merge_prop;
                     }
                 }
             }
             *budget = budget.checked_sub(1).ok_or(AllocError)?;
-            // `G::Property` is not `Clone`; reconstruct from its `Copy` fields
-            // (Zig copied the struct by value).
+            // `G::Property` is not `Clone`; reconstruct from its `Copy` fields.
             self.list.push(G::Property {
                 key: merge_prop.key,
                 value: merge_prop.value,
@@ -3456,7 +3324,6 @@ impl MappingProps {
                 initializer: merge_prop.initializer,
                 ..Default::default()
             });
-            // PERF(port): was appendAssumeCapacity
             self.merge_index
                 .get_or_put(merge_hash)?
                 .value_ptr
@@ -3476,7 +3343,6 @@ impl MappingProps {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
         };
-        // TODO(port): exact ExprData variant names depend on bun_ast.
 
         if !is_merge_key {
             self.list.push(G::Property {
@@ -3730,8 +3596,8 @@ impl Default for ScanOptions {
 // Escape
 // ───────────────────────────────────────────────────────────────────────────
 
-// PERF(port): was a comptime parameter (Zig `comptime escape`); ConstParamTy needs
-// nightly `adt_const_params`. Downgraded to a runtime arg — branch is trivially
+// PERF: a const-generic parameter would need nightly `adt_const_params`
+// (ConstParamTy). Kept as a runtime arg — branch is trivially
 // predicted (3 fixed call sites). Re-evaluate.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -3970,9 +3836,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             node_props.set_anchor(anchor)?;
         }
 
-        // PORT NOTE: labeled-switch loop on `self.token.data`. The Zig
-        // `continue :node self.token.data` re-enters with the new token after
-        // scanning. We loop and re-match.
+        // labeled-switch loop on `self.token.data`: loop and re-match with
+        // the new token after scanning.
         let node: Expr = 'node: loop {
             match &self.token.data {
                 TokenData::Eof | TokenData::DocumentStart | TokenData::DocumentEnd => {
@@ -4020,7 +3885,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Some(e) => *e,
                         None => {
                             // we failed to find the alias, but it might be cyclic and
-                            // available later. (see Zig comment block)
+                            // available later.
                             return Err(ParseError::UnresolvedAlias);
                         }
                     };
@@ -4352,7 +4217,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let scalar_line = self.token.line;
                     let scalar_tab_after_indent = self.tab_after_indent;
 
-                    // PORT NOTE: reshaped for borrowck — we must hold the scalar
+                    // reshaped for borrowck — we must hold the scalar
                     // payload across `self.scan()` which replaces self.token.
                     // Take it out before scanning.
                     let scalar = match core::mem::replace(
@@ -4378,7 +4243,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         // this might be the start of a new object with an implicit key
-                        // (see Zig comments for cases 1-4)
                         if self.token.indent.is_less_than(scalar_indent)
                             || (opts.explicit_mapping_key
                                 && scalar_line != self.token.line
@@ -4502,7 +4366,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn fold_lines(&mut self) -> usize {
         let mut total: usize = 0;
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut __c = Enc::wide(self.next());
         loop {
             match __c {
@@ -4548,229 +4412,210 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
+    fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
+        StringBuilder {
+            input: self.input,
+            whitespace_buf: core::mem::take(&mut self.whitespace_buf),
+            str: YamlString::Range(StringRange {
+                off: Pos::ZERO,
+                end: Pos::ZERO,
+            }),
+        }
+    }
+
     // ── scanPlainScalar ─────────────────────────────────────────────────────
     //
     // This is the largest function in the file: a labeled-switch state machine
-    // with an inner local struct `ScalarResolverCtx` that holds `*Parser` AND a
-    // `StringBuilder` that ALSO holds `*Parser`. Both are BACKREF in
-    // LIFETIMES.tsv → modeled as raw `*mut Parser` here.
-    //
-    // TODO(port): borrowck reshape — TODO(port): either (a) move
-    // `whitespace_buf` out of Parser, or (b) restructure ctx to take `&mut self`
-    // per call instead of storing it. The raw-pointer aliasing below is sound
-    // because `ctx` never outlives `&mut self` and never re-enters Parser
-    // methods that re-borrow `whitespace_buf`/`input` concurrently.
+    // with an inner `ScalarResolverCtx`.
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
-        let parser: *mut Parser<'i, Enc> = self;
-        macro_rules! parser {
-            () => {
-                // SAFETY: single provenance chain — `parser` was derived from
-                // `&mut self` above; all access routes through it (never reborrow
-                // `self` directly), and each expansion's `&mut` is dropped before
-                // the next is derived.
-                unsafe { &mut *parser }
-            };
-        }
-        // SAFETY: ctx outlived by the &mut self this fn was entered with. Both
-        // `ctx.parser` and `ctx.str_builder.parser` are copies of the SAME raw
-        // pointer (`parser` above) so all derived `&mut Parser` share one
-        // provenance chain.
         let mut ctx = ScalarResolverCtx::<Enc> {
-            str_builder: StringBuilder {
-                parser,
-                str: YamlString::Range(StringRange {
-                    off: Pos::ZERO,
-                    end: Pos::ZERO,
-                }),
-            },
+            str_builder: self.string_builder(),
             resolved: false,
             scalar: None,
             tag: opts.tag,
-            parser,
             resolved_scalar_len: 0,
-            start: parser!().pos,
-            line: parser!().line,
-            line_indent: parser!().line_indent,
+            start: self.pos,
+            line: self.line,
+            line_indent: self.line_indent,
             multiline: false,
         };
 
-        // PORT NOTE: labeled-switch loop
-        let mut __c = Enc::wide(parser!().next());
+        // labeled-switch loop
+        let mut __c = Enc::wide(self.next());
         loop {
             match __c {
                 0 => {
-                    return Ok(ctx.done());
+                    return Ok(ctx.done(self));
                 }
 
                 0x2D /* '-' */ => {
                     // [203] c-directives-end is line-starting at column 0.
-                    if parser!().is_at_line_start()
-                        && parser!().line_indent == Indent::NONE
-                        && parser!().remain_starts_with(Enc::literal(b"---"))
-                        && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    if self.is_at_line_start()
+                        && self.line_indent == Indent::NONE
+                        && self.remain_starts_with(Enc::literal(b"---"))
+                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
-                        ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                        parser!().inc(1);
-                        ctx.try_resolve_number(FirstChar::Negative)?;
-                        __c = Enc::wide(parser!().next());
+                        ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                        self.inc(1);
+                        ctx.try_resolve_number(self, FirstChar::Negative)?;
+                        __c = Enc::wide(self.next());
                         continue;
                     }
 
-                    ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x2E /* '.' */ => {
-                    if parser!().is_at_line_start()
-                        && parser!().line_indent == Indent::NONE
-                        && parser!().remain_starts_with(Enc::literal(b"..."))
-                        && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    if self.is_at_line_start()
+                        && self.line_indent == Indent::NONE
+                        && self.remain_starts_with(Enc::literal(b"..."))
+                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
-                        match Enc::wide(parser!().peek(1)) {
+                        match Enc::wide(self.peek(1)) {
                             0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
-                                ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                                parser!().inc(1);
-                                ctx.try_resolve_number(FirstChar::Dot)?;
-                                __c = Enc::wide(parser!().next());
+                                ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                                self.inc(1);
+                                ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
                             _ => {
-                                ctx.try_resolve_number(FirstChar::Other)?;
-                                __c = Enc::wide(parser!().next());
+                                ctx.try_resolve_number(self, FirstChar::Other)?;
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
                         }
                     }
 
-                    ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x3A /* ':' */ => {
-                    if parser!().is_s_white_or_b_char_or_eof_at(1) {
-                        return Ok(ctx.done());
+                    if self.is_s_white_or_b_char_or_eof_at(1) {
+                        return Ok(ctx.done(self));
                     }
 
-                    match parser!().context.get() {
+                    match self.context.get() {
                         Context::BlockOut | Context::BlockIn => {}
                         // [130] `:` is ns-plain-char only when followed by
                         // ns-plain-safe(c); in flow context that excludes
                         // c-flow-indicator.
                         Context::FlowIn | Context::FlowKey => {
-                            match Enc::wide(parser!().peek(1)) {
+                            match Enc::wide(self.peek(1)) {
                                 0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                                    return Ok(ctx.done());
+                                    return Ok(ctx.done(self));
                                 }
                                 _ => {}
                             }
                         }
                     }
 
-                    ctx.append_source(Enc::ch(b':'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b':'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x23 /* '#' */ => {
-                    if parser!().is_at_line_start()
+                    if self.is_at_line_start()
                         || matches!(
-                            Enc::wide(parser!().input[parser!().pos.sub(1).cast()]),
+                            Enc::wide(self.input[self.pos.sub(1).cast()]),
                             0x20 | 0x09 | 0x0D | 0x0A
                         )
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
-                    ctx.append_source(Enc::ch(b'#'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'#'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                    match parser!().context.get() {
+                    match self.context.get() {
                         Context::BlockIn | Context::BlockOut => {}
                         Context::FlowIn | Context::FlowKey => {
-                            return Ok(ctx.done());
+                            return Ok(ctx.done(self));
                         }
                     }
 
-                    let c = parser!().next();
-                    ctx.append_source(c, parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    let c = self.next();
+                    ctx.append_source(self, c, self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x20 | 0x09 /* ' ' '\t' */ => {
-                    let c = parser!().next();
-                    ctx.append_source_whitespace(c, parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    let c = self.next();
+                    ctx.append_source_whitespace(c, self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x0D /* '\r' */ => {
-                    if Enc::wide(parser!().peek(1)) == 0x0A {
-                        parser!().inc(1);
+                    if Enc::wide(self.peek(1)) == 0x0A {
+                        self.inc(1);
                     }
                     __c = 0x0A;
                     continue;
                 }
 
                 0x0A /* '\n' */ => {
-                    parser!().newline();
-                    parser!().inc(1);
+                    self.newline();
+                    self.inc(1);
 
-                    let lines = parser!().fold_lines();
+                    let lines = self.fold_lines();
 
-                    if let Some(block_indent) = parser!().block_indents.get() {
-                        match parser!().line_indent.cmp(block_indent) {
+                    if let Some(block_indent) = self.block_indents.get() {
+                        match self.line_indent.cmp(block_indent) {
                             Ordering::Greater => {
                                 // continue (whitespace already stripped)
                             }
                             Ordering::Less | Ordering::Equal => {
                                 // end here. this is the start of a new value.
-                                return Ok(ctx.done());
+                                return Ok(ctx.done(self));
                             }
                         }
                     }
 
                     // clear the leading whitespace before the newline.
-                    // clear via the single raw-pointer provenance chain.
-                    parser!().whitespace_buf.clear();
+                    ctx.str_builder.clear_whitespace();
 
-                    if lines == 0 && !parser!().is_eof() {
+                    if lines == 0 && !self.is_eof() {
                         ctx.append_whitespace(Enc::ch(b' '))?;
                     }
 
                     ctx.append_whitespace_n_times(Enc::ch(b'\n'), lines)?;
 
-                    __c = Enc::wide(parser!().next());
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 _ => {
-                    let c = parser!().next();
+                    let c = self.next();
                     if ctx.resolved || ctx.str_builder.len() != 0 {
-                        let start = parser!().pos;
-                        parser!().inc(1);
-                        ctx.append_source(c, start)?;
-                        __c = Enc::wide(parser!().next());
+                        let start = self.pos;
+                        self.inc(1);
+                        ctx.append_source(self, c, start)?;
+                        __c = Enc::wide(self.next());
                         continue;
                     }
 
@@ -4779,153 +4624,153 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // TODO: make more better
                     match __c {
                         0x6E /* 'n' */ => {
-                            let n_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"ull")) {
+                            let n_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"ull")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"null"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, n_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, n_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x4E /* 'N' */ => {
-                            let n_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"ull")) {
+                            let n_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"ull")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"Null"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"ULL")) {
+                            if self.remain_starts_with(Enc::literal(b"ULL")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"NULL"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, n_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, n_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x7E /* '~' */ => {
-                            let start = parser!().pos;
-                            parser!().inc(1);
+                            let start = self.pos;
+                            self.inc(1);
                             ctx.resolve(NodeScalar::Null, start, Enc::literal(b"~"))?;
-                            __c = Enc::wide(parser!().next());
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x74 /* 't' */ => {
-                            let t_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"rue")) {
+                            let t_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"rue")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"true"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, t_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, t_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x54 /* 'T' */ => {
-                            let t_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"rue")) {
+                            let t_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"rue")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"True"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"RUE")) {
+                            if self.remain_starts_with(Enc::literal(b"RUE")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"TRUE"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, t_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, t_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x66 /* 'f' */ => {
-                            let f_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"alse")) {
+                            let f_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"alse")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"false"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, f_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, f_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x46 /* 'F' */ => {
-                            let f_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"alse")) {
+                            let f_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"alse")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"False"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"ALSE")) {
+                            if self.remain_starts_with(Enc::literal(b"ALSE")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"FALSE"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, f_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, f_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2D /* '-' */ => {
-                            ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                            parser!().inc(1);
-                            ctx.try_resolve_number(FirstChar::Negative)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                            self.inc(1);
+                            ctx.try_resolve_number(self, FirstChar::Negative)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2B /* '+' */ => {
-                            ctx.append_source(Enc::ch(b'+'), parser!().pos)?;
-                            parser!().inc(1);
-                            ctx.try_resolve_number(FirstChar::Positive)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, Enc::ch(b'+'), self.pos)?;
+                            self.inc(1);
+                            ctx.try_resolve_number(self, FirstChar::Positive)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x30..=0x39 /* '0'..'9' */ => {
-                            ctx.try_resolve_number(FirstChar::Other)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.try_resolve_number(self, FirstChar::Other)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2E /* '.' */ => {
-                            match Enc::wide(parser!().peek(1)) {
+                            match Enc::wide(self.peek(1)) {
                                 0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
-                                    ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                                    parser!().inc(1);
-                                    ctx.try_resolve_number(FirstChar::Dot)?;
-                                    __c = Enc::wide(parser!().next());
+                                    ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                                    self.inc(1);
+                                    ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                    __c = Enc::wide(self.next());
                                     continue;
                                 }
                                 _ => {
-                                    ctx.try_resolve_number(FirstChar::Other)?;
-                                    __c = Enc::wide(parser!().next());
+                                    ctx.try_resolve_number(self, FirstChar::Other)?;
+                                    __c = Enc::wide(self.next());
                                     continue;
                                 }
                             }
                         }
 
                         _ => {
-                            let start = parser!().pos;
-                            parser!().inc(1);
-                            ctx.append_source(c, start)?;
-                            __c = Enc::wide(parser!().next());
+                            let start = self.pos;
+                            self.inc(1);
+                            ctx.append_source(self, c, start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                     }
@@ -4940,7 +4785,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut indent_indicator: Option<IndentIndicator> = None;
         let mut chomp: Option<Chomp> = None;
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut __c = Enc::wide(self.next());
         loop {
             match __c {
@@ -5016,11 +4861,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     // ── scanAutoIndentedLiteralScalar ───────────────────────────────────────
     //
-    // TODO(port): Another large labeled-switch state machine (yaml.zig:2703-2979)
-    // with an inner `LiteralScalarCtx` struct. The two-phase loop (find
-    // content_indent, then scan body) with `ctx.append`/`ctx.done` and chomp
-    // handling is preserved structurally below; verify the nested `newlines:`
-    // switch translation against the Zig original.
+    // Another large labeled-switch state machine with an inner
+    // `LiteralScalarCtx` struct: a two-phase loop (find content_indent,
+    // then scan body) with `ctx.append`/`ctx.done` (verified against the
+    // official yaml-test-suite):
+    // - explicit `indent_indicator` support;
+    // - EOF chomping normalized via `leading_newlines` in `done()` so Clip and
+    //   Keep agree with eemeli/yaml + js-yaml (L24T/01, JEF9/02);
+    // - folded more-indented lines tracked with `prev/cur_more_indented`
+    //   flags, so breaks adjacent to more-indented lines are not folded
+    //   (spec [73]-[74]);
+    // - the per-line indent guard is the precomputed `min_indent`
+    //   (>= content_indent AND > parent block indent);
+    // - `---`/`...` document markers additionally require line start.
 
     fn scan_auto_indented_literal_scalar(
         &mut self,
@@ -5154,7 +5007,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
 
         // Phase 1: find content_indent and first non-ws char
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut consumed_indent_this_line = false;
         let (content_indent, first): (Indent, u32) = 'phase1: loop {
             let __c = Enc::wide(self.next());
@@ -5246,7 +5099,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
 
         // Phase 2: scan body
-        // PORT NOTE: labeled-switch loop with nested `newlines:` switch
+        // labeled-switch loop with nested `newlines:` switch
         let mut __c = first;
         loop {
             match __c {
@@ -5353,8 +5206,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if self.line_indent.is_less_than(min_indent) {
                         return Ok(ctx.done()?);
                     }
-                    // TODO(port): need Enc::Unit from u32; assuming Enc::Unit: From<u8> for ASCII range only.
-                    // For non-ASCII units we need to read self.next() directly.
                     let unit = self.next();
                     let _ = c;
                     ctx.append(unit)?;
@@ -5395,7 +5246,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let mut text: Vec<Enc::Unit> = Vec::new();
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         loop {
             let c = Enc::wide(self.next());
             match c {
@@ -5457,7 +5308,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong! (matches Zig comment)
+                            // TODO: wrong!
                             multiline: self.line != scalar_line,
                             is_quoted: true,
                             data: NodeScalar::String(YamlString::List(text)),
@@ -5478,7 +5329,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let scalar_indent = self.line_indent;
         let mut text: Vec<Enc::Unit> = Vec::new();
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         loop {
             let c = Enc::wide(self.next());
             match c {
@@ -5535,7 +5386,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong! (matches Zig comment)
+                            // TODO: wrong!
                             multiline: self.line != scalar_line,
                             is_quoted: true,
                             data: NodeScalar::String(YamlString::List(text)),
@@ -5614,42 +5465,58 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    // TODO: should this append replacement characters instead of erroring?
-    fn decode_hex_code_point(
-        &mut self,
-        escape: Escape,
-        text: &mut Vec<Enc::Unit>,
-    ) -> Result<(), ParseError> {
+    fn read_hex_digits(&mut self, count: u8) -> Result<u32, ParseError> {
         let mut value: u32 = 0;
-        for _ in 0..(escape as u8) {
+        for _ in 0..count {
             self.inc(1);
             let digit = Enc::wide(self.next());
             let num =
                 bun_core::fmt::hex_digit_value_u32(digit).ok_or(ParseError::UnexpectedCharacter)?;
             value = value * 16 + num as u32;
         }
+        Ok(value)
+    }
 
-        if value > 0x10_FFFF {
+    fn decode_hex_code_point(
+        &mut self,
+        escape: Escape,
+        text: &mut Vec<Enc::Unit>,
+    ) -> Result<(), ParseError> {
+        let mut cp = self.read_hex_digits(escape as u8)?;
+
+        if cp > 0x10_FFFF {
             return Err(ParseError::UnexpectedCharacter);
         }
-        let cp = value;
+
+        // JSON encodes supplementary code points as a `\uD8xx\uDCxx` surrogate
+        // pair; YAML 1.2 is a JSON superset. Lone surrogates remain an error.
+        if (0xD800..=0xDFFF).contains(&cp) {
+            if !matches!(escape, Escape::LowerU)
+                || !bun_core::strings::u16_is_lead(cp as u16)
+                || Enc::wide(self.peek(1)) != 0x5C /* '\\' */
+                || Enc::wide(self.peek(2)) != 0x75
+            /* 'u' */
+            {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            self.inc(2);
+            let low = self.read_hex_digits(Escape::LowerU as u8)?;
+            if !bun_core::strings::u16_is_trail(low as u16) {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            cp = bun_core::strings::u16_get_supplementary(cp as u16, low as u16);
+        }
 
         match Enc::KIND {
             EncodingKind::Utf8 => {
                 let ch = char::from_u32(cp).ok_or(ParseError::UnexpectedCharacter)?;
                 let mut buf = [0u8; 4];
                 let s = ch.encode_utf8(&mut buf);
-                // TODO(port): need to push &[u8] into Vec<Enc::Unit>; Enc::Unit==u8 here.
                 for b in s.bytes() {
                     text.push(Enc::ch(b));
                 }
             }
             EncodingKind::Utf16 => {
-                // Zig: std.unicode.utf16CodepointSequenceLength + manual surrogate split.
-                // utf16CodepointSequenceLength rejects surrogate code points; mirror that.
-                if (0xD800..=0xDFFF).contains(&cp) {
-                    return Err(ParseError::UnexpectedCharacter);
-                }
                 if cp < 0x10000 {
                     text.push(Enc::unit_from_u16(cp as u16));
                 } else {
@@ -5795,7 +5662,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn shorthand_to_tag(&self, shorthand: StringRange) -> NodeTag {
         let s = shorthand.slice(self.input);
-        // TODO(port): comparing &[Enc::Unit] to ASCII literals; assumes u8-compatible.
         if eq_ascii::<Enc>(s, b"bool") {
             return NodeTag::Bool;
         }
@@ -5831,7 +5697,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let previous_token_line = self.token.line;
 
-        // PORT NOTE: labeled-switch loop with `inline` whitespace dispatch.
+        // labeled-switch loop with `inline` whitespace dispatch.
         // We loop on `Enc::wide(self.next())` and break with the resulting token.
         let token: Token<Enc> = 'next: loop {
             let c = Enc::wide(self.next());
@@ -6084,8 +5950,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token = Token::reserved(self.token_init(start));
                     return Err(Self::unexpected_token());
                 }
-                // PORT NOTE: ScanCtx.scanWhitespace inlined.
-                // whitespace — Zig used `inline '\r','\n',' ','\t' => |ws| ctx.scanWhitespace(ws)`
+                // ScanCtx.scanWhitespace inlined.
                 0x0D /* '\r' */ => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -6428,12 +6293,3 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 fn eq_ascii<Enc: Encoding>(s: &[Enc::Unit], lit: &[u8]) -> bool {
     s.len() == lit.len() && s.iter().zip(lit).all(|(a, b)| Enc::wide(*a) == *b as u32)
 }
-
-// ───────────────────────────────────────────────────────────────────────────
-// Omitted: large commented-out blocks from yaml.zig
-//   - `Node` struct (lines 4758-4881) — commented out in source
-//   - `Printer` fn   (lines 4927-5248) — commented out in source
-// These were not active code; intentionally not ported.
-// ───────────────────────────────────────────────────────────────────────────
-
-// ported from: src/interchange/yaml.zig

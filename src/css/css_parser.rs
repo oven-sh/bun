@@ -4502,6 +4502,27 @@ pub unsafe fn src_str(s: &[u8]) -> &'static [u8] {
     unsafe { bun_collections::detach_lifetime(s) }
 }
 
+/// css-syntax §3.2 "decode bytes": the tokenizer requires well-formed UTF-8.
+/// Token payloads are raw sub-slices of `src` (idents, urls, import
+/// specifiers) and byte positions are assumed to be char boundaries, so
+/// malformed sequences must become U+FFFD before tokenizing, never leak
+/// through. Returns `code` unchanged when it is already valid.
+pub fn replace_invalid_utf8<'a>(code: &'a [u8], arena: &'a Bump) -> &'a [u8] {
+    if strings::is_valid_utf8(code) {
+        return code;
+    }
+    // Cold: malformed input only. Each maximal ill-formed subpart becomes one
+    // U+FFFD (the substitution browsers apply when decoding a stylesheet).
+    let mut out: Vec<u8> = Vec::with_capacity(code.len() + REPLACEMENT_CHAR_UTF8.len());
+    for chunk in code.utf8_chunks() {
+        out.extend_from_slice(chunk.valid().as_bytes());
+        if !chunk.invalid().is_empty() {
+            out.extend_from_slice(REPLACEMENT_CHAR_UTF8);
+        }
+    }
+    arena.alloc_slice_copy(&out)
+}
+
 impl<'a> Tokenizer<'a> {
     pub fn init_with_arena(src: &'a [u8], arena: &'a Bump) -> Tokenizer<'a> {
         Tokenizer {

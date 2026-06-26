@@ -2300,7 +2300,15 @@ pub mod parse_worker {
         }
         *step = Step::Parse;
 
-        let entry_contents: &[u8] = entry.contents.as_slice();
+        // CSS must be decoded before tokenizing (see
+        // `bun_css::replace_invalid_utf8`). Do it here, before `source` is
+        // built, so `source.contents`, token positions, error line text, and
+        // source maps all index the same buffer.
+        let entry_contents: &[u8] = if loader == Loader::Css {
+            bun_css::replace_invalid_utf8(entry.contents.as_slice(), bump)
+        } else {
+            entry.contents.as_slice()
+        };
         let is_empty = strings::is_all_whitespace(entry_contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the

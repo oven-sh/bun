@@ -118,11 +118,12 @@ export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: s
 }
 
 // PostgreSQL FE/BE protocol §55.7 generic backend message: Byte1(type) Int32(len = 4 + body.length) body
-// Low-level escape hatch for fault-injection tests that need a deliberately malformed body.
-export function pgRaw(type: string, body: Buffer): Buffer {
+// Low-level escape hatch for fault-injection tests that need a deliberately malformed body,
+// or (via `declaredLength`) a length field that lies about the body it precedes.
+export function pgRaw(type: string, body: Buffer, declaredLength: number = body.length + 4): Buffer {
   const buf = Buffer.alloc(5 + body.length);
   buf.write(type, 0);
-  buf.writeInt32BE(body.length + 4, 1);
+  buf.writeInt32BE(declaredLength, 1);
   body.copy(buf, 5);
   return buf;
 }

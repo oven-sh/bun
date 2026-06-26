@@ -498,9 +498,6 @@ pub(crate) fn on_data<Context: ReaderContext>(
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
                 let length = reader.length()?;
-                if length < 4 {
-                    return Err(AnyPostgresError::InvalidMessageLength);
-                }
                 let to_skip = length.saturating_sub(4);
                 bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
                 reader.skip(usize::try_from(to_skip).expect("int cast"))?;

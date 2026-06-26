@@ -7869,8 +7869,7 @@ fn print_repl_functions_source<'a, const ASCII_ONLY: bool>(
         }
     }
     if printed {
-        slot.data =
-            bun_ast::StoreStr::new(bump.alloc_slice_copy(buffer_printer.ctx.get_written()));
+        slot.data = bun_ast::StoreStr::new(bump.alloc_slice_copy(buffer_printer.ctx.get_written()));
     }
     symbols
 }

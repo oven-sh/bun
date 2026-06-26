@@ -245,10 +245,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Inner: ClassName = class ClassName {}
                     if let Some(name_loc) = class.class.class_name {
                         let name_ref = name_loc.ref_;
-                        repl_push_unique_name(
-                            &mut declared_names,
-                            self.repl_symbol_name(name_ref),
-                        );
+                        repl_push_unique_name(&mut declared_names, self.repl_symbol_name(name_ref));
                         // Must be checked before `class.class` is moved out below.
                         let is_serializable = self.class_can_be_removed_if_unused(&class.class);
                         hoisted_stmts.push(self.s(

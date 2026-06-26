@@ -1,0 +1,165 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+
+// A `redis+unix://` path with no listener makes `connect()` fail synchronously
+// (inside the `.connect()` call itself) instead of via a deferred socket error.
+// That branch of `do_connect` used to leave the already-rejected
+// `connectionPromise` in its cached slot, so:
+//   1. a later `.connect()` returned the stale rejected promise and never retried
+//   2. once a later connection attempt (started by any command) progressed,
+//      `on_valkey_connect` / `on_valkey_close` settled that same promise again:
+//        ASSERTION FAILED: arg0->status() == JSC::JSPromise::Status::Pending
+//        void JSC__JSPromise__reject(JSC::JSPromise*, JSGlobalObject*, EncodedJSValue)
+//        src/jsc/bindings/bindings.cpp:3733
+// Each case runs in its own process because the second settle aborts the whole
+// process under ASSERT-enabled builds.
+
+// Minimal Redis-ish unix-socket server: frames complete RESP arrays
+// (*N\r\n followed by N bulk strings) and replies +OK to each. +OK is a valid
+// HELLO reply, so the client reaches the connected state without a real Redis.
+const SERVER_TS = /* ts */ `
+  function consumeRespArray(buf) {
+    if (buf.length < 4 || buf[0] !== 0x2a /* '*' */) return 0;
+    let eol = buf.indexOf("\\r\\n");
+    if (eol < 0) return 0;
+    const count = parseInt(buf.subarray(1, eol).toString("latin1"), 10);
+    let off = eol + 2;
+    for (let i = 0; i < count; i++) {
+      if (off >= buf.length || buf[off] !== 0x24 /* '$' */) return 0;
+      eol = buf.indexOf("\\r\\n", off);
+      if (eol < 0) return 0;
+      const len = parseInt(buf.subarray(off + 1, eol).toString("latin1"), 10);
+      off = eol + 2 + len + 2;
+      if (off > buf.length) return 0;
+    }
+    return off;
+  }
+
+  export function listenRespOk(unix) {
+    return Bun.listen({
+      unix,
+      socket: {
+        open(socket) {
+          socket.data = { buf: Buffer.alloc(0) };
+        },
+        data(socket, chunk) {
+          socket.data.buf = Buffer.concat([socket.data.buf, chunk]);
+          let consumed;
+          while ((consumed = consumeRespArray(socket.data.buf)) > 0) {
+            socket.data.buf = socket.data.buf.subarray(consumed);
+            socket.write("+OK\\r\\n");
+          }
+        },
+        error() {},
+      },
+    });
+  }
+`;
+
+async function run(name: string, reproTs: string) {
+  using dir = tempDir(name, { "server.ts": SERVER_TS, "repro.ts": reproTs });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repro.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+}
+
+test.skipIf(isWindows).concurrent("RedisClient.connect() retries after a synchronous connect failure", async () => {
+  const { stdout, exitCode, signalCode } = await run(
+    "vk-retry",
+    /* ts */ `
+        import { RedisClient } from "bun";
+        import { join } from "node:path";
+        import { listenRespOk } from "./server.ts";
+        const sock = join(import.meta.dir, "s");
+        const client = new RedisClient(\`redis+unix://\${sock}\`);
+        // No listener at \`sock\` yet: connect(2) on the unix path fails synchronously.
+        const first = await client.connect().then(() => "resolved", (e) => e?.code);
+        const wasConnected = client.connected;
+        // The target exists now. connect() must start a new attempt rather than
+        // hand back the promise it already rejected above.
+        const server = listenRespOk(sock);
+        const second = await client.connect().then((v) => v, (e) => e?.code);
+        console.log(JSON.stringify({ first, wasConnected, second, connected: client.connected }));
+        client.close();
+        server.stop(true);
+      `,
+  );
+  expect({ stdout, exitCode, signalCode }).toEqual({
+    stdout: JSON.stringify({
+      first: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
+      wasConnected: false,
+      second: "OK",
+      connected: true,
+    }),
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// on_valkey_connect re-reads the cached connectionPromise once the handshake
+// finishes. If the failed connect() left its rejected promise in the slot, this
+// resolves it a second time.
+test
+  .skipIf(isWindows)
+  .concurrent("a later successful connection does not settle the stale connectionPromise", async () => {
+    const { stdout, exitCode, signalCode } = await run(
+      "vk-resolve",
+      /* ts */ `
+        import { RedisClient } from "bun";
+        import { join } from "node:path";
+        import { listenRespOk } from "./server.ts";
+        const sock = join(import.meta.dir, "s");
+        const client = new RedisClient(\`redis+unix://\${sock}\`);
+        const first = await client.connect().then(() => "resolved", (e) => e?.code);
+        const server = listenRespOk(sock);
+        // .get() reconnects via a path that does not consult the cached slot, so
+        // the connection proceeds and on_valkey_connect settles the slot.
+        const got = await client.get("k");
+        console.log(JSON.stringify({ first, got }));
+        client.close();
+        server.stop(true);
+      `,
+    );
+    expect({ stdout, exitCode, signalCode }).toEqual({
+      stdout: JSON.stringify({ first: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION", got: "OK" }),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+// on_valkey_close also re-reads the cached connectionPromise. close() while a
+// later attempt is still mid-connect rejects the stale promise a second time
+// (the JSC__JSPromise__reject half of the assertion).
+test
+  .skipIf(isWindows)
+  .concurrent("close() during a later connection attempt does not reject the stale connectionPromise", async () => {
+    const { stdout, exitCode, signalCode } = await run(
+      "vk-reject",
+      /* ts */ `
+        import { RedisClient } from "bun";
+        import { join } from "node:path";
+        import { listenRespOk } from "./server.ts";
+        const sock = join(import.meta.dir, "s");
+        const client = new RedisClient(\`redis+unix://\${sock}\`);
+        const first = await client.connect().then(() => "resolved", (e) => e?.code);
+        const server = listenRespOk(sock);
+        // Start a fresh connection via .get(), then close before it completes.
+        const pending = client.get("k").then(() => "resolved", (e) => e?.code);
+        client.close();
+        const got = await pending;
+        console.log(JSON.stringify({ first, got }));
+        server.stop(true);
+      `,
+    );
+    expect({ stdout, exitCode, signalCode }).toEqual({
+      stdout: JSON.stringify({ first: "ERR_SOCKET_CLOSED_BEFORE_CONNECTION", got: "ERR_REDIS_CONNECTION_CLOSED" }),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });

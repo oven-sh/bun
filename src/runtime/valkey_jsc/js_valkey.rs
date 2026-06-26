@@ -999,6 +999,10 @@ impl JSValkeyClient {
             if let Err(err) = self.connect() {
                 self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
                 self.client_mut().flags.needs_to_open_socket = true;
+                // Clear the cached slot before settling, like on_valkey_connect and
+                // on_valkey_close do. A stale settled promise here gets settled again
+                // by those paths, and a later connect() returns it instead of retrying.
+                Js::connection_promise_set_cached(this_value, global_object, JSValue::ZERO);
                 let err_value = global_object
                     .err(
                         jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,

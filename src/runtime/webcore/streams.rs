@@ -1851,10 +1851,13 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         self.aborted = true;
 
-        self.signal.close(None);
-
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
         self.finalize();
+
+        // Close the signal last. It runs the controller's JS onClose callback, which
+        // cancels the stream; cancelling a native source drains microtasks, and the
+        // drained stream-settled reaction tears down and frees this sink.
+        self.signal.close(None);
     }
 
     fn unregister_auto_flusher(&mut self) {

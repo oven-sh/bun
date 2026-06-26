@@ -1,0 +1,34 @@
+diff --git a/build.zig b/build.zig
+index 8ef7701..7ebcc1e 100644
+--- a/build.zig
++++ b/build.zig
+@@ -56,6 +56,29 @@ pub fn build(b: *std.Build) !void {
+         &deps,
+     );
+ 
++    // When only the VT library is requested, build it and stop. This avoids
++    // walking the full Ghostty app dependency graph (GTK, fonts, renderers,
++    // ...), which would otherwise lazily fetch dozens of packages that
++    // libghostty-vt does not need.
++    if (config.emit_lib_vt) {
++        const vt_static = try buildpkg.GhosttyLibVt.initStatic(b, &mod);
++        const static_lib_name = if (config.target.result.os.tag == .windows)
++            "ghostty-vt-static.lib"
++        else
++            "libghostty-vt.a";
++        b.getInstallStep().dependOn(&b.addInstallLibFile(
++            vt_static.output,
++            static_lib_name,
++        ).step);
++        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
++            .source_dir = b.path("include/ghostty"),
++            .install_dir = .header,
++            .install_subdir = "ghostty",
++            .include_extensions = &.{".h"},
++        }).step);
++        return;
++    }
++
+     // All our steps which we'll hook up later. The steps are shown
+     // up here just so that they are more self-documenting.
+     const run_step = b.step("run", "Run the app");

@@ -30,6 +30,7 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs, slash } from "./shell.ts";
 import { streamPath } from "./stream.ts";
+import { zigBuildCliPath } from "./zig-build-cli.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,
@@ -162,6 +163,7 @@ export type Source =
  */
 export type BuildSpec =
   | NestedCmakeBuild
+  | NestedZigBuild
   | CargoBuild
   | DirectBuild
   | {
@@ -334,6 +336,53 @@ export interface PreBuildSpec {
    * Also the ninja outputs — if missing, preBuild runs.
    */
   outputs: string[];
+}
+
+/**
+ * Build a dep with its own `build.zig` via `zig build`.
+ *
+ * One ninja edge runs `scripts/build/zig-build-cli.ts`, which resolves a
+ * Zig compiler (`$BUN_ZIG` → `$PATH` → auto-download into `cfg.cacheDir`),
+ * pre-fetches the dep's Zig package dependencies through our downloader,
+ * then runs `zig build <args> --prefix <buildDir>/deps/<name>`. Like
+ * nested-cmake, the nested build system owns incrementality; `restat = 1`
+ * prunes our downstream when the install is a no-op.
+ */
+export interface NestedZigBuild {
+  kind: "nested-zig";
+  /**
+   * `zig build` args (e.g. `-Demit-lib-vt`, `-Doptimize=ReleaseFast`).
+   * A `-Dtarget=<triple>` derived from `cfg` via `zigTargetTriple()` is
+   * always appended so the artifact matches bun's target, not the host.
+   * `--prefix` is always appended and must not appear here.
+   */
+  args: string[];
+  /**
+   * The dep's Zig package dependencies, resolved to exact URLs and the
+   * content hashes its `build.zig.zon` pins. Prefetched into the Zig
+   * global cache before `zig build` runs so the nested build never makes
+   * its own network requests (and so downloads go through our retrying,
+   * proxy-aware, prefetch-cached path like every other dep's).
+   *
+   * These must be kept in sync with the dep's `build.zig.zon` when its
+   * commit is bumped. A stale hash fails the build with a message that
+   * names this field.
+   */
+  packages: Array<{ url: string; hash: string }>;
+}
+
+/**
+ * Zig target triple for bun's build target, e.g. `x86_64-linux-gnu`.
+ * Passed as `-Dtarget=` so `zig build` cross-compiles deterministically
+ * instead of sniffing the host.
+ */
+export function zigTargetTriple(cfg: Config): string {
+  const arch = cfg.arm64 ? "aarch64" : "x86_64";
+  if (cfg.darwin) return `${arch}-macos`;
+  if (cfg.freebsd) return `${arch}-freebsd`;
+  if (cfg.windows) return `${arch}-windows`;
+  assert(cfg.linux, `zigTargetTriple: unsupported target os "${cfg.os}"`);
+  return `${arch}-linux-${cfg.abi ?? "gnu"}`;
 }
 
 export interface CargoBuild {
@@ -615,6 +664,18 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     });
   }
 
+  // Zig build: one edge that runs zig-build-cli.ts. That script resolves a
+  // Zig toolchain ($BUN_ZIG → $PATH → cached download), prefetches the
+  // dep's Zig packages through our downloader, and runs `zig build` in the
+  // source dir. restat: the nested zig build is itself incremental, so a
+  // no-op install preserves output mtimes and prunes downstream.
+  n.rule("dep_zig_build", {
+    command: `${stream} --cwd=$srcdir ${cfg.jsRuntime} ${q(zigBuildCliPath)} --prefix $prefix --cache $cache $packages -- $args`,
+    description: "zig $name",
+    restat: true,
+    pool: "dep",
+  });
+
   // preBuild: runs an arbitrary command before cmake configure. Used for
   // build steps that live outside cmake (ICU via msbuild on Windows).
   // restat: if outputs are unchanged (script is idempotent), prune
@@ -782,6 +843,9 @@ export function resolveDep(
     if (buildSpec.kind === "nested-cmake") {
       stampDir = buildSpec.sourceSubdir ? resolve(srcDir, buildSpec.sourceSubdir) : srcDir;
       stampFile = "CMakeLists.txt";
+    } else if (buildSpec.kind === "nested-zig") {
+      stampDir = srcDir;
+      stampFile = "build.zig";
     } else if (buildSpec.kind === "cargo") {
       stampDir = resolve(srcDir, buildSpec.manifestDir);
       stampFile = "Cargo.toml";
@@ -834,6 +898,15 @@ export function resolveDep(
       // source changes reliably (git checkout preserves mtimes of files
       // unchanged between commits). The inner ninja detects what's stale.
       alwaysBuild: source.kind === "local",
+    });
+    libs = result.libs;
+    outputs = result.libs;
+  } else if (buildSpec.kind === "nested-zig") {
+    const result = emitNestedZig(n, cfg, dep.name, buildSpec, {
+      srcDir,
+      sourceStamp,
+      provides,
+      fetchDepStamps,
     });
     libs = result.libs;
     outputs = result.libs;
@@ -922,6 +995,12 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
       libs.push(...buildSpec.preBuild.outputs);
     }
     return libs;
+  }
+
+  // nested-zig: `zig build --prefix <buildDir>` installs libs under lib/.
+  if (buildSpec.kind === "nested-zig") {
+    const libDir = resolve(depBuildDir(cfg, dep.name), "lib");
+    return provides.libs.map(lib => resolve(libDir, `${cfg.libPrefix}${lib}${cfg.libSuffix}`));
   }
 
   // cargo: single lib in targetDir/<triple?>/<profile>/.
@@ -1317,6 +1396,65 @@ function emitNestedCmake(
   n.phony(name, allLibs);
 
   return { libs: allLibs };
+}
+
+interface EmitNestedZigInput {
+  /** Resolved source dir (vendor/<name>). */
+  srcDir: string;
+  /** The "source is ready" file (vendor/<name>/.ref or build.zig). */
+  sourceStamp: string;
+  provides: Provides;
+  /** Cross-dep build outputs; implicit inputs so they're built first. */
+  fetchDepStamps: string[];
+}
+
+/**
+ * Emit a ninja build rule for a `build.zig` project. Returns the static
+ * libs `zig build --prefix <buildDir>/deps/<name>` installs under `lib/`.
+ *
+ * One edge, no separate configure: `zig build` owns its own incremental
+ * graph (like cargo). The heavy lifting — finding or downloading Zig,
+ * prefetching the dep's Zig packages — happens inside zig-build-cli.ts at
+ * build time, so the configure step never touches the network or probes
+ * for a toolchain it may not need.
+ */
+function emitNestedZig(
+  n: Ninja,
+  cfg: Config,
+  name: string,
+  spec: NestedZigBuild,
+  input: EmitNestedZigInput,
+): { libs: string[] } {
+  const hostWin = cfg.host.os === "windows";
+  const { srcDir, sourceStamp, provides, fetchDepStamps } = input;
+  const buildDir = depBuildDir(cfg, name);
+
+  // `zig build --prefix` installs libraries under `<prefix>/lib/` and
+  // names them with the host platform's conventions.
+  const libs = provides.libs.map(lib => resolve(buildDir, "lib", `${cfg.libPrefix}${lib}${cfg.libSuffix}`));
+  assert(libs.length > 0, `nested-zig dep "${name}" must declare at least one provides.libs entry`);
+
+  // The target triple is appended LAST so a dep cannot accidentally
+  // override it and produce a host-arch artifact in a cross build.
+  const args = [...spec.args, `-Dtarget=${zigTargetTriple(cfg)}`];
+
+  n.build({
+    outputs: libs,
+    rule: "dep_zig_build",
+    inputs: [],
+    implicitInputs: [sourceStamp, zigBuildCliPath, ...fetchDepStamps],
+    vars: {
+      name,
+      srcdir: srcDir,
+      prefix: buildDir,
+      cache: cfg.cacheDir,
+      packages: spec.packages.map(p => `--package ${quote(p.url, hostWin)} ${p.hash}`).join(" "),
+      args: quoteArgs(args, hostWin),
+    },
+  });
+  n.phony(name, libs);
+
+  return { libs };
 }
 
 interface EmitCargoInput {

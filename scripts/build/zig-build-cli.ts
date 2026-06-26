@@ -1,0 +1,271 @@
+/**
+ * zig-build-cli — the build-time entry point for `nested-zig` deps.
+ *
+ * Invoked by the `dep_zig_build` ninja rule (see source.ts). It does three
+ * things, all at BUILD time (never at configure time):
+ *
+ *  1. Resolve a Zig compiler (see `resolveZig`).
+ *  2. Pre-fetch the dep's Zig package dependencies into the Zig global
+ *     cache so `zig build` never makes its own network requests. Zig's
+ *     package manager is content-addressed: a package that is already in
+ *     the cache under the hash declared in `build.zig.zon` is used as-is
+ *     and its URL is never consulted, so this also keeps all downloads on
+ *     our `downloadWithRetry` path (retries, prefetch cache, proxies).
+ *  3. Run `zig build <args> --prefix <prefix>` in the dep's source dir.
+ *
+ * ## Usage (ninja only — not meant to be run by hand)
+ *
+ *   zig-build-cli.ts --prefix <dir> --cache <dir>
+ *                    [--package <url> <zig-package-hash>]...
+ *                    -- <zig build args...>
+ *
+ * cwd must be the dep's source directory (the ninja rule sets it via
+ * stream.ts `--cwd=`).
+ */
+
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
+import { delimiter, join, resolve } from "node:path";
+import { downloadWithRetry } from "./download.ts";
+import { BuildError, assert } from "./error.ts";
+
+/** Absolute path to this file, for ninja rule command strings. */
+export const zigBuildCliPath: string = import.meta.filename;
+
+/**
+ * The pinned Zig release used to build `nested-zig` deps. Bumping it means
+ * updating every sha256 below from
+ * https://ziglang.org/download/index.json (the same data is mirrored at
+ * github.com/ziglang/www.ziglang.org in assets/download/index.json).
+ */
+export const ZIG_VERSION = "0.15.2";
+
+/**
+ * Official release tarball sha256s, keyed by `<arch>-<os>` in Zig's own
+ * naming. The downloaded tarball is rejected if its digest differs.
+ */
+const ZIG_TARBALL_SHA256: Record<string, string> = {
+  "x86_64-linux": "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239",
+  "aarch64-linux": "958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f",
+  "x86_64-macos": "375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f",
+  "aarch64-macos": "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b",
+  "x86_64-freebsd": "5509ff57cd3f219165caed0da10221739af82742b9edfcda3f7bfaf4da7212dd",
+  "aarch64-freebsd": "c62efd319f86663eb7747709dfca259205edba8eaee98efc96a51ce40a9437de",
+};
+
+/**
+ * Zig's `<arch>-<os>` key for the machine running this build. The Linux
+ * binaries are fully static (musl), so one tarball covers glibc and musl
+ * hosts.
+ */
+function hostZigPlatform(): string {
+  const archNames: Record<string, string> = { x64: "x86_64", arm64: "aarch64" };
+  const osNames: Record<string, string> = { linux: "linux", darwin: "macos", freebsd: "freebsd" };
+  const arch = archNames[process.arch];
+  const os = osNames[process.platform];
+  assert(
+    arch !== undefined && os !== undefined,
+    `No Zig ${ZIG_VERSION} download for host ${process.platform}-${process.arch}`,
+    {
+      hint: "Install Zig yourself and point BUN_ZIG at it, or add the platform to ZIG_TARBALL_SHA256 in zig-build-cli.ts",
+    },
+  );
+  return `${arch}-${os}`;
+}
+
+/**
+ * Find a usable `zig` executable, in order:
+ *
+ *  1. `$BUN_ZIG` — an explicit path, taken as-is (no version check: the
+ *     nested `zig build` enforces its own `minimum_zig_version`).
+ *  2. `zig` on `$PATH` whose `zig version` reports `major.minor` matching
+ *     `ZIG_VERSION`. A mismatched system Zig is skipped, not fatal.
+ *  3. Download the official `ZIG_VERSION` release into
+ *     `<cacheDir>/zig/<version>/`, verifying its sha256 against the pinned
+ *     table above. Cached per machine like the other toolchain downloads.
+ */
+async function resolveZig(cacheDir: string): Promise<string> {
+  const fromEnv = process.env.BUN_ZIG;
+  if (fromEnv) {
+    assert(existsSync(fromEnv), `BUN_ZIG points at a path that does not exist: ${fromEnv}`);
+    return fromEnv;
+  }
+
+  const wantMinor = ZIG_VERSION.split(".").slice(0, 2).join(".");
+  const exe = process.platform === "win32" ? "zig.exe" : "zig";
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (dir.length === 0) continue;
+    const candidate = join(dir, exe);
+    if (!existsSync(candidate)) continue;
+    const probe = spawnSync(candidate, ["version"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const version = probe.status === 0 ? (probe.stdout ?? "").trim() : "";
+    if (version.split(".").slice(0, 2).join(".") === wantMinor) {
+      return candidate;
+    }
+  }
+
+  // ─── Download ───
+  const platform = hostZigPlatform();
+  const sha = ZIG_TARBALL_SHA256[platform];
+  assert(sha !== undefined, `No pinned Zig ${ZIG_VERSION} sha256 for ${platform}`, {
+    hint: "Add it to ZIG_TARBALL_SHA256 in zig-build-cli.ts (from ziglang.org/download/index.json), or set BUN_ZIG",
+  });
+
+  const installDir = resolve(cacheDir, "zig", ZIG_VERSION);
+  const zigExe = join(installDir, "zig");
+  if (existsSync(zigExe)) return zigExe;
+
+  const name = `zig-${platform}-${ZIG_VERSION}`;
+  const url = `https://ziglang.org/download/${ZIG_VERSION}/${name}.tar.xz`;
+  console.log(`downloading ${url}`);
+  const tarball = `${installDir}.${process.pid}.tar.xz`;
+  const staging = `${installDir}.${process.pid}.staging`;
+  await mkdir(resolve(installDir, ".."), { recursive: true });
+  try {
+    await downloadWithRetry(url, tarball, name);
+
+    const digest = createHash("sha256").update(readFileSync(tarball)).digest("hex");
+    assert(digest === sha, `Zig tarball sha256 mismatch for ${name}`, {
+      hint: `expected ${sha}\n     got ${digest}\nfrom ${url}`,
+    });
+
+    // -J: the official Zig release archives are .tar.xz on every platform
+    // this dep supports. -m normalizes mtimes (same as extractTarGz).
+    await mkdir(staging, { recursive: true });
+    const tar = spawnSync("tar", ["-xJmf", tarball, "-C", staging, "--strip-components=1"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      encoding: "utf8",
+    });
+    assert(tar.status === 0, `Failed to extract ${name}.tar.xz: ${tar.stderr ?? tar.error?.message}`, {
+      hint: "Extracting .tar.xz requires xz (apt install xz-utils / brew install xz)",
+    });
+
+    // Publish atomically: the rename is the single step that makes a
+    // complete toolchain visible at installDir. A concurrent build that
+    // won the race already produced the same content.
+    await rm(installDir, { recursive: true, force: true });
+    await rm(tarball, { force: true });
+    const fs = await import("node:fs/promises");
+    try {
+      await fs.rename(staging, installDir);
+    } catch (err) {
+      if (!existsSync(zigExe)) throw err;
+    }
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+    await rm(tarball, { force: true });
+  }
+
+  assert(existsSync(zigExe), `Zig extraction produced no ${zigExe}`);
+  return zigExe;
+}
+
+/**
+ * Ensure a Zig package is present in the global cache at `expectedHash`.
+ *
+ * Downloads `url` through our downloader, then hands the local tarball to
+ * `zig fetch`, which unpacks it into `<globalCache>/p/<hash>/` keyed by
+ * the content hash it computes. A mismatch between that hash and the one
+ * `build.zig.zon` expects means the URL no longer serves the pinned
+ * content — fail loudly rather than letting `zig build` fall back to the
+ * network.
+ */
+async function prefetchZigPackage(
+  zig: string,
+  globalCache: string,
+  url: string,
+  expectedHash: string,
+): Promise<void> {
+  if (existsSync(join(globalCache, "p", expectedHash))) return;
+
+  console.log(`fetching zig package ${expectedHash}`);
+  const tarball = join(globalCache, `prefetch.${process.pid}.${createHash("sha256").update(url).digest("hex").slice(0, 8)}.tar.gz`);
+  try {
+    await downloadWithRetry(url, tarball, expectedHash);
+    const fetched = spawnSync(zig, ["fetch", tarball], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ZIG_GLOBAL_CACHE_DIR: globalCache },
+    });
+    assert(fetched.status === 0, `zig fetch failed for ${url}: ${fetched.stderr ?? fetched.error?.message}`);
+    const got = (fetched.stdout ?? "").trim();
+    assert(got === expectedHash, `Zig package hash mismatch for ${url}`, {
+      hint:
+        `expected ${expectedHash}\n     got ${got}\n` +
+        `The URL no longer serves the content build.zig.zon pins. ` +
+        `Update the --package hash in deps/ghostty-vt.ts to match the new build.zig.zon.`,
+    });
+  } finally {
+    await rm(tarball, { force: true });
+  }
+}
+
+async function main(): Promise<void> {
+  let prefix = "";
+  let cacheDir = "";
+  const packages: Array<{ url: string; hash: string }> = [];
+  const zigArgs: string[] = [];
+
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === "--prefix") {
+      prefix = argv[++i] ?? "";
+    } else if (a === "--cache") {
+      cacheDir = argv[++i] ?? "";
+    } else if (a === "--package") {
+      const url = argv[++i];
+      const hash = argv[++i];
+      assert(url !== undefined && hash !== undefined, "--package requires <url> <hash>");
+      packages.push({ url, hash });
+    } else if (a === "--") {
+      zigArgs.push(...argv.slice(i + 1));
+      break;
+    } else {
+      throw new BuildError(`Unknown zig-build-cli argument: ${a}`);
+    }
+  }
+  assert(prefix.length > 0 && cacheDir.length > 0, "zig-build-cli: --prefix and --cache are required");
+
+  const zig = await resolveZig(cacheDir);
+
+  // Shared across profiles and checkouts (package store + compiled Zig
+  // stdlib), like the tarball cache. The local cache is per dep build dir
+  // so debug and release builds never invalidate each other.
+  const globalCache = resolve(cacheDir, "zig-global-cache");
+  const localCache = resolve(prefix, ".zig-cache");
+  await mkdir(globalCache, { recursive: true });
+
+  for (const pkg of packages) {
+    await prefetchZigPackage(zig, globalCache, pkg.url, pkg.hash);
+  }
+
+  const result = spawnSync(zig, ["build", ...zigArgs, "--prefix", prefix], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ZIG_GLOBAL_CACHE_DIR: globalCache,
+      ZIG_LOCAL_CACHE_DIR: localCache,
+    },
+  });
+  if (result.error) {
+    throw new BuildError(`Failed to spawn ${zig}`, { cause: result.error });
+  }
+  if (result.status !== 0) {
+    throw new BuildError(`zig build exited with ${result.status}`, {
+      hint: `command: ${zig} build ${zigArgs.join(" ")} --prefix ${prefix}`,
+    });
+  }
+}
+
+if (process.argv[1] === import.meta.filename) {
+  main().catch(err => {
+    if (err instanceof BuildError) {
+      process.stderr.write(err.format());
+      process.exit(1);
+    }
+    throw err;
+  });
+}

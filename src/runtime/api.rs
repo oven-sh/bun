@@ -151,6 +151,8 @@ pub mod bun {
         pub use crate::api::bun_terminal_body::{
             CreatePtyError, OpenPtyFn, OpenPtyTermios, PtyResult, Winsize,
         };
+        // `bun run --parallel` gives each task a pty for its pane renderer.
+        pub(crate) use crate::api::bun_terminal_body::create_pty;
     }
     pub use terminal::Terminal;
 

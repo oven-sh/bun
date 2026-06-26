@@ -581,12 +581,13 @@ impl Cmd {
         // with the correct `child` once `spawn_async` writes through
         // `out_subproc`. `interp` is left null until `spawn_async` and the
         // `did_exit_immediately` handling have returned: a synchronous
-        // `Cmd::on_exit` reached via the process exit handler would otherwise
-        // drive the trampoline (`Yield::run(&*interp)`) while this frame
-        // still holds `&Interpreter`, tearing the Cmd down (and freeing
-        // `child`) underneath the live `subproc` borrow. With `interp` null,
-        // `on_exit` records `exit_code`/`state = Done` and returns; we resume
-        // via the Yield we hand back below.
+        // `Cmd::on_exit` (process exit) or `Cmd::buffered_output_close`
+        // (pipe-reader done/error, e.g. a failed poll registration) would
+        // otherwise drive the trampoline (`Yield::run(&*interp)`) while this
+        // frame still holds `&Interpreter`, tearing the Cmd down (and freeing
+        // `child` and this node's arena slot) underneath the live `subproc`
+        // borrow. With `interp` null they record `exit_code`/`state = Done`
+        // and return; we resume via the Yield we hand back below.
         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let buffered_closed = BufferedIoClosed::from_stdio(&spawn_args.stdio);
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
@@ -966,6 +967,10 @@ impl Cmd {
             // `CmdState::Done` → `interp.child_done(...)`.
             self.state = CmdState::Done;
             let this_id = match &self.exec {
+                // `transition_to_exec` publishes `interp` only after the spawn
+                // returns; a null backref means that frame still holds this
+                // node and resumes `Done` itself (same deferral as `on_exit`).
+                Exec::Subproc(sub) if sub.interp.is_null() => return Yield::suspended(),
                 Exec::Subproc(sub) => sub.this_id,
                 // Only the subprocess path calls this; builtin output goes
                 // through `Builtin::done` → `on_exec_done`.

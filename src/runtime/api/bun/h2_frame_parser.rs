@@ -5387,9 +5387,9 @@ impl H2FrameParser {
                     engine.pending_local_window_acks.push_back(w);
                 }
             });
-            // Streams whose legacy lifecycle finished since the last batch: evict the engine
-            // entry and free the legacy slot. free_resources already ran for these (it is the
-            // only producer of this queue); duplicate ids are fine — remove() yields None.
+            // Streams the embedder released since the last batch: evict the engine entry and,
+            // for ids queued by free_resources, free the legacy slot. Ids queued by rst_stream's
+            // no-legacy-entry branch (and duplicates) have no legacy entry: remove() yields None.
             self.pending_engine_stream_closes.with_mut(|v| {
                 for id in v.drain(..) {
                     engine.close_stream(id);

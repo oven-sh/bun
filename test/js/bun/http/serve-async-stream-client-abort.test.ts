@@ -36,15 +36,10 @@ test("client aborting a native-source stream response does not use the sink afte
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({
-    stdout: stdout.trim(),
-    exitCode,
-    signalCode: proc.signalCode,
-    stderr: exitCode === 0 ? "" : stderr,
-  }).toEqual({
+  expect({ stderr, stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stderr: "",
     stdout: expect.stringContaining('"ok":true'),
     exitCode: 0,
     signalCode: null,
-    stderr: "",
   });
 }, 60_000);

@@ -34,24 +34,27 @@ const server = Bun.serve({
 });
 
 let aborted = 0;
-for (let i = 0; i < 3; i++) {
-  const controller = new AbortController();
-  // Resolves once the headers and the first chunk arrive; at that point the
-  // server is parked on the next (never-arriving) chunk of the pipe.
-  await fetch(`http://127.0.0.1:${server.port}/`, { signal: controller.signal });
-  controller.abort();
-  aborted++;
+try {
+  for (let i = 0; i < 3; i++) {
+    const controller = new AbortController();
+    const response = await fetch(`http://127.0.0.1:${server.port}/`, { signal: controller.signal });
+    // Wait for the first chunk so the server is provably streaming and parked
+    // on the next (never-arriving) chunk of the pipe, then abort.
+    await response.body!.getReader().read();
+    controller.abort();
+    aborted++;
 
-  // A full request/response round-trip after the abort guarantees the server
-  // processed the aborted socket's close event and is still functional.
-  const pong = await (await fetch(`http://127.0.0.1:${server.port}/ping`)).text();
-  if (pong !== "pong") {
-    console.error(`expected pong, got ${JSON.stringify(pong)}`);
-    process.exit(1);
+    // A full request/response round-trip after the abort guarantees the server
+    // processed the aborted socket's close event and is still functional.
+    const pong = await (await fetch(`http://127.0.0.1:${server.port}/ping`)).text();
+    if (pong !== "pong") {
+      throw new Error(`expected pong, got ${JSON.stringify(pong)}`);
+    }
   }
-}
 
-for (const child of children) child.kill();
-await Promise.all(children.map(child => child.exited));
-server.stop(true);
-console.log(JSON.stringify({ ok: true, aborted }));
+  console.log(JSON.stringify({ ok: true, aborted }));
+} finally {
+  for (const child of children) child.kill();
+  await Promise.all(children.map(child => child.exited));
+  server.stop(true);
+}

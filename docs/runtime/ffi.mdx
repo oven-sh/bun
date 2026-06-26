@@ -290,7 +290,7 @@ const {
   },
 });
 
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
+const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, 0, length)), {
   returns: "bool",
   args: ["ptr", "usize"],
 });
@@ -320,7 +320,7 @@ A thread-safe callback is dispatched to the JavaScript thread asynchronously, so
 ```ts
 const onMatch = new JSCallback(
   (ptr, length) => {
-    console.log(new CString(ptr, length));
+    console.log(new CString(ptr, 0, length));
   },
   {
     args: ["ptr", "usize"],

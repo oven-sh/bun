@@ -1843,10 +1843,9 @@ pub(crate) mod strings_impl {
         pub written: u32,
     }
 
-    /// Port of `elementLengthUTF16IntoUTF8` — exact UTF-8 byte length of a UTF-16
-    /// (LE) input, charging 3 bytes (U+FFFD) per unpaired surrogate. This is
-    /// exactly what `copy_utf16_into_utf8` / `to_utf8_alloc` write, so it is a
-    /// valid exact allocation size even for ill-formed UTF-16.
+    /// Port of `elementLengthUTF16IntoUTF8`: the exact UTF-8 byte length of a
+    /// UTF-16 (LE) input, charging 3 bytes (U+FFFD) per unpaired surrogate,
+    /// which is exactly what `copy_utf16_into_utf8` / `to_utf8_alloc` write.
     #[inline]
     pub fn element_length_utf16_into_utf8(utf16: &[u16]) -> usize {
         simdutf::length::utf8::from::utf16::le_with_replacement(utf16)

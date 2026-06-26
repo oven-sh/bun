@@ -2461,10 +2461,9 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("lastIndexOf with utf16le only matches on a code-unit boundary", () => {
-        // UCS2 searches operate on whole uint16_t units (Node's
-        // SearchString<uint16_t>), so a raw byte match at an ODD offset is
-        // not a real match. The backward search used a byte-level std::find_end.
-        // The needle "a" is bytes [0x61, 0x00]; they occur only at byte 1 here.
+        // UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
+        // so a raw byte match at an ODD offset is not a real match. The needle
+        // "a" is bytes [0x61, 0x00]; they occur here only at byte offset 1.
         const h = Buffer.from([0x00, 0x61, 0x00, 0x00]);
         expect(h.lastIndexOf(Buffer.from("a", "utf16le"), undefined, "utf16le")).toBe(-1);
         expect(h.lastIndexOf("a", undefined, "utf16le")).toBe(-1);

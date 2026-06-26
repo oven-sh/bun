@@ -322,8 +322,14 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
 // unchecked by the yarn printer, `Package.clone` and the hoister, so an `off`
 // past the end of its buffer panicked:
 //   "range start index 4294967280 out of range for slice of length 3"
-for (const column of ["dependencies", "resolutions"] as const) {
-  it(`rejects a binary lockfile whose package ${column} offset is out of range`, async () => {
+// The two windows must also be the same range: consumers derive dependency
+// ids from one and index the other with them.
+for (const [what, column, poke] of [
+  ["dependencies offset is out of range", "dependencies", 0xfffffff0],
+  ["resolutions offset is out of range", "resolutions", 0xfffffff0],
+  ["resolutions window does not match dependencies", "resolutions", 0],
+] as const) {
+  it(`rejects a binary lockfile whose package ${what}`, async () => {
     const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
     // Migrating a package-lock.json with `--lockfile-only` writes bun.lockb
@@ -381,10 +387,13 @@ for (const column of ["dependencies", "resolutions"] as const) {
     const resolutionSize = fmt === 2 ? 64 : 72;
     const columnStart = begin + N * (8 + 8 + resolutionSize) + (column === "resolutions" ? N * 8 : 0);
     expect(N).toBe(3);
-    // Sanity: the root package's list is the first two of the three entries.
+    // Sanity: the root package's list is the first two of the three entries,
+    // and the last package's window starts right after them, so overwriting
+    // its `off` with 0 always de-pairs it from its `dependencies` window.
     expect(lockb.readUInt32LE(columnStart)).toBe(0);
     expect(lockb.readUInt32LE(columnStart + 4)).toBe(2);
-    lockb.writeUInt32LE(0xfffffff0, columnStart + 2 * 8);
+    expect(lockb.readUInt32LE(columnStart + 2 * 8)).toBe(2);
+    lockb.writeUInt32LE(poke, columnStart + 2 * 8);
     await write(lockbPath, lockb);
 
     // `bun bun.lockb` dereferences every package's dependency list to print

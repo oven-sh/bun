@@ -18,7 +18,7 @@ use crate::config_version::ConfigVersion;
 use crate::dependency;
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::resolution_real::Tag as ResolutionTag;
-use crate::{invalid_dependency_id, invalid_package_id};
+use crate::{bin, invalid_dependency_id, invalid_package_id};
 use bun_ast::Log;
 use bun_core::strings;
 use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
@@ -814,12 +814,15 @@ fn slice_in_bounds(off: u32, len: u32, buffer_len: usize) -> bool {
     off as usize + len as usize <= buffer_len
 }
 
-/// `package::serializer::load` and `buffers::load` memcpy slice descriptors
-/// (`(off, len)` pairs) and element ids verbatim from disk, and their
-/// consumers (`ExternalSlice::get`, `Package::clone`, the hoister, the
-/// printers) index with them unchecked. Out-of-range values from a corrupt or
-/// crafted lockfile must fail the parse so the installer can warn and
-/// re-resolve instead of panicking.
+/// `package::serializer::load` and `buffers::load` memcpy the package columns,
+/// the tree list and the id buffers verbatim from disk, and their consumers
+/// (`ExternalSlice::get`, `Package::clone`, the hoister, the printers) index
+/// with them unchecked. Validate every `ExternalSlice` window (`dependencies`,
+/// `resolutions`, `bin.map`, tree `dependencies`) and element id (tree
+/// `dependency_id` / `parent`, the `resolutions` and `hoisted_dependencies`
+/// buffers) so a corrupt or crafted lockfile fails the parse and the installer
+/// warns and re-resolves instead of panicking. String `(off, len)` pairs are
+/// not covered here: `SemverString::slice` already clamps them.
 fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
     let buffers = &lockfile.buffers;
     let dependencies_len = buffers.dependencies.len();
@@ -831,6 +834,9 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
         return Err(bun_core::err!("InvalidLockfile"));
     }
 
+    // A package's two windows must be the same range, not just two in-bounds
+    // ranges: consumers derive dependency ids from one and index the other
+    // with them.
     for (dependencies, resolutions) in lockfile
         .packages
         .items_dependencies()
@@ -838,10 +844,24 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
         .zip(lockfile.packages.items_resolutions())
     {
         if !slice_in_bounds(dependencies.off, dependencies.len, dependencies_len)
-            || !slice_in_bounds(resolutions.off, resolutions.len, resolutions_len)
-            || dependencies.len != resolutions.len
+            || resolutions.off != dependencies.off
+            || resolutions.len != dependencies.len
         {
             return Err(bun_core::err!("InvalidLockfile"));
+        }
+    }
+
+    // `bin` is a tagged union; the `Map` arm is an `(off, len)` window into
+    // `extern_strings` (the tag byte itself is validated by the package
+    // deserializer).
+    let extern_strings_len = buffers.extern_strings.len();
+    for package_bin in lockfile.packages.items_bin() {
+        if package_bin.tag == bin::Tag::Map {
+            // SAFETY: `tag == Map` discriminates the active union field.
+            let map = unsafe { package_bin.value.map };
+            if !slice_in_bounds(map.off, map.len, extern_strings_len) {
+                return Err(bun_core::err!("InvalidLockfile"));
+            }
         }
     }
 

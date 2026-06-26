@@ -206,6 +206,34 @@ function handleSocketAfterProxy(err, req) {
   }
 }
 
+// https-proxy-agent & co keep their constructor options on `agent.connectOpts`:
+// https://github.com/TooTallNate/proxy-agents/blob/main/packages/https-proxy-agent/src/index.ts#L110-L117
+// Node.js only uses those for the connection to the proxy. Bun has always also
+// honored the TLS trust options for the CONNECT-tunneled connection itself
+// (`new HttpsProxyAgent(url, { ca })` is widely relied on), so addRequest seeds
+// exactly those at the lowest priority. Options describing the connection to
+// the proxy (host, port, servername, ALPNProtocols, ...) are not forwarded.
+const kTunneledTLSOptions = [
+  "ca",
+  "cert",
+  "key",
+  "passphrase",
+  "rejectUnauthorized",
+  "ciphers",
+  "secureOptions",
+  "checkServerIdentity",
+];
+function tunneledTLSOptions(connectOpts) {
+  if (connectOpts == null) return undefined;
+  let picked;
+  for (let i = 0; i < kTunneledTLSOptions.length; i++) {
+    const key = kTunneledTLSOptions[i];
+    const value = connectOpts[key];
+    if (value !== undefined) (picked ??= { __proto__: null })[key] = value;
+  }
+  return picked;
+}
+
 Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */, localAddress /* legacy */) {
   // Legacy API: addRequest(req, host, port, localAddress)
   if (typeof options === "string") {
@@ -217,8 +245,9 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     };
   }
 
-  // Here the agent options will override per-request options.
-  options = { __proto__: null, ...options, ...this.options };
+  // Here the agent options will override per-request options,
+  // and `agent.connectOpts` TLS trust options seed the lowest priority.
+  options = { __proto__: null, ...tunneledTLSOptions(this.connectOpts), ...options, ...this.options };
   const socketPath = options.socketPath;
   if (socketPath) options.path = socketPath;
 

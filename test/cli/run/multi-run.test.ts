@@ -2054,12 +2054,17 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
    * when every byte we intend to assert on has arrived — the pty read side
    * races the child's exit, so waiting on the condition (never on time) is
    * what makes this deterministic.
+   *
+   * `prelude` is a shell command to run *inside* the pty before exec'ing
+   * bun (e.g. `stty rows 0` to give the pty a size `Bun.Terminal` refuses
+   * to create). It goes through `sh -c '... && exec "$0" "$@"'` so bun's
+   * path and args need no quoting.
    */
   async function runOnPty(
     args: string[],
     dir: string,
     until: (raw: string) => boolean,
-    { cols = 100, rows = 40 } = {},
+    { cols = 100, rows = 40, prelude = "" } = {},
   ): Promise<{ raw: string; exitCode: number }> {
     let raw = "";
     const decoder = new TextDecoder();
@@ -2085,7 +2090,7 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
       },
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
+      cmd: prelude ? ["sh", "-c", `${prelude} && exec "$0" "$@"`, bunExe(), ...args] : [bunExe(), ...args],
       // The pane renderer is gated on an ANSI-capable terminal, so the
       // NO_COLOR/CI that bunEnv sets for every other test must come off.
       env: { ...bunEnv, NO_COLOR: undefined, CI: undefined },
@@ -2345,5 +2350,28 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
     expect(stdout).not.toContain("│");
     expect(stdout).not.toContain("└─");
     expect(r.exitCode).toBe(0);
+  });
+
+  test("a terminal reporting 0 rows keeps the prefix renderer", async () => {
+    using dir = tempDir("mr-pane-zero-rows", {
+      "package.json": JSON.stringify({
+        scripts: {
+          a: `${bunExe()} -e "console.log('plain-a')"`,
+        },
+      }),
+    });
+    // A 0-row terminal can never be repainted (the cursor-up erase has no
+    // rows to reach), so the pane renderer treats it like an unreadable
+    // size and falls back to the prefix renderer. `Bun.Terminal` replaces
+    // `rows: 0` with a default, so `stty` resizes the pty from inside it;
+    // `<&1` points stty at the pty (stdout), which it definitely is.
+    const { raw, exitCode } = await runOnPty(["run", "--parallel", "a"], String(dir), r => r.includes("plain-a"), {
+      prelude: "stty rows 0 <&1",
+    });
+    const out = Bun.stripANSI(raw).replaceAll("\r\n", "\n");
+    expectPrefixed(out, "a", "plain-a");
+    expect(out).not.toContain("│");
+    expect(out).not.toContain("└─");
+    expect(exitCode).toBe(0);
   });
 });

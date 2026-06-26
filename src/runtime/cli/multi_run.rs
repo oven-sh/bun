@@ -428,6 +428,12 @@ impl Panes {
             return None;
         }
         let winsize = Output::File::from(bun_core::Fd::stdout()).winsize()?;
+        // With 0 rows, `redraw`'s cursor-up erase (clamped to `term_rows - 1`)
+        // never fires and every repaint appends below the last. Treat it like
+        // an unreadable size, the same as the too-narrow `col` check below.
+        if winsize.row == 0 {
+            return None;
+        }
         let cols = winsize
             .col
             .checked_sub(Self::GUTTER_COLS)

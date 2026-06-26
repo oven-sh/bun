@@ -737,21 +737,33 @@ impl Connection {
             );
             return true;
         }
+        // RFC 9113 §5.1.1: on a client, an even id at or below the highest one the peer has
+        // promised is never idle again. One with no live entry was refused (by the reserved-
+        // stream cap or by accept_stream, neither of which leaves an entry behind) or already
+        // completed and was evicted; its HEADERS are a frame on a closed stream. This must not
+        // depend on an engine entry surviving eviction - refused reservations never insert one.
+        let promised_closed = is_new
+            && !self.is_server
+            && hdr.stream_id.is_multiple_of(2)
+            && hdr.stream_id <= self.last_stream_id;
         // Bound peer-initiated streams before allocating: a peer flooding HEADERS with fresh
         // ids would otherwise grow `streams` (and, via on_stream_open, any per-stream state the
         // sink owns) without limit. A stream the embedder initiated locally (is_local_stream:
         // the legacy outbound already sent its HEADERS) is not peer-initiated and is never
         // consulted - a client over budget must not refuse its own responses. Declined streams
         // are answered with RST_STREAM(REFUSED_STREAM) after the block is decoded for
-        // HPACK-table sync (§4.3); on_stream_open is never invoked for them.
-        let refused =
-            is_new && !sink.is_local_stream(hdr.stream_id) && !sink.accept_stream(hdr.stream_id);
-        let mut stream_closed = false;
+        // HPACK-table sync (§4.3); on_stream_open is never invoked for them. A closed promised
+        // id is never consulted either: it gets STREAM_CLOSED, not an invitation to retry.
+        let refused = !promised_closed
+            && is_new
+            && !sink.is_local_stream(hdr.stream_id)
+            && !sink.accept_stream(hdr.stream_id);
+        let mut stream_closed = promised_closed;
         if refused {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-        } else {
+        } else if !promised_closed {
             let cur_state = self
                 .streams
                 .entry(hdr.stream_id)
@@ -1541,11 +1553,11 @@ impl Connection {
 
     /// Close a stream entry whose lifecycle completed outside the engine: a legacy outbound
     /// request that finished, or a refused pushed id the JS layer reset. Marked Closed rather
-    /// than removed: the drain that calls this runs before the current batch is dispatched, so
-    /// a frame for the id already buffered in that batch must see a closed stream (§5.1 ->
-    /// RST_STREAM(STREAM_CLOSED), never surfaced). Removal would make an already-in-flight
-    /// response for a refused push look idle, and handle_headers would re-open it through
-    /// on_stream_open. replenish_windows evicts Closed entries at the end of the same pass.
+    /// than removed so a frame for the id already buffered in the batch about to be dispatched
+    /// sees a closed stream (§5.1 -> RST_STREAM(STREAM_CLOSED)) instead of an idle one;
+    /// replenish_windows evicts the entry at the end of that same pass. This only lasts one
+    /// batch: the durable guard for a refused promised id is the `promised_closed` check in
+    /// handle_headers, which works from last_stream_id and needs no entry at all.
     pub fn close_stream(&mut self, stream_id: u32) {
         if let Some(s) = self.streams.get_mut(&stream_id) {
             s.state = State::Closed;

@@ -828,6 +828,46 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.close();
     }
   });
+
+  // Same race, one read later: an intervening frame (here a PING the client must ACK) lets the
+  // per-batch eviction pass reap the refused id's engine entry before the response HEADERS
+  // arrive, so the guard cannot depend on that entry still existing. RFC 9113 §5.1.1: an even
+  // id at or below the highest one the peer has promised is never idle again.
+  test("a refused push's response HEADERS arriving batches later is still closed, not re-opened", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxReservedRemoteStreams: 0 });
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
+      const promised = Buffer.alloc(4);
+      promised.writeUInt32BE(2, 0);
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block]));
+      const refusal = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      expect(refusal.payload.readUInt32BE(0)).toBe(ErrorCode.CANCEL);
+      // A full PING round-trip between the refusal and the response HEADERS guarantees the
+      // client ran, and finished, at least one more receive pass in between. The two PINGs in
+      // this test carry distinct payloads so each ACK wait can only match its own.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 1));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload[0] === 1);
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS | END_STREAM */, 2, Buffer.from([0x88]));
+      await raw.waitFor(
+        f =>
+          f.type === FrameType.RST_STREAM && f.streamId === 2 && f.payload.readUInt32BE(0) === ErrorCode.STREAM_CLOSED,
+      );
+      // The connection survives.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 2));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload[0] === 2);
+      expect(raw.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });
 
 describe("PUSH_PROMISE flood (maxSessionMemory)", () => {

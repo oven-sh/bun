@@ -571,11 +571,13 @@ impl Connection {
                 .unwrap_or(self.local_settings);
             self.acked_local_initial_window = acked.initial_window_size;
             // RFC 7541 §6.3: the limit on the peer's Dynamic Table Size Update is the
-            // SETTINGS_HEADER_TABLE_SIZE the peer has ACKed. Resize OUR decoder to match
-            // (the non-ACK branch below handles the encoder side of the peer's settings).
+            // SETTINGS_HEADER_TABLE_SIZE the peer has ACKed. Resize OUR decoder to match. (The
+            // outbound encoder is the mirror: the embedder applies the PEER's header table size
+            // to it from Sink::on_remote_settings.)
             self.hpack.set_decoder_capacity(acked.header_table_size);
-            let snapshot = self.local_settings;
-            sink.on_local_settings(&snapshot);
+            // The `localSettings` event / `session.localSettings` must report the values the peer
+            // just acknowledged (what nghttp2's local_settings holds), not the latest submission.
+            sink.on_local_settings(&acked);
             return false;
         }
         // node's maxSettings (nghttp2 max_settings): refuse SETTINGS frames carrying more entries

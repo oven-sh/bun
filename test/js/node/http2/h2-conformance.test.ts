@@ -520,6 +520,56 @@ function hpackInt(value: number, prefixBits: number, pattern: number): Buffer {
   return Buffer.from(out);
 }
 
+/** RFC 7541 §5.1: read a prefixed integer at `pos`; returns the value and the next offset. */
+function readHpackInt(block: Buffer, pos: number, prefixBits: number): { value: number; next: number } {
+  const max = (1 << prefixBits) - 1;
+  let value = block[pos++] & max;
+  if (value < max) return { value, next: pos };
+  for (let m = 0; ; m += 7) {
+    const b = block[pos++];
+    value += (b & 0x7f) * 2 ** m;
+    if (!(b & 0x80)) return { value, next: pos };
+  }
+}
+
+/** Walk a header block and collect every table index it resolves against the dynamic table (> 61). */
+function dynamicTableIndexes(block: Buffer): number[] {
+  const out: number[] = [];
+  let i = 0;
+  const readInt = (prefixBits: number) => {
+    const r = readHpackInt(block, i, prefixBits);
+    i = r.next;
+    return r.value;
+  };
+  // The Huffman flag lives above the 7-bit length prefix, so readInt(7) masks it off. readInt
+  // already advanced past the length byte(s); add the body length in a SECOND statement (an
+  // `i += readInt(7)` captures `i` for the addition before the call mutates it).
+  const skipString = () => {
+    const length = readInt(7);
+    i += length;
+  };
+  const name = (index: number) => {
+    if (index > 61) out.push(index);
+    if (index === 0) skipString();
+  };
+  while (i < block.length) {
+    const b = block[i];
+    if (b & 0x80) {
+      const index = readInt(7); // §6.1 indexed header field
+      if (index > 61) out.push(index);
+    } else if (b & 0x40) {
+      name(readInt(6)); // §6.2.1 literal with incremental indexing
+      skipString();
+    } else if ((b & 0xe0) === 0x20) {
+      readInt(5); // §6.3 dynamic table size update
+    } else {
+      name(readInt(4)); // §6.2.2 / §6.2.3 literal without / never indexed
+      skipString();
+    }
+  }
+  return out;
+}
+
 /** HPACK string literal: 7-bit prefixed length, no Huffman coding. */
 function hpackLiteral(str: string): Buffer {
   const bytes = Buffer.from(str, "latin1");
@@ -1083,26 +1133,28 @@ describe("inbound stream lifecycle", () => {
   });
 });
 
-// ── Local SETTINGS_HEADER_TABLE_SIZE must resize the server's HPACK decoder (RFC 7541 §4.2/§6.3).
+// ── SETTINGS_HEADER_TABLE_SIZE must be applied to both HPACK coders after construction (RFC 7541).
 //
-// The value a server advertises bounds the peer encoder's §6.3 Dynamic Table Size Update. Applying
-// it only at parser construction means a `session.settings({ headerTableSize })` issued after the
-// connection is up advertises the new maximum without ever applying it to the decoder, so a
-// conforming peer that ACKs the SETTINGS and opens its next header block with a size update up to
-// that maximum is torn down with GOAWAY(COMPRESSION_ERROR) and an uncaught ERR_HTTP2_SESSION_ERROR.
+// Two directions, each covered by a describe below:
+//   - The value WE advertise bounds the peer encoder's §6.3 Dynamic Table Size Update; OUR decoder
+//     must grow to it once the peer ACKs, or a conforming peer is torn down with
+//     GOAWAY(COMPRESSION_ERROR) and an uncaught ERR_HTTP2_SESSION_ERROR.
+//   - The value the PEER advertises bounds OUR encoder, which must apply it and open its next
+//     header block with a §6.3 size update. nginx advertises 0 to every h2 upstream and rejects a
+//     server that keeps referencing the dynamic table ("upstream sent invalid http2 table index").
+
+const HEADER_TABLE_SIZE = 0x1;
+/** RFC 7541 §6.3 Dynamic Table Size Update opcode (001 pattern, 5-bit prefix). */
+const dynamicTableSizeUpdate = (size: number) => hpackInt(size, 5, 0x20);
+/** Minimal GET /: :method GET (2), :scheme http (6), :path / (4), :authority literal. */
+const getRoot = () => Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+const readSetting = (f: Frame, id: number): number | undefined => {
+  for (let i = 0; i + 6 <= f.payload.length; i += 6) {
+    if (f.payload.readUInt16BE(i) === id) return f.payload.readUInt32BE(i + 2);
+  }
+};
 
 describe("local SETTINGS_HEADER_TABLE_SIZE resizes the HPACK decoder (RFC 7541 §6.3)", () => {
-  const HEADER_TABLE_SIZE = 0x1;
-  /** RFC 7541 §6.3 Dynamic Table Size Update opcode (001 pattern, 5-bit prefix). */
-  const dynamicTableSizeUpdate = (size: number) => hpackInt(size, 5, 0x20);
-  /** Minimal GET /: :method GET (2), :scheme http (6), :path / (4), :authority literal. */
-  const getRoot = () => Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
-  const readSetting = (f: Frame, id: number): number | undefined => {
-    for (let i = 0; i + 6 <= f.payload.length; i += 6) {
-      if (f.payload.readUInt16BE(i) === id) return f.payload.readUInt32BE(i + 2);
-    }
-  };
-
   /** A server that answers every request with a 200 and runs `body` on the first stream's session. */
   async function serverThatThenCalls(body: (s: http2.Http2Session) => void) {
     const h2server = http2.createServer();
@@ -1167,7 +1219,9 @@ describe("local SETTINGS_HEADER_TABLE_SIZE resizes the HPACK decoder (RFC 7541 �
     const GROWN = 8192;
     // #1 grows the table to 8192; #2 shrinks it to 512 before #1 is ACKed. After ACKing only
     // #1, the client is bound by 8192, so a size update to 8192 must be accepted.
+    let session: http2.Http2Session | undefined;
     const { h2server, h2port, sessionErrors } = await serverThatThenCalls(s => {
+      session = s;
       s.settings({ headerTableSize: GROWN });
       s.settings({ headerTableSize: 512 });
     });
@@ -1189,9 +1243,62 @@ describe("local SETTINGS_HEADER_TABLE_SIZE resizes the HPACK decoder (RFC 7541 �
       c.sendSettingsAck(); // ACKs #1 (8192) only; #2 (512) is still outstanding.
       c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.concat([dynamicTableSizeUpdate(GROWN), getRoot()]));
       await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      // `session.localSettings` reports the submission that ACK acknowledged, not the latest
+      // one still in flight (node: nghttp2_session_update_local_settings applies the oldest).
+      expect(session!.localSettings.headerTableSize).toBe(GROWN);
       expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
       expect(sessionErrors).toEqual([]);
       c.sendSettingsAck(); // ACK #2 (512).
+    } finally {
+      c.destroy();
+      h2server.close();
+    }
+  });
+});
+
+describe("remote SETTINGS_HEADER_TABLE_SIZE resizes the HPACK encoder (RFC 7541 §6.3)", () => {
+  // https://github.com/oven-sh/bun/issues/19152
+  test("after the client advertises HEADER_TABLE_SIZE=0, responses stop using the dynamic table", async () => {
+    const h2server = http2.createServer();
+    const sessionErrors: string[] = [];
+    h2server.on("session", s => s.on("error", e => sessionErrors.push((e as any).code ?? e.message)));
+    // The same response header every time: against a live dynamic table the second response would
+    // reference the entry the first one inserted instead of re-sending it literally.
+    const shared = Buffer.alloc(40, 0x61).toString("latin1");
+    h2server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200, "x-shared": shared });
+      stream.end("ok");
+    });
+    h2server.listen(0);
+    await once(h2server, "listening");
+    const c = await RawH2.connect((h2server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      const disable = Buffer.alloc(6);
+      disable.writeUInt16BE(HEADER_TABLE_SIZE, 0); // value 0: the peer may not use the dynamic table
+      c.sendFrame(FrameType.SETTINGS, 0, 0, disable);
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+      // The server's ACK of OUR settings is the point from which its encoder is bound by 0.
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 1);
+
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM|END_HEADERS */, 1, getRoot());
+      const r1 = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, getRoot());
+      const r3 = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+
+      // Neither response is padded or carries priority, so its payload is the raw header block.
+      expect([r1.flags & 0x28, r3.flags & 0x28]).toEqual([0, 0]);
+      // §6.3: the first block after the shrink must open with a size update to the new maximum.
+      expect(r1.payload[0] & 0xe0).toBe(0x20);
+      expect(readHpackInt(r1.payload, 0, 5).value).toBe(0);
+      // Neither block references the dynamic table (the reference nginx rejects in #19152).
+      expect({ first: dynamicTableIndexes(r1.payload), second: dynamicTableIndexes(r3.payload) }).toEqual({
+        first: [],
+        second: [],
+      });
+      expect(sessionErrors).toEqual([]);
     } finally {
       c.destroy();
       h2server.close();

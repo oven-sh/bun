@@ -527,5 +527,42 @@ test("duplicate test", () => {
       expect(stderr).toContain("1 pass");
       expect(result.exitCode).toBe(0);
     });
+
+    test("explicit absolute project root keeps defaults when path contains a build/ ancestor", () => {
+      // Narrowing matches each default against the root's *project-relative*
+      // path. When the explicit arg resolves to the project root itself that
+      // relative path is empty, so no default is dropped — even if the
+      // project's absolute path contains a `build`/`dist` segment (e.g. a
+      // Docker `WORKDIR /build`). Passing the absolute cwd (`bun test "$PWD"`)
+      // must behave like `bun test`: matching the raw absolute path instead of
+      // the empty relative path would wrongly drop `**/build/**` here.
+      const dir = tempDirWithFiles("path-ignore-build-ancestor", {
+        "build/app/src/only.test.ts": `
+import { test, expect } from "bun:test";
+test("original test", () => {
+  expect(1).toBe(1);
+});
+`,
+        "build/app/build/duplicate.test.ts": `
+import { test, expect } from "bun:test";
+test("duplicate test", () => {
+  expect(1).toBe(1);
+});
+`,
+      });
+      const projectRoot = `${dir}/build/app`;
+
+      const result = Bun.spawnSync([bunExe(), "test", projectRoot], {
+        cwd: projectRoot,
+        env: bunEnv,
+        stdio: [null, null, "pipe"],
+      });
+
+      const stderr = result.stderr.toString("utf-8");
+      expect(stderr).toContain("original test");
+      expect(stderr).not.toContain("duplicate test");
+      expect(stderr).toContain("1 pass");
+      expect(result.exitCode).toBe(0);
+    });
   });
 });

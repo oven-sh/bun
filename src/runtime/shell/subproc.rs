@@ -1245,14 +1245,19 @@ impl Readable {
         eager: bool,
     ) -> bun_sys::Result<()> {
         if let Readable::Pipe(pipe) = self {
-            let p = arc_as_mut_ptr(pipe);
-            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell, and
-            // during `spawn` the `Arc<PipeReader>` is uniquely held (the
-            // reader callback is registered by `start` itself), so no other
-            // `&PipeReader` can exist for this scope.
+            // `start()` can fire `on_reader_error` synchronously (poll
+            // registration failure), which drops this slot's strong ref via
+            // `ShellSubprocess::on_close_io`; this clone pins the allocation
+            // for the whole scope. Neither `pipe` nor `self` is read again.
+            let keepalive = Arc::clone(pipe);
+            let p = arc_as_mut_ptr(&keepalive);
+            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; `keepalive`
+            // keeps `*p` alive across the re-entrant error path inside `start`
+            // (mirrors the `ScopedRef` guard in `SubprocessPipeReader::start`).
             let p = unsafe { &mut *p };
             p.start(process, event_loop)?;
             if eager {
+                // After an in-`start` error the state is `Err`: no-op.
                 p.read_all();
             }
         }
@@ -2009,6 +2014,12 @@ impl PipeReader {
         match self.reader.start(self.stdio_result.unwrap(), true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
+                // `reader.start()` reports a poll-registration failure via
+                // `on_reader_error` (not its return value); by the time it
+                // returns `Ok` the reader is already torn down.
+                if matches!(self.state, PipeReaderState::Err(_)) {
+                    return bun_sys::Result::Ok(());
+                }
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct

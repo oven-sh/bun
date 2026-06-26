@@ -2503,6 +2503,7 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
     ext: &[u8],
     hash: Option<u64>,
     target: &[u8],
+    sanitize_parent_dirs: bool,
 ) -> bun_io::Result<()> {
     let mut remain: &[u8] = data;
     while let Some(j) = strings::index_of_char(remain, b'[') {
@@ -2543,9 +2544,10 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
             PlaceholderField::Dir => {
                 if dir.is_empty() {
                     writer.write_all(b".")?;
-                } else {
-                    // Sanitize leading `..` segments so `[dir]` cannot place output
-                    // above outdir when a source resolves outside `root`.
+                } else if sanitize_parent_dirs {
+                    // Sanitize leading `..` so `[dir]` can't escape outdir for an
+                    // out-of-root source. `--compile` skips this: bunfs entries keep
+                    // `..` so runtime references to them resolve.
                     let mut d: &[u8] = dir;
                     while matches!(d, [b'.', b'.', b'/' | b'\\', ..]) {
                         PathTemplate::write_replacing_slashes_on_windows(writer, b"_.._/")?;
@@ -2555,6 +2557,8 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
                         writer,
                         if d == b".." { b"_.._" } else { d },
                     )?;
+                } else {
+                    PathTemplate::write_replacing_slashes_on_windows(writer, dir)?;
                 }
             }
             PlaceholderField::Name => {
@@ -2645,7 +2649,11 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub fn print<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub fn print<W: bun_io::Write>(
+        &self,
+        writer: &mut W,
+        sanitize_parent_dirs: bool,
+    ) -> bun_io::Result<()> {
         path_template_print(
             writer,
             &self.data,
@@ -2654,6 +2662,7 @@ impl PathTemplate {
             &self.placeholder.ext,
             self.placeholder.hash,
             &self.placeholder.target,
+            sanitize_parent_dirs,
         )
     }
 }
@@ -2709,7 +2718,11 @@ impl PathTemplateConst {
     /// Kept as an inherent method so callers writing
     /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
     /// blanket [`core::fmt::Display`] impl below.
-    pub fn print<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub fn print<W: bun_io::Write>(
+        &self,
+        writer: &mut W,
+        sanitize_parent_dirs: bool,
+    ) -> bun_io::Result<()> {
         path_template_print(
             writer,
             self.data,
@@ -2718,6 +2731,7 @@ impl PathTemplateConst {
             self.placeholder.ext,
             self.placeholder.hash,
             self.placeholder.target,
+            sanitize_parent_dirs,
         )
     }
 
@@ -2729,7 +2743,7 @@ impl PathTemplateConst {
 impl core::fmt::Display for PathTemplateConst {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut buf = Vec::<u8>::new();
-        self.print(&mut buf).map_err(|_| core::fmt::Error)?;
+        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
         write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
@@ -2737,7 +2751,7 @@ impl core::fmt::Display for PathTemplateConst {
 impl core::fmt::Display for PathTemplate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut buf = Vec::<u8>::new();
-        self.print(&mut buf).map_err(|_| core::fmt::Error)?;
+        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
         write!(f, "{}", bstr::BStr::new(&buf))
     }
 }

@@ -363,9 +363,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // routing through `Display`/`write!` goes via `from_utf8_lossy`,
             // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
             // the output path.
+            // Disk output sanitizes leading `..`; `--compile` keeps it so
+            // runtime bunfs references to out-of-root entrypoints resolve.
             chunk
                 .template
-                .print(&mut rel_path)
+                .print(&mut rel_path, !c.options.compile)
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 

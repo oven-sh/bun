@@ -1277,24 +1277,28 @@ function traceConnectEnd(req) {
   }
 }
 
+function onDuplexTLSData(state, chunk) {
+  if (state.pending) state.pending.push(chunk);
+  else state.events[0](chunk);
+}
+
+function flushPendingDuplexTLS(state) {
+  const chunks = state.pending;
+  state.pending = null;
+  state.self[kflushPendingDuplexTLS] = undefined;
+  for (let i = 0; i < chunks.length; i++) state.events[0](chunks[i]);
+}
+
 // The native SSL engine behind an upgraded Duplex is created by a deferred
 // event-loop task. Buffer 'data' that arrives before it exists (as the
 // GC-owned Buffers they already are) and replay it from the `open` handler.
 function wireDuplexToTLS(self, connection, events) {
-  let pending: Buffer[] | null = [];
-  connection.on("data", chunk => {
-    if (pending) pending.push(chunk);
-    else events[0](chunk);
-  });
+  const state = { self, events, pending: [] as Buffer[] | null };
+  connection.on("data", onDuplexTLSData.bind(null, state));
   connection.on("end", events[1]);
   connection.on("drain", events[2]);
   connection.on("close", events[3]);
-  self[kflushPendingDuplexTLS] = function flushPendingDuplexTLS() {
-    const chunks = pending!;
-    pending = null;
-    self[kflushPendingDuplexTLS] = undefined;
-    for (let i = 0; i < chunks.length; i++) events[0](chunks[i]);
-  };
+  self[kflushPendingDuplexTLS] = flushPendingDuplexTLS.bind(null, state);
 }
 
 function kConnectTcp(self, addressType, req, address, port) {

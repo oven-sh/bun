@@ -499,10 +499,16 @@ function cc(options) {
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+    // `cc()` callers nest symbol definitions under `options.symbols`, unlike
+    // `dlopen`/`linkSymbols` which take them at the top level. Read from there so
+    // a "function"/"callback" argument is wrapped by FFIBuilder (JSCallback ->
+    // pointer); otherwise the JSCallback object is passed to native code as the
+    // callback pointer and the native call jumps to a wild address.
+    const definition = options.symbols?.[key];
+    if (definition?.args?.length || FFIType[definition?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
+        definition.args ?? [],
+        definition.returns ?? FFIType.void,
         symbol,
         // in stacktraces:
         // instead of

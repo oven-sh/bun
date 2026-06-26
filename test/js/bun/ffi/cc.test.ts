@@ -456,3 +456,67 @@ describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and
     });
   });
 });
+
+// `cc()` reads symbol arg definitions from `options.symbols`, so a "function"
+// argument given a JSCallback object must be wrapped (JSCallback -> pointer).
+// Before the fix the object was passed to native code as the callback pointer and
+// the native call jumped to a wild address (ASAN SEGV / release crash). Runs in a
+// subprocess because the unpatched bug aborts the process; skipped under ASan like
+// the other cc() tests (TinyCC/ASan conflict).
+describe.skipIf(isWindows || isASAN || isFFIUnavailable)("cc() function-argument JSCallback wrapping", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-jscallback-arg", {
+      "call_cb.c": /* c */ `
+        typedef int (*bun_test_cb)(int);
+        int call_cb(void *cb, int value) { return ((bun_test_cb)cb)(value); }
+      `,
+      "probe.js": /* js */ `
+        import { cc, JSCallback } from "bun:ffi";
+        import source from "./call_cb.c" with { type: "file" };
+
+        const { symbols } = cc({
+          source,
+          symbols: { call_cb: { args: ["function", "int"], returns: "int" } },
+        });
+
+        const cb = new JSCallback(value => value + 1, { args: ["int"], returns: "int" });
+
+        if (symbols.call_cb(cb, 41) !== 42) throw new Error("expected the wrapped callback to return 42");
+        cb.close();
+        let threw = false;
+        try {
+          symbols.call_cb(cb, 41);
+        } catch (e) {
+          threw = e?.name === "TypeError";
+        }
+        if (!threw) throw new Error("expected a TypeError after close (ptr is null)");
+        console.log("ok");
+      `,
+    });
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  // An unpatched build crashes inside the native FFI call, and Bun's crash handler
+  // can take tens of seconds to unwind and ignores SIGTERM, so a regression must be
+  // SIGKILLed rather than left to hang the runner. The patched run prints "ok" and
+  // exits in well under a second; on a regression stdout stays empty and the
+  // assertion below fails cleanly instead of timing out with a dangling process.
+  it("wraps a JSCallback object passed for a function argument (no wild jump)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "probe.js"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }, 20_000);
+});

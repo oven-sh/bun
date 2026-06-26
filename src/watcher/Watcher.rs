@@ -329,6 +329,17 @@ impl Watcher {
                 Ok(()) => {}
             }
 
+            // Barrier: `shutdown()` holds `self.mutex` across
+            // `running.store(false)` and `platform.wake()`. This thread can
+            // observe `running == false` at the unlocked `while` check
+            // without ever blocking (e.g. it was just spawned), so without
+            // this lock/unlock pair `platform.stop()` below could run while
+            // `wake()` is still reading the same platform state (kqueue's
+            // non-atomic `fd`), and `heap::take(this)` could free `self.mutex`
+            // out from under `shutdown()`'s pending unlock.
+            me.mutex.lock();
+            me.mutex.unlock();
+
             // Release platform resources (inotify fd, kqueue fd, IOCP
             // handle). This must run on both the `Err` and `Ok` arms:
             // `shutdown()`'s wake path exits via `Ok` on Linux/macOS, and
@@ -344,14 +355,6 @@ impl Watcher {
                 }
             }
             // watchlist / watch_events freed by Drop below
-
-            // Barrier: `shutdown()` holds `self.mutex` across its wake()
-            // call. Without this lock/unlock pair the thread could free
-            // `this` while shutdown() is still between wake() and its
-            // own mutex.unlock(), leaving that unlock to operate on
-            // freed memory.
-            me.mutex.lock();
-            me.mutex.unlock();
         }
 
         // Close trace file if open

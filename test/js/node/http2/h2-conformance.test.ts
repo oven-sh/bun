@@ -706,6 +706,51 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+describe("maxReservedRemoteStreams (client option)", () => {
+  test("a value above the default 200 raises the inbound PUSH_PROMISE reservation cap", async () => {
+    const limit = 201;
+    const raw = await RawH2Server.listen();
+    const pushed: number[] = [];
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxReservedRemoteStreams: limit });
+    client.on("error", () => {});
+    client.on("stream", (s: any) => {
+      s.on("error", () => {});
+      pushed.push(s.id);
+    });
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
+      // `limit` PUSH_PROMISE reservations on even ids 2..2*limit, each a state-free block:
+      // [:method GET, :scheme http, :path /, literal-without-indexing :authority].
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      let buf = Buffer.alloc(0);
+      for (let i = 0; i < limit; i++) {
+        const promised = Buffer.alloc(4);
+        promised.writeUInt32BE(2 + 2 * i, 0);
+        buf = Buffer.concat([
+          buf,
+          encodeFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block])),
+        ]);
+      }
+      raw.socket!.write(buf);
+      // A PING after the reservations round-trips once they are all processed. No RST_STREAM
+      // went back for any promised id: the previous hardcoded engine cap of 200 refused the
+      // 201st with REFUSED_STREAM regardless of maxReservedRemoteStreams.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const rsts = raw.frames.filter(f => f.type === FrameType.RST_STREAM && f.streamId % 2 === 0);
+      expect(rsts.map(f => ({ id: f.streamId, code: f.payload.readUInt32BE(0) }))).toEqual([]);
+      expect(pushed.length).toBe(limit);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
 describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
   test("an ACK applies to the oldest outstanding SETTINGS, not the latest submission", async () => {
     const raw = await RawH2Server.listen();

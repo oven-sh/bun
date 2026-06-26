@@ -68,7 +68,7 @@ pub const DEFAULT_RESET_RATE: u32 = 33;
 /// nghttp2's NGHTTP2_DEFAULT_MAX_INCOMING_RESERVED_STREAMS. Reserved streams are exempt from
 /// SETTINGS_MAX_CONCURRENT_STREAMS (§5.1.2), so inbound PUSH_PROMISE reservations need their
 /// own bound or a server can hold unbounded reserved state on a client.
-const MAX_INBOUND_RESERVED_STREAMS: u32 = 200;
+pub const DEFAULT_MAX_RESERVED_REMOTE_STREAMS: u32 = 200;
 
 /// Token bucket mirroring nghttp2's `nghttp2_ratelim`: `val` tokens available, regenerated at
 /// `rate` per second (second-resolution monotonic timestamps) up to `burst`.
@@ -208,8 +208,11 @@ pub struct Connection {
     /// `set_stream_state`/`insert_stream`/`remove_stream` so the per-HEADERS check is O(1).
     peer_active_count: u32,
     /// Peer-initiated streams in reserved (remote): inbound PUSH_PROMISE reservations, which
-    /// §5.1.2 exempts from the concurrency limit (see MAX_INBOUND_RESERVED_STREAMS).
+    /// §5.1.2 exempts from the concurrency limit (bounded by `max_reserved_remote_streams`).
     peer_reserved_count: u32,
+    /// Bound on `peer_reserved_count` (node's `maxReservedRemoteStreams` client option,
+    /// nghttp2's max_incoming_reserved_streams). A PUSH_PROMISE past it is refused.
+    pub max_reserved_remote_streams: u32,
 
     /// Connection-level flow control (§6.9.1). The connection window is fixed at 65535 initially
     /// and is NOT affected by SETTINGS_INITIAL_WINDOW_SIZE (that governs streams only).
@@ -273,6 +276,7 @@ impl Connection {
             epoch: std::time::Instant::now(),
             peer_active_count: 0,
             peer_reserved_count: 0,
+            max_reserved_remote_streams: DEFAULT_MAX_RESERVED_REMOTE_STREAMS,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
             hpack: hpack::Coder::new(local.header_table_size),
@@ -1449,7 +1453,7 @@ impl Connection {
         // Reserved-remote streams are exempt from SETTINGS_MAX_CONCURRENT_STREAMS (§5.1.2), so
         // inbound reservations are bounded separately (nghttp2's max_incoming_reserved_streams).
         // A refused push reserves nothing and never fires on_push_promise; see header_refused.
-        let refused = self.peer_reserved_count >= MAX_INBOUND_RESERVED_STREAMS;
+        let refused = self.peer_reserved_count >= self.max_reserved_remote_streams;
         if !refused {
             // Reserve the promised (even) stream.
             let send_init = self.remote_settings.initial_window_size;
@@ -2353,12 +2357,20 @@ mod tests {
     fn push_promise_past_reserved_cap_is_refused() {
         // §5.1.2 exempts reserved streams from SETTINGS_MAX_CONCURRENT_STREAMS, so without a
         // separate cap a server could hold unbounded reserved state and pushed-stream objects
-        // on a client (nghttp2 bounds this with max_incoming_reserved_streams).
+        // on a client (nghttp2 bounds this with max_incoming_reserved_streams). The bound is
+        // the configurable `max_reserved_remote_streams` field (node's maxReservedRemoteStreams),
+        // not a hardcoded constant.
         let sink = CaptureSink::default();
         let mut c = Connection::new(false, Settings::default());
+        assert_eq!(
+            c.max_reserved_remote_streams,
+            DEFAULT_MAX_RESERVED_REMOTE_STREAMS
+        );
+        let cap = 3u32;
+        c.max_reserved_remote_streams = cap;
         let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
         let mut bytes = Vec::new();
-        for i in 0..=MAX_INBOUND_RESERVED_STREAMS {
+        for i in 0..=cap {
             let promised = 2 + 2 * i;
             let mut payload = Vec::with_capacity(4 + block.len());
             payload.extend_from_slice(&promised.to_be_bytes());
@@ -2372,14 +2384,11 @@ mod tests {
         }
         let fed = c.receive(&sink, &bytes);
         assert!(!fed.fatal);
-        let over = 2 + 2 * MAX_INBOUND_RESERVED_STREAMS;
+        let over = 2 + 2 * cap;
         // Exactly the cap was reserved; the one past it never entered the map, never fired
         // on_push_promise, never surfaced fields, and was answered with REFUSED_STREAM.
-        assert_eq!(c.peer_reserved_count, MAX_INBOUND_RESERVED_STREAMS);
-        assert_eq!(
-            sink.pushes.borrow().len(),
-            MAX_INBOUND_RESERVED_STREAMS as usize
-        );
+        assert_eq!(c.peer_reserved_count, cap);
+        assert_eq!(sink.pushes.borrow().len(), cap as usize);
         assert!(!sink.pushes.borrow().iter().any(|(_, p)| *p == over));
         assert!(!c.streams.contains_key(&over));
         assert!(!sink.headers.borrow().iter().any(|(id, _, _)| *id == over));
@@ -2391,6 +2400,38 @@ mod tests {
                 .any(|(id, code)| *id == over && *code == ErrorCode::RefusedStream.as_u32())
         );
         assert!(sink.goaway.get().is_none());
+    }
+
+    #[test]
+    fn reserved_cap_raised_above_default_admits_more() {
+        // Regression for the Node compat gap: maxReservedRemoteStreams set above the default
+        // must actually raise the engine's bound (it was a hardcoded constant).
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        c.max_reserved_remote_streams = DEFAULT_MAX_RESERVED_REMOTE_STREAMS + 1;
+        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let mut bytes = Vec::new();
+        // One past the DEFAULT, but within the raised limit: every reservation is admitted.
+        for i in 0..=DEFAULT_MAX_RESERVED_REMOTE_STREAMS {
+            let promised = 2 + 2 * i;
+            let mut payload = Vec::with_capacity(4 + block.len());
+            payload.extend_from_slice(&promised.to_be_bytes());
+            payload.extend_from_slice(&block);
+            bytes.extend_from_slice(&frame(
+                FrameType::PushPromise,
+                wire::flags::END_HEADERS,
+                1,
+                &payload,
+            ));
+        }
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        assert_eq!(
+            c.peer_reserved_count,
+            DEFAULT_MAX_RESERVED_REMOTE_STREAMS + 1
+        );
+        assert!(sink.rejected.borrow().is_empty());
+        assert!(sink.resets.borrow().is_empty());
     }
 
     #[test]

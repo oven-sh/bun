@@ -1301,6 +1301,7 @@ pub struct H2FrameParser {
     max_session_invalid_frames: Cell<u32>,
     stream_reset_burst: Cell<u32>,
     stream_reset_rate: Cell<u32>,
+    max_reserved_remote_streams: Cell<u32>,
     max_outstanding_settings: Cell<u32>,
     outstanding_settings: Cell<u32>,
     rejected_streams: Cell<u32>,
@@ -5349,6 +5350,7 @@ impl H2FrameParser {
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
             engine
                 .set_reset_rate_limit(self.stream_reset_burst.get(), self.stream_reset_rate.get());
+            engine.max_reserved_remote_streams = self.max_reserved_remote_streams.get();
             // Apply any receive-window growth setLocalWindowSize() accumulated while a dispatch
             // held this borrow.
             let pending = self.pending_recv_window_growth.replace(0);
@@ -9150,6 +9152,9 @@ impl H2FrameParser {
             max_session_invalid_frames: Cell::new(1000),
             stream_reset_burst: Cell::new(crate::api::h2::connection::DEFAULT_RESET_BURST),
             stream_reset_rate: Cell::new(crate::api::h2::connection::DEFAULT_RESET_RATE),
+            max_reserved_remote_streams: Cell::new(
+                crate::api::h2::connection::DEFAULT_MAX_RESERVED_REMOTE_STREAMS,
+            ),
             max_outstanding_settings: Cell::new(10),
             outstanding_settings: Cell::new(0),
             rejected_streams: Cell::new(0),
@@ -9289,6 +9294,17 @@ impl H2FrameParser {
                     if stream_reset_rate.is_number() {
                         this_ref.stream_reset_rate.set(
                             stream_reset_rate
+                                .to_uint64_no_truncate()
+                                .min(u32::MAX as u64) as u32,
+                        );
+                    }
+                }
+                if let Some(max_reserved_remote_streams) =
+                    settings_js.get(global_object, "maxReservedRemoteStreams")?
+                {
+                    if max_reserved_remote_streams.is_number() {
+                        this_ref.max_reserved_remote_streams.set(
+                            max_reserved_remote_streams
                                 .to_uint64_no_truncate()
                                 .min(u32::MAX as u64) as u32,
                         );

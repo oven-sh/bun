@@ -1248,8 +1248,8 @@ describe("tls.Server socket destroySoon", () => {
         const c = connect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: false }, () => {
           let bytesRead = 0;
           c.on("readable", () => {
-            const d = c.read();
-            if (d) bytesRead += d.length;
+            let d;
+            while ((d = c.read()) !== null) bytesRead += d.length;
           });
           c.on("end", () => resolve(bytesRead));
         });

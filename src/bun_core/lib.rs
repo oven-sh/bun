@@ -1844,10 +1844,12 @@ pub(crate) mod strings_impl {
     }
 
     /// Port of `elementLengthUTF16IntoUTF8` — exact UTF-8 byte length of a UTF-16
-    /// (LE) input. simdutf-backed; falls back to scalar would be in unicode_draft.
+    /// (LE) input, charging 3 bytes (U+FFFD) per unpaired surrogate. This is
+    /// exactly what `copy_utf16_into_utf8` / `to_utf8_alloc` write, so it is a
+    /// valid exact allocation size even for ill-formed UTF-16.
     #[inline]
     pub fn element_length_utf16_into_utf8(utf16: &[u16]) -> usize {
-        simdutf::length::utf8::from::utf16::le(utf16)
+        simdutf::length::utf8::from::utf16::le_with_replacement(utf16)
     }
 
     /// Port of `elementLengthLatin1IntoUTF8`.
@@ -1869,7 +1871,7 @@ pub(crate) mod strings_impl {
         let utf8_len = if worst_case <= buf.len() {
             worst_case
         } else {
-            simdutf::length::utf8::from::utf16::le(utf16)
+            element_length_utf16_into_utf8(utf16)
         };
         copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
     }

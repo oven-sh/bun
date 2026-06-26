@@ -360,6 +360,39 @@ for (let withOverridenBufferWrite of [false, true]) {
         }
       });
 
+      it("write BigInt64 with a negative offset throws ERR_OUT_OF_RANGE", () => {
+        // Node's boundsError reports a negative offset as ERR_OUT_OF_RANGE
+        // (">= 0 and <= max"), not ERR_BUFFER_OUT_OF_BOUNDS.
+        const buf = Buffer.alloc(16);
+        for (const fn of ["writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE"]) {
+          expect(() => buf[fn](1n, -1)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received -1',
+            }),
+          );
+          // A fractional offset reports "an integer", even when negative.
+          expect(() => buf[fn](1n, -1.5)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be an integer. Received -1.5',
+            }),
+          );
+          // The too-large path is unchanged.
+          expect(() => buf[fn](1n, 9)).toThrow(
+            expect.objectContaining({
+              code: "ERR_OUT_OF_RANGE",
+              message: 'The value of "offset" is out of range. It must be >= 0 and <= 8. Received 9',
+            }),
+          );
+          // A too-short buffer is still ERR_BUFFER_OUT_OF_BOUNDS (matches Node's
+          // boundsError when `length < 0`).
+          expect(() => Buffer.alloc(7)[fn](1n, 0)).toThrow(
+            expect.objectContaining({ code: "ERR_BUFFER_OUT_OF_BOUNDS" }),
+          );
+        }
+      });
+
       it("copy() beyond end of buffer", () => {
         const b = Buffer.allocUnsafe(64);
         // Try to copy 0 bytes worth of data into an empty buffer
@@ -1652,6 +1685,27 @@ for (let withOverridenBufferWrite of [false, true]) {
         );
       });
 
+      it("Buffer.byteLength matches the encoder for unpaired surrogates", () => {
+        // byteLength used simdutf's non-validating UTF-16 length, which charges
+        // an unpaired surrogate 2 bytes; the encoder writes U+FFFD (3 bytes).
+        // byteLength(s) === Buffer.from(s).length must hold by definition.
+        const cases = [
+          "\ud800",
+          "\udfff",
+          "\ud800a",
+          "a\ud800",
+          "\ud800a".repeat(17),
+          "\ud800\udc00",
+          "a\udc00\ud800b",
+        ];
+        expect(cases.map(s => ({ input: JSON.stringify(s), byteLength: Buffer.byteLength(s, "utf8") }))).toEqual(
+          cases.map(s => ({ input: JSON.stringify(s), byteLength: Buffer.from(s, "utf8").length })),
+        );
+        expect(Buffer.byteLength("\ud800a".repeat(17), "utf8")).toBe(68);
+        // TextEncoder shares the same length helper and must agree.
+        expect(new TextEncoder().encode("\ud800a".repeat(17)).byteLength).toBe(68);
+      });
+
       it("Buffer.isBuffer", () => {
         expect(Buffer.isBuffer(new Buffer(1))).toBe(true);
         gc();
@@ -2180,6 +2234,31 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf.includes("this", 4)).toBe(false);
       });
 
+      it("indexOf/lastIndexOf/includes on an empty buffer", () => {
+        // An empty haystack is not an automatic -1: Node still finds an
+        // empty needle in it at offset 0.
+        const empty = Buffer.alloc(0);
+        expect(empty.indexOf(Buffer.alloc(0))).toBe(0);
+        expect(empty.lastIndexOf(Buffer.alloc(0))).toBe(0);
+        expect(empty.includes(Buffer.alloc(0))).toBe(true);
+        expect(empty.indexOf("")).toBe(0);
+        expect(empty.lastIndexOf("")).toBe(0);
+        expect(empty.includes("")).toBe(true);
+        // byteOffset is clamped to [0, length] for an empty needle.
+        expect(empty.indexOf("", 5)).toBe(0);
+        expect(empty.indexOf("", -5)).toBe(0);
+        // A non-empty needle in an empty haystack is still -1.
+        expect(empty.indexOf("a")).toBe(-1);
+        expect(empty.indexOf(Buffer.from("a"))).toBe(-1);
+        expect(empty.indexOf(97)).toBe(-1);
+        expect(empty.lastIndexOf(97)).toBe(-1);
+        expect(empty.includes(97)).toBe(false);
+        // A non-empty haystack with an empty needle was already correct.
+        expect(Buffer.from("ab").indexOf(Buffer.alloc(0))).toBe(0);
+        expect(Buffer.from("ab").indexOf(Buffer.alloc(0), 5)).toBe(2);
+        expect(Buffer.from("ab").lastIndexOf("")).toBe(2);
+      });
+
       it("indexOf", () => {
         const buf = Buffer.from("this is a buffer");
 
@@ -2360,6 +2439,26 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b16.lastIndexOf("hello", 22, "ucs2")).toBe(0);
       });
 
+      it("lastIndexOf with utf16le only matches on a code-unit boundary", () => {
+        // UCS2 searches operate on whole uint16_t units (Node's
+        // SearchString<uint16_t>), so a raw byte match at an ODD offset is
+        // not a real match. The backward search used a byte-level std::find_end.
+        // The needle "a" is bytes [0x61, 0x00]; they occur only at byte 1 here.
+        const h = Buffer.from([0x00, 0x61, 0x00, 0x00]);
+        expect(h.lastIndexOf(Buffer.from("a", "utf16le"), undefined, "utf16le")).toBe(-1);
+        expect(h.lastIndexOf("a", undefined, "utf16le")).toBe(-1);
+        // The forward search was already uint16-aligned.
+        expect(h.indexOf("a", 0, "utf16le")).toBe(-1);
+        // An even-offset match is still found.
+        const h2 = Buffer.from("ba", "utf16le");
+        expect(h2.lastIndexOf("a", undefined, "utf16le")).toBe(2);
+        expect(h2.lastIndexOf(Buffer.from("a", "utf16le"), undefined, "utf16le")).toBe(2);
+        // byteOffset is floored to a code-unit boundary.
+        const h3 = Buffer.from("aaaa", "utf16le");
+        expect(h3.lastIndexOf("a", 5, "utf16le")).toBe(4);
+        expect(h3.lastIndexOf("a", 3, "utf16le")).toBe(2);
+      });
+
       for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
         it(`Buffer.${fn.name}`, () => {
           const buf = new Buffer("buffer");
@@ -2405,6 +2504,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect.unreachable();
         } catch (exception) {
           expect(exception.message).toBe("Buffer size must be a multiple of 16-bits");
+          expect(exception.code).toBe("ERR_INVALID_BUFFER_SIZE");
+          expect(exception).toBeInstanceOf(RangeError);
         }
       });
 
@@ -2431,6 +2532,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect.unreachable();
         } catch (exception) {
           expect(exception.message).toBe("Buffer size must be a multiple of 32-bits");
+          expect(exception.code).toBe("ERR_INVALID_BUFFER_SIZE");
+          expect(exception).toBeInstanceOf(RangeError);
         }
       });
 
@@ -2457,6 +2560,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect.unreachable();
         } catch (exception) {
           expect(exception.message).toBe("Buffer size must be a multiple of 64-bits");
+          expect(exception.code).toBe("ERR_INVALID_BUFFER_SIZE");
+          expect(exception).toBeInstanceOf(RangeError);
         }
       });
 
@@ -2956,6 +3061,33 @@ for (let withOverridenBufferWrite of [false, true]) {
         // Make sure these throw.
         expect(() => Buffer.allocUnsafe(8).fill("a", -1)).toThrow();
         expect(() => Buffer.allocUnsafe(8).fill("a", 0, 9)).toThrow();
+      });
+
+      it("fill() with a fractional offset or end throws ERR_OUT_OF_RANGE", () => {
+        // Node routes offset/end through validateOffset (= validateInteger),
+        // so a non-integer throws instead of being silently truncated.
+        expect(() => Buffer.alloc(4, "x").fill("a", 1.5)).toThrow(
+          expect.objectContaining({
+            code: "ERR_OUT_OF_RANGE",
+            message: 'The value of "offset" is out of range. It must be an integer. Received 1.5',
+          }),
+        );
+        expect(() => Buffer.alloc(4, "x").fill("a", 0, 1.5)).toThrow(
+          expect.objectContaining({
+            code: "ERR_OUT_OF_RANGE",
+            message: 'The value of "end" is out of range. It must be an integer. Received 1.5',
+          }),
+        );
+        expect(() => Buffer.alloc(4, "x").fill("a", NaN)).toThrow(
+          expect.objectContaining({
+            code: "ERR_OUT_OF_RANGE",
+            message: 'The value of "offset" is out of range. It must be an integer. Received NaN',
+          }),
+        );
+        // Integer offsets still work and still range-check.
+        expect(Buffer.alloc(4, "x").fill("a", 3).toString()).toBe("xxxa");
+        expect(() => Buffer.alloc(4).fill("a", -1)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+        expect(() => Buffer.alloc(4).fill("a", 0, 5)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
       });
 
       it("fill() should not hang indefinitely", () => {

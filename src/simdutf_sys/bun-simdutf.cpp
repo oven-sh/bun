@@ -294,6 +294,15 @@ size_t simdutf__utf8_length_from_utf16le(const char16_t* input, size_t length)
     return simdutf::utf8_length_from_utf16le(input, length);
 }
 
+// Unlike the non-validating variant above (which charges every surrogate code
+// unit 2 bytes), this charges 3 bytes (U+FFFD) for each unpaired surrogate,
+// matching what the replacement encoder produces. `.count` is documented to be
+// correct even when `.error` is SURROGATE.
+size_t simdutf__utf8_length_from_utf16le_with_replacement(const char16_t* input, size_t length)
+{
+    return simdutf::utf8_length_from_utf16le_with_replacement(input, length).count;
+}
+
 size_t simdutf__utf8_length_from_utf16be(const char16_t* input, size_t length)
 {
     return simdutf::utf8_length_from_utf16be(input, length);

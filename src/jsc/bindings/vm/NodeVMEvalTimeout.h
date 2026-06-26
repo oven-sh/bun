@@ -16,10 +16,10 @@ namespace Bun {
 //
 // Armed deadlines form an intrusive per-VM stack (evaluations nest strictly).
 // The NeedTermination trap they fire is a single coalescing per-VM signal, so
-// when an evaluation consumes it for its own expired deadline, disarm()
-// re-raises it if an enclosing armed deadline has also expired; otherwise that
-// enclosing evaluation would never be interrupted again (its timer is
-// one-shot).
+// after an evaluation consumes it for its own expired deadline (or its own
+// SIGINT), raiseExpiredDeadline() raises it again on behalf of any enclosing
+// armed deadline that has also expired; otherwise that enclosing evaluation
+// would never be interrupted again (its timer is one-shot).
 //
 // The JSC Watchdog is deliberately not used here. It measures CPU time while
 // Node's `timeout` is wall-clock, and it cannot be disarmed: its wall timer
@@ -38,14 +38,14 @@ public:
     // NeedTermination trap it raised so it cannot leak into unrelated JS.
     void disarm();
 
-    // Must run after disarm(), once this evaluation's own timeout error has
-    // been thrown. If an enclosing armed deadline has also expired, disarm()
-    // consumed the (coalesced) termination request its one-shot timer had
-    // raised, so raise it again on its behalf. Deferring this until after
-    // the ERR_SCRIPT_EXECUTION_TIMEOUT has been created keeps the new
-    // termination request from being serviced in the middle of constructing
-    // that error.
-    void raiseExpiredEnclosingDeadline();
+    // Raises the termination request again if any still-armed deadline on
+    // this VM has already expired: such a deadline's one-shot timer has
+    // fired, so the request the evaluation that just finished consumed (for
+    // its own timeout or SIGINT) was the only signal left. Must run after
+    // that evaluation's own ERR_SCRIPT_EXECUTION_* error has been created,
+    // so the new termination request cannot be serviced in the middle of
+    // constructing it.
+    static void raiseExpiredDeadline(JSC::VM&);
 
     // Only meaningful after disarm().
     bool expired() const { return m_expired; }

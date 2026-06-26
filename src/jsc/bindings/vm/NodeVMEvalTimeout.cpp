@@ -68,17 +68,15 @@ void NodeVMEvalTimeout::disarm()
     m_vm.traps().clearTrap(VMTraps::NeedTermination);
 }
 
-void NodeVMEvalTimeout::raiseExpiredEnclosingDeadline()
+void NodeVMEvalTimeout::raiseExpiredDeadline(VM& vm)
 {
-    ASSERT(!m_armed);
-    if (!m_expired)
-        return;
-    // An enclosing deadline that expires after this check raises the
-    // request from its own timer, so nothing is lost by only checking
-    // deadlines that have already expired.
-    for (NodeVMEvalTimeout* enclosing = m_enclosing; enclosing; enclosing = enclosing->m_enclosing) {
-        if (enclosing->hasExpired()) {
-            m_vm.notifyNeedTermination();
+    // The evaluation that just finished has already been popped (disarm()),
+    // so this walks only the still-armed enclosing deadlines. One that
+    // expires after this check raises the request from its own timer, so
+    // nothing is lost by only checking deadlines that have already expired.
+    for (NodeVMEvalTimeout* armed = WebCore::clientData(vm)->nodeVMEvalTimeouts; armed; armed = armed->m_enclosing) {
+        if (armed->hasExpired()) {
+            vm.notifyNeedTermination();
             return;
         }
     }

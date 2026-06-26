@@ -610,9 +610,10 @@ bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JS
         throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, deadline->milliseconds(), "ms"_s));
     }
     // Now that this evaluation's own error has been thrown, hand the shared
-    // termination signal back to any enclosing deadline that also expired.
-    if (deadline)
-        deadline->raiseExpiredEnclosingDeadline();
+    // termination signal back to any enclosing deadline that already expired.
+    // This is not gated on `deadline`: a breakOnSigint evaluation with no (or
+    // an unexpired) deadline consumes the same coalesced signal.
+    NodeVMEvalTimeout::raiseExpiredDeadline(vm);
     return true;
 }
 

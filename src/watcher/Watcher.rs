@@ -111,11 +111,11 @@ pub struct Watcher {
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
-    /// Whether `thread_main` is running. Written by the watcher thread, read
-    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
-    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
-    pub watchloop_handle: bun_core::AtomicCell<bool>,
     pub cwd: &'static [u8],
+    /// Written synchronously by `start()`, so `shutdown()` can tell whether a
+    /// watcher thread owns `self` without racing the spawned thread. The
+    /// handle is never joined (the thread frees `self` and exits); it exists
+    /// only for this check.
     pub thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
     /// `watch_loop` and the platform `watch_loop_cycle`.
@@ -196,7 +196,6 @@ impl Watcher {
             platform: Platform::default(),
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
-            watchloop_handle: bun_core::AtomicCell::new(false),
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
@@ -255,15 +254,13 @@ impl Watcher {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
         if me.thread.is_some() {
-            // A watcher thread has been spawned. It may not have begun
-            // running yet (on Windows especially, `watchloop_handle` can
-            // still be false here), so we must not free `this`
-            // synchronously — the thread owns cleanup once spawned.
-            // Previously this branch keyed off `watchloop_handle`, which
-            // is written by the spawned thread; that raced with `start()`
-            // and caused a use-after-free in `thread_main` when the dev
-            // server was torn down immediately after creation (e.g.
-            // listen failure). See #21017.
+            // A watcher thread has been spawned; it owns cleanup, so we must
+            // not free `this` here even if it hasn't begun running yet. This
+            // check must use state written by `start()`, not by the spawned
+            // thread: keying it off a thread-written flag raced with
+            // `start()` and freed the Watcher under `thread_main` when the
+            // dev server was torn down right after creation (e.g. listen
+            // failure). See #21017.
             me.mutex.lock();
             me.close_descriptors.store(close_descriptors);
             me.running.store(false);
@@ -312,7 +309,6 @@ impl Watcher {
             // SAFETY: caller contract — `this` is a valid, exclusively-accessed
             // heap allocation for the duration of this scope.
             let me = unsafe { &mut *this };
-            me.watchloop_handle.store(true);
             me.thread_lock.lock();
             Output::Source::configure_named_thread(zstr!("File Watcher"));
 
@@ -321,7 +317,6 @@ impl Watcher {
 
             match me.watch_loop() {
                 Err(err) => {
-                    me.watchloop_handle.store(false);
                     if me.running.load() {
                         (me.on_error)(me.ctx, err);
                     }

@@ -6843,19 +6843,18 @@ pub mod bv2_impl {
                         .text;
                     let loader = this.graph.input_files.items_loader()[source_index as usize];
                     if this.should_add_watcher(source_path) {
-                        // const generic `CLONE_FILE_PATH = isWindows`
-                        // matches `cfg!(windows)` at compile time.
-                        let _ = this
-                            .bun_watcher_mut()
-                            .unwrap()
-                            .add_file::<{ cfg!(windows) }>(
-                                parse_result.watcher_data.fd,
-                                source_path,
-                                bun_wyhash::hash(source_path) as u32,
-                                bun_watcher::Loader(loader as u8),
-                                parse_result.watcher_data.dir_fd,
-                                None,
-                            );
+                        // `add_file::<true>` so the `WatchItem` owns its path: the
+                        // watcher outlives this bundle, and `dupe_alloc` may place
+                        // `path.text` in the per-bundle arena when `pretty` is not
+                        // a byte range of `text`.
+                        let _ = this.bun_watcher_mut().unwrap().add_file::<true>(
+                            parse_result.watcher_data.fd,
+                            source_path,
+                            bun_wyhash::hash(source_path) as u32,
+                            bun_watcher::Loader(loader as u8),
+                            parse_result.watcher_data.dir_fd,
+                            None,
+                        );
                     }
                 }
             }

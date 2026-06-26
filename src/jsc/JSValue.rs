@@ -511,7 +511,7 @@ impl JSValue {
     /// tag space and decode as forged cells or immediates.
     #[inline]
     pub fn purify_nan(n: f64) -> f64 {
-        if n != n {
+        if n.is_nan() {
             // `PNaNAsBits` in PureNaN.h; not `f64::NAN`, whose bit pattern
             // is not guaranteed.
             return f64::from_bits(0x7ff8_0000_0000_0000);

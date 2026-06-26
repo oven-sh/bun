@@ -719,9 +719,7 @@ it("JSCallback tolerates worker.terminate() arriving inside the callback", async
       });
 
       // Wait until the worker thread is inside the native -> JS callback frame.
-      while (Atomics.load(flag, 0) === 0) {
-        await Bun.sleep(5);
-      }
+      await Atomics.waitAsync(flag, 0, 0).value;
 
       terminating = true;
       await worker.terminate();
@@ -738,6 +736,7 @@ it("JSCallback tolerates worker.terminate() arriving inside the callback", async
           // Tell the parent we are inside the native -> JS callback frame, then
           // spin until worker.terminate() delivers the TerminationException.
           Atomics.store(flag, 0, 1);
+          Atomics.notify(flag, 0);
           while (true) {}
         },
         { returns: "void", args: [], threadsafe: true },

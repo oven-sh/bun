@@ -10,8 +10,10 @@
 
 use bun_http::lshpack::{DecodeResult, HpackError, HpackHandle};
 
-/// RFC 7541 §6.3: a Dynamic Table Size Update integer never needs more than 6 bytes for a u32.
-pub const MAX_SIZE_UPDATE_BYTES: usize = 6;
+/// RFC 7541 §4.2: a header block opens with at most two §6.3 Dynamic Table Size Updates (the
+/// interval minimum, then the final value). A §5.1 5-bit-prefix integer for a u32 never needs more
+/// than 6 bytes, so this bounds what [`Coder::take_pending_size_update`] can write.
+pub const MAX_SIZE_UPDATE_BYTES: usize = 12;
 
 pub struct Coder {
     hpack: HpackHandle,
@@ -22,6 +24,11 @@ pub struct Coder {
     /// A capacity change requested by the peer's SETTINGS_HEADER_TABLE_SIZE, applied + announced at
     /// the start of the next encoded header block. `None` = nothing pending.
     pending_enc_capacity: Option<u32>,
+    /// RFC 7541 §4.2: the SMALLEST capacity the peer requested since the last header block. The
+    /// peer's decoder evicts eagerly on each of its SETTINGS, so a transient minimum below the
+    /// final value must still be applied and signaled (as the first of two size updates) or the
+    /// two tables diverge. Only meaningful while `pending_enc_capacity` is `Some`.
+    pending_enc_min: u32,
 }
 
 impl Coder {
@@ -31,6 +38,7 @@ impl Coder {
             enc_capacity: max_capacity,
             dec_capacity: max_capacity,
             pending_enc_capacity: None,
+            pending_enc_min: max_capacity,
         }
     }
 
@@ -40,6 +48,10 @@ impl Coder {
         if capacity == self.enc_capacity && self.pending_enc_capacity.is_none() {
             return;
         }
+        self.pending_enc_min = match self.pending_enc_capacity {
+            Some(_) => self.pending_enc_min.min(capacity),
+            None => capacity,
+        };
         self.pending_enc_capacity = Some(capacity);
     }
 
@@ -56,15 +68,25 @@ impl Coder {
         self.dec_capacity = capacity;
     }
 
-    /// If a capacity change is pending, apply it and write the §6.3 size-update opcode into `dst` at
-    /// `offset`. Returns bytes written (0 if none). `dst[offset..]` needs >= MAX_SIZE_UPDATE_BYTES.
+    /// If a capacity change is pending, apply it and write the §6.3 size-update opcode(s) into
+    /// `dst` at `offset`. Returns bytes written (0 if none). `dst[offset..]` needs >=
+    /// MAX_SIZE_UPDATE_BYTES.
     pub fn take_pending_size_update(&mut self, dst: &mut [u8], offset: usize) -> usize {
         let Some(cap) = self.pending_enc_capacity.take() else {
             return 0;
         };
+        let mut n = 0;
+        // §4.2: when the interval's minimum is below its final value, the minimum MUST be signaled
+        // first (at most two size updates per block). Applying it evicts our table exactly as the
+        // peer's decoder already did at that SETTINGS, keeping the two tables in lockstep.
+        let min = self.pending_enc_min;
+        if min < cap {
+            self.hpack.set_encoder_max_capacity(min);
+            n += write_table_size_update(dst, offset, min);
+        }
         self.hpack.set_encoder_max_capacity(cap);
         self.enc_capacity = cap;
-        write_table_size_update(dst, offset, cap)
+        n + write_table_size_update(dst, offset + n, cap)
     }
 
     #[inline]

@@ -1258,12 +1258,19 @@ describe("local SETTINGS_HEADER_TABLE_SIZE resizes the HPACK decoder (RFC 7541 �
 
 describe("remote SETTINGS_HEADER_TABLE_SIZE resizes the HPACK encoder (RFC 7541 §6.3)", () => {
   // https://github.com/oven-sh/bun/issues/19152
-  test("after the client advertises HEADER_TABLE_SIZE=0, responses stop using the dynamic table", async () => {
+  /** A SETTINGS payload carrying one HEADER_TABLE_SIZE entry. */
+  const headerTableSizeSetting = (value: number) => {
+    const b = Buffer.alloc(6);
+    b.writeUInt16BE(HEADER_TABLE_SIZE, 0);
+    b.writeUInt32BE(value, 2);
+    return b;
+  };
+
+  /** A server whose responses all carry the same custom header (so a live dynamic table would get used). */
+  async function responseServer() {
     const h2server = http2.createServer();
     const sessionErrors: string[] = [];
     h2server.on("session", s => s.on("error", e => sessionErrors.push((e as any).code ?? e.message)));
-    // The same response header every time: against a live dynamic table the second response would
-    // reference the entry the first one inserted instead of re-sending it literally.
     const shared = Buffer.alloc(40, 0x61).toString("latin1");
     h2server.on("stream", stream => {
       stream.on("error", () => {});
@@ -1272,16 +1279,22 @@ describe("remote SETTINGS_HEADER_TABLE_SIZE resizes the HPACK encoder (RFC 7541 
     });
     h2server.listen(0);
     await once(h2server, "listening");
-    const c = await RawH2.connect((h2server.address() as net.AddressInfo).port);
+    return { h2server, h2port: (h2server.address() as net.AddressInfo).port, sessionErrors };
+  }
+
+  const isServerSettingsAck = (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 1;
+
+  test("after the client advertises HEADER_TABLE_SIZE=0, responses stop using the dynamic table", async () => {
+    const { h2server, h2port, sessionErrors } = await responseServer();
+    const c = await RawH2.connect(h2port);
     try {
       c.sendPreface();
-      const disable = Buffer.alloc(6);
-      disable.writeUInt16BE(HEADER_TABLE_SIZE, 0); // value 0: the peer may not use the dynamic table
-      c.sendFrame(FrameType.SETTINGS, 0, 0, disable);
+      // Value 0: the peer (us) never accepts a dynamic-table reference.
+      c.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSizeSetting(0));
       await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
       c.sendSettingsAck();
       // The server's ACK of OUR settings is the point from which its encoder is bound by 0.
-      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 1);
+      await c.waitFor(isServerSettingsAck);
 
       c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM|END_HEADERS */, 1, getRoot());
       const r1 = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
@@ -1298,6 +1311,41 @@ describe("remote SETTINGS_HEADER_TABLE_SIZE resizes the HPACK encoder (RFC 7541 
         first: [],
         second: [],
       });
+      expect(sessionErrors).toEqual([]);
+    } finally {
+      c.destroy();
+      h2server.close();
+    }
+  });
+
+  // RFC 7541 §4.2: when the peer changes HEADER_TABLE_SIZE more than once between two of our
+  // header blocks, the interval MINIMUM must be signaled first (at most two size updates per
+  // block). The peer's decoder evicts eagerly at each of its SETTINGS, so signaling only the
+  // final value leaves it with a smaller table than ours; nghttp2's inflater also hard-rejects
+  // a first size update above the interval minimum.
+  test("two table-size changes between blocks emit the interval minimum then the final value", async () => {
+    const { h2server, h2port, sessionErrors } = await responseServer();
+    const c = await RawH2.connect(h2port);
+    try {
+      c.sendPreface();
+      // Shrink to 0, then restore to 4096, before the server sends any header block.
+      c.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSizeSetting(0));
+      c.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSizeSetting(4096));
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+      // Both table-size changes have reached the encoder once both of our SETTINGS are ACKed.
+      await c.waitFor(f => isServerSettingsAck(f) && c.frames.filter(isServerSettingsAck).length >= 2);
+
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM|END_HEADERS */, 1, getRoot());
+      const r1 = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      expect(r1.flags & 0x28).toBe(0);
+
+      // The block opens with size-update(0) then size-update(4096), in that order.
+      const first = readHpackInt(r1.payload, 0, 5);
+      const second = readHpackInt(r1.payload, first.next, 5);
+      expect([r1.payload[0] & 0xe0, r1.payload[first.next] & 0xe0]).toEqual([0x20, 0x20]);
+      expect([first.value, second.value]).toEqual([0, 4096]);
+      expect(dynamicTableIndexes(r1.payload)).toEqual([]);
       expect(sessionErrors).toEqual([]);
     } finally {
       c.destroy();

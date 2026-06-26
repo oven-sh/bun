@@ -133,7 +133,6 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     Global::crash();
 }
 
-
 pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,

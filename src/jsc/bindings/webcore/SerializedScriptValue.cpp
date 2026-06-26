@@ -3429,6 +3429,13 @@ private:
         return i;
     }
 
+    // The readConstantPoolIndex byte width also depends on the pool size matching the
+    // serializer's, so an extra or missing entry desyncs the byte stream, not just the index.
+    void addToObjectPool(JSValue value)
+    {
+        m_objectPool.appendWithCrashOnOverflow(value);
+    }
+
     static bool readString(const uint8_t*& ptr, const uint8_t* end, String& str, unsigned length, bool is8Bit)
     {
         if (length >= std::numeric_limits<int32_t>::max() / sizeof(char16_t))
@@ -4884,13 +4891,13 @@ private:
         case FalseObjectTag: {
             BooleanObject* obj = BooleanObject::create(m_lexicalGlobalObject->vm(), m_globalObject->booleanObjectStructure());
             obj->setInternalValue(m_lexicalGlobalObject->vm(), jsBoolean(false));
-            m_gcBuffer.appendWithCrashOnOverflow(obj);
+            addToObjectPool(obj);
             return obj;
         }
         case TrueObjectTag: {
             BooleanObject* obj = BooleanObject::create(m_lexicalGlobalObject->vm(), m_globalObject->booleanObjectStructure());
             obj->setInternalValue(m_lexicalGlobalObject->vm(), jsBoolean(true));
-            m_gcBuffer.appendWithCrashOnOverflow(obj);
+            addToObjectPool(obj);
             return obj;
         }
         case DoubleTag: {
@@ -4906,7 +4913,7 @@ private:
             if (!read(d))
                 return JSValue();
             NumberObject* obj = constructNumber(m_globalObject, jsNumber(purifyNaN(d)));
-            m_gcBuffer.appendWithCrashOnOverflow(obj);
+            addToObjectPool(obj);
             return obj;
         }
         case BigIntObjectTag: {
@@ -4915,7 +4922,7 @@ private:
                 return JSValue();
             ASSERT(bigInt.isBigInt());
             BigIntObject* obj = BigIntObject::create(m_lexicalGlobalObject->vm(), m_globalObject, bigInt);
-            m_gcBuffer.appendWithCrashOnOverflow(obj);
+            addToObjectPool(obj);
             return obj;
         }
         case DateTag: {
@@ -5030,13 +5037,13 @@ private:
             if (!readStringData(cachedString))
                 return JSValue();
             StringObject* obj = constructString(m_lexicalGlobalObject->vm(), m_globalObject, cachedString->jsString(m_lexicalGlobalObject));
-            m_gcBuffer.appendWithCrashOnOverflow(obj);
+            addToObjectPool(obj);
             return obj;
         }
         case EmptyStringObjectTag: {
             VM& vm = m_lexicalGlobalObject->vm();
             StringObject* obj = constructString(vm, m_globalObject, jsEmptyString(vm));
-            m_gcBuffer.appendWithCrashOnOverflow(obj);
+            addToObjectPool(obj);
             return obj;
         }
         case RegExpTag: {
@@ -5089,12 +5096,12 @@ private:
             return ErrorInstance::create(m_lexicalGlobalObject, WTF::move(message), toErrorType(serializedErrorType), { line, column }, WTF::move(sourceURL), WTF::move(stackString));
         }
         case ObjectReferenceTag: {
-            auto index = readConstantPoolIndex(m_gcBuffer);
-            if (!index || *index >= m_gcBuffer.size()) {
+            auto index = readConstantPoolIndex(m_objectPool);
+            if (!index || *index >= static_cast<uint32_t>(m_objectPool.size())) {
                 fail();
                 return JSValue();
             }
-            return m_gcBuffer.at(*index);
+            return m_objectPool.at(*index);
         }
         case MessagePortReferenceTag: {
             uint32_t index;
@@ -5185,7 +5192,7 @@ private:
                 return JSValue();
             }
             JSValue result = JSArrayBuffer::create(m_lexicalGlobalObject->vm(), structure, WTF::move(arrayBuffer));
-            m_gcBuffer.appendWithCrashOnOverflow(result);
+            addToObjectPool(result);
             return result;
         }
         case ResizableArrayBufferTag: {
@@ -5202,7 +5209,7 @@ private:
                 return JSValue();
             }
             JSValue result = JSArrayBuffer::create(m_lexicalGlobalObject->vm(), structure, WTF::move(arrayBuffer));
-            m_gcBuffer.appendWithCrashOnOverflow(result);
+            addToObjectPool(result);
             return result;
         }
         case ArrayBufferTransferTag: {
@@ -5232,7 +5239,7 @@ private:
             m_sharedBuffers->at(index).shareWith(arrayBufferContents);
             auto buffer = ArrayBuffer::create(WTF::move(arrayBufferContents));
             JSValue result = getJSValue(buffer.get());
-            m_gcBuffer.appendWithCrashOnOverflow(result);
+            addToObjectPool(result);
             return result;
         }
         case ArrayBufferViewTag: {
@@ -5241,7 +5248,7 @@ private:
                 fail();
                 return JSValue();
             }
-            m_gcBuffer.appendWithCrashOnOverflow(arrayBufferView);
+            addToObjectPool(arrayBufferView);
             return arrayBufferView;
         }
 #if ENABLE(WEB_CRYPTO)
@@ -5342,6 +5349,10 @@ private:
     const uint8_t* const m_end;
     unsigned m_version;
     Vector<CachedString> m_constantPool;
+    // Mirrors CloneSerializer's m_objectPool: ObjectReferenceTag indexes into this.
+    // Only values the serializer passed to recordObject() may be appended here (via
+    // addToObjectPool), in the same order, or every later back-reference is wrong.
+    MarkedArgumentBuffer m_objectPool;
     // Vector<Ref<ImageData>> m_imageDataPool;
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     ArrayBufferContentsArray* m_arrayBufferContents;
@@ -5408,7 +5419,7 @@ DeserializationResult CloneDeserializer::deserialize()
             JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), length);
             if (scope.exception()) [[unlikely]]
                 goto error;
-            m_gcBuffer.appendWithCrashOnOverflow(outArray);
+            addToObjectPool(outArray);
             outputObjectStack.append(outArray);
         }
         arrayStartVisitMember:
@@ -5459,7 +5470,7 @@ DeserializationResult CloneDeserializer::deserialize()
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSObject* outObject = constructEmptyObject(m_lexicalGlobalObject, m_globalObject->objectPrototype());
-            m_gcBuffer.appendWithCrashOnOverflow(outObject);
+            addToObjectPool(outObject);
             outputObjectStack.append(outObject);
         }
         objectStartVisitMember:
@@ -5502,7 +5513,7 @@ DeserializationResult CloneDeserializer::deserialize()
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSMap* map = JSMap::create(m_lexicalGlobalObject->vm(), m_globalObject->mapStructure());
-            m_gcBuffer.appendWithCrashOnOverflow(map);
+            addToObjectPool(map);
             outputObjectStack.append(map);
             mapStack.append(map);
             goto mapDataStartVisitEntry;
@@ -5534,7 +5545,7 @@ DeserializationResult CloneDeserializer::deserialize()
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSSet* set = JSSet::create(m_lexicalGlobalObject->vm(), m_globalObject->setStructure());
-            m_gcBuffer.appendWithCrashOnOverflow(set);
+            addToObjectPool(set);
             outputObjectStack.append(set);
             setStack.append(set);
             goto setDataStartVisitEntry;

@@ -399,3 +399,60 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     });
   }
 });
+
+// A repeated object is serialized as an ObjectReferenceTag holding an index into the
+// serializer's object pool. The deserializer must rebuild that pool entry-for-entry:
+// any value it appends that the serializer did not record (BigInt primitives,
+// CryptoKey, X509Certificate) shifts every later back-reference, and the index byte
+// width depends on the pool size, so a big enough mismatch desyncs the whole stream.
+for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSerializeRoundtripCrossProcess]) {
+  describe(`${structuredCloneFn.name}: object pool back-references`, () => {
+    test.each([
+      ["heap BigInt", 1n],
+      ["zero BigInt", 0n],
+      ["200-bit BigInt", 2n ** 200n],
+      ["BigInt object", Object(7n)],
+    ])("a duplicated object after a %s keeps its identity", (_name, bigint) => {
+      const o = { x: 1 };
+      const c = structuredCloneFn([bigint, o, o]);
+      expect(c[1]).toEqual({ x: 1 });
+      expect(c[2]).toBe(c[1]);
+    });
+
+    test("a circular reference after a BigInt resolves to itself", () => {
+      const s: any = {};
+      s.self = s;
+      const d = structuredCloneFn([1n, s]);
+      expect(d[1].self).toBe(d[1]);
+    });
+
+    test("a duplicated BigInt object keeps its identity", () => {
+      const b = Object(5n);
+      const c = structuredCloneFn([b, b]);
+      expect(c[0].valueOf()).toBe(5n);
+      expect(c[1]).toBe(c[0]);
+    });
+
+    test("a back-reference past 255 interleaved BigInts", () => {
+      const o = { marker: "hello" };
+      const input: unknown[] = [o];
+      for (let i = 0; i < 300; i++) input.push((1n << 64n) + BigInt(i));
+      input.push(o);
+      const c = structuredCloneFn(input);
+      expect(c[300]).toBe((1n << 64n) + 299n);
+      expect(c[301]).toEqual({ marker: "hello" });
+      expect(c[301]).toBe(c[0]);
+    });
+  });
+}
+
+describe("structuredClone object pool back-references after platform objects", () => {
+  test("a duplicated object after a CryptoKey keeps its identity", async () => {
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt", "decrypt"]);
+    const o = { x: 1 };
+    const c = structuredClone([key, o, o]);
+    expect(c[0]).toBeInstanceOf(CryptoKey);
+    expect(c[1]).toEqual({ x: 1 });
+    expect(c[2]).toBe(c[1]);
+  });
+});

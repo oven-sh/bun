@@ -2454,7 +2454,12 @@ mod tests {
             payload.extend_from_slice(&req);
             let fed = c.receive(
                 &sink,
-                &frame(FrameType::PushPromise, wire::flags::END_HEADERS, 1, &payload),
+                &frame(
+                    FrameType::PushPromise,
+                    wire::flags::END_HEADERS,
+                    1,
+                    &payload,
+                ),
             );
             assert!(!fed.fatal);
             assert_eq!(c.peer_reserved_count, 1, "push {id} was admitted");
@@ -2464,7 +2469,11 @@ mod tests {
         }
         // Every push reached on_push_promise; none was refused by a leaked slot.
         assert_eq!(
-            sink.pushes.borrow().iter().map(|(_, p)| *p).collect::<Vec<_>>(),
+            sink.pushes
+                .borrow()
+                .iter()
+                .map(|(_, p)| *p)
+                .collect::<Vec<_>>(),
             vec![2, 4, 6]
         );
         assert!(sink.rejected.borrow().is_empty());

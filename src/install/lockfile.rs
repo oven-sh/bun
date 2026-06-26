@@ -959,12 +959,13 @@ impl Lockfile {
         let keep: Vec<bool> = {
             let string_buf = old.buffers.string_bytes.as_slice();
             let deps: &[Dependency] = dep_slice.get(old.buffers.dependencies.as_slice());
+            let resolutions: &[PackageID] = res_slice.get(old.buffers.resolutions.as_slice());
 
             // A root dependency is "requested" when it matches one of the
             // update requests the user typed. Only non-aliased URL adds get
             // renamed to the resolved name, so only those can collide.
             let mut matched = vec![false; n];
-            let mut superseding: Vec<(PackageNameHash, bool)> = Vec::new();
+            let mut superseding: Vec<(PackageNameHash, bool, PackageID)> = Vec::new();
             for (i, dep) in deps.iter().enumerate() {
                 for update in updates.iter() {
                     if update.matches(dep, string_buf) {
@@ -978,20 +979,26 @@ impl Lockfile {
                                     | dependency::Tag::Github
                             )
                         {
-                            superseding.push((dep.name_hash, dep.behavior.is_dev()));
+                            superseding.push((dep.name_hash, dep.behavior.is_dev(), resolutions[i]));
                         }
                         break;
                     }
                 }
             }
 
+            // Mirror the tree hoister's loop condition exactly: same name and
+            // dev-ness, non-peer, resolving to a *different* package. A sibling
+            // that resolves to the same package does not loop, so keep it.
             let mut keep = vec![true; n];
             for (i, dep) in deps.iter().enumerate() {
                 if matched[i] || dep.behavior.is_peer() {
                     continue;
                 }
-                for &(name_hash, is_dev) in &superseding {
-                    if dep.name_hash == name_hash && dep.behavior.is_dev() == is_dev {
+                for &(name_hash, is_dev, winner_resolution) in &superseding {
+                    if dep.name_hash == name_hash
+                        && dep.behavior.is_dev() == is_dev
+                        && resolutions[i] != winner_resolution
+                    {
                         keep[i] = false;
                         break;
                     }

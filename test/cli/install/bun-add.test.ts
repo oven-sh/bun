@@ -1,7 +1,16 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -2473,7 +2482,8 @@ it("should not add duplicate package.json entries when installing the same tarba
 
 it("should update a package installed from one tarball URL to a different tarball URL (#32757)", async () => {
   // Build two tarballs for the same package name at two different versions.
-  const tmpDir = tmpdirSync();
+  using tmpRoot = tempDir("bun-add-url-replace", {});
+  const tmpDir = String(tmpRoot);
   for (const version of ["1.0.0", "2.0.0"]) {
     const dir = join(tmpDir, version, "package");
     await mkdir(dir, { recursive: true });

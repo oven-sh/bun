@@ -373,7 +373,9 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<f32>(addr) };
-        Ok(JSValue::js_number(value as f64))
+        // The bytes at `addr` are arbitrary; a crafted NaN payload must not
+        // reach the NaN-boxed encoding (see `JSValue::purify_nan`).
+        Ok(JSValue::js_number(JSValue::purify_nan(value as f64)))
     }
     pub(crate) fn f64(
         global_object: &JSGlobalObject,
@@ -383,7 +385,9 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<f64>(addr) };
-        Ok(JSValue::js_number(value))
+        // The bytes at `addr` are arbitrary; a crafted NaN payload must not
+        // reach the NaN-boxed encoding (see `JSValue::purify_nan`).
+        Ok(JSValue::js_number(JSValue::purify_nan(value)))
     }
     pub(crate) fn i64(
         global_object: &JSGlobalObject,

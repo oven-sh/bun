@@ -689,13 +689,28 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub fn set_type_of_service(
         this: &Self,
-        _global: &JSGlobalObject,
+        global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         let args = callframe.arguments_old::<1>();
         let tos: i32 = if args.len >= 1 {
-            args.ptr[0].to_int32()
+            let arg = args.ptr[0];
+            // validate_integer_range maps NaN to the default; node:net rejects
+            // it with ERR_INVALID_ARG_TYPE, so do that explicitly here.
+            if arg.is_number() && arg.as_number().is_nan() {
+                return Err(global.throw_invalid_property_type_value(b"tos", b"integer", arg));
+            }
+            global.validate_integer_range(
+                arg,
+                0i32,
+                bun_sql_jsc::jsc::IntegerRange {
+                    min: 0,
+                    max: 255,
+                    field_name: b"tos",
+                    ..Default::default()
+                },
+            )?
         } else {
             0
         };

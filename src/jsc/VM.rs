@@ -33,11 +33,8 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
-    safe fn JSC__VM__setExecutionTimeLimit(vm: &VM, timeout: f64);
-    safe fn JSC__VM__clearExecutionTimeLimit(vm: &VM);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
-    safe fn JSC__VM__notifyNeedWatchdogCheck(vm: &VM);
     safe fn JSC__VM__notifyNeedDebuggerBreak(vm: &VM);
     safe fn JSC__VM__notifyNeedShellTimeoutCheck(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
@@ -78,6 +75,8 @@ impl VM {
         crate::cpp::JSC__VM__isJITEnabled()
     }
 
+    /// Whether a `node:vm` evaluation with the `timeout` option is currently
+    /// running on this VM.
     pub fn has_execution_time_limit(&self) -> bool {
         JSC__VM__hasExecutionTimeLimit(self)
     }
@@ -134,29 +133,16 @@ impl VM {
         JSC__VM__setExecutionForbidden(self, forbidden)
     }
 
-    pub fn set_execution_time_limit(&self, timeout: f64) {
-        JSC__VM__setExecutionTimeLimit(self, timeout)
-    }
-
-    pub fn clear_execution_time_limit(&self) {
-        JSC__VM__clearExecutionTimeLimit(self)
-    }
-
     pub fn execution_forbidden(&self) -> bool {
         JSC__VM__executionForbidden(self)
     }
 
-    // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
+    // These functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
     // These may be called concurrently from another thread.
 
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
-    }
-
-    /// Fires NeedWatchdogCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
-    pub fn notify_need_watchdog_check(&self) {
-        JSC__VM__notifyNeedWatchdogCheck(self)
     }
 
     /// Fires NeedDebuggerBreak Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.

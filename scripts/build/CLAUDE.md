@@ -28,7 +28,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 - `nested-zig` — invoke `zig build` through `zig-build-cli.ts`, which resolves a Zig toolchain (`$BUN_ZIG` → `$PATH` → a sha256-pinned download into the build cache) and pre-fetches the dep's Zig packages through our downloader so the nested build never touches the network itself (ghostty-vt).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
-The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
+The `dep` pool (depth 4) throttles concurrent nested cmake/cargo/zig sub-builds so they don't oversubscribe cores.
 
 **Self-obsoleting workarounds** — see "Adding a workaround" below.
 
@@ -205,6 +205,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                               |
 | `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                           |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                                                              |
+| `zig-build-cli.ts`             | Build-time CLI for nested-zig deps: resolve Zig, prefetch packages, run `zig build`                                     |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                |

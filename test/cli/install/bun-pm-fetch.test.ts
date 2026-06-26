@@ -77,8 +77,10 @@ it("should fetch dependencies into the cache without installing", async () => {
   const cache_contents = await readdir(cache_dir);
   expect(cache_contents.some(name => name.startsWith("bar@0.0.2"))).toBe(true);
 
-  // node_modules was NOT created.
+  // node_modules was NOT created, and no lockfile was written.
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
+  expect(await exists(join(package_dir, "bun.lock"))).toBe(false);
+  expect(await exists(join(package_dir, "bun.lockb"))).toBe(false);
 }, 30_000);
 
 it("should fetch packages missing from cache when lockfile exists", async () => {

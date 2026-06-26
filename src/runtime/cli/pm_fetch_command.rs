@@ -27,17 +27,19 @@ impl PmFetchCommand {
         let log_level = pm.options.log_level;
 
         if pm.options.should_print_command_name() {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b>bun pm fetch <r><d>v{}<r>\n",
                 Global::package_json_version_with_sha,
-            ));
+            );
             Output::flush();
         }
 
-        // Resolve and download, but never touch node_modules or run scripts.
+        // Resolve and download into the cache, but never touch node_modules,
+        // run scripts, or write package.json / the lockfile.
         pm.options.do_.set_install_packages(false);
         pm.options.do_.set_run_scripts(false);
         pm.options.do_.set_write_package_json(false);
+        pm.options.do_.set_save_lockfile(false);
         pm.options.do_.set_summary(false);
 
         // Resolve dependencies and download any newly-resolved tarballs into the
@@ -233,7 +235,7 @@ impl PmFetchCommand {
             if log_level.show_progress() {
                 pm.start_progress_bar();
             } else if log_level != LogLevel::Silent {
-                Output::pretty_errorln(format_args!("Fetching packages"));
+                bun_core::pretty_errorln!("Fetching packages");
                 Output::flush();
             }
 
@@ -269,31 +271,31 @@ impl PmFetchCommand {
             let total_fetched = pm.extracted_count;
 
             if total_fetched > 0 {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<green>Fetched {} package{}<r> into cache ",
                     total_fetched,
                     if total_fetched == 1 { "" } else { "s" },
-                ));
+                );
             } else if already_cached > 0 {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<green>Done<r>! {} package{} already in cache ",
                     already_cached,
                     if already_cached == 1 { "" } else { "s" },
-                ));
+                );
             } else {
-                Output::pretty(format_args!("<green>Done<r>! No packages to fetch "));
+                bun_core::pretty!("<green>Done<r>! No packages to fetch ");
             }
             Output::print_start_end_stdout(ctx.start_time, bun_core::time::nano_timestamp());
-            Output::pretty(format_args!("<r>\n"));
+            bun_core::pretty!("<r>\n");
             if skipped_git > 0 {
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "<yellow>note<r>: skipped {} git dependenc{} (run <b>bun install<r> to populate)",
                     skipped_git,
                     if skipped_git == 1 { "y" } else { "ies" },
-                ));
+                );
             }
             if !cache_dir.is_empty() {
-                Output::prettyln(format_args!("<d>Cache: {}<r>", BStr::new(cache_dir)));
+                bun_core::prettyln!("<d>Cache: {}<r>", BStr::new(cache_dir));
             }
             Output::flush();
         }

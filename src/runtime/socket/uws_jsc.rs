@@ -9,28 +9,6 @@ use bun_uws::{
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-// ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
-// is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
-trait StreamBufferExt {
-    fn is_not_empty(&self) -> bool;
-    fn slice(&self) -> &[u8];
-    fn wrote(&mut self, amount: usize);
-}
-impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
-    #[inline]
-    fn is_not_empty(&self) -> bool {
-        self.list.len() > self.cursor
-    }
-    #[inline]
-    fn slice(&self) -> &[u8] {
-        &self.list[self.cursor..]
-    }
-    #[inline]
-    fn wrote(&mut self, amount: usize) {
-        self.cursor += amount;
-    }
-}
-
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
 pub fn create_bun_socket_error_to_js(
     this: create_bun_socket_error_t,
@@ -97,6 +75,10 @@ unsafe extern "C" {
         data: *const u8,
         length: usize,
     ) -> bool;
+
+    // Half-close after flushing the cork buffer. True when bytes remain
+    // buffered (shutdown deferred to the drain path), false when FIN sent.
+    safe fn uws_async_socket_end(ssl: i32, socket: &mut us_socket_t) -> bool;
 }
 
 pub(crate) fn any_web_socket_get_topics_as_js_array(
@@ -172,60 +154,34 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
         }
     }
 
-    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call.
-    // No JS executes between here and the `update()` below, so this owning `Vec` is the
-    // sole owner of `list_ptr` for the remainder of the function.
-    let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
-    let mut total_written: usize = 0;
-
-    // Labeled block + post-block cleanup so the `buffer.update` / `buffer.wrote`
-    // side effects run on every
-    // exit path without a scopeguard borrow conflict.
-    let result: JSValue = 'body: {
-        let data_slice = node_buffer.slice();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        // No JS executes between here and `JSValue::TRUE/FALSE` below, so the
-        // single `&mut` does not alias the re-entrant write path documented at
-        // the top of this fn (raw `socket` is still kept for that reason).
-        let socket_ref = us_socket_t::opaque_mut(socket);
-        let ssl_flag: i32 = if ssl { 1 } else { 0 };
-        let mut backpressure = false;
-        // AsyncSocket::write so bytes are ordered against res.write() and
-        // land in AsyncSocketData::buffer (flushed on every writable event)
-        // instead of the raw fd: in Node.js both routes share one buffer.
-        if stream_buffer.is_not_empty() {
-            let to_flush = stream_buffer.slice();
-            let to_flush_len = to_flush.len();
-            backpressure |=
-                uws_async_socket_write(ssl_flag, socket_ref, to_flush.as_ptr(), to_flush_len);
-            stream_buffer.wrote(to_flush_len);
-            total_written = total_written.saturating_add(to_flush_len);
-        }
-
-        if !data_slice.is_empty() {
-            backpressure |=
-                uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), data_slice.len());
-            total_written = total_written.saturating_add(data_slice.len());
-        } else if ended && !backpressure {
-            // handle.end() with nothing to write: probe the buffered amount
-            // so shutdown defers until AsyncSocketData::buffer has drained
-            // (the deferred shutdown runs from onDrain once it empties).
-            backpressure |= uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), 0);
-        }
-        if backpressure {
-            break 'body JSValue::FALSE;
-        }
-        if ended {
-            socket_ref.shutdown();
-        }
-        JSValue::TRUE
+    let data_slice = node_buffer.slice();
+    // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+    // No JS executes between here and the return below, so the single
+    // `&mut` does not alias the re-entrant write path documented above.
+    let socket_ref = us_socket_t::opaque_mut(socket);
+    let ssl_flag: i32 = if ssl { 1 } else { 0 };
+    // AsyncSocket::write so bytes are ordered against res.write() and
+    // land in AsyncSocketData::buffer (flushed on every writable event)
+    // instead of the raw fd: in Node.js both routes share one buffer.
+    let backpressure = if !data_slice.is_empty() {
+        // SAFETY: caller guarantees `buffer` is valid; only
+        // total_bytes_written is touched (the list is never populated now
+        // that AsyncSocket::write buffers the remainder natively).
+        unsafe { (*buffer).wrote(data_slice.len()) };
+        uws_async_socket_write(ssl_flag, socket_ref, data_slice.as_ptr(), data_slice.len())
+    } else {
+        false
     };
-
-    // SAFETY: caller guarantees `buffer` is valid for the call; no JS executes between here
-    // and return, so no re-entrancy aliasing.
-    unsafe {
-        (*buffer).update(stream_buffer);
-        (*buffer).wrote(total_written);
+    if backpressure {
+        return JSValue::FALSE;
     }
-    result
+    if ended {
+        // Flush the cork buffer first so shutdown does not truncate bytes
+        // still parked there; defer to the drain path when
+        // AsyncSocketData::buffer is not yet empty.
+        if uws_async_socket_end(ssl_flag, socket_ref) {
+            return JSValue::FALSE;
+        }
+    }
+    JSValue::TRUE
 }

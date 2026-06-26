@@ -1285,9 +1285,13 @@ function onDuplexTLSData(state, chunk) {
 
 function flushPendingDuplexTLS(state) {
   const { events, pending: chunks } = state;
+  if (!chunks) return;
+  // Keep buffering until the replay finishes: a chunk the engine's output
+  // synchronously echoes back into the duplex must not overtake queued ones.
+  // It lands on `chunks` itself, so the loop delivers it in arrival order.
+  for (let i = 0; i < chunks.length; i++) events[0](chunks[i]);
   state.pending = null;
   state.self[kflushPendingDuplexTLS] = undefined;
-  for (let i = 0; i < chunks.length; i++) events[0](chunks[i]);
 }
 
 // The native SSL engine behind an upgraded Duplex is created by a deferred

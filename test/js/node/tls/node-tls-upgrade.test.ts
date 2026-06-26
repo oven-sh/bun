@@ -80,10 +80,14 @@ test("server-side TLSSocket over a duplexPair handshakes when the client is crea
   client.on("error", data.reject);
   server.on("error", data.reject);
 
-  await Promise.all([once(server, "secure"), once(client, "secureConnect")]);
-  server.end("pong");
-  expect(await data.promise).toBe("pong");
-  client.end();
+  try {
+    await Promise.all([once(server, "secure"), once(client, "secureConnect")]);
+    server.end("pong");
+    expect(await data.promise).toBe("pong");
+  } finally {
+    client.destroy();
+    server.destroy();
+  }
 });
 
 // Nested TLS sessions, each layer wrapped in a generic Duplex shim. The outer

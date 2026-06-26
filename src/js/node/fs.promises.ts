@@ -262,7 +262,9 @@ const exports = {
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
-  readdir: asyncWrap(fs.readdir, "readdir"),
+  readdir: async function readdir(path, options) {
+    return fs.readdir(path, options, true);
+  },
   readFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);

@@ -30,11 +30,11 @@ use crate::api::bun::process::{
 // renderer; see `Panes`.
 #[cfg(unix)]
 use crate::api::bun::terminal::create_pty;
+use bun_dotenv::Loader as DotEnvLoader;
 #[cfg(unix)]
 use bun_ghostty_vt_sys::VirtualTerminal;
 #[cfg(unix)]
 use bun_sys::FdExt as _;
-use bun_dotenv::Loader as DotEnvLoader;
 type OutputWriter = bun_core::io::Writer;
 
 /// Value type for package.json `scripts` map. Mirrors
@@ -394,8 +394,9 @@ impl Panes {
     const SCROLLBACK_BYTES: usize = 2 * 1024 * 1024;
 
     /// `Some` only when stdout is an ANSI-capable interactive terminal
-    /// whose width is readable. Anything else keeps the prefix renderer,
-    /// so piped/CI output is byte-for-byte what it was before panes existed.
+    /// whose width is readable, on a platform where ptys can be created.
+    /// Anything else keeps the prefix renderer, so piped/CI output is
+    /// byte-for-byte what it was before panes existed.
     fn init(elide_lines: Option<usize>) -> Option<Self> {
         if !Output::enable_ansi_colors_stdout() || !Output::is_stdout_tty() {
             return None;
@@ -406,6 +407,15 @@ impl Panes {
             .filter(|n| *n > 0)
             .unwrap_or(Self::DEFAULT_ROWS)
             .min(usize::from(u16::MAX)) as u16;
+        // Every task is about to be given a pty; prove one can be created
+        // before committing to the pane renderer, so an environment with
+        // no openpty (or no /dev/ptmx) degrades to the prefix renderer
+        // instead of failing the whole run on the first task.
+        let probe = create_pty(cols, rows).ok()?;
+        probe.master.close();
+        probe.read_fd.close();
+        probe.write_fd.close();
+        probe.slave.close();
         Some(Self {
             cols,
             rows,

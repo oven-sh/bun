@@ -172,16 +172,14 @@ async function resolveZig(cacheDir: string): Promise<string> {
  * content — fail loudly rather than letting `zig build` fall back to the
  * network.
  */
-async function prefetchZigPackage(
-  zig: string,
-  globalCache: string,
-  url: string,
-  expectedHash: string,
-): Promise<void> {
+async function prefetchZigPackage(zig: string, globalCache: string, url: string, expectedHash: string): Promise<void> {
   if (existsSync(join(globalCache, "p", expectedHash))) return;
 
   console.log(`fetching zig package ${expectedHash}`);
-  const tarball = join(globalCache, `prefetch.${process.pid}.${createHash("sha256").update(url).digest("hex").slice(0, 8)}.tar.gz`);
+  const tarball = join(
+    globalCache,
+    `prefetch.${process.pid}.${createHash("sha256").update(url).digest("hex").slice(0, 8)}.tar.gz`,
+  );
   try {
     await downloadWithRetry(url, tarball, expectedHash);
     const fetched = spawnSync(zig, ["fetch", tarball], {

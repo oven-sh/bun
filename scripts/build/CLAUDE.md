@@ -25,6 +25,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 - `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
 - `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
 - `cargo` — invoke cargo build (lolhtml). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
+- `nested-zig` — invoke `zig build` through `zig-build-cli.ts`, which resolves a Zig toolchain (`$BUN_ZIG` → `$PATH` → a sha256-pinned download into the build cache) and pre-fetches the dep's Zig packages through our downloader so the nested build never touches the network itself (ghostty-vt).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
 The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.

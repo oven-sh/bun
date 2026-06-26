@@ -65,13 +65,7 @@ export const ghosttyVt: Dependency = {
 
   build: () => ({
     kind: "nested-zig",
-    args: [
-      "-Demit-lib-vt",
-      "-Dsimd=false",
-      "-Dapp-runtime=none",
-      "-Demit-xcframework=false",
-      "-Doptimize=ReleaseFast",
-    ],
+    args: ["-Demit-lib-vt", "-Dsimd=false", "-Dapp-runtime=none", "-Demit-xcframework=false", "-Doptimize=ReleaseFast"],
     packages: [
       {
         // jacobsandlund/uucode — Unicode tables (grapheme/width data).

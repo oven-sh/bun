@@ -111,6 +111,10 @@ export const mydep: Dependency = {
 - **`nested-cmake`**: Runs `cmake --fresh -B ...` then `cmake --build`.
   See `NestedCmakeBuild` in `../source.ts` for all fields.
 - **`cargo`**: Rust deps (currently just lolhtml). See `CargoBuild` in `../source.ts`.
+- **`nested-zig`**: Runs `zig build` via `../zig-build-cli.ts`, which finds
+  (or downloads) a pinned Zig toolchain and pre-fetches the dep's Zig
+  packages through our downloader. See `NestedZigBuild` in `../source.ts`.
+  Currently just ghostty-vt.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 
 ## Worked examples

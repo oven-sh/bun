@@ -152,6 +152,9 @@ pub mod bun {
             CreatePtyError, OpenPtyFn, OpenPtyTermios, PtyResult, Winsize,
         };
         // `bun run --parallel` gives each task a pty for its pane renderer.
+        // That renderer is unix-only (see `Panes` in multi_run.rs), so the
+        // re-export is too; otherwise it is an unused import on Windows.
+        #[cfg(unix)]
         pub(crate) use crate::api::bun_terminal_body::create_pty;
     }
     pub use terminal::Terminal;

@@ -7,7 +7,7 @@ import path from "path";
 async function runMulti(
   args: string[],
   dir: string,
-  extraEnv?: Record<string, string>,
+  extraEnv?: Record<string, string | undefined>,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
@@ -1565,6 +1565,12 @@ describe.concurrent("concurrent stdout + stderr from same script", () => {
 
 describe.concurrent("dependency chains", () => {
   test("sequential with pre/post creates deep chain that works", async () => {
+    // The property under test is the ORDERING of a 9-deep pre->main->post
+    // chain, which only needs 9 trivial children. `echo` is a builtin of
+    // both `sh -c` (posix) and `bun exec` (windows). The bun children it
+    // used before cost ~700ms each to START under a debug+ASAN build, and
+    // --sequential runs them one after another, which blew the 5s test
+    // budget on a slow machine.
     using dir = tempDir("mr-deep-chain", {
       "package.json": JSON.stringify({
         scripts: {
@@ -2029,6 +2035,206 @@ describe("workspace integration", () => {
     const r = await runMulti(["run", "--parallel", "--filter", "./packages/my-pkg", "build"], String(dir));
     // Label should use relative path "packages/my-pkg" instead of empty string
     expectPrefixed(r.stdout, "packages/my-pkg:build", "no-name-ok");
+    expect(r.exitCode).toBe(0);
+  });
+});
+
+// ─── PARALLEL: PANE RENDERER (TTY) ────────────────────────────────────────────
+//
+// When stdout is an interactive, ANSI-capable terminal, `--parallel` spawns
+// each task onto a pty sized to its pane and replays the output into a
+// libghostty-vt virtual terminal, then repaints one pane per task. Non-tty
+// output keeps the `label | line` prefix renderer, which every other test in
+// this file exercises through a pipe.
+//
+// These tests give `bun run --parallel` a real pty via `Bun.Terminal`.
+describe.skipIf(isWindows)("parallel: pane renderer", () => {
+  /**
+   * Run `bun <args>` with its stdio on a fresh pty. `until(raw)` decides
+   * when every byte we intend to assert on has arrived — the pty read side
+   * races the child's exit, so waiting on the condition (never on time) is
+   * what makes this deterministic.
+   */
+  async function runOnPty(
+    args: string[],
+    dir: string,
+    until: (raw: string) => boolean,
+    { cols = 100, rows = 40 } = {},
+  ): Promise<{ raw: string; exitCode: number }> {
+    let raw = "";
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols,
+      rows,
+      data(_term: Bun.Terminal, chunk: Uint8Array) {
+        raw += decoder.decode(chunk, { stream: true });
+        if (until(raw)) done.resolve();
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      // The pane renderer is gated on an ANSI-capable terminal, so the
+      // NO_COLOR/CI that bunEnv sets for every other test must come off.
+      env: { ...bunEnv, NO_COLOR: undefined, CI: undefined },
+      cwd: dir,
+      terminal,
+    });
+    const exitCode = await proc.exited;
+    await done.promise;
+    return { raw, exitCode };
+  }
+
+  /** Fully painted frames, oldest to newest. Each is bracketed by a
+   * synchronized update (`CSI ? 2026 h` ... `l`); an in-flight partial
+   * frame at the tail of `raw` is dropped. */
+  function completeFrames(raw: string): string[] {
+    return raw.split("\x1b[?2026h").filter(f => f.includes("\x1b[?2026l"));
+  }
+
+  /**
+   * `until` predicate: some single complete frame shows a terminal status
+   * for every one of `n` tasks. Statuses never go backwards (a Done task
+   * stays Done), so every LATER complete frame also satisfies it —
+   * including `lastFrame()`, which is what the tests assert on.
+   */
+  function allDone(n: number) {
+    return (raw: string) =>
+      completeFrames(raw).some(
+        f => (f.match(/(Done in |Exited with code |Signaled: |Interrupted)/g) ?? []).length >= n,
+      );
+  }
+
+  /** The last fully painted frame, as the plain text a terminal would show. */
+  function lastFrame(raw: string): string {
+    const frames = completeFrames(raw);
+    expect(frames.length).toBeGreaterThan(0);
+    return (
+      frames[frames.length - 1]!// The erase-previous-frame prefix and every other escape sequence.
+      .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+        // The pty's ONLCR maps the renderer's `\n` to `\r\n`.
+        .replaceAll("\r\n", "\n")
+    );
+  }
+
+  test("each task gets a pty sized to its pane and renders into a gutter", async () => {
+    using dir = tempDir("mr-pane-basic", {
+      "package.json": JSON.stringify({
+        scripts: {
+          size: `${bunExe()} -e "console.log('cols='+process.stdout.columns+' tty='+process.stdout.isTTY)"`,
+          lines: `${bunExe()} -e "for (let i = 0; i < 3; i++) console.log('line-' + i)"`,
+        },
+      }),
+    });
+    const { raw, exitCode } = await runOnPty(["run", "--parallel", "size", "lines"], String(dir), allDone(2), {
+      cols: 100,
+    });
+    const frame = lastFrame(raw);
+    // Header (`label $ command`), one `│ ` gutter row per output line, and
+    // a `└─ <status>` footer per task, in declaration order.
+    expect(frame).toContain("size $");
+    expect(frame).toContain("lines $");
+    // The task saw a real tty whose width is the pane interior: the
+    // terminal's 100 columns minus the 2-cell `│ ` gutter.
+    expect(frame).toContain("│ cols=98 tty=true");
+    expect(frame).toContain("│ line-0");
+    expect(frame).toContain("│ line-1");
+    expect(frame).toContain("│ line-2");
+    expect(frame.match(/└─ Done in \d/g)).toHaveLength(2);
+    expect(exitCode).toBe(0);
+  });
+
+  test("carriage-return overwrites resolve like a real terminal", async () => {
+    using dir = tempDir("mr-pane-cr", {
+      "package.json": JSON.stringify({
+        scripts: {
+          spin: `${bunExe()} -e "for (const s of ['25%','50%','75%']) process.stdout.write('\\rstep ' + s); console.log('\\rall done')"`,
+        },
+      }),
+    });
+    const { raw, exitCode } = await runOnPty(["run", "--parallel", "spin"], String(dir), allDone(1));
+    const frame = lastFrame(raw);
+    // Four `\r`-prefixed writes land on ONE terminal row; the pane shows
+    // only the final overwrite, never the intermediate fragments.
+    expect(frame.match(/^│ .*$/gm)).toEqual(["│ all done"]);
+    expect(frame).not.toContain("step 25%");
+    expect(exitCode).toBe(0);
+  });
+
+  test("rows that scroll out of the pane are counted as elided", async () => {
+    using dir = tempDir("mr-pane-elide", {
+      "package.json": JSON.stringify({
+        scripts: {
+          many: `${bunExe()} -e "for (let i = 0; i < 14; i++) console.log('row-' + i)"`,
+        },
+      }),
+    });
+    // The pane is a real 10-row terminal. 14 newline-terminated lines
+    // leave the cursor resting on a blank bottom row, so the visible
+    // content is the last 9 lines and the other 5 are in scrollback —
+    // exactly what `seq 14` in a 10-row terminal window shows.
+    const { raw, exitCode } = await runOnPty(["run", "--parallel", "many"], String(dir), allDone(1));
+    const frame = lastFrame(raw);
+    expect(frame).toContain("│ [5 lines elided]");
+    expect(frame.match(/^│ row-\d+$/gm)).toEqual(Array.from({ length: 9 }, (_, i) => `│ row-${i + 5}`));
+    expect(exitCode).toBe(0);
+  });
+
+  test("--elide-lines sets the pane height", async () => {
+    using dir = tempDir("mr-pane-elide-flag", {
+      "package.json": JSON.stringify({
+        scripts: {
+          many: `${bunExe()} -e "for (let i = 0; i < 14; i++) console.log('row-' + i)"`,
+        },
+      }),
+    });
+    const { raw, exitCode } = await runOnPty(
+      ["run", "--parallel", "--elide-lines", "3", "many"],
+      String(dir),
+      allDone(1),
+    );
+    const frame = lastFrame(raw);
+    // The task's terminal is 3 rows tall; the bottom row holds the
+    // resting cursor, so 2 lines are visible and 12 are in scrollback.
+    expect(frame).toContain("│ [12 lines elided]");
+    expect(frame.match(/^│ row-\d+$/gm)).toEqual(["│ row-12", "│ row-13"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a failing task's exit code lands in its footer and the exit code", async () => {
+    using dir = tempDir("mr-pane-fail", {
+      "package.json": JSON.stringify({
+        scripts: {
+          bad: `${bunExe()} -e "console.log('about to fail'); process.exit(3)"`,
+        },
+      }),
+    });
+    const { raw, exitCode } = await runOnPty(["run", "--parallel", "bad"], String(dir), allDone(1));
+    const frame = lastFrame(raw);
+    expect(frame).toContain("│ about to fail");
+    expect(frame).toContain("└─ Exited with code 3");
+    expect(exitCode).toBe(3);
+  });
+
+  test("piped output never renders panes, even with colors forced on", async () => {
+    using dir = tempDir("mr-pane-piped", {
+      "package.json": JSON.stringify({
+        scripts: {
+          a: `${bunExe()} -e "console.log('plain-a')"`,
+        },
+      }),
+    });
+    // FORCE_COLOR turns ANSI on for a pipe, but the pane renderer also
+    // requires stdout to BE a terminal; a pipe must stay on the
+    // `label | line` prefix renderer.
+    const r = await runMulti(["run", "--parallel", "a"], String(dir), {
+      FORCE_COLOR: "1",
+      NO_COLOR: undefined,
+    });
+    const stdout = Bun.stripANSI(r.stdout);
+    expectPrefixed(stdout, "a", "plain-a");
+    expect(stdout).not.toContain("│");
+    expect(stdout).not.toContain("└─");
     expect(r.exitCode).toBe(0);
   });
 });

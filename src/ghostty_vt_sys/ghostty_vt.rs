@@ -29,6 +29,7 @@ pub const GHOSTTY_FORMATTER_FORMAT_VT: FormatterFormat = 1;
 
 /// `GhosttyTerminalData` (the subset Bun reads).
 pub type TerminalData = c_int;
+pub const GHOSTTY_TERMINAL_DATA_CURSOR_X: TerminalData = 3;
 pub const GHOSTTY_TERMINAL_DATA_CURSOR_Y: TerminalData = 4;
 pub const GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS: TerminalData = 15;
 
@@ -306,8 +307,22 @@ impl VirtualTerminal {
         }
     }
 
+    /// 0-indexed column of the cursor.
+    fn cursor_col(&self) -> u16 {
+        let mut out: u16 = 0;
+        // SAFETY: `term` is live; CURSOR_X writes a `uint16_t`.
+        let rc = unsafe {
+            ghostty_terminal_get(
+                self.term.as_ptr(),
+                GHOSTTY_TERMINAL_DATA_CURSOR_X,
+                (&raw mut out).cast::<c_void>(),
+            )
+        };
+        if rc == GHOSTTY_SUCCESS { out } else { 0 }
+    }
+
     /// 0-indexed row of the cursor within the active area.
-    pub fn cursor_row(&self) -> u16 {
+    fn cursor_row(&self) -> u16 {
         let mut out: u16 = 0;
         // SAFETY: `term` is live; CURSOR_Y writes a `uint16_t`.
         let rc = unsafe {
@@ -335,14 +350,13 @@ impl VirtualTerminal {
         if rc == GHOSTTY_SUCCESS { out } else { 0 }
     }
 
-    /// Rows of the active area that carry content: everything up to and
-    /// including the cursor row, or the full height once output has
-    /// scrolled. Keeps short-lived tasks from rendering a block of blanks.
+    /// Rows of the active area that carry content: everything through the
+    /// cursor's row, EXCLUDING that row when the cursor is resting at
+    /// column 0 on it (the position after a trailing newline). A task
+    /// that has printed N complete lines renders N rows, not N plus a
+    /// blank; a task that has printed nothing renders zero.
     pub fn used_rows(&self) -> u16 {
-        if self.scrollback_rows() > 0 {
-            return self.rows;
-        }
-        (self.cursor_row() + 1).min(self.rows)
+        (self.cursor_row() + u16::from(self.cursor_col() > 0)).min(self.rows)
     }
 
     /// Serialize one row of the active area as VT text — SGR colors and

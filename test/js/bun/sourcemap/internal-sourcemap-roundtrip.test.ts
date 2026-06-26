@@ -446,3 +446,29 @@ describe.concurrent("sourcemap of a source with a truncated trailing UTF-8 seque
     });
   });
 });
+
+// `sources` entries in the emitted map are URLs: the path from the chunk
+// directory to each source must use forward slashes on every platform, never
+// the host path separator.
+test.concurrent("sourcemap sources use forward slashes on every platform", async () => {
+  using dir = tempDir("sourcemap-forward-slashes", {
+    "src/nested/in.js": `import { v } from "../dep.js";\nconsole.log(v);\n`,
+    "src/dep.js": `export const v = 1;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--sourcemap=external", "--outdir=out", "src/nested/in.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toEqual({
+    exitCode: 0,
+    stdout: expect.any(String),
+    stderr: expect.any(String),
+  });
+  // Two sources so both `sources` emission paths (first entry and the rest) are covered.
+  const map = await Bun.file(path.join(String(dir), "out", "in.js.map")).json();
+  expect(map.sources).toEqual(["../src/dep.js", "../src/nested/in.js"]);
+});

@@ -1112,10 +1112,15 @@ impl<'a> LinkerContext<'a> {
 
                 // Note: the relative path lives in a local owned buffer
                 // (drops at scope exit).
-                let rel_path_storage;
+                let mut rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
                     rel_path_storage =
                         bun_paths::resolve_path::relative_alloc(chunk_abs_dir, path.text)?;
+                    // `sources` entries are URLs, so they always use forward slashes,
+                    // the same invariant `Path::pretty` holds (`assert_pretty_is_valid`).
+                    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                        &mut rel_path_storage,
+                    );
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -1140,10 +1145,13 @@ impl<'a> LinkerContext<'a> {
 
                 let path = &sources[index as usize].path;
 
-                let rel_path_storage;
+                let mut rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
                     rel_path_storage =
                         bun_paths::resolve_path::relative_alloc(chunk_abs_dir, path.text)?;
+                    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                        &mut rel_path_storage,
+                    );
                     &rel_path_storage
                 } else {
                     path.pretty

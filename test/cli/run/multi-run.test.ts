@@ -2077,6 +2077,8 @@ describe.concurrent.skipIf(isWindows)("parallel: pane renderer", () => {
       // timeout. (This also fires when `await using` disposes the
       // terminal after a successful run; `done` is settled by then.)
       exit() {
+        // Flush a trailing partial UTF-8 sequence the streaming decoder buffered.
+        raw += decoder.decode();
         if (!until(raw)) {
           done.reject(new Error(`pty stream ended before the expected output arrived; got:\n${raw}`));
         }

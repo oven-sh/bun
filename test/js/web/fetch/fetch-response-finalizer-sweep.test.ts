@@ -96,11 +96,7 @@ describe.skipIf(isWindows)("fetch Response Weak finalizer during GC sweep", () =
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // On failure the process aborts inside WeakBlock::sweep before reaching
     // the print; asserting the combined shape gives a readable diff. stderr
     // is included for diagnostics only (debug/ASAN builds emit benign

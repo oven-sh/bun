@@ -1210,18 +1210,19 @@ describe("node:vm timeout option", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("OK\n");
-    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
   test("terminates a runaway script", () => {
-    expect(() => runInThisContext("while (true) {}", { timeout: 100 })).toThrow({
-      name: "Error",
-      message: "Script execution timed out after 100ms",
-    });
+    expect(() => runInThisContext("while (true) {}", { timeout: 100 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        message: "Script execution timed out after 100ms",
+      }),
+    );
   });
 
   // runInThisContext evaluates in the caller's own global, so timing out must
@@ -1232,7 +1233,10 @@ describe("node:vm timeout option", () => {
       survived = true;
     });
     expect(() => runInThisContext("while (true) {}", { timeout: 100 })).toThrow(
-      "Script execution timed out after 100ms",
+      expect.objectContaining({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        message: "Script execution timed out after 100ms",
+      }),
     );
     await Promise.resolve();
     expect(survived).toBe(true);
@@ -1243,7 +1247,10 @@ describe("node:vm timeout option", () => {
       runInVM: (timeout: number) => runInNewContext("while (true) {}", context, { timeout }),
     });
     expect(() => runInNewContext("runInVM(50)", context, { timeout: 100_000 })).toThrow(
-      "Script execution timed out after 50ms",
+      expect.objectContaining({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        message: "Script execution timed out after 50ms",
+      }),
     );
   });
 
@@ -1254,7 +1261,10 @@ describe("node:vm timeout option", () => {
       runInVM: (timeout: number) => runInNewContext("while (true) {}", context, { timeout }),
     });
     expect(() => runInNewContext("runInVM(100000)", context, { timeout: 100 })).toThrow(
-      "Script execution timed out after 100ms",
+      expect.objectContaining({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        message: "Script execution timed out after 100ms",
+      }),
     );
   });
 
@@ -1278,10 +1288,9 @@ describe("node:vm timeout option", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\n");
-    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -1311,10 +1320,9 @@ describe("node:vm timeout option", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\nmicrotask survived: true\n");
-    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

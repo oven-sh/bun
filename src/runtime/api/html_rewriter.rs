@@ -568,7 +568,13 @@ impl HTMLRewriterLoader {
                 // the destination sink; valid for the duration of this call.
                 unsafe { (*pending).apply_backpressure(&mut self.output, bytes) };
             }
-            Writable::IntoArray(_) | Writable::Owned(_) | Writable::Temporary(_) => {
+            // The bytes were consumed by the output sink either way; the
+            // rewriter has no resume wiring of its own, so treat a
+            // backpressure result the same as `Owned` rather than stalling.
+            Writable::IntoArray(_)
+            | Writable::Owned(_)
+            | Writable::Temporary(_)
+            | Writable::Backpressure(_) => {
                 self.signal.ready(
                     if self.chunk_size > 0 {
                         Some(self.chunk_size as u64)

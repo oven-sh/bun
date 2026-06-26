@@ -1366,7 +1366,13 @@ pub(super) extern "C" fn napi_is_arraybuffer(
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
-    *result = !value.is_number() && value.js_type_loose() == jsc::JSType::ArrayBuffer;
+    // A SharedArrayBuffer shares the `ArrayBuffer` cell type with a plain
+    // ArrayBuffer in JSC, so `js_type` alone can't tell them apart. Node's
+    // `napi_is_arraybuffer` maps to V8's `IsArrayBuffer()`, which is false for
+    // SharedArrayBuffer, so exclude shared buffers here too.
+    *result = value
+        .as_array_buffer(env.to_js())
+        .is_some_and(|ab| ab.typed_array_type == jsc::JSType::ArrayBuffer && !ab.shared);
     env.ok()
 }
 
@@ -2974,6 +2980,8 @@ mod v8_api {
         pub(super) fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() -> *mut c_void;
         pub(super) fn _ZN2v86Number3NewEPNS_7IsolateEd() -> *mut c_void;
         pub(super) fn _ZNK2v86Number5ValueEv() -> *mut c_void;
+        pub(super) fn _ZN2v86Number12NewFromInt32EPNS_7IsolateEi() -> *mut c_void;
+        pub(super) fn _ZN2v86Number13NewFromUint32EPNS_7IsolateEj() -> *mut c_void;
         pub(super) fn _ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi()
         -> *mut c_void;
         pub(super) fn _ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii() -> *mut c_void;
@@ -2981,6 +2989,8 @@ mod v8_api {
         pub(super) fn _ZNK2v86String6LengthEv() -> *mut c_void;
         pub(super) fn _ZN2v88External3NewEPNS_7IsolateEPv() -> *mut c_void;
         pub(super) fn _ZNK2v88External5ValueEv() -> *mut c_void;
+        pub(super) fn _ZN2v88External3NewEPNS_7IsolateEPvt() -> *mut c_void;
+        pub(super) fn _ZNK2v88External5ValueEt() -> *mut c_void;
         pub(super) fn _ZN2v86Object3NewEPNS_7IsolateE() -> *mut c_void;
         pub(super) fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() -> *mut c_void;
         pub(super) fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE() -> *mut c_void;
@@ -2989,6 +2999,14 @@ mod v8_api {
         pub(super) fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
         pub(super) fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScope12CreateHandleEPNS_7IsolateEm() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScope10InitializeEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value16QuickIsUndefinedEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11QuickIsNullEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value22QuickIsNullOrUndefinedEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value13QuickIsStringEv() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScope6ExtendEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScope16DeleteExtensionsEPNS_7IsolateE() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScopeC1EPNS_7IsolateE() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScopeD1Ev() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScopeD2Ev() -> *mut c_void;
@@ -3040,6 +3058,10 @@ mod v8_api {
         pub(super) fn _ZNK2v86String17IsExternalTwoByteEv() -> *mut c_void;
         pub(super) fn _ZNK2v86String9IsOneByteEv() -> *mut c_void;
         pub(super) fn _ZNK2v86String19ContainsOnlyOneByteEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86String7WriteV2EPNS_7IsolateEjjPti() -> *mut c_void;
+        pub(super) fn _ZNK2v86String14WriteOneByteV2EPNS_7IsolateEjjPhi() -> *mut c_void;
+        pub(super) fn _ZNK2v86String11WriteUtf8V2EPNS_7IsolateEPcmiPm() -> *mut c_void;
+        pub(super) fn _ZNK2v86String12Utf8LengthV2EPNS_7IsolateE() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm()
         -> *mut c_void;
         pub(super) fn _ZN2v812api_internal13DisposeGlobalEPm() -> *mut c_void;
@@ -3087,6 +3109,10 @@ mod v8_api {
         pub(super) fn v8_Number_New() -> *mut c_void;
         #[link_name = "?Value@Number@v8@@QEBANXZ"]
         pub(super) fn v8_Number_Value() -> *mut c_void;
+        #[link_name = "?NewFromInt32@Number@v8@@CA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@H@Z"]
+        pub(super) fn v8_Number_NewFromInt32() -> *mut c_void;
+        #[link_name = "?NewFromUint32@Number@v8@@CA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@I@Z"]
+        pub(super) fn v8_Number_NewFromUint32() -> *mut c_void;
         #[link_name = "?NewFromUtf8@String@v8@@SA?AV?$MaybeLocal@VString@v8@@@2@PEAVIsolate@2@PEBDW4NewStringType@2@H@Z"]
         pub(super) fn v8_String_NewFromUtf8() -> *mut c_void;
         #[link_name = "?WriteUtf8@String@v8@@QEBAHPEAVIsolate@2@PEADHPEAHH@Z"]
@@ -3099,6 +3125,10 @@ mod v8_api {
         pub(super) fn v8_External_New() -> *mut c_void;
         #[link_name = "?Value@External@v8@@QEBAPEAXXZ"]
         pub(super) fn v8_External_Value() -> *mut c_void;
+        #[link_name = "?New@External@v8@@SA?AV?$Local@VExternal@v8@@@2@PEAVIsolate@2@PEAXG@Z"]
+        pub(super) fn v8_External_New_tagged() -> *mut c_void;
+        #[link_name = "?Value@External@v8@@QEBAPEAXG@Z"]
+        pub(super) fn v8_External_Value_tagged() -> *mut c_void;
         #[link_name = "?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z"]
         pub(super) fn v8_Object_New() -> *mut c_void;
         #[link_name = "?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z"]
@@ -3115,6 +3145,10 @@ mod v8_api {
         pub(super) fn v8_Object_Get_key() -> *mut c_void;
         #[link_name = "?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z"]
         pub(super) fn v8_HandleScope_CreateHandle() -> *mut c_void;
+        #[link_name = "?Extend@HandleScope@v8@@CAPEA_KPEAVIsolate@2@@Z"]
+        pub(super) fn v8_HandleScope_Extend() -> *mut c_void;
+        #[link_name = "?DeleteExtensions@HandleScope@v8@@AEAAXPEAVIsolate@2@@Z"]
+        pub(super) fn v8_HandleScope_DeleteExtensions() -> *mut c_void;
         #[link_name = "??0HandleScope@v8@@QEAA@PEAVIsolate@1@@Z"]
         pub(super) fn v8_HandleScope_ctor() -> *mut c_void;
         #[link_name = "??1HandleScope@v8@@QEAA@XZ"]
@@ -3205,6 +3239,14 @@ mod v8_api {
         pub(super) fn v8_String_Utf8Length() -> *mut c_void;
         #[link_name = "?ContainsOnlyOneByte@String@v8@@QEBA_NXZ"]
         pub(super) fn v8_String_ContainsOnlyOneByte() -> *mut c_void;
+        #[link_name = "?WriteV2@String@v8@@QEBAXPEAVIsolate@2@IIPEAGH@Z"]
+        pub(super) fn v8_String_WriteV2() -> *mut c_void;
+        #[link_name = "?WriteOneByteV2@String@v8@@QEBAXPEAVIsolate@2@IIPEAEH@Z"]
+        pub(super) fn v8_String_WriteOneByteV2() -> *mut c_void;
+        #[link_name = "?WriteUtf8V2@String@v8@@QEBA_KPEAVIsolate@2@PEAD_KHPEA_K@Z"]
+        pub(super) fn v8_String_WriteUtf8V2() -> *mut c_void;
+        #[link_name = "?Utf8LengthV2@String@v8@@QEBA_KPEAVIsolate@2@@Z"]
+        pub(super) fn v8_String_Utf8LengthV2() -> *mut c_void;
         #[link_name = "?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z"]
         pub(super) fn v8_api_internal_GlobalizeReference() -> *mut c_void;
         #[link_name = "?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"]
@@ -4082,10 +4124,13 @@ pub fn fix_dead_code_elimination() {
             _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_,
             _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_,
             _ZN2v86Number3NewEPNS_7IsolateEd, _ZNK2v86Number5ValueEv,
+            _ZN2v86Number12NewFromInt32EPNS_7IsolateEi,
+            _ZN2v86Number13NewFromUint32EPNS_7IsolateEj,
             _ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi,
             _ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii, _ZN2v812api_internal12ToLocalEmptyEv,
             _ZNK2v86String6LengthEv, _ZN2v88External3NewEPNS_7IsolateEPv,
             _ZNK2v88External5ValueEv, _ZN2v86Object3NewEPNS_7IsolateE,
+            _ZN2v88External3NewEPNS_7IsolateEPvt, _ZNK2v88External5ValueEt,
             _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
             _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE,
             _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE,
@@ -4093,6 +4138,14 @@ pub fn fix_dead_code_elimination() {
             _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
             _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj,
             _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm,
+            _ZN2v811HandleScope12CreateHandleEPNS_7IsolateEm,
+            _ZN2v811HandleScope10InitializeEPNS_7IsolateE,
+            _ZNK2v85Value16QuickIsUndefinedEv,
+            _ZNK2v85Value11QuickIsNullEv,
+            _ZNK2v85Value22QuickIsNullOrUndefinedEv,
+            _ZNK2v85Value13QuickIsStringEv,
+            _ZN2v811HandleScope6ExtendEPNS_7IsolateE,
+            _ZN2v811HandleScope16DeleteExtensionsEPNS_7IsolateE,
             _ZN2v811HandleScopeC1EPNS_7IsolateE, _ZN2v811HandleScopeD1Ev,
             _ZN2v811HandleScopeD2Ev,
             _ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE,
@@ -4123,6 +4176,10 @@ pub fn fix_dead_code_elimination() {
             _ZNK2v86String10Utf8LengthEPNS_7IsolateE, _ZNK2v86String10IsExternalEv,
             _ZNK2v86String17IsExternalOneByteEv, _ZNK2v86String17IsExternalTwoByteEv,
             _ZNK2v86String9IsOneByteEv, _ZNK2v86String19ContainsOnlyOneByteEv,
+            _ZNK2v86String7WriteV2EPNS_7IsolateEjjPti,
+            _ZNK2v86String14WriteOneByteV2EPNS_7IsolateEjjPhi,
+            _ZNK2v86String11WriteUtf8V2EPNS_7IsolateEPcmiPm,
+            _ZNK2v86String12Utf8LengthV2EPNS_7IsolateE,
             _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm,
             _ZN2v812api_internal13DisposeGlobalEPm,
             _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE,
@@ -4142,12 +4199,16 @@ pub fn fix_dead_code_elimination() {
             node_RemoveEnvironmentCleanupHook,
             v8_Number_New,
             v8_Number_Value,
+            v8_Number_NewFromInt32,
+            v8_Number_NewFromUint32,
             v8_String_NewFromUtf8,
             v8_String_WriteUtf8,
             v8_api_internal_ToLocalEmpty,
             v8_String_Length,
             v8_External_New,
             v8_External_Value,
+            v8_External_New_tagged,
+            v8_External_Value_tagged,
             v8_Object_New,
             v8_Object_Set_key,
             v8_Object_Set_index,
@@ -4156,6 +4217,8 @@ pub fn fix_dead_code_elimination() {
             v8_Object_Get_index,
             v8_Object_Get_key,
             v8_HandleScope_CreateHandle,
+            v8_HandleScope_Extend,
+            v8_HandleScope_DeleteExtensions,
             v8_HandleScope_ctor,
             v8_HandleScope_dtor,
             v8_FunctionTemplate_GetFunction,
@@ -4201,6 +4264,10 @@ pub fn fix_dead_code_elimination() {
             v8_String_IsOneByte,
             v8_String_Utf8Length,
             v8_String_ContainsOnlyOneByte,
+            v8_String_WriteV2,
+            v8_String_WriteOneByteV2,
+            v8_String_WriteUtf8V2,
+            v8_String_Utf8LengthV2,
             v8_api_internal_GlobalizeReference,
             v8_api_internal_DisposeGlobal,
             v8_api_internal_GetFunctionTemplateData,

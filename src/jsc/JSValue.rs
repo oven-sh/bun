@@ -1641,8 +1641,6 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // Note: debug-only event-loop bookkeeping is
-        // omitted while VirtualMachine.rs is gated; restore when it un-gates.
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.

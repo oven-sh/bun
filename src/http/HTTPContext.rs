@@ -1342,16 +1342,34 @@ impl<const SSL: bool> Handler<SSL> {
         // 4. Dead socket: it is already marked as dead
         let tagged = HTTPContext::<SSL>::get_tagged(ptr);
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);
-        socket.close(uws::CloseKind::Failure);
-
+        // An idle (pooled keep-alive) socket's FIN is answered with a graceful
+        // close so well-behaved servers don't observe ECONNRESET for
+        // connections we were simply done with, and so is a FIN that
+        // terminates an EOF-delimited response (the request was fully sent;
+        // this FIN *is* the end of the response). A FIN that cuts the request
+        // short while its body is still being sent is answered with a reset
+        // instead: a graceful close would queue our FIN behind the
+        // not-yet-delivered body bytes (a server that rejects an upload early
+        // stops reading them), so the peer would never observe the connection
+        // closing and it would leak.
         if let Some(client) = tagged.client_mut() {
+            if client.has_unsent_request_body() {
+                socket.close(uws::CloseKind::Failure);
+            } else {
+                socket.close(uws::CloseKind::Normal);
+            }
             client.on_close::<SSL>(socket);
             return;
         }
         if let Some(session) = tagged.session_mut() {
+            // An HTTP/2 session's streams may still be uploading; the same
+            // undeliverable-bytes reasoning applies, and this matches the
+            // pre-existing behaviour for this branch.
+            socket.close(uws::CloseKind::Failure);
             session.on_close(bun_core::err!("ConnectionClosed"));
             return;
         }
+        socket.close(uws::CloseKind::Normal);
     }
 }
 

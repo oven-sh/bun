@@ -40,6 +40,8 @@ const { validateInteger, validateInt32, validateFunction } = require("internal/v
 // `new Response(Bun.file("path.txt"))`.
 // This makes an idomatic Node.js pattern much faster.
 const kReadStreamFastPath = Symbol("kReadStreamFastPath");
+const kIsPerformingIO = Symbol("kIsPerformingIO");
+const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
@@ -307,7 +309,16 @@ readStreamPrototype._read = function (n) {
 
   const buf = Buffer.allocUnsafeSlow(n);
 
+  this[kIsPerformingIO] = true;
   this[kFs].read(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
+    this[kIsPerformingIO] = false;
+
+    // Tell ._destroy() that it's safe to close the fd now.
+    if (this.destroyed) {
+      this.emit(kIoDone, er);
+      return;
+    }
+
     if (er) {
       require("internal/streams/destroy").errorOrDestroy(this, er);
     } else if (bytesRead > 0) {
@@ -342,6 +353,8 @@ readStreamPrototype._destroy = function (this: FSStream, err, cb) {
   // any pending IO (kIsPerformingIO) to complete (kIoDone).
   if (this[kReadStreamFastPath]) {
     this.once(kReadStreamFastPath, er => close(this, err || er, cb));
+  } else if (this[kIsPerformingIO]) {
+    this.once(kIoDone, er => close(this, err || er, cb));
   } else {
     close(this, err, cb);
   }
@@ -480,12 +493,19 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
+    if (fd != null) {
+      // Already-open fd (stdio): skip the async _construct round-trip so the
+      // stream is born constructed, like node's stdio streams (net.Socket /
+      // tty.WriteStream), which never allocate construct TickObjects.
+      this._construct = undefined;
+    }
   }
 
   Writable.$call(this, options);
 
-  if (options.encoding) {
-    this.setDefaultEncoding(options.encoding);
+  const encoding = options.encoding;
+  if (encoding) {
+    this.setDefaultEncoding(encoding);
   }
   return this as unknown as void;
 }

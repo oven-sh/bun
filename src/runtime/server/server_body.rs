@@ -2978,12 +2978,6 @@ where
 
         self.on_pending_request();
 
-        // SAFETY: vm.event_loop() returns the live VM-owned `*mut EventLoop`.
-        let _dbg_guard = unsafe {
-            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
-                (*self.vm_ref().event_loop()).debug
-            ))
-        };
         ReqLike::set_yield(req, false);
         RespLike::timeout(resp, self.config.idle_timeout);
 

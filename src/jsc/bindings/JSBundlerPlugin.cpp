@@ -667,7 +667,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
 {
     auto* globalObject = pluginObject->globalObject();
     MarkedArgumentBuffer arguments;
-    pluginObject->plugin.deferredPromises.moveTo(pluginObject, arguments);
+    pluginObject->plugin.deferredPromises.drainTo(pluginObject, arguments);
     ASSERT(!arguments.hasOverflowed());
 
     auto& vm = pluginObject->vm();
@@ -675,7 +675,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     for (auto promiseValue : arguments) {
         JSPromise* promise = uncheckedDowncast<JSPromise>(promiseValue);
         if (rejected) {
-            promise->reject(vm, globalObject, JSC::jsUndefined());
+            promise->reject(vm, JSC::jsUndefined());
         } else {
             promise->resolve(globalObject, vm, JSC::jsUndefined());
         }

@@ -110,7 +110,7 @@ pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<'_, Enc>, writer: &mut
     // (currently unreachable — `rg yaml::print src/` has no callers) path.
     let _ = (stream, writer);
     panic!(
-        "yaml::print: Printer is commented out in yaml.zig (dead-by-spec; uses removed Node type)"
+        "yaml::print: Printer is commented out in the Zig original (dead-by-spec; uses removed Node type)"
     );
 }
 
@@ -1787,7 +1787,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
-            NodeScalar::Number(value) => Expr::init(E::Number { value: *value }, pos.loc()),
+            NodeScalar::Number(value) => Expr::init(E::Number::new(*value), pos.loc()),
             NodeScalar::String(value) => {
                 // For `Utf16` we route through `E::String::init_utf16`.
                 //
@@ -1871,7 +1871,7 @@ fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
     match (&l.data, &r.data) {
         (ast::ExprData::ENull(_), _) => true,
         (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
-        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value == rn.value,
+        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value() == rn.value(),
         (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
             // UTF-8/UTF-16-aware string equality.
             if ls.is_utf16 != rs.is_utf16 {
@@ -1899,7 +1899,7 @@ fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
         ast::ExprData::ENull(_) => 0,
         ast::ExprData::EBoolean(b) => 1 + b.value as u64,
         ast::ExprData::ENumber(n) => {
-            let value = if n.value == 0.0 { 0.0 } else { n.value };
+            let value = if n.value() == 0.0 { 0.0 } else { n.value() };
             value.to_bits()
         }
         ast::ExprData::EString(s) => s.hash(),

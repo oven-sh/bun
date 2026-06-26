@@ -1,6 +1,6 @@
 //! "api" in this context means "the Bun APIs", as in "the exposed JS APIs"
 
-// ─── server / socket / ffi (un-gated, opaque surface) ────────────────────────
+// ─── server / socket / ffi ───────────────────────────────────────────────────
 pub use crate::server;
 pub use crate::server::AnyRequestContext;
 pub use crate::server::AnyServer;
@@ -91,17 +91,11 @@ pub mod yaml_object;
 // inline `mod bun { }` below is a re-export façade only — module bodies are
 // declared flat to avoid the non-mod-rs nested-path resolution rules.
 
-// process.rs — Process struct + posix_spawn/uv_spawn machinery. §Dispatch
-// vtable applied for ProcessExitHandler; structs + non-JSC methods un-gated.
-// spawn_process_{posix,windows} bodies + waiter-thread dispatch loop + sync
-// mod remain re-gated inside the file (depend on sibling `spawn` posix_spawn
-// wrappers and bun_io FilePoll method surface).
+// Process struct + posix_spawn/uv_spawn machinery.
 #[path = "api/bun/process.rs"]
 pub mod bun_process;
 
-// posix_spawn(2) wrappers + Stdio enum. `bun_sys::posix` surface is now wide
-// enough for the `bun_spawn` half; libc-backed `PosixSpawn*` wrappers are
-// cfg-gated to macOS inside the file. `stdio` submod stays re-gated within.
+// posix_spawn(2) wrappers + Stdio enum.
 #[path = "api/bun/spawn.rs"]
 pub mod bun_spawn;
 
@@ -119,10 +113,13 @@ pub mod js_bun_spawn_bindings;
 pub mod bun_terminal_body;
 
 // H2FrameParser — ~338 jsc refs (Strong, JsRef, host_fn getters, AbortSignal).
+// From-scratch node:http2 engine rewrite (will replace h2_frame_parser.rs).
+#[path = "api/bun/h2/mod.rs"]
+pub mod h2;
+
 #[path = "api/bun/h2_frame_parser.rs"]
 pub mod h2_frame_parser_body;
 
-// SSL siblings — gated (boringssl_sys bindgen surface).
 #[path = "api/bun/SSLContextCache.rs"]
 pub mod bun_ssl_context_cache;
 
@@ -148,9 +145,6 @@ pub mod bun {
     pub use spawn::posix_spawn;
 
     pub mod terminal {
-        /// Re-export the full struct now that `bun_terminal_body` is un-gated;
-        /// downstream callers (`Subprocess.terminal`, spawn bindings) hold the
-        /// concrete type directly — no opaque-ZST cast layer.
         pub use crate::api::bun_terminal_body::Terminal;
         // `Terminal.PtyResult`, `Winsize`, `OpenPtyFn`, `CreatePtyError` —
         // pure FFI handles with no JSC. Canonical defs live in
@@ -164,13 +158,8 @@ pub mod bun {
 
     pub mod h2_frame_parser {
         pub use crate::api::h2_frame_parser_body::ErrorCode;
-        /// Re-export the full struct now that `h2_frame_parser_body` is
-        /// un-gated; `socket::NativeCallbacks::H2(IntrusiveRc<H2FrameParser>)`
-        /// and the `set_native_socket` attach path now share one concrete
-        /// type — no opaque-ZST cast layer. The body provides the real
-        /// `RefCounted` impl + `on_native_{read,writable,close}` bodies.
         pub use crate::api::h2_frame_parser_body::H2FrameParser;
-        // js2native thunks (`$zig(h2_frame_parser.zig, …)` in generated_js2native.rs).
+        // js2native thunks (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
         pub use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
         pub use crate::api::h2_frame_parser_body::js_assert_settings;
         pub use crate::api::h2_frame_parser_body::js_get_packed_settings;
@@ -180,12 +169,10 @@ pub mod bun {
 }
 pub use bun::process::Process as SpawnProcess;
 
-// ─── un-gated re-exports (targets compile) ───────────────────────────────────
 pub use crate::image as Image;
 pub use crate::shell as Shell;
 pub use crate::timer as Timer;
 
-// ─── un-gated re-exports (opaque structs / pure helpers compiling) ───────────
 pub use crate::api::archive as Archive;
 pub use crate::api::bun::h2_frame_parser::H2FrameParser;
 pub use crate::api::bun::secure_context as SecureContext;

@@ -1860,7 +1860,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         sink.aborted = true;
 
-        let _ = sink.flush_promise(); // TODO: properly propagate exception upwards
+        // Only JsTerminated escapes flush_promise; there is no JS caller to
+        // surface it to from a socket-close callback, so teardown continues.
+        let _ = sink.flush_promise();
         sink.finalize();
 
         // Close the signal last and through a stack copy: the close fires the JS

@@ -87,8 +87,8 @@ impl ClientContext {
         let qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
 
         // Process-lifetime singleton — published into `INSTANCE` below and
-        // never torn down (the lsquic engine outlives every request, same as
-        // `h3_client.zig`'s process-global `var instance`). `alloc_nn` is the
+        // never torn down (the lsquic engine outlives every request).
+        // `alloc_nn` is the
         // `Box::into_raw`-as-`NonNull` spelling of that one-time hand-off.
         let self_ = bun_core::heap::alloc_nn(ClientContext {
             qctx,
@@ -123,11 +123,11 @@ impl ClientContext {
             }
         }
 
-        // Zig: `dupeZ` — owned NUL-terminated buffer. `dupeZ` copies bytes
-        // verbatim (interior NUL allowed) then appends a sentinel; lsquic reads
-        // it as a C string so an interior NUL truncates on the C side. Mirror
-        // that here instead of `CString::new`, which would reject interior NUL
-        // and diverge by returning `false` where Zig proceeds.
+        // Owned NUL-terminated buffer: copy the bytes
+        // verbatim (interior NUL allowed) then append a sentinel; lsquic reads
+        // it as a C string so an interior NUL truncates on the C side. This is
+        // deliberately not `CString::new`, which would reject interior NUL
+        // and diverge by returning `false`.
         let mut host_buf = hostname.to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
@@ -224,6 +224,16 @@ impl ClientContext {
             session_mut(s).stream_body_by_http_id(async_http_id, ended);
         }
     }
-}
 
-// ported from: src/http/h3_client/ClientContext.zig
+    pub fn resume_receive_by_http_id(async_http_id: u32) {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
+            if session_mut(s).resume_receive_by_http_id(async_http_id) {
+                return;
+            }
+        }
+    }
+}

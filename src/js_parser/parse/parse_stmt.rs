@@ -20,17 +20,12 @@ use crate::typescript;
 use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};
 use js_ast::expr::EFlags;
 
-// TODO(port): narrow error set
 type Result<T> = core::result::Result<T, bun_core::Error>;
 
-// Zig: `pub fn ParseStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 25+ per-token `t_*` helpers are private; only `parse_stmt` is
-// surfaced. Round-G un-gated the simpler `t_*` bodies; phase-d ported the remaining
-// `t_export`/`t_import`/fallthrough bodies inline (the `_draft_heavy` staging mod is gone).
+// The 25+ per-token `t_*` helpers are private; only `parse_stmt` is surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // PORT NOTE on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
+    // Note on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
     // `parse_stmt` is invoked once per leading statement token; profiling showed its
     // stack-adjust prologue/epilogue dominating because LLVM was hoisting the larger
     // (and rarely-taken) `t_*` bodies inline, ballooning `parse_stmt`'s frame. Keep the
@@ -95,7 +90,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //   "@decorator export declare class Foo {}"
             //   "@decorator export declare abstract class Foo {}"
             //
-            // PORT NOTE: spec stores the Vec<Expr> directly into `opts.ts_decorators.values`.
+            // spec stores the Vec<Expr> directly into `opts.ts_decorators.values`.
             // `DeferredTsDecorators::values` is currently typed `&'a [Expr]` (parser.rs), so until
             // that field is widened to `ExprNodeList` we copy into the arena (Expr is `Copy`) and
             // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
@@ -204,7 +199,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_if(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let mut current_loc = loc;
         let mut root_if: Option<Stmt> = None;
-        // PORT NOTE: `StoreRef` (arena back-pointer with safe `Deref`/`DerefMut`)
+        // `StoreRef` (arena back-pointer with safe `Deref`/`DerefMut`)
         // into the previous iteration's `S::If` allocation — borrowck cannot
         // express the cross-iteration back-reference, but the arena keeps every
         // node alive for `'a`.
@@ -343,7 +338,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = p.lexer.loc();
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, body_loc)?;
-        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit as well as explicit returns.
         let result: Result<Stmt> = (|| {
             p.lexer.expect(T::TOpenBrace)?;
@@ -351,8 +346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut found_default = false;
             while p.lexer.token != T::TCloseBrace {
                 let mut body = StmtList::new_in(p.arena);
-                // PORT NOTE: Zig hoisted `value`/`stmt_opts` above the loop;
-                // both are reinitialized every iteration before any read, so
+                // `value`/`stmt_opts` are reinitialized every iteration before any read, so
                 // declare per-iteration.
                 let mut value: Option<js_ast::Expr> = None;
                 if p.lexer.token == T::TDefault {
@@ -494,7 +488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn t_for(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
-        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit as well as explicit returns.
         let result: Result<Stmt> = (|| {
             p.lexer.next()?;
@@ -777,7 +771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
-        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit.
         let result: Result<Stmt> = (|| {
             p.lexer.next()?;
@@ -864,7 +858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
-                    if opts.is_typescript_declare && p.lexer.is_contextual_keyword(b"as") {
+                    if p.lexer.is_contextual_keyword(b"as") {
                         // "export as namespace ns;"
                         p.lexer.next()?;
                         p.lexer.expect_contextual_keyword(b"namespace")?;
@@ -1192,8 +1186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "export * from 'path'"
                     p.lexer.expect_contextual_keyword(b"from")?;
                     path = p.parse_path()?;
-                    // Zig: `fs.PathName.init(path.text).nonUniqueNameString(arena)` —
-                    // sanitize the basename into an identifier and copy into the arena.
+                    // Sanitize the basename into an identifier and copy into the arena.
                     let name: &'a [u8] = {
                         use std::io::Write as _;
                         let base = fs::PathName::init(path.text).non_unique_name_string_base();
@@ -1287,7 +1280,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
                     let path_name = fs::PathName::init(parsed_path.text);
-                    // PERF(port): was arena allocPrint — profile if hot.
                     let namespace_ref = {
                         use std::io::Write as _;
                         let mut buf: Vec<u8> = Vec::new();
@@ -1424,7 +1416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect_contextual_keyword(b"as")?;
                 stmt = S::Import {
                     namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
-                    star_name_loc: Some(p.lexer.loc()),
+                    star_name_loc: p.lexer.loc(),
                     import_record_index: u32::MAX,
                     ..Default::default()
                 };
@@ -1475,7 +1467,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     import_record_index: u32::MAX,
                     default_name: Some(LocRef {
                         loc: p.lexer.loc(),
-                        ref_: Some(p.store_name_in_ref(default_name)?),
+                        ref_: p.store_name_in_ref(default_name)?,
                     }),
                     ..Default::default()
                 };
@@ -1510,7 +1502,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {
                         namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
-                        star_name_loc: Some(p.lexer.loc()),
+                        star_name_loc: p.lexer.loc(),
                         import_record_index: u32::MAX,
                         phase_defer: true,
                         ..Default::default()
@@ -1599,7 +1591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.lexer.next()?;
                             p.lexer.expect_contextual_keyword(b"as")?;
                             stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier)?;
-                            stmt.star_name_loc = Some(p.lexer.loc());
+                            stmt.star_name_loc = p.lexer.loc();
                             p.lexer.expect(T::TIdentifier)?;
                         }
                         // "import defaultItem, {item1, item2} from 'path'"
@@ -1645,15 +1637,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         label_ref: Ref,
     ) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Label, loc)?;
-        // Zig: `defer p.popScope();` — pop after parsing the labeled body.
-        // Hand-roll the defer so we can keep `p` exclusively borrowed.
+        // Pop after parsing the labeled body; done explicitly so we can keep
+        // `p` exclusively borrowed.
 
         // Parse a labeled statement
         p.lexer.next()?;
 
         let _name = LocRef {
             loc: label_loc,
-            ref_: Some(label_ref),
+            ref_: label_ref,
         };
         let mut nested_opts = ParseStatementOptions::default();
 
@@ -1895,13 +1887,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         if !self.stack_check.is_safe_to_recurse() {
-            // TODO(port): bun_core::throw_stack_overflow() not yet exported; map to a SyntaxError
-            // until the StackOverflow error variant lands.
+            // Sentinel error; mapped to a "Maximum call stack size exceeded"
+            // syntax error at the catch site in parse_entry.rs.
             return Err(err!("StackOverflow"));
         }
 
-        // Zig used `inline ... => |function| @field(@This(), @tagName(function))(...)` to dispatch
-        // by token name via comptime reflection. Rust has no `@field`/`@tagName`; expand the arms.
         let loc = self.lexer.loc();
         match self.lexer.token {
             T::TSemicolon => Self::t_semicolon(self),

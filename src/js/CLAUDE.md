@@ -95,7 +95,7 @@ function myAPI(callback) {
 3. Bundle, convert `export default` to `return`
 4. Replace `__intrinsic__` with `@`, inline into C++
 
-ModuleLoader.zig loads modules by numeric ID via `InternalModuleRegistry.cpp`.
+ModuleLoader.rs loads modules by numeric ID via `InternalModuleRegistry.cpp`.
 
 ## Key Rules
 

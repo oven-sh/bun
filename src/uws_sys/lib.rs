@@ -36,7 +36,7 @@ pub type SslCtx = bun_boringssl_sys::SSL_CTX;
 
 /// `struct us_bun_verify_error_t` — TLS handshake verification result.
 ///
-/// Field is named `error_no` (mirrors the Zig `error_no`) so the Node-compat
+/// Field is named `error_no` so the Node-compat
 /// `verifyError`/`authorizationError` paths read naturally; the C struct's
 /// first member is `int error` and the layout is identical.
 #[repr(C)]
@@ -139,7 +139,7 @@ impl Opcode {
     pub const Close: Opcode = Opcode(8);
     pub const Ping: Opcode = Opcode(9);
     pub const Pong: Opcode = Opcode(10);
-    // Upper-case aliases for callers that ported the Zig screaming-snake names
+    // Upper-case aliases for callers that use the screaming-snake names
     // (`uWS::OpCode::TEXT` etc.). Same bit values; both spellings are accepted
     // so the merge of `bun_uws::Opcode` into this type doesn't ripple.
     pub const CONTINUATION: Opcode = Opcode(0);
@@ -179,7 +179,7 @@ bun_core::opaque_extern!(
 // `extern "C"` symbols which the runtime crate exports with `#[no_mangle]`.
 // This is the same link-time-dispatch pattern as other `*_sys` crates use for
 // their C backends — only here the "backend" is Rust in a higher tier.
-// PORT NOTE: signatures mirror `src/runtime/socket/UpgradedDuplex.rs`.
+// Signatures must stay in sync with `src/runtime/socket/UpgradedDuplex.rs`.
 // SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
 // via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
 // ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
@@ -264,7 +264,7 @@ impl UpgradedDuplex {
 // Same link-time-dispatch as `UpgradedDuplex` above: the real
 // `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
 // forwards to `extern "C"` symbols that the runtime crate exports with
-// `#[no_mangle]`. Surface mirrors `src/jsc/api/bun/socket.zig WindowsNamedPipe`.
+// `#[no_mangle]`.
 #[cfg(windows)]
 unsafe extern "C" {
     safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;
@@ -392,6 +392,43 @@ pub mod web_socket;
 
 #[path = "socket.rs"]
 pub mod socket;
+
+#[cfg(socket_fault_injection)]
+pub mod fault_inject {
+    use core::ffi::c_int;
+
+    pub const RECV: c_int = 0;
+    pub const SEND: c_int = 1;
+    pub const WRITEV: c_int = 2;
+    pub const SENDMSG: c_int = 3;
+    pub const RECVMSG: c_int = 4;
+    pub const CONNECT: c_int = 5;
+    pub const ACCEPT: c_int = 6;
+    pub const SOCKET: c_int = 7;
+    pub const CLOSE: c_int = 8;
+    pub const SHUTDOWN: c_int = 9;
+
+    pub const ACTION_NONE: c_int = 0;
+    pub const ACTION_ERRNO: c_int = 1;
+    pub const ACTION_SHORT: c_int = 2;
+    pub const ACTION_ZERO: c_int = 3;
+
+    #[repr(C)]
+    pub struct UsFaultRule {
+        pub action: c_int,
+        pub errno_value: c_int,
+        pub clamp_bytes: c_int,
+        pub after_n_calls: c_int,
+        pub repeat: c_int,
+        pub target_fd: c_int,
+    }
+
+    unsafe extern "C" {
+        pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
+        pub safe fn us_fault_clear(syscall: c_int);
+        pub safe fn us_fault_clear_all();
+    }
+}
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
     SocketTcp, SocketTls,
@@ -417,10 +454,10 @@ pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
-pub use us_socket::{CloseCode, us_socket_stream_buffer_t, us_socket_t};
+pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
-/// Zig `NewApp(ssl)` / `NewApp(ssl).Response` aliases.
+/// Legacy aliases for `App<SSL>` / `Response<SSL>`.
 pub type NewApp<const SSL: bool> = app::App<SSL>;
 pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
 pub type Socket = us_socket::us_socket_t;

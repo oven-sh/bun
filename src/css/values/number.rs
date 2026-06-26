@@ -25,7 +25,6 @@ impl CSSNumberFns {
         let number: f32 = this;
         if number != 0.0 && number.abs() < 1.0 {
             let mut dtoa_buf: [u8; 129] = [0; 129];
-            // PERF(port): Zig left dtoa_buf uninitialized — profile if hot.
             let (str, _) = css::dtoa_short(&mut dtoa_buf, number, 6);
             if number < 0.0 {
                 dest.write_char(b'-')?;
@@ -44,7 +43,7 @@ impl CSSNumberFns {
 
     pub fn sign(this: CSSNumber) -> f32 {
         if this == 0.0 {
-            // Spec-faithful (number.zig:45): ±0.0 both map to +0.0 — do NOT
+            // Spec-faithful: ±0.0 both map to +0.0 — do NOT
             // collapse with `signfns::sign_f32` / `calc::std_math_sign`.
             return 0.0;
         }
@@ -68,5 +67,3 @@ impl CSSIntegerFns {
         css::to_css::integer(this, dest)
     }
 }
-
-// ported from: src/css/values/number.zig

@@ -44,8 +44,9 @@ impl Default for GzipOptions {
     }
 }
 
-// TODO(port): #[bun_jsc::JsClass] derive — hand-written until the proc-macro
-// grows `no_finalize`/`no_construct` knobs Archive needs (custom `finalize`).
+// Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
+// needs a custom `finalize` and no constructor, which the proc-macro does not
+// expose.
 #[repr(C)]
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
@@ -55,7 +56,7 @@ pub struct Archive {
 }
 
 impl Archive {
-    /// Borrow the backing `StoreRef` (Zig: `archive.store`).
+    /// Borrow the backing `StoreRef`.
     #[inline]
     pub fn store_ref(&self) -> &StoreRef {
         &self.store
@@ -70,8 +71,7 @@ bun_jsc::impl_js_class_via_generated!(Archive => crate::generated_classes::js_Ar
 impl Archive {
     /// `Archive.write(path, data, options?)` static class fn — codegen
     /// (`ArchiveClass__write`) resolves it as an associated item on the struct,
-    /// so forward to the module-level [`write`] body below (Zig had it as
-    /// `pub fn write` in the file struct, which is both).
+    /// so forward to the module-level [`write`] body below.
     #[inline]
     pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self::write(global, callframe)
@@ -167,7 +167,7 @@ impl Archive {
     /// - compress: "gzip" - Enable gzip compression
     /// - level: number (1-12) - Compression level (default 6)
     /// When no options are provided, no compression is applied
-    // PORT NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
+    // NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
     // `JsClass` derive emits a `constructor` shim that calls this directly.
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
@@ -273,8 +273,7 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
     Box::new(Archive { store, compress })
 }
 
-/// `JSValue::as_::<Blob>()` shim — kept as a free fn so the call sites read
-/// the same as the Zig (`jsc.WebCore.Blob.fromJS(value)`). Returns a shared
+/// `JSValue::as_::<Blob>()` shim — kept as a free fn. Returns a shared
 /// borrow (BACKREF: m_ctx payload kept live by the JSC cell rooted by `value`
 /// on the caller's stack) so callers don't open-code `unsafe { &*ptr }`.
 #[inline]
@@ -576,7 +575,6 @@ fn parse_pattern_arg(
             }
             let pattern: Box<[u8]> = Box::from(str_slice.slice());
             patterns.push(pattern);
-            // PERF(port): was appendAssumeCapacity.
             i += 1;
         }
 
@@ -651,7 +649,6 @@ impl PromiseResult {
     }
 }
 
-/// Trait extracted from the Zig structural-duck-typing on `Context`.
 /// Context must provide:
 ///   - `run` — runs on thread pool, stores result in `self`
 ///   - `run_from_js` — returns value to resolve/reject
@@ -941,7 +938,7 @@ impl TaskContext for BlobContext {
             }
             BlobResult::Uncompressed => Ok(match self.output_type {
                 BlobOutputType::Blob => {
-                    // Zig: `this.store.ref()` — clone bumps the refcount; ownership of
+                    // The clone bumps the refcount; ownership of
                     // the new ref transfers into the Blob via init_with_store.
                     let store = self.store.clone();
                     let blob_ptr = Blob::new(Blob::init_with_store(store, global));
@@ -949,8 +946,13 @@ impl TaskContext for BlobContext {
                     PromiseResult::Resolve(unsafe { (*blob_ptr).to_js(global) })
                 }
                 BlobOutputType::Bytes => {
-                    let dup = self.store.shared_view().to_vec();
-                    // TODO(port): Zig matched OOM here and rejected; Rust Vec aborts on OOM.
+                    // On allocation failure, reject the promise instead of aborting.
+                    let view = self.store.shared_view();
+                    let mut dup: Vec<u8> = Vec::new();
+                    if dup.try_reserve_exact(view.len()).is_err() {
+                        return Ok(PromiseResult::Reject(global.create_out_of_memory_error()));
+                    }
+                    dup.extend_from_slice(view);
                     PromiseResult::Resolve(JSValue::create_buffer_from_box(
                         global,
                         dup.into_boxed_slice(),
@@ -1178,10 +1180,8 @@ impl FilesContext {
                     let to_read = (size - total_read).min(buf.len());
                     let read = archive.read_data(&mut buf[..to_read]);
                     if read < 0 {
-                        // Read error - returned as a normal Result (not a Zig error), so the
-                        // errdefer above won't fire. Free the current buffer and all previously
-                        // collected entries manually to avoid leaking them.
-                        // PORT NOTE: in Rust both `data` and `entries` drop automatically here.
+                        // Read error.
+                        // NOTE: both `data` and `entries` drop automatically here.
                         // SAFETY: `archive` is the live `read_new()` handle opened above.
                         return Ok(if let Some(err) = Self::clone_error_string(&archive) {
                             FilesResult::LibarchiveErr(err)
@@ -1324,24 +1324,13 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     use bun_libdeflate_sys::libdeflate;
     libdeflate::load();
 
-    let compressor_ptr = libdeflate::Compressor::alloc(i32::from(level));
-    if compressor_ptr.is_null() {
-        return Err(CompressError::GzipInitFailed);
-    }
-    // defer compressor.deinit();
-    let _guard = scopeguard::guard(compressor_ptr, |p| {
-        // SAFETY: `p` is the non-null pointer returned by `Compressor::alloc` above;
-        // this is the matching free, run once when `_guard` drops on scope exit.
-        unsafe { libdeflate::Compressor::destroy(p) }
-    });
-    // SAFETY: alloc returned non-null; freed by `_guard` on scope exit.
-    let compressor: &mut libdeflate::Compressor = unsafe { &mut *compressor_ptr };
+    let mut compressor =
+        libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 
-    // PERF(port): the Zig spec used a 256 KiB on-stack scratch for small inputs;
-    // in Rust the scratch is heap-allocated either way, so the threshold is dead
-    // weight — just size the Vec to `max_size` once.
+    // The scratch is heap-allocated either way, so a small-input threshold is
+    // dead weight — just size the Vec to `max_size` once.
     let mut output = Vec::with_capacity(max_size);
     let result = compressor.compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip);
     if result.status != libdeflate::Status::Success {
@@ -1420,7 +1409,6 @@ fn extract_to_disk_filtered(
     root: &[u8],
     glob_patterns: Option<&[Box<[u8]>]>,
 ) -> Result<u32, bun_core::Error> {
-    // TODO(port): narrow error set
     use libarchive::lib;
     let archive = lib::ReadArchive::new();
     configure_archive_reader(&archive);
@@ -1599,5 +1587,3 @@ fn extract_to_disk_filtered(
 
     Ok(count)
 }
-
-// ported from: src/runtime/api/Archive.zig

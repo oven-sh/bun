@@ -2,6 +2,7 @@
   "src/ast/runtime.rs": 1,
   "src/bun_core/lib.rs": 1,
   "src/bun_core/output.rs": 1,
+  "src/bun_core_macros/comptime_string_map.rs": 2,
   "src/bundler/Chunk.rs": 2,
   "src/collections/multi_array_list.rs": 8,
   "src/crash_handler/lib.rs": 1,
@@ -24,6 +25,5 @@
   "src/runtime/server/NodeHTTPResponse.rs": 1,
   "src/runtime/shell/IOWriter.rs": 1,
   "src/runtime/test_runner/expect.rs": 1,
-  "src/runtime/webcore/ReadableStream.rs": 1,
   "src/spawn_sys/posix_spawn.rs": 4
 }

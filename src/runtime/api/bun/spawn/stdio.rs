@@ -5,7 +5,7 @@ use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
-// say `webcore::ReadableStream` / `webcore::body::Value` per the .zig spec.
+// say `webcore::ReadableStream` / `webcore::body::Value`.
 use crate::webcore;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
@@ -14,39 +14,39 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 // keep `process` leaf; `subprocess` re-exports it).
 use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
 
-// `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums
-// can't nest type decls, so process.rs exposes `PosixStdio` / `WindowsStdio`;
-// alias the active one as `SpawnOptionsStdio` so the body stays platform-neutral.
+// `SpawnOptions.Stdio` is platform-dependent: process.rs exposes `PosixStdio` /
+// `WindowsStdio`; alias the active one as `SpawnOptionsStdio` so the body stays
+// platform-neutral.
 #[cfg(not(windows))]
 pub(crate) type SpawnOptionsStdio = process::PosixStdio;
 #[cfg(windows)]
 pub(crate) type SpawnOptionsStdio = process::WindowsStdio;
 
 // `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
-// re-exported through `bun_sys`. Alias so `FdStdio::StdIn` etc. read as the
-// Zig `bun.FD.Stdio.std_in`.
+// re-exported through `bun_sys`.
 use sys::Stdio as FdStdio;
 
 // `const log = bun.sys.syslog;`
 bun_output::define_scoped_log!(log, SYS, visible);
 
-/// Anonymous payload of `Stdio::Capture` in Zig: `struct { buf: *bun.Vec<u8> }`.
+/// Payload of `Stdio::Capture`.
 #[derive(Clone, Copy)]
 pub struct Capture {
-    // TODO(port): lifetime — Zig holds a raw `*bun.Vec<u8>` backref owned
-    // elsewhere (shell). LIFETIMES.tsv has no row; treating as BACKREF.
+    // BACKREF: raw pointer to a capture buffer owned by the shell interpreter.
+    // The shell keeps the buffer alive for the lifetime
+    // of the spawned process; this struct never frees it.
     pub buf: *mut Vec<u8>,
 }
 
-/// Anonymous payload of `Stdio::Dup2` in Zig.
+/// Payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
 pub struct Dup2 {
     pub out: StdioKind,
     pub to: StdioKind,
 }
 
-// Mirrors the Zig `bun.spawn.Stdio` union and is constructed/matched in many
-// other files (subprocess, shell); boxing `Blob` would ripple through all of them.
+// Constructed/matched in many other files (subprocess, shell); boxing `Blob`
+// would ripple through all of them.
 #[allow(clippy::large_enum_variant)]
 pub enum Stdio {
     Inherit,
@@ -59,13 +59,18 @@ pub enum Stdio {
     ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),
     Pipe,
+    /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
+    /// stored as `ExtraPipe::UnownedFd` so `Subprocess::finalize_streams`
+    /// never closes it; the caller reads the fd from `.stdio[i]` and is
+    /// responsible for closing it. Used by `node:child_process` which wraps
+    /// extra `"pipe"` slots in `net.connect({fd})` (usockets then owns the
+    /// fd). Only valid at indices >= 3.
+    SocketFd,
     Ipc,
     ReadableStream(webcore::ReadableStream),
 }
 
-// In Zig these are `Stdio.Result` / `Stdio.ResultT` / `Stdio.ToSpawnOptsError`.
-// Rust enums cannot nest type decls, so they live at module scope and callers
-// reference them as `stdio::Result` etc.
+// These live at module scope and callers reference them as `stdio::Result` etc.
 
 pub enum ResultT<T> {
     Result(T),
@@ -185,15 +190,12 @@ impl Stdio {
                 }
             }
 
-            // PORT NOTE: reshaped for borrowck — `remain` borrows `*self`, so we
+            // Note: reshaped for borrowck — `remain` borrows `*self`, so we
             // must drop it before mutating `self`. Shadowing ends the borrow here.
             let _ = remain;
 
-            // PORT NOTE: in Zig only `.array_buffer` / `.blob` are explicitly
-            // deinit'd before reassignment. In Rust, assigning to `*self` drops
-            // the previous variant via `Drop`, which has equivalent behaviour
-            // for those arms and is a no-op for others (and additionally closes
-            // a prior `.memfd`, which Zig left open — arguably a leak fix).
+            // Assigning to `*self` drops the previous variant via `Drop`
+            // (and closes a prior `.memfd`).
             *self = Stdio::Memfd(fd);
             true
         }
@@ -232,15 +234,13 @@ impl Stdio {
 
         let result = match self {
             Self::Blob(blob) => 'brk: {
-                let fd = FdStdio::from_int(i).unwrap().fd();
+                let fd = FdStdio::from_int(i).map(FdStdio::fd);
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
-                        // Zig accesses `store.data.file` directly (union payload);
-                        // in Rust `data` is an enum so match the `File` arm.
                         if let StoreData::File(ref file) = store.data {
                             match file.pathlike {
                                 PathOrFileDescriptor::Fd(store_fd) => {
-                                    if store_fd == fd {
+                                    if Some(store_fd) == fd {
                                         break 'brk SpawnOptionsStdio::Inherit;
                                     }
 
@@ -288,6 +288,12 @@ impl Stdio {
             Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
                 buffer()
             }
+            #[cfg(not(windows))]
+            Self::SocketFd => SpawnOptionsStdio::SocketFd,
+            // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
+            // to transfer), so `socket-fd` behaves identically to `pipe` there.
+            #[cfg(windows)]
+            Self::SocketFd => buffer(),
             Self::Ipc => ipc(),
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
             #[cfg(not(windows))]
@@ -368,7 +374,11 @@ impl Stdio {
                             "ReadableStream cannot be used for stderr yet. For now, do .stderr"
                         )));
                     }
-                    _ => unreachable!(),
+                    _ => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ReadableStream cannot be used for stdio[{i}] yet"
+                        )));
+                    }
                 }
 
                 let stream_value = body.to_readable_stream(global)?;
@@ -420,6 +430,20 @@ impl Stdio {
                 *out_stdio = Stdio::Ignore;
             } else if str.eql_comptime(b"pipe") || str.eql_comptime(b"overlapped") {
                 *out_stdio = Stdio::Pipe;
+            } else if str.eql_comptime(b"socket-fd") {
+                if i < 3 {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "stdio: 'socket-fd' is only supported at indices >= 3"
+                    )));
+                }
+                if is_sync {
+                    // Bun.spawnSync's result has no .stdio, so the caller
+                    // could never receive the fd it's supposed to own.
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "stdio: 'socket-fd' cannot be used with spawnSync"
+                    )));
+                }
+                *out_stdio = Stdio::SocketFd;
             } else if str.eql_comptime(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
@@ -429,8 +453,7 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
-            // `JSValue.asFileDescriptor()` (jsc/JSValue.zig:2151) is just
-            // `bun.FD.fromUV(this.toInt32())` — inline it here since the
+            // `bun.FD.fromUV(this.toInt32())` inlined here since the
             // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
             let fd = Fd::from_uv(value.to_int32());
             let file_fd = fd.uv();
@@ -499,7 +522,11 @@ impl Stdio {
                 0 => b"stdin",
                 1 => b"stdout",
                 2 => b"stderr",
-                _ => unreachable!(),
+                _ => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "ReadableStream cannot be used for stdio[{i}] yet"
+                    )));
+                }
             };
 
             if is_sync {
@@ -554,16 +581,14 @@ impl Stdio {
         blob: webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
-        let fd = FdStdio::from_int(i).unwrap().fd();
+        let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
-                // Zig accesses `store.data.file` directly (union payload);
-                // in Rust `data` is an enum so match the `File` arm.
                 if let StoreData::File(ref file) = store.data {
                     match file.pathlike {
                         PathOrFileDescriptor::Fd(store_fd) => {
-                            if store_fd == fd {
+                            if Some(store_fd) == fd {
                                 *self = Stdio::Inherit;
                             } else {
                                 // TODO: is this supposed to be `store.data.file.pathlike.fd`?
@@ -616,6 +641,13 @@ impl Stdio {
             return Ok(());
         }
 
+        if i != 0 {
+            // The parent-side writer that pumps Blob bytes into the child's
+            // pipe (`Writable::Buffer` / memfd) is only wired up for stdin.
+            return Err(global
+                .throw_invalid_arguments(format_args!("Blob cannot be used for stdio[{i}] yet")));
+        }
+
         *self = Stdio::Blob(blob);
         Ok(())
     }
@@ -652,5 +684,3 @@ fn create_zeroed_pipe() -> *mut uv::Pipe {
     // `heap::take` without aliasing a live `Box` (which would double-free).
     bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))
 }
-
-// ported from: src/runtime/api/bun/spawn/stdio.zig

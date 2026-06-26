@@ -96,8 +96,6 @@ pub mod js_bundler {
             // copied, JS strings are decoded). Extract them into the lower-tier
             // map and release the wrapper immediately so no JSC handle crosses
             // threads.
-            // PERF(port): Zig stores the `BlobOrStringOrBuffer` directly; here we
-            // make one extra owned copy to keep `bun_bundler` free of JSC types.
             let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
             drop(blob_or_string);
 
@@ -111,7 +109,6 @@ pub mod js_bundler {
                 key.as_mut_slice(),
             );
 
-            // PERF(port): was assume_capacity
             this.map.put_assume_capacity(&key, bytes);
         }
 
@@ -123,6 +120,9 @@ pub mod js_bundler {
         pub entry_points: StringSet,
         pub hot: bool,
         pub react_fast_refresh: bool,
+        pub react_compiler: bun_ast::runtime::ReactCompilerMode,
+        pub react_compiler_parse_test_pragmas: bool,
+        pub react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
         pub define: StringMap,
         pub loaders: Option<api::LoaderMap>,
         pub dir: OwnedString,
@@ -136,6 +136,7 @@ pub mod js_bundler {
         pub no_macros: bool,
         pub ignore_dce_annotations: bool,
         pub emit_dce_annotations: Option<bool>,
+        pub tree_shaking: Option<bool>,
         pub names: Names,
         pub external: StringSet,
         pub allow_unresolved: Option<StringSet>,
@@ -178,6 +179,9 @@ pub mod js_bundler {
                 entry_points: StringSet::default(),
                 hot: false,
                 react_fast_refresh: false,
+                react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
+                react_compiler_parse_test_pragmas: false,
+                react_compiler_output_mode: None,
                 define: StringMap::init(false),
                 loaders: None,
                 dir: OwnedString::default(),
@@ -198,6 +202,7 @@ pub mod js_bundler {
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
+                tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
                 allow_unresolved: None,
@@ -595,6 +600,36 @@ pub mod js_bundler {
                 this.react_fast_refresh = react_fast_refresh;
             }
 
+            if let Some(react_compiler) = config.get_boolean_loose(global_this, "reactCompiler")? {
+                this.react_compiler = if react_compiler {
+                    bun_ast::runtime::ReactCompilerMode::Client
+                } else {
+                    bun_ast::runtime::ReactCompilerMode::Disabled
+                };
+            }
+
+            if let Some(v) =
+                config.get_boolean_loose(global_this, "reactCompilerParseTestPragmas")?
+            {
+                this.react_compiler_parse_test_pragmas = v;
+            }
+
+            if let Some(slice) =
+                config.get_optional_slice(global_this, b"reactCompilerOutputMode")?
+            {
+                this.react_compiler_output_mode = Some(match slice.slice() {
+                    b"ssr" => bun_ast::runtime::ReactCompilerMode::Ssr,
+                    b"client" => bun_ast::runtime::ReactCompilerMode::Client,
+                    other => {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected reactCompilerOutputMode to be 'client' or 'ssr', got {}",
+                            bstr::BStr::new(other)
+                        )));
+                    }
+                });
+                drop(slice);
+            }
+
             let mut has_out_dir = false;
             if let Some(slice) = config.get_optional_slice(global_this, b"outdir")? {
                 this.outdir.append_slice_exact(slice.slice())?;
@@ -798,6 +833,10 @@ pub mod js_bundler {
                 this.ignore_dce_annotations = flag;
             }
 
+            if let Some(flag) = config.get_boolean_loose(global_this, "treeShaking")? {
+                this.tree_shaking = Some(flag);
+            }
+
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {
                 if conditions_value.is_string() {
                     let slice = conditions_value.to_slice_or_null(global_this)?;
@@ -850,7 +889,7 @@ pub mod js_bundler {
                         });
                     }
 
-                    // PORT NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
+                    // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
                     // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
                     // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
@@ -949,23 +988,12 @@ pub mod js_bundler {
                 }
             }
 
-            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
-            //     defer slice.deinit();
-            //     this.appendSliceExact(slice.slice()) catch unreachable;
-            // } else {
-            //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
-            // }
-
             if let Some(slice) = config.get_optional_slice(global_this, b"publicPath")? {
                 this.public_path.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
 
             if let Some(naming) = config.get_truthy(global_this, "naming")? {
-                // Zig kept a separate `owned_*: OwnedString` buffer per template
-                // and pointed `template.data` (a `[]const u8`) into it. Rust's
-                // `PathTemplate.data` is already `Box<[u8]>` (owned), so build
-                // straight into it — no self-referential borrow, no clone.
                 let with_dot_slash = |s: &[u8]| -> Box<[u8]> {
                     if s.starts_with(b"./") {
                         Box::<[u8]>::from(s)
@@ -1078,7 +1106,6 @@ pub mod js_bundler {
                     }
                     drop(prop_slice);
 
-                    // PERF(port): was assume_capacity
                     loader_values.push(loader_iter.value.to_enum_from_map(
                         global_this,
                         "loader",
@@ -1201,17 +1228,15 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // PORT NOTE (diverges from Zig spec — flake fix): when no
-                        // `outdir`/`outfile` was given, the Zig path stores only
-                        // the basename here and `doCompilation` later resolves it
-                        // against the process-wide `top_level_dir`. Under the JS
-                        // API that means every `Bun.build({compile: true,
-                        // entrypoints: [tmp + "/app.js"]})` from any test process
-                        // writes the *same* `<cwd>/app`, so concurrently-running
-                        // test files race on the executable (observed flake in
-                        // bun-build-compile-sourcemap.test.ts). Placing the
+                        // NOTE: when no `outdir`/`outfile` was given, place the
                         // auto-derived executable next to its entry point — the
-                        // only path the caller actually supplied — keeps each
+                        // only path the caller actually supplied. Resolving the
+                        // basename against the process-wide cwd instead would
+                        // make every `Bun.build({compile: true, entrypoints:
+                        // [tmp + "/app.js"]})` from any test process write the
+                        // *same* `<cwd>/app`, so concurrently-running test files
+                        // would race on the executable (observed flake in
+                        // bun-build-compile-sourcemap.test.ts). This keeps each
                         // build's output inside its own (temp) directory and is
                         // also the more intuitive default for a programmatic API.
                         // Explicit `outfile`/`outdir` are unaffected.
@@ -1267,9 +1292,9 @@ pub mod js_bundler {
     // `Config` owns only `Drop`-aware fields (`Box<[u8]>` map values, `Vec`s,
     // `MutableString`, `Strong`); no manual `Drop` needed.
 
-    /// Zig kept a separate `owned_*: OwnedString` per template and pointed
-    /// `template.data: []const u8` into it (self-referential). Rust's
-    /// `PathTemplate.data` is `Box<[u8]>` (owned), so the indirection is gone.
+    /// Output path templates for entry points, chunks, and assets. Each
+    /// `PathTemplate.data` is owned (`Box<[u8]>`), so no separate backing
+    /// string per template is needed.
     pub struct Names {
         pub entry_point: options::PathTemplate,
         pub chunk: options::PathTemplate,
@@ -1358,7 +1383,7 @@ pub mod js_bundler {
         build(global_this, arguments.slice())
     }
 
-    // PORT NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
+    // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
     // `bun_bundler::bundle_v2::api::JSBundler` so that `BundleV2` can operate
     // on them directly (`on_resolve_async`/`on_load_async`). `dispatch()` and
     // `run_on_js_thread()` are also inherent methods there — they only need
@@ -1401,7 +1426,6 @@ pub mod js_bundler {
         unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
     /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
@@ -1519,7 +1543,6 @@ pub mod js_bundler {
         BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `load` must be the live `*mut Load` previously handed to C++ via
     /// `Load::dispatch`, and `global` must be the plugin's owning
@@ -1533,7 +1556,6 @@ pub mod js_bundler {
         unsafe { jsc::to_js_host_call(&*global, || (&mut *load).on_defer(&*global)) }
     }
 
-    // TODO(port): move to runtime_sys
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
@@ -1557,8 +1579,6 @@ pub mod js_bundler {
                         )),
                     );
                 }
-                // Zig: this.deinit() — explicit drop
-                // TODO(port): Load is not Box-allocated here; Zig deinit only resets value
                 this.value = LoadValue::Consumed;
                 return;
             }
@@ -1690,11 +1710,10 @@ pub mod js_bundler {
                 Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
-            // Zig (JSBundler.zig:1572-1582) opens an explicit `TopExceptionScope`
-            // before the FFI call and `returnIfException`s after; the C++ side has
-            // a `DECLARE_THROW_SCOPE` whose dtor sets `m_needExceptionCheck` under
-            // `BUN_JSC_validateExceptionChecks=1`, so a post-hoc `has_exception()`
-            // (whose own scope ctor asserts) is wrong.
+            // The C++ side has a `DECLARE_THROW_SCOPE` whose dtor sets
+            // `m_needExceptionCheck` under `BUN_JSC_validateExceptionChecks=1`,
+            // so a post-hoc `has_exception()` (whose own scope ctor asserts) is
+            // wrong; open a top-level exception scope around the FFI call.
             bun_jsc::top_scope!(scope, global_this);
             let value = JSBundlerPlugin__runOnEndCallbacks(
                 self,
@@ -1768,9 +1787,8 @@ pub mod js_bundler {
     /// pending-item counter is decremented. Returning early here would cause
     /// `Bun.build` to hang forever waiting on the counter.
     ///
-    /// Runs on the JS thread, so allocations go through the global heap (Zig
-    /// passes `bun.default_allocator`); the bundler arena is owned by another
-    /// thread.
+    /// Runs on the JS thread, so allocations go through the global heap; the
+    /// bundler arena is owned by another thread.
     fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> bun_ast::Msg {
         let global = plugin.global_object();
         match bun_ast_jsc::msg_from_js(global, file.to_vec(), exception) {
@@ -1800,7 +1818,6 @@ pub mod js_bundler {
         }
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `plugin` must be a live `JSBundlerPlugin` opaque handle. `ctx` must be
     /// the live `*mut Resolve` (when `which == 0`) or `*mut Load` (when
@@ -1861,7 +1878,7 @@ pub struct BuildArtifact {
 /// callers stay unchanged.
 pub use bun_bundler::options::OutputKind;
 
-/// `JSValue::as(Blob)` BuildArtifact fallback (JSValue.zig:467) — declared
+/// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
@@ -1887,7 +1904,6 @@ impl BuildArtifact {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PERF(port): was @call(bun.callmod_inline, ...)
         this.blob.get_text(global_this, callframe)
     }
 
@@ -2004,7 +2020,7 @@ impl BuildArtifact {
 
         {
             formatter.indent_inc();
-            // PORT NOTE: reshaped for borrowck — scopeguard cannot reborrow
+            // NOTE: reshaped for borrowck — scopeguard cannot reborrow
             // `formatter` while it is also borrowed for the body; decrement
             // after the block instead.
 
@@ -2104,5 +2120,3 @@ impl BuildArtifact {
         Ok(())
     }
 }
-
-// ported from: src/runtime/api/JSBundler.zig

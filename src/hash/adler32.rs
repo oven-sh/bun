@@ -1,9 +1,8 @@
 //! Adler-32 checksum.
 //!
-//! Ported from `vendor/zig/lib/std/hash/Adler32.zig` (which itself follows
-//! https://tools.ietf.org/html/rfc1950#section-9 and zlib's `adler32.c`).
+//! Follows https://tools.ietf.org/html/rfc1950#section-9 and zlib's `adler32.c`.
 //!
-//! `HashObject.zig` exposes this via `hashWrap(std.hash.Adler32)`, which calls
+//! `HashObject.rs` exposes this via `hash_wrap::<Adler32>`, which calls
 //! the single-argument `hash(input)` (no seed) — the JS-side seed argument is
 //! ignored for Adler32.
 
@@ -57,7 +56,7 @@ impl Adler32 {
             while i + Self::NMAX <= input.len() {
                 let mut rounds: usize = 0;
                 while rounds < N {
-                    // Zig: `inline while (j < 16)` — rely on the optimizer to unroll.
+                    // Rely on the optimizer to unroll.
                     for j in 0..16usize {
                         s1 = s1.wrapping_add(input[i + j] as u32);
                         s2 = s2.wrapping_add(s1);

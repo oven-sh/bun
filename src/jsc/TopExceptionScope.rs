@@ -11,7 +11,8 @@ const SIZE: usize = 56;
 const SIZE: usize = 8;
 const ALIGNMENT: usize = 8;
 
-/// Mirrors `std.builtin.SourceLocation`. Rust's `core::panic::Location` lacks `fn_name`
+/// A NUL-terminated source location (function name, file, line, column).
+/// Rust's `core::panic::Location` lacks `fn_name`
 /// and is not NUL-terminated, so callers construct this via the [`src!`](crate::src) macro
 /// (which captures `module_path!()`/`file!()`/`line!()` as NUL-terminated literals) or via
 /// [`SourceLocation::from_caller`] which interns the runtime `Location` for `#[track_caller]`
@@ -332,8 +333,7 @@ impl TopExceptionScope {
                 // (not via `debug_assert!`): release+ASAN builds enter here via
                 // `bun_asan` with `debug_assertions` off, and the C++ scope's
                 // destructor will fail `verifyExceptionCheckNeedIsSatisfied` unless
-                // the underlying `VM::exception()` was actually invoked. Zig spec
-                // uses `bun.assertf` (active under `ci_assert`, which includes ASAN).
+                // the underlying `VM::exception()` was actually invoked.
                 assert!(self.has_exception(), "Expected an exception to be thrown");
             } else {
                 self.assert_no_exception();
@@ -425,9 +425,8 @@ macro_rules! validation_scope {
 
 /// Limited subset of TopExceptionScope functionality, for when you have a different way to detect
 /// exceptions and you only need a TopExceptionScope to prove that you are checking exceptions correctly.
-/// Gated by `cfg(any(debug_assertions, bun_asan))` — Zig's `Environment.ci_assert` is
-/// `isDebug || isTest || enable_asan || (ReleaseSafe && is_canary)`; the bun_jsc crate has no
-/// `ci_assert` Cargo feature, so gate on the same predicate this file already uses for `SIZE`.
+/// Gated by `cfg(any(debug_assertions, bun_asan))` — the same predicate this file
+/// already uses for `SIZE`.
 /// Without this, debug builds left the scope as a no-op while `debug_assert!` callers (e.g.
 /// `bun_string_jsc::from_js`) still fired, panicking on every legitimate stringify exception.
 ///
@@ -597,14 +596,14 @@ impl ExceptionValidationScope {
     }
 }
 
-// ──────────────── per-mode FFI-call wrappers (Rust analogue of cpp.zig) ────────────────
+// ──────────────── per-mode FFI-call wrappers ────────────────
 //
 // `src/codegen/cppbind.ts` parses C++ `[[ZIG_EXPORT(mode)]]` attributes and emits
-// `build/<profile>/codegen/cpp.zig`, where each throwing FFI gets a typed wrapper that
+// typed wrappers into `cpp.rs` (see `generateRustFn` in cppbind.ts), which
+// `bun_jsc::cpp` `include!`s. Each throwing FFI gets a wrapper that
 // (a) opens an `ExceptionValidationScope`/`TopExceptionScope` *before* the call,
 // (b) asserts the return-value sentinel agrees with the scope's exception state, and
-// (c) converts to `error{JSError}`. The Rust port emits the same wrappers into
-// `cpp.rs` (see `generateRustFn` in cppbind.ts), which `bun_jsc::cpp` `include!`s.
+// (c) converts to `JsResult`.
 //
 // These four helpers are the per-mode bodies the generated wrappers (and hand-written
 // FFI shims in `JSValue.rs`/`JSPromise.rs`/etc.) delegate to. They are *not* the
@@ -696,9 +695,8 @@ pub fn call_null_is_throw<T>(
 ///
 /// Under `cfg(any(debug_assertions, bun_asan))` this opens a real [`TopExceptionScope`]
 /// so `simulateThrow()` is satisfied and the assertion fires on mismatch. In release
-/// builds the C++ validation machinery is compiled out, so we match Zig's generated
-/// `check_slow` wrapper exactly: single `Bun__RETURN_IF_EXCEPTION` FFI call after the
-/// closure (1 FFI hop instead of 3).
+/// builds the C++ validation machinery is compiled out: a single
+/// `Bun__RETURN_IF_EXCEPTION` FFI call after the closure (1 FFI hop instead of 3).
 #[inline]
 pub fn call_check_slow_at<R>(
     global: &JSGlobalObject,
@@ -791,5 +789,3 @@ unsafe extern "C" {
     safe fn TopExceptionScope__assertNoException(ptr: &mut [u8; SIZE]);
     fn TopExceptionScope__destruct(ptr: *mut [u8; SIZE]);
 }
-
-// ported from: src/jsc/TopExceptionScope.zig

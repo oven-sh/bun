@@ -4,8 +4,8 @@ use bun_core::String;
 
 use super::field_type::FieldType;
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 
-/// Zig: `union(FieldType)` — every variant carries a `bun.String`.
 pub enum FieldMessage {
     Severity(String),
     LocalizedSeverity(String),
@@ -29,7 +29,13 @@ pub enum FieldMessage {
 
 impl fmt::Display for FieldMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zig: `switch (this) { inline else => |str| writer.print("{f}", .{str}) }`
+        write!(f, "{}", self.payload())
+    }
+}
+
+impl FieldMessage {
+    /// Every variant carries a single `bun.String` payload.
+    pub fn payload(&self) -> &String {
         match self {
             FieldMessage::Severity(s)
             | FieldMessage::LocalizedSeverity(s)
@@ -48,20 +54,13 @@ impl fmt::Display for FieldMessage {
             | FieldMessage::Constraint(s)
             | FieldMessage::File(s)
             | FieldMessage::Line(s)
-            | FieldMessage::Routine(s) => write!(f, "{s}"),
+            | FieldMessage::Routine(s) => s,
         }
     }
-}
 
-// Zig `deinit` called `.deref()` on the payload `bun.String`. In Rust,
-// `bun_core::String`'s own `Drop` performs the deref, so no explicit `Drop`
-// impl is needed here — dropping the enum drops the payload.
-
-impl FieldMessage {
     pub fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
-    ) -> Result<Vec<FieldMessage>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
         let mut messages: Vec<FieldMessage> = Vec::new();
         loop {
             let field_int: u8 = reader.int::<u8>()?;
@@ -111,5 +110,3 @@ impl FieldMessage {
         })
     }
 }
-
-// ported from: src/sql/postgres/protocol/FieldMessage.zig

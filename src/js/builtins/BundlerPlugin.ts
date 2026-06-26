@@ -129,8 +129,8 @@ export function runOnEndCallbacks(
   }
 
   if (promises.length > 0) {
-    // we return the promise here because detecting if the promise was handled or not
-    // in bundle_v2.zig is done by checking if this function did not return undefined
+    // we return the promise here because the native bundler detects whether the
+    // promise was handled by checking if this function did not return undefined
     return Promise.all(promises).then(
       () => {
         if (buildRejection !== undefined) {
@@ -378,8 +378,9 @@ export function runSetupFunction(
       setupResult = $peekPromiseSettledValue(setupResult);
     } else {
       return setupResult.$then(() => {
-        if (is_last && self.promises !== undefined && self.promises.length > 0) {
-          const awaitAll = Promise.all(self.promises);
+        let selfPromises;
+        if (is_last && (selfPromises = self.promises) !== undefined && selfPromises.length > 0) {
+          const awaitAll = Promise.all(selfPromises);
           return awaitAll.$then(processSetupResult);
         }
         return processSetupResult();
@@ -387,8 +388,9 @@ export function runSetupFunction(
     }
   }
 
-  if (is_last && this.promises !== undefined && this.promises.length > 0) {
-    const awaitAll = Promise.all(this.promises);
+  let pendingPromises;
+  if (is_last && (pendingPromises = this.promises) !== undefined && pendingPromises.length > 0) {
+    const awaitAll = Promise.all(pendingPromises);
     return awaitAll.$then(processSetupResult);
   }
 

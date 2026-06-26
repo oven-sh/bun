@@ -10,8 +10,8 @@ using JSC::TopExceptionScope;
 #define ExpectedTopExceptionScopeAlignment 8
 #endif
 
-static_assert(sizeof(TopExceptionScope) == ExpectedTopExceptionScopeSize, "TopExceptionScope.zig assumes TopExceptionScope is 56 bytes");
-static_assert(alignof(TopExceptionScope) == ExpectedTopExceptionScopeAlignment, "TopExceptionScope.zig assumes TopExceptionScope is 8-byte aligned");
+static_assert(sizeof(TopExceptionScope) == ExpectedTopExceptionScopeSize, "src/jsc/TopExceptionScope.rs assumes TopExceptionScope is 56 bytes");
+static_assert(alignof(TopExceptionScope) == ExpectedTopExceptionScopeAlignment, "src/jsc/TopExceptionScope.rs assumes TopExceptionScope is 8-byte aligned");
 
 extern "C" void TopExceptionScope__construct(
     void* ptr,
@@ -22,7 +22,7 @@ extern "C" void TopExceptionScope__construct(
     size_t size,
     size_t alignment)
 {
-    // validate that Zig is correct about what the size and alignment should be
+    // validate that the caller is correct about what the size and alignment should be
     ASSERT(size >= sizeof(TopExceptionScope));
     ASSERT(alignment >= alignof(TopExceptionScope));
     ASSERT((uintptr_t)ptr % alignment == 0);
@@ -72,6 +72,6 @@ extern "C" void TopExceptionScope__assertNoException(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
     // this function assumes it should assert in all build modes, anything else would be confusing.
-    // Zig should only call TopExceptionScope__assertNoException if it wants the assertion.
+    // Callers should only call TopExceptionScope__assertNoException if they want the assertion.
     static_cast<TopExceptionScope*>(ptr)->releaseAssertNoException();
 }

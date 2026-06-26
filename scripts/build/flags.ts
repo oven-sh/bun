@@ -658,10 +658,10 @@ export const bunOnlyFlags: Flag[] = [
 
   // ─── Bun-target-specific ───
   {
-    flag: ["-fconstexpr-steps=2542484", "-fconstexpr-depth=54"],
+    flag: ["-fconstexpr-steps=6000000", "-fconstexpr-depth=54"],
     when: c => c.unix,
     lang: "cxx",
-    desc: "Raise constexpr limits (JSC uses heavy constexpr)",
+    desc: "Raise constexpr limits (JSC uses heavy constexpr; the embedded module registry literals are large)",
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
@@ -742,13 +742,17 @@ export const defines: Flag[] = [
   },
   {
     // Shell-escaped quotes so clang receives literal quotes in the define
-    // (the preprocessor needs the string to be "24.3.0", not bare 24.3.0).
+    // (the preprocessor needs the string to be "26.3.0", not bare 26.3.0).
     flag: c => `REPORTED_NODEJS_VERSION=\\"${c.nodejsVersion}\\"`,
     desc: "Node.js version string reported by process.version",
   },
   {
     flag: c => `REPORTED_NODEJS_ABI_VERSION=${c.nodejsAbiVersion}`,
     desc: "Node.js ABI version (process.versions.modules)",
+  },
+  {
+    flag: c => `REPORTED_NODEJS_V8_VERSION=\\"${c.nodejsV8Version}\\"`,
+    desc: "V8 version string (process.versions.v8)",
   },
   {
     // Hardcoded ON — experimental flag not exposed in config
@@ -766,6 +770,11 @@ export const defines: Flag[] = [
     flag: "BUN_DEBUG=1",
     when: c => c.debug,
     desc: "Enable debug-only code paths",
+  },
+  {
+    flag: "LIBUS_SOCKET_FAULT_INJECTION=1",
+    when: c => c.socketFaultInjection,
+    desc: "Compile usockets bsd_* syscall fault-injection hooks (runtime-armed via bun:internal-for-testing)",
   },
   {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
@@ -989,12 +998,6 @@ export const linkerFlags: Flag[] = [
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
       // Linux `-Wl,-icf=safe`.
-      //
-      // (This was temporarily /OPT:NOICF so PDB symbolication stayed
-      // unfolded while chasing the Windows-only `Strong<Impl>* corrupted
-      // (0x1)` crash in the fs/promises writeFile async-iterable path under
-      // `panic = "abort"` — flip it back locally if that investigation needs
-      // an unfolded PDB again.)
       "/OPT:SAFEICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.

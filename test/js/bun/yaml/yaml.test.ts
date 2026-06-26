@@ -1875,10 +1875,33 @@ folded: >
           expect(() => YAML.parse("!!float 0x1f")).toThrow();
         });
 
-        test.todo("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
-          // js-yaml/eemeli combine surrogate halves to the supplementary code
-          // point. Currently rejected.
+        test("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
+          // YAML 1.2 is a JSON superset; JSON encodes supplementary code
+          // points as `\uD8xx\uDCxx` surrogate pairs.
           expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("𝄞");
+          expect(YAML.parse('"\\uD83D\\uDE00"')).toBe("😀");
+          expect(YAML.parse('"\\ud83d\\ude00"')).toBe("😀");
+          expect(YAML.parse('"a\\uD83D\\uDE00b"')).toBe("a😀b");
+          expect(YAML.parse('"\\uD83D\\uDE00\\uD83D\\uDE01"')).toBe("😀😁");
+          expect(YAML.parse('"\\uDBFF\\uDFFF"')).toBe("\u{10FFFF}");
+          // Matches JSON.parse on the same document.
+          const doc = '{"k": "\\uD83D\\uDE00"}';
+          expect(YAML.parse(doc)).toEqual(JSON.parse(doc));
+          // `\U` 32-bit escapes for the same code point still work.
+          expect(YAML.parse('"\\U0001F600"')).toBe("😀");
+          // Lone or mis-ordered surrogates are rejected.
+          expect(() => YAML.parse('"\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83Dx"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uDE00"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uDE00\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\u0041"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\n"')).toThrow(SyntaxError);
+          // `\U` ([60] ns-esc-32-bit) names a Unicode character; surrogate
+          // code points are not characters and are never combined.
+          expect(() => YAML.parse('"\\U0000D83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\U0000D83D\\uDE00"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\U0000D83D\\U0000DE00"')).toThrow(SyntaxError);
         });
 
         test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {
@@ -2660,6 +2683,43 @@ config:
         expect(YAML.parse(YAML.stringify('with "quotes"'))).toBe('with "quotes"');
         expect(YAML.parse(YAML.stringify("with\ttab"))).toBe("with\ttab");
         expect(YAML.parse(YAML.stringify("with\rcarriage"))).toBe("with\rcarriage");
+      });
+
+      test("round-trips U+00A8/U+00A9 and escapes U+2028/U+2029 as \\L/\\P", () => {
+        // U+00A8 (DIAERESIS) and U+00A9 (COPYRIGHT SIGN) are ordinary printable
+        // characters; only U+2028/U+2029 map to the YAML \L and \P escapes.
+        expect(YAML.parse(YAML.stringify("\u00a8"))).toBe("\u00a8");
+        expect(YAML.parse(YAML.stringify("\u00a9"))).toBe("\u00a9");
+        expect(YAML.parse(YAML.stringify("x\u00a8y"))).toBe("x\u00a8y");
+        expect(YAML.parse(YAML.stringify("x\u00a9y"))).toBe("x\u00a9y");
+        expect(YAML.parse(YAML.stringify({ k: "a\u00a8b\u00a9c" }))).toEqual({ k: "a\u00a8b\u00a9c" });
+
+        expect(YAML.stringify("\u00a8")).not.toContain("\\L");
+        expect(YAML.stringify("\u00a9")).not.toContain("\\P");
+        expect(YAML.stringify("\u2028")).toBe('"\\L"');
+        expect(YAML.stringify("\u2029")).toBe('"\\P"');
+        expect(YAML.parse(YAML.stringify("\u2028"))).toBe("\u2028");
+        expect(YAML.parse(YAML.stringify("\u2029"))).toBe("\u2029");
+        expect(YAML.parse(YAML.stringify("a\u2028b\u2029c"))).toBe("a\u2028b\u2029c");
+      });
+
+      test("round-trips every non-surrogate BMP code point", () => {
+        let all = "";
+        for (let cp = 0; cp <= 0xffff; cp++) {
+          if (cp >= 0xd800 && cp <= 0xdfff) continue;
+          all += String.fromCharCode(cp);
+        }
+        const back = YAML.parse(YAML.stringify(all));
+        expect(typeof back).toBe("string");
+        expect(back.length).toBe(all.length);
+        for (let i = 0; i < all.length; i++) {
+          if (back.charCodeAt(i) !== all.charCodeAt(i)) {
+            throw new Error(
+              `U+${all.charCodeAt(i).toString(16).padStart(4, "0")} did not round-trip: ` +
+                `got U+${back.charCodeAt(i).toString(16).padStart(4, "0")}`,
+            );
+          }
+        }
       });
 
       test("round-trips arrays", () => {
@@ -4566,3 +4626,120 @@ test("bounds alias expansion for parsed and imported YAML documents", async () =
   expect(stdout).not.toContain("payload:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+describe("plain scalar whitespace handling", () => {
+  test("internal whitespace runs are preserved exactly", () => {
+    expect(YAML.parse("key: word1   word2")).toEqual({ key: "word1   word2" });
+    expect(YAML.parse("key: a \t b")).toEqual({ key: "a \t b" });
+  });
+
+  test("trailing whitespace is dropped", () => {
+    expect(YAML.parse("key: value   ")).toEqual({ key: "value" });
+    expect(YAML.parse("key: value\t")).toEqual({ key: "value" });
+  });
+
+  test("whitespace before a line break is dropped when folding", () => {
+    expect(YAML.parse("key: foo  \n  bar")).toEqual({ key: "foo bar" });
+    expect(YAML.parse("key: foo \t \n  bar")).toEqual({ key: "foo bar" });
+  });
+
+  test("multiline plain scalars fold with newline counts", () => {
+    expect(YAML.parse("key: foo\n  bar")).toEqual({ key: "foo bar" });
+    expect(YAML.parse("key: foo\n\n  bar")).toEqual({ key: "foo\nbar" });
+    expect(YAML.parse("key: foo\n\n\n  bar")).toEqual({ key: "foo\n\nbar" });
+  });
+
+  test("whitespace buffer state does not leak between sibling scalars", () => {
+    // Each scalar scan reuses the parser's whitespace buffer; pending
+    // whitespace from one scalar must never appear in the next.
+    expect(YAML.parse("a: one  two   \nb: three\nc: four  \n  five\nd: 6")).toEqual({
+      a: "one  two",
+      b: "three",
+      c: "four five",
+      d: 6,
+    });
+  });
+
+  test("many scalars in one document reuse the buffer correctly", () => {
+    const n = 256;
+    const doc = Array.from({ length: n }, (_, i) => `k${i}: v${i} a  b   c\t`).join("\n");
+    const parsed = YAML.parse(doc) as Record<string, string>;
+    expect(Object.keys(parsed)).toHaveLength(n);
+    for (let i = 0; i < n; i++) {
+      expect(parsed[`k${i}`]).toBe(`v${i} a  b   c`);
+    }
+  });
+
+  test("number resolution followed by more content becomes a string", () => {
+    expect(YAML.parse("key: 12  34")).toEqual({ key: "12  34" });
+    expect(YAML.parse("key: 1+1")).toEqual({ key: "1+1" });
+    expect(YAML.parse("key: 12 then words")).toEqual({ key: "12 then words" });
+  });
+
+  test("special float forms resolve through the scalar resolver", () => {
+    expect(YAML.parse("key: .nan")).toEqual({ key: NaN });
+    expect(YAML.parse("key: .NaN")).toEqual({ key: NaN });
+    expect(YAML.parse("key: .NAN")).toEqual({ key: NaN });
+    expect((YAML.parse("key: .inf") as any).key).toBe(Infinity);
+    expect((YAML.parse("key: .Inf") as any).key).toBe(Infinity);
+    expect((YAML.parse("key: .INF") as any).key).toBe(Infinity);
+    expect((YAML.parse("key: -.inf") as any).key).toBe(-Infinity);
+    expect((YAML.parse("key: -.Inf") as any).key).toBe(-Infinity);
+    expect((YAML.parse("key: +.inf") as any).key).toBe(Infinity);
+  });
+
+  test("near-miss special floats fall back to strings", () => {
+    expect(YAML.parse("key: .in")).toEqual({ key: ".in" });
+    expect(YAML.parse("key: .na")).toEqual({ key: ".na" });
+    expect(YAML.parse("key: .infx")).toEqual({ key: ".infx" });
+    expect(YAML.parse("key: .nanx")).toEqual({ key: ".nanx" });
+    expect(YAML.parse("key: -.in")).toEqual({ key: "-.in" });
+  });
+
+  test("resolved keyword followed by more content becomes a string", () => {
+    expect(YAML.parse("key: null x")).toEqual({ key: "null x" });
+    expect(YAML.parse("key: true ish")).toEqual({ key: "true ish" });
+    expect(YAML.parse("key: falsey")).toEqual({ key: "falsey" });
+  });
+
+  test("plain scalars in flow context preserve internal whitespace", () => {
+    expect(YAML.parse("[one  two, 3, four   five]")).toEqual(["one  two", 3, "four   five"]);
+    expect(YAML.parse("{a: x  y, b: 1 2}")).toEqual({ a: "x  y", b: "1 2" });
+  });
+
+  test("multiline plain scalar folding in UTF-16 input", () => {
+    // Non-Latin1 characters force the UTF-16 scanner through the same
+    // whitespace-buffer machinery.
+    expect(YAML.parse("key: 测试  值\n  续行")).toEqual({ key: "测试  值 续行" });
+    expect(YAML.parse("key: 🎉 party  time   ")).toEqual({ key: "🎉 party  time" });
+  });
+
+  test("plain scalar terminated by document markers drops pending whitespace", () => {
+    expect(YAML.parse("key: value \n...")).toEqual({ key: "value" });
+  });
+
+  test("deeply interleaved numbers, keywords, and folded text in one document", () => {
+    const doc = [
+      "a: -1.5e3",
+      "b: nan but not  really",
+      "c: .nan",
+      "d: word",
+      "  folded  line",
+      "e: 0x10",
+      "f: 0b1",
+      "h: +",
+    ].join("\n");
+    const parsed = YAML.parse(doc) as any;
+    expect(parsed.a).toBe(-1500);
+    expect(parsed.b).toBe("nan but not  really");
+    expect(Number.isNaN(parsed.c)).toBe(true);
+    expect(parsed.d).toBe("word folded  line");
+    expect(parsed.e).toBe(16);
+    expect(parsed.f).toBe("0b1");
+    expect(parsed.h).toBe("+");
+  });
+
+  test("bare dash after a mapping key is a block-sequence indicator, not a plain scalar", () => {
+    expect(() => YAML.parse("g: -")).toThrow(SyntaxError);
+  });
+});

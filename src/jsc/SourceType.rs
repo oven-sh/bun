@@ -6,5 +6,3 @@ pub enum SourceType {
     Module = 1,
     WebAssembly = 2,
 }
-
-// ported from: src/jsc/SourceType.zig

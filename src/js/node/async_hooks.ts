@@ -9,7 +9,7 @@
 // in the promise reaction) and then just before we call .then, we restore it.
 //
 // This means context tracking is *kind-of* manual. If we receive a callback in native code
-// - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
+// - In Rust, call jsValue.with_async_context_if_needed(); which returns another JSValue. Store that and
 //   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
 //   use AsyncContextFrame:: call(...) instead of JSC:: call.
@@ -365,6 +365,7 @@ const createHookNotImpl = createWarning(
 );
 
 let hasEnabledCreateHook = false;
+const kHookEnabled = Symbol("kHookEnabled");
 function createHook(hook) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
@@ -375,14 +376,40 @@ function createHook(hook) {
   if (promiseResolve !== undefined && typeof promiseResolve !== "function")
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
+  let enabledInit;
   return {
     enable() {
-      createHookNotImpl(hook);
+      if (init !== undefined && enabledInit === undefined) {
+        // init is delivered for TickObject resources (process.nextTick);
+        // other resource types are still unimplemented.
+        // Per-instance wrapper: two hooks registered with the same init
+        // function must stay independently removable (removal is by
+        // identity, and removing the other instance's entry would reorder
+        // its callback relative to unrelated hooks).
+        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
+        require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
+      }
+      if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
+        createHookNotImpl(hook);
+      }
       hasEnabledCreateHook = true;
+      if (!this[kHookEnabled]) {
+        this[kHookEnabled] = true;
+        require("internal/async_hooks").markHookEnabled();
+      }
       return this;
     },
     disable() {
-      createHookNotImpl();
+      if (enabledInit !== undefined) {
+        const hooks = require("internal/async_hooks_tick").tickInitHooks;
+        const idx = hooks.indexOf(enabledInit);
+        if (idx !== -1) hooks.splice(idx, 1);
+        enabledInit = undefined;
+      }
+      if (this[kHookEnabled]) {
+        this[kHookEnabled] = false;
+        require("internal/async_hooks").markHookDisabled();
+      }
       return this;
     },
   };

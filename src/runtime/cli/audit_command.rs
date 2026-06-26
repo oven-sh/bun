@@ -18,9 +18,8 @@ use bun_url::URL;
 use crate::cli::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
-// TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are
-// `allocator.dupe`d). Boxed here to avoid a struct lifetime param; revisit if
-// the extra clones show up in profiling.
+// Boxed to avoid a struct lifetime param; the
+// clones are per-vulnerability, terminal-UI-bound, and not perf-relevant.
 struct VulnerabilityInfo {
     severity: Box<[u8]>,
     title: Box<[u8]>,
@@ -36,7 +35,6 @@ struct PackageInfo {
     dependents: Vec<DependencyPath>,
 }
 
-// In Zig this is `PackageInfo.DependencyPath`; hoisted because Rust has no nested struct types.
 struct DependencyPath {
     path: Vec<Box<[u8]>>,
 }
@@ -67,7 +65,7 @@ impl AuditCommand {
         ctx: Command::Context,
     ) -> Result<core::convert::Infallible, bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
-        // PORT NOTE: `init` consumes `cli`; capture the fields read after it.
+        // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
         let production = cli.production;
         let audit_ignore_list = cli.audit_ignore_list;
@@ -123,8 +121,7 @@ impl AuditCommand {
         );
         Output::flush();
 
-        // PORT NOTE: Zig `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)`
-        // is a self-referential split borrow; encapsulated upstream as
+        // Note: a self-referential split borrow; encapsulated upstream as
         // `PackageManager::load_lockfile_from_cwd`.
         {
             let log_level = pm.options.log_level;
@@ -243,9 +240,7 @@ fn build_dependency_tree(
 
             let resolved_name = pkg_names[resolved_pkg_id as usize].slice(buf);
 
-            // PORT NOTE: Zig `getOrPut` then `dupe` key only when not found.
-            // `StringHashMap::get_or_put` always boxes the key on miss, so the
-            // separate `allocator.dupe` is folded in.
+            // `StringHashMap::get_or_put` always boxes the key on miss.
             let result = dependency_tree.get_or_put(resolved_name)?;
             result.value_ptr.push(Box::<[u8]>::from(package_name));
         }
@@ -331,10 +326,10 @@ fn collect_packages_for_audit(
         prod_packages = Some(set);
     }
 
-    // PORT NOTE: reshaped for borrowck — column slices borrow `pm.lockfile`
+    // Note: reshaped for borrowck — column slices borrow `pm.lockfile`
     // immutably for the loop, so resolve `root_id` / `prod_packages` (which
     // need `&mut pm`) above, and split-borrow `pm.options` for the scope lookup
-    // (disjoint from `pm.lockfile`; Zig had no aliasing model).
+    // (disjoint from `pm.lockfile`).
     let options = &pm.options;
     let default_url_hash = options.scope.url_hash;
     let packages = pm.lockfile.packages.slice();
@@ -395,10 +390,8 @@ fn collect_packages_for_audit(
         if !version_exists {
             found_package.versions.push(ver_str);
         }
-        // else: ver_str dropped (Zig: allocator.free)
     }
 
-    // PERF(port): Zig used MutableString with initial capacity 1024.
     let mut body: Vec<u8> = Vec::with_capacity(1024);
     body.push(b'{');
 
@@ -434,20 +427,12 @@ fn send_audit_request(
     body: &[u8],
 ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
     libdeflate::load();
-    let compressor_ptr = libdeflate::Compressor::alloc(6);
-    if compressor_ptr.is_null() {
-        return Err(bun_alloc::AllocError);
-    }
-    // SAFETY: non-null checked above; libdeflate hands back a heap-allocated
-    // compressor that lives until `destroy` (Zig: `*Compressor`).
-    let compressor = unsafe { &mut *compressor_ptr };
+    let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
     let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
     let mut compressed_body = Vec::with_capacity(max_compressed_size);
     let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip);
-    // SAFETY: `compressor_ptr` was returned by `Compressor::alloc` and is not
-    // used after this point (Zig: `defer compressor.deinit()`).
-    unsafe { libdeflate::Compressor::destroy(compressor_ptr) };
+    drop(compressor);
     let final_compressed_body = compressed_body;
 
     let mut headers = HeaderBuilder::default();
@@ -488,10 +473,8 @@ fn send_audit_request(
 
     let http_proxy = pm.http_proxy(&url);
 
-    // PORT NOTE: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
     let headers_buf: &[u8] = headers.content.written_slice();
 
-    // PERF(port): Zig used MutableString with initial capacity 1024.
     let mut response_buf = MutableString::init(1024)?;
     // `init_sync` erases lifetimes internally (port-erased raw pointers); all
     // borrowed inputs live on this stack frame past `send_sync()`.
@@ -561,7 +544,7 @@ fn parse_vulnerability(
                         } else if let ExprData::ENumber(num) = &value.data {
                             if field_name == b"id" {
                                 let mut s: Vec<u8> = Vec::new();
-                                write!(&mut s, "{}", num.value as u64).expect("unreachable");
+                                write!(&mut s, "{}", num.value() as u64).expect("unreachable");
                                 vulnerability.id = s.into_boxed_slice();
                             }
                         }
@@ -1013,5 +996,3 @@ fn print_enhanced_audit_report(
 
     Ok(0)
 }
-
-// ported from: src/cli/audit_command.zig

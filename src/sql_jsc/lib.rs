@@ -3,7 +3,7 @@
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module tree wired with explicit `#[path]` attrs (files use PascalCase
-// basenames, mirroring the Zig sources).
+// basenames).
 // ──────────────────────────────────────────────────────────────────────────
 
 // Local signature-compatible stubs for the JSC surface this crate names.
@@ -20,6 +20,9 @@ pub mod shared {
     #[path = "CachedStructure.rs"]
     pub mod cached_structure;
 
+    #[path = "ConnectionCtorArgs.rs"]
+    pub mod connection_ctor_args;
+
     pub mod datetime_text;
 
     #[path = "ObjectIterator.rs"]
@@ -27,6 +30,9 @@ pub mod shared {
 
     #[path = "QueryBindingIterator.rs"]
     pub mod query_binding_iterator;
+
+    #[path = "QueryCtorArgs.rs"]
+    pub mod query_ctor_args;
 
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;

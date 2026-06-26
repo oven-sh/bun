@@ -22,10 +22,6 @@ use js_ast::{
 };
 use js_lexer::T;
 
-// Zig: `fn ParseProperty(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn parse_method_expression(
         &mut self,
@@ -132,8 +128,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.pop_scope();
-        // PORT NOTE: G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate in place via the
-        // E::Function payload after boxing rather than copying `func`.
+        // G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate `func` in place.
         let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
         let args = func.args.slice();
@@ -260,20 +255,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
             // Every match arm below assigns `key` (or `continue 'restart` /
-            // `return`) before any read; Zig's `var key: Expr = undefined` pre-
-            // init is unnecessary here.
+            // `return`) before any read.
             let mut key: Expr;
             let key_range = p.lexer.range();
             let mut is_computed = false;
 
             match p.lexer.token {
                 T::TNumericLiteral => {
-                    key = p.new_expr(
-                        E::Number {
-                            value: p.lexer.number,
-                        },
-                        p.lexer.loc(),
-                    );
+                    key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
                     // p.checkForLegacyOctalLiteral()
                     p.lexer.next()?;
                 }
@@ -524,7 +513,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
                             p.lexer.expect(T::TCloseBrace)?;
 
-                            // PERF(port): was arena arena.create — bump.alloc returns &'a mut T;
                             // Vec::from_slice copies the bump-backed StmtList into a heap-backed list.
                             // TODO(perf): route ClassStaticBlock.stmts through arena slice directly.
                             let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice());
@@ -801,7 +789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             };
 
-            // PORT NOTE: reshaped for borrowck — `errors` is Option<&mut _>, reborrow via as_deref_mut
+            // `errors` is Option<&mut _>; reborrow via as_deref_mut so the caller's binding stays usable
             p.parse_expr_or_bindings(
                 Level::Comma,
                 errors.as_deref_mut(),
@@ -811,5 +799,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
-
-// ported from: src/js_parser/ast/parseProperty.zig

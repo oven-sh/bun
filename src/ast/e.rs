@@ -1,12 +1,9 @@
 //! E — expression node payloads for the JS AST.
-//!
-//! Port of `src/js_parser/ast/E.zig`.
 
 use core::cmp::Ordering;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use phf::phf_map;
 
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
@@ -16,7 +13,6 @@ use bun_core::strings;
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
 use bun_alloc::ArenaVecExt as _;
 
-// In Zig: `const string = []const u8;`
 // AST string fields are arena-owned (bulk-freed via Store/arena reset; never
 // individually freed). `StoreStr` is `StoreRef`'s `[u8]` sibling: a thin
 // lifetime-erased pointer with safe construction (no `transmute`) and
@@ -45,7 +41,7 @@ impl Default for NameOfSymbol {
 
 pub struct Array {
     pub items: ExprNodeList,
-    pub comma_after_spread: Option<crate::Loc>,
+    pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -55,7 +51,7 @@ impl Default for Array {
     fn default() -> Self {
         Self {
             items: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: None,
+            comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -63,21 +59,17 @@ impl Default for Array {
         }
     }
 }
-// TODO(port): Array methods call `Vec::init_capacity(bump, n)`
-// (signature mismatch: Vec takes only `n`; AST-crate variant with bump
-// arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
 // Live subset of `Array` accessors needed by downstream crates.
 impl Array {
     pub const EMPTY: Array = Array {
         items: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: None,
+        comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
         close_bracket_loc: crate::Loc::EMPTY,
     };
 
-    /// Zig: `pub fn push(this: *Array, arena, item) !void`.
     /// `Vec::append` uses the global arena; `_bump` is kept
     /// for call-site shape parity and the eventual bump-arena Vec.
     pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
@@ -98,14 +90,13 @@ impl Array {
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
-        // PERF(port): Zig allocated in arena; this Vec uses the global arena.
-        // `Expr.data` is an enum (validity invariant), so the Zig
-        // `expandToCapacity` + index-walk pattern would form `&mut [Expr]`
+        // `Expr.data` is an enum (validity invariant), so an
+        // expand-to-capacity + index-walk pattern would form `&mut [Expr]`
         // over invalid bit patterns. Push into reserved capacity instead —
         // same allocation profile (one upfront `with_capacity`), no uninit.
         let mut out: ExprNodeList =
             ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize);
-        // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
+        // Reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` does not overlap a shared borrow of `self`.
         let items_len = self.items.len_u32() as usize;
         for idx in 0..items_len {
@@ -134,8 +125,7 @@ impl Array {
         Ok(out)
     }
 
-    // `pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").arrayToJS;` — deleted per
-    // PORTING.md (jsc extension trait lives in `js_parser_jsc` crate).
+    // `toJS` lives in the `js_parser_jsc` crate's extension trait.
 
     /// Assumes each item in the array is a string
     pub fn alphabetize_strings(&mut self) {
@@ -265,11 +255,11 @@ pub enum Special {
     HotData,
     /// `import.meta.hot.accept` when HMR is enabled. Truthy.
     HotAccept,
-    /// Converted from `hot_accept` in P.zig's handleImportMetaHotAcceptCall
-    /// when passed strings. Printed as `hmr.acceptSpecifiers`
+    /// Converted from `hot_accept` by the parser's import.meta.hot.accept
+    /// handling when passed strings. Printed as `hmr.acceptSpecifiers`
     HotAcceptVisited,
-    /// Prints the resolved specifier string for an import record.
-    /// Zig: `resolved_specifier_string: ImportRecord.Index` (a `u32`).
+    /// Prints the resolved specifier string for an import record
+    /// (an `ImportRecord` index).
     ResolvedSpecifierString(u32),
 }
 
@@ -315,7 +305,7 @@ impl Call {
     }
 }
 
-#[repr(u8)] // Zig: enum(u2) — Rust has no u2, use u8
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CallUnwrap {
     #[default]
@@ -327,7 +317,8 @@ pub enum CallUnwrap {
 pub struct Dot {
     // target is Node
     pub target: ExprNodeIndex,
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub name: Str,
     pub name_loc: crate::Loc,
     pub optional_chain: Option<OptionalChain>,
@@ -355,9 +346,7 @@ impl Default for Dot {
 }
 impl Dot {
     pub fn has_same_flags_as(&self, b: &Dot) -> bool {
-        // TODO(port): Zig refers to `a.is_direct_eval` which does not exist on Dot;
-        // mirroring the (likely buggy) Zig literally would not compile. Preserving
-        // the three fields that DO exist; revisit.
+        // Compare the three flag fields that exist on Dot.
         self.optional_chain == b.optional_chain
             && self.can_be_removed_if_unused == b.can_be_removed_if_unused
             && self.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused
@@ -383,9 +372,12 @@ pub struct Arrow {
     pub has_rest_arg: bool,
     /// Use shorthand if true and "Body" is a single return statement
     pub prefer_expr: bool,
+    /// See `flags::Function::HasReactHooksSuppression`.
+    pub has_react_hooks_suppression: bool,
 }
+// The fourth bool fits in existing trailing padding.
+const _: () = assert!(core::mem::size_of::<Arrow>() == 32);
 impl Arrow {
-    // Zig `pub const noop_return_undefined: Arrow = .{ .body = .{ .stmts = &.{} } };`
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
         body: G::FnBody {
@@ -395,6 +387,7 @@ impl Arrow {
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
+        has_react_hooks_suppression: false,
     };
 }
 impl Default for Arrow {
@@ -408,6 +401,7 @@ impl Default for Arrow {
             is_async: false,
             has_rest_arg: false,
             prefer_expr: false,
+            has_react_hooks_suppression: false,
         }
     }
 }
@@ -419,9 +413,8 @@ pub struct Function {
 /// 8-byte identifier expression payload. The three side-effect flags are packed
 /// into `Ref`'s user-bit lane (bits 28..31, masked out of `Ref` identity) so
 /// this — the most common `expr::Data` variant — fits in a single word, which
-/// is what pulls `expr::Data` down to 16 bytes / `Expr` to 24. The Zig layout
-/// stores them as discrete bools (16B with padding); the Rust port exploits
-/// `noalias` + smaller nodes for the structural perf win.
+/// is what pulls `expr::Data` down to 16 bytes / `Expr` to 24 (vs. 16B with
+/// padding for discrete bools).
 ///
 /// `ref_` remains a public field so the ~100 existing `id.ref_` /
 /// `Identifier { ref_, ..Default::default() }` sites stay untouched; flag
@@ -429,8 +422,8 @@ pub struct Function {
 ///
 /// **Hazard:** assigning a fresh `Ref` to `ref_` *clears the flags*. This is
 /// fine for `visit_expr`'s `e_identifier` (sets `ref_` first then re-derives
-/// the flags), but any port of Zig `id.ref = new_ref` that expects the
-/// surrounding bool fields to survive must instead write
+/// the flags), but any `id.ref_ = new_ref` site that expects the
+/// flags to survive must instead write
 /// `id.ref_ = new_ref.with_user_bits_from(id.ref_)` — see `handle_identifier`.
 #[derive(Clone, Copy)]
 pub struct Identifier {
@@ -485,8 +478,7 @@ impl Identifier {
         self.ref_.set_user_bit(2, v);
     }
 
-    // Builder-style — replaces the Zig `.{ .ref = r, .can_be_removed = true }`
-    // struct-init pattern at the handful of sites that set flags up front.
+    // Builder-style setters for the handful of sites that set flags up front.
     #[inline]
     pub const fn with_must_keep_due_to_with_stmt(self, v: bool) -> Self {
         Self {
@@ -686,32 +678,51 @@ pub enum JSXSpecialProp {
     Ref,
     Any,
 }
+bun_core::comptime_string_map! {
+    static JSX_SPECIAL_PROP_MAP: JSXSpecialProp = {
+        b"key" => JSXSpecialProp::Key,
+        b"ref" => JSXSpecialProp::Ref,
+        b"__self" => JSXSpecialProp::UnderscoreSelf,
+        b"__source" => JSXSpecialProp::UnderscoreSource,
+    };
+}
+
 impl JSXSpecialProp {
-    // PERF(port): Zig used `ComptimeStringMap` (length-prefix lookup, all
-    // resolved at comptime). A `phf::Map` here would compute a full SipHash +
-    // index + slice compare on every JSX prop name even though the
-    // overwhelming majority of inputs (`className`, `onClick`, `style`, ...)
-    // miss. With only 4 keys at 3 distinct lengths, a length-gated `match`
-    // rejects almost every miss on a single `usize` compare and never hashes.
-    // See clap::find_param (12577e958d71) for the same pattern.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
-        match s.len() {
-            3 => match s {
-                b"key" => Some(Self::Key),
-                b"ref" => Some(Self::Ref),
-                _ => None,
-            },
-            6 if s == b"__self" => Some(Self::UnderscoreSelf),
-            8 if s == b"__source" => Some(Self::UnderscoreSource),
-            _ => None,
-        }
+        JSX_SPECIAL_PROP_MAP.get(s).copied()
     }
 }
 
+/// `packed(4)` lowers the alignment to 4 so `expr::Data` (and therefore `Expr`)
+/// drop to align 4 and pack into 16 bytes; the `f64` stays a single scalar so
+/// `.value()` is one `movsd`/`ldr`. The field is private because comparisons on
+/// a packed `f64` field would require `&self.value` (an unaligned reference);
+/// callers go through `value()` / `new()` which copy by value.
 #[derive(Clone, Copy)]
+#[repr(C, packed(4))]
 pub struct Number {
-    pub value: f64,
+    value: f64,
+}
+
+const _: () = assert!(core::mem::size_of::<Number>() == 8);
+const _: () = assert!(core::mem::align_of::<Number>() == 4);
+
+impl Number {
+    #[inline(always)]
+    pub const fn new(value: f64) -> Self {
+        Number { value }
+    }
+    #[inline(always)]
+    pub const fn value(self) -> f64 {
+        self.value
+    }
+}
+impl From<f64> for Number {
+    #[inline]
+    fn from(v: f64) -> Self {
+        Number::new(v)
+    }
 }
 
 const DOUBLE_DIGIT: [&[u8]; 101] = [
@@ -743,7 +754,7 @@ impl Number {
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
     pub fn to_string(self, bump: &Bump) -> Option<Str> {
-        Self::to_string_from_f64(self.value, bump)
+        Self::to_string_from_f64(self.value(), bump)
     }
 
     pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
@@ -760,7 +771,6 @@ impl Number {
                 }));
             }
 
-            // std.fmt.allocPrint(arena, "{d}", .{@as(i32, @intCast(int_value))}) catch return null
             // i32 fits in 11 bytes ("-2147483648"); format on stack then bump-copy.
             let mut stack = [0u8; 16];
             let Ok(s) = bun_core::fmt::buf_print(&mut stack, format_args!("{}", int_value as i32))
@@ -816,15 +826,14 @@ impl Number {
     }
 
     pub fn to<T: NumberCast>(self) -> T {
-        // @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(floatMax(f64), maxInt(T)))))
-        let clamped = self.value.trunc().max(0.0).min(T::MAX_AS_F64);
+        let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 }
 
-/// Helper trait for `Number::to<T>()` — replaces Zig's `comptime T: type` param.
+/// Helper trait for `Number::to<T>()`.
 pub trait NumberCast: Copy {
     const MAX_AS_F64: f64;
     fn from_f64(v: f64) -> Self;
@@ -843,7 +852,8 @@ macro_rules! impl_number_cast {
 impl_number_cast!(u16, u32, u64, usize);
 
 pub struct BigInt {
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub value: Str,
 }
 impl BigInt {
@@ -854,7 +864,7 @@ impl BigInt {
 
 pub struct Object {
     pub properties: G::PropertyList,
-    pub comma_after_spread: Option<crate::Loc>,
+    pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -865,7 +875,7 @@ impl Default for Object {
     fn default() -> Self {
         Self {
             properties: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: None,
+            comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -877,8 +887,7 @@ impl Default for Object {
 /// used in TOML parser to merge properties.
 ///
 /// Node types are lifetime-free, so `next` is a raw `*mut Rope`
-/// into the bump arena (Zig: `next: ?*Rope`). Segments are bulk-freed at
-/// arena reset.
+/// into the bump arena. Segments are bulk-freed at arena reset.
 pub struct Rope {
     pub head: Expr,
     pub next: *mut Rope,
@@ -911,7 +920,7 @@ impl Rope {
     #[inline]
     pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
         // SAFETY: `next` is either null or a bump-arena allocation valid until
-        // arena reset (Zig: `?*Rope`). Read-only borrow; no `&mut` alias is
+        // arena reset. Read-only borrow; no `&mut` alias is
         // outstanding at any caller (the chain is fully built before walking).
         unsafe { self.next.cast_const().as_ref() }
     }
@@ -945,7 +954,7 @@ pub struct RopeQuery<'a> {
 impl Object {
     pub const EMPTY: Object = Object {
         properties: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: None,
+        comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
@@ -1012,7 +1021,7 @@ impl Object {
     }
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
-    /// the leaf `E.Object` expression (Zig: `getOrPutObject`).
+    /// the leaf `E.Object` expression.
     pub fn get_or_put_object(&mut self, rope: &Rope, _bump: &Bump) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
@@ -1082,8 +1091,7 @@ impl Object {
         if self.has_property(&head_key) {
             return Err(SetError::Clobber);
         }
-        // Zig takes `*const Object` here and mutates through Vec's interior pointer;
-        // in Rust we require `&mut self` so the borrow checker tracks the write.
+        // `&mut self` so the borrow checker tracks the write.
         VecExt::append(
             &mut self.properties,
             G::Property {
@@ -1266,20 +1274,22 @@ enum PackageJsonSortFields {
     Fake = 12,
 }
 
-static PACKAGE_JSON_SORT_MAP: phf::Map<&'static [u8], PackageJsonSortFields> = phf_map! {
-    b"name" => PackageJsonSortFields::Name,
-    b"version" => PackageJsonSortFields::Version,
-    b"author" => PackageJsonSortFields::Author,
-    b"repository" => PackageJsonSortFields::Repository,
-    b"config" => PackageJsonSortFields::Config,
-    b"main" => PackageJsonSortFields::Main,
-    b"module" => PackageJsonSortFields::Module,
-    b"dependencies" => PackageJsonSortFields::Dependencies,
-    b"devDependencies" => PackageJsonSortFields::DevDependencies,
-    b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
-    b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
-    b"exports" => PackageJsonSortFields::Exports,
-};
+bun_core::comptime_string_map! {
+    static PACKAGE_JSON_SORT_MAP: PackageJsonSortFields = {
+        b"name" => PackageJsonSortFields::Name,
+        b"version" => PackageJsonSortFields::Version,
+        b"author" => PackageJsonSortFields::Author,
+        b"repository" => PackageJsonSortFields::Repository,
+        b"config" => PackageJsonSortFields::Config,
+        b"main" => PackageJsonSortFields::Main,
+        b"module" => PackageJsonSortFields::Module,
+        b"dependencies" => PackageJsonSortFields::Dependencies,
+        b"devDependencies" => PackageJsonSortFields::DevDependencies,
+        b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
+        b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
+        b"exports" => PackageJsonSortFields::Exports,
+    };
+}
 
 fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
     let mut lhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
@@ -1303,8 +1313,7 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
 
     match lhs_key_size.cmp(&rhs_key_size) {
         Ordering::Equal => {
-            // PORT NOTE: Zig `cmpStringsAsc` is `std.mem.order(u8, a, b) == .lt`; lifted to
-            // a full `Ordering` so this is usable with `sort_by`.
+            // Full `Ordering` so this is usable with `sort_by`.
             let a = lhs
                 .key
                 .as_ref()
@@ -1352,13 +1361,21 @@ pub struct Spread {
 }
 
 /// JavaScript string literal type
+// repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
+// `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
+// offset, and a `static EString = EString::from_static(b"...")` then emits an
+// `ARM64_RELOC_UNSIGNED` at that offset which arm64 ld rejects. `repr(C)` pins
+// `data` (the only field needing a static relocation) at offset 0; `align(8)`
+// keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
+// in `Expr`), so this does not affect `Expr` size.
+#[repr(C, align(8))]
 pub struct EString {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
     // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
     // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub data: Str,
-    pub prefer_template: bool,
 
     // A very simple rope implementation
     // We only use this for string folding, so this is kind of overkill
@@ -1366,9 +1383,10 @@ pub struct EString {
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
     pub rope_len: u32,
+    pub prefer_template: bool,
     pub is_utf16: bool,
 }
-// Export under the Zig name `String` as well; `EString` avoids colliding with bun_core::String.
+// Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
 
 impl Default for EString {
@@ -1438,9 +1456,9 @@ impl EString {
         }
     }
     /// Construct from a UTF-16 slice (arena-owned). The `data` slice's `.len()`
-    /// stores the **u16 element count** (not byte count) — Zig:
-    /// `@ptrCast(value.ptr)[0..value.len]`. `slice16()` and friends rely on
-    /// this. The pointer is reinterpreted to `*const u8` for storage only.
+    /// stores the **u16 element count** (not byte count); `slice16()` and
+    /// friends rely on this. The pointer is reinterpreted to `*const u8` for
+    /// storage only.
     pub fn init_utf16(data: &[u16]) -> Self {
         // `Str::new` only records `(ptr, len)`; we want the original `*const u16`
         // (reinterpreted as bytes) and the **u16 element count**. Safe-cast the
@@ -1462,8 +1480,8 @@ impl EString {
         if strings::first_non_ascii(utf8).is_none() {
             Self::init(utf8)
         } else {
-            // PERF(port): Zig allocated directly in arena; here we transcode to a
-            // heap Vec then copy into the bump arena — profile.
+            // PERF: transcodes to a heap Vec then copies into the bump
+            // arena — profile.
             let utf16 = strings::to_utf16_alloc_for_real(utf8, false, false).expect("unreachable"); // fail_if_invalid=false → never errors
             let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
             Self::init_utf16(arena_slice)
@@ -1505,13 +1523,13 @@ impl EString {
         self.len() > 0
     }
 
-    /// Zig `slice8()` alias used by some downstream callers as `.utf8()`.
+    /// Alias for `slice8()` used by some downstream callers.
     #[inline]
     pub fn utf8(&self) -> &[u8] {
         self.slice8()
     }
 
-    /// Zig: `slice(arena)` — flatten any rope and return UTF-8 bytes.
+    /// Flatten any rope and return UTF-8 bytes.
     /// Resolves the rope into the bump arena, then transcodes if UTF-16.
     pub fn slice<'b>(&mut self, bump: &'b Bump) -> &'b [u8] {
         self.resolve_rope_if_needed(bump);
@@ -1569,13 +1587,12 @@ impl EString {
         self.next = None;
     }
 
-    /// Zig `string(arena)` — return UTF-8 bytes, transcoding if UTF-16.
-    /// The transcode allocates via the global arena then copies into
-    /// `bump` (Zig used the passed arena directly).
+    /// Return UTF-8 bytes, transcoding if UTF-16.
+    /// The transcode allocates via the global arena then copies into `bump`.
     pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         if self.is_utf8() {
-            // `self.data` is arena-owned with the same lifetime as `bump`
-            // (Zig invariant); StoreStr re-borrows under that contract.
+            // `self.data` is arena-owned with the same lifetime as `bump`;
+            // StoreStr re-borrows under that contract.
             Ok(self.data.slice())
         } else {
             let v = strings::to_utf8_alloc(self.slice16());
@@ -1608,12 +1625,7 @@ impl EString {
 // Ordering / equality / const-literal / rope-mutation helpers.
 // `string_z`/`to_zig_string` remain gated on `bun_core::ZStr` arena constructors.
 impl EString {
-    pub const CLASS: EString = EString::from_static(b"class");
     pub const EMPTY: EString = EString::from_static(b"");
-    pub const TRUE: EString = EString::from_static(b"true");
-    pub const FALSE: EString = EString::from_static(b"false");
-    pub const NULL: EString = EString::from_static(b"null");
-    pub const UNDEFINED: EString = EString::from_static(b"undefined");
 
     pub fn is_identifier(&mut self, bump: &Bump) -> bool {
         if !self.is_utf8() {
@@ -1664,7 +1676,7 @@ impl EString {
         Some(self.slice16().len() as u32)
     }
 
-    // Zig `eql(comptime _t: type, other: anytype)` — split by operand type.
+    // `eql`, split by operand type.
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {
             if other.is_utf8() {
@@ -1689,8 +1701,7 @@ impl EString {
 
     /// Shallow field-wise copy. `EString` is structurally `Copy` (slice ref +
     /// `Option<NonNull>` rope links + scalars) but does not derive it to keep
-    /// rope-ownership intent explicit; Zig sites that did `.* = other.*` use
-    /// this instead.
+    /// rope-ownership intent explicit; use this for field-wise copies.
     #[inline]
     pub fn shallow_clone(&self) -> EString {
         EString {
@@ -1714,7 +1725,7 @@ impl EString {
         }
     }
 
-    /// Zig `E.String.push` — link `other` onto this string's rope tail.
+    /// Link `other` onto this string's rope tail.
     ///
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
@@ -1732,8 +1743,7 @@ impl EString {
         self.rope_len += other.rope_len;
 
         // Caller contract — `other` lives in the AST Store/arena and outlives
-        // the next reset; capturing its address as a `StoreRef` is the Zig
-        // `*E.String` semantics.
+        // the next reset, so capturing its address as a `StoreRef` is sound.
         let other_ref = StoreRef::from_bump(other);
         if self.next.is_none() {
             self.next = Some(other_ref);
@@ -1784,8 +1794,7 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
 
 impl EString {
     pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_core::ZStr, AllocError> {
-        // Zig: `if (self.isUTF8()) self.data else strings.toUTF8AllocZ(...)`, NUL-terminated.
-        // Port: copy into the bump arena with a trailing NUL and wrap as `ZStr`.
+        // Copy into the bump arena with a trailing NUL and wrap as `ZStr`.
         let bytes: &[u8] = if self.is_utf8() {
             &self.data
         } else {
@@ -1851,7 +1860,7 @@ pub struct TemplatePart {
 
 pub struct Template {
     pub tag: Option<ExprNodeIndex>,
-    /// Arena-owned mutable slice (Zig: `[]TemplatePart`). Stored as a
+    /// Arena-owned mutable slice. Stored as a
     /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
     /// visit pass, `foldStringAddition`) retain mutable provenance. Use
     /// `parts()` / `parts_mut()` for ergonomic access; never null.
@@ -1891,7 +1900,7 @@ impl TemplateContents {
 }
 
 impl TemplateContents {
-    /// Field-wise copy (Zig: `var part = part.*`). `EString` is structurally
+    /// Field-wise copy. `EString` is structurally
     /// `Copy` but does not derive it; use `shallow_clone` for the cooked arm.
     #[inline]
     pub(crate) fn shallow_clone(&self) -> TemplateContents {
@@ -1909,8 +1918,8 @@ impl Template {
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
             // we only fold utf-8/ascii for now
-            // `self` is Store/arena-allocated (Zig: `*Template`); capturing its
-            // address as a `StoreRef` mirrors `.{ .e_template = self }`.
+            // `self` is Store/arena-allocated, so capturing its address as a
+            // `StoreRef` is sound.
             return Expr {
                 data: crate::expr::Data::ETemplate(StoreRef::from_bump(self)),
                 loc,
@@ -1927,7 +1936,7 @@ impl Template {
             bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
         let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
         for part_src in self.parts() {
-            // Zig `var part = part.*` — field-wise copy (TemplatePart is not `Copy` only
+            // Field-wise copy (TemplatePart is not `Copy` only
             // because `EString` does not derive it; all fields are structurally `Copy`).
             let mut part = TemplatePart {
                 value: part_src.value,
@@ -2048,12 +2057,10 @@ impl Template {
                             );
                         }
                     } else {
-                        // PERF(port): was appendAssumeCapacity — profile
                         parts.push(part);
                     }
                 }
             } else {
-                // PERF(port): was appendAssumeCapacity — profile
                 parts.push(part);
             }
         }
@@ -2068,7 +2075,7 @@ impl Template {
         }
 
         // Arena-owned mutable slice; `into_bump_slice_mut()` preserves write
-        // provenance for downstream mutators (Zig: `parts.items`).
+        // provenance for downstream mutators.
         Expr::init(
             Template {
                 tag: None,
@@ -2086,7 +2093,8 @@ impl Template {
 }
 
 pub struct RegExp {
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub value: Str,
 
     /// This exists for JavaScript bindings
@@ -2172,7 +2180,8 @@ pub struct RequireResolveString {
 
 pub struct InlinedEnum {
     pub value: ExprNodeIndex,
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub comment: Str,
 }
 
@@ -2196,7 +2205,6 @@ impl Import {
     }
 
     pub fn import_record_loader(&self) -> Option<crate::Loader> {
-        // This logic is duplicated in js_printer.zig fn parsePath()
         let crate::ExprData::EObject(obj) = &self.options.data else {
             return None;
         };
@@ -2228,5 +2236,3 @@ impl Import {
 }
 
 pub use G::Class;
-
-// ported from: src/js_parser/ast/E.zig

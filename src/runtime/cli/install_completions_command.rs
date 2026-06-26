@@ -8,20 +8,15 @@ use bun_paths::PathBuffer;
 use bun_paths::WPathBuffer;
 #[cfg(not(windows))]
 use bun_paths::{platform, resolve_path};
-use bun_sys::{self, Dir, E, File};
+use bun_sys::{self, E, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
 pub struct InstallCompletionsCommand;
 
 impl InstallCompletionsCommand {
-    pub fn test_path(_: &[u8]) -> Result<Dir, bun_core::Error> {
-        // TODO(port): Zig body is empty (`pub fn testPath(_: string) !std.fs.Dir {}`)
-        unreachable!()
-    }
-
     #[cfg(not(windows))]
-    const BUNX_NAME: &'static str = if cfg!(debug_assertions) {
+    const BUNX_NAME: &'static str = if bun_core::env::IS_DEBUG {
         "bunx-debug"
     } else {
         "bunx"
@@ -124,12 +119,12 @@ impl InstallCompletionsCommand {
 
         let mut bunx_path_buf = WPathBuffer::uninit();
 
-        let cmd_suffix: &[u16] = if cfg!(debug_assertions) {
+        let cmd_suffix: &[u16] = if bun_core::env::IS_DEBUG {
             w!("bunx-debug.cmd")
         } else {
             w!("bunx.cmd")
         };
-        let exe_suffix_z: &[u16] = if cfg!(debug_assertions) {
+        let exe_suffix_z: &[u16] = if bun_core::env::IS_DEBUG {
             w!("bunx-debug.exe\0")
         } else {
             w!("bunx.exe\0")
@@ -159,10 +154,7 @@ impl InstallCompletionsCommand {
             )?;
             // SAFETY: exe_suffix_z ends in NUL
             let bunx_cmd = WStr::from_slice_with_nul(&bunx_cmd_with_z[..]);
-            // TODO: fix this zig bug, it is one line change to a few functions.
-            // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
-            // zig: `defer file.close()`
             file.write_all(SCRIPT)?;
         }
         Ok(())
@@ -212,13 +204,11 @@ impl InstallCompletionsCommand {
         )?;
 
         let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
-        // zig: `defer file.close()`
         file.write_all(CONTENT)?;
         Ok(())
     }
 
     pub fn exec() -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Fail silently on auto-update.
         let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
             1
@@ -232,7 +222,6 @@ impl InstallCompletionsCommand {
 
         let mut shell = Shell::Unknown;
         if let Some(shell_name) = env_var::SHELL.platform_get() {
-            // TODO(port): Shell.fromEnv(@TypeOf(shell_name), shell_name) — generic over u8/u16
             shell = Shell::from_env(shell_name);
         }
 
@@ -543,7 +532,6 @@ impl InstallCompletionsCommand {
 
             debug_assert!(!completions_dir.is_empty());
 
-            // output_dir.createFileZ(filename, .{ .truncate = true })
             let output_file: File = match File::create(output_dir, filename, true) {
                 Ok(f) => f,
                 Err(err) => {
@@ -728,5 +716,3 @@ impl InstallCompletionsCommand {
 
 #[cfg(not(windows))]
 use bun_core::fmt::{buf_print_infallible as buf_print, buf_print_z_infallible as buf_print_z};
-
-// ported from: src/cli/install_completions_command.zig

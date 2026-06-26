@@ -4,7 +4,6 @@ use bun_core::ZigString;
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // toSatisfy bypasses get_value (no .resolves/.rejects handling), so it cannot use
     // the full `matcher_prelude`; only the post_match guard mechanism unifies.
@@ -50,11 +49,10 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         return Ok(JSValue::UNDEFINED);
     }
 
-    // PORT NOTE: `defer formatter.deinit()` dropped — Formatter impls Drop.
+    // Formatter impls Drop.
     let mut formatter = super::make_formatter(global);
 
     if not {
-        // PERF(port): was `comptime getSignature(...)` — could const-eval the signature.
         let signature = get_signature("toSatisfy", "<green>expected<r>", true);
         return this.throw(
             global,
@@ -63,11 +61,9 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         );
     }
 
-    // PERF(port): was `comptime getSignature(...)` — could const-eval the signature.
     let signature = get_signature("toSatisfy", "<green>expected<r>", false);
 
-    // PORT NOTE: reshaped for borrowck — Zig held two `*Formatter` aliases via `toFmt`;
-    // Rust `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
+    // `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
     // received value (matches the toBeGreaterThan.rs pattern).
     let mut formatter2 = super::make_formatter(global);
     this.throw(
@@ -80,5 +76,3 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toSatisfy.zig

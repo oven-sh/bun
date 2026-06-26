@@ -532,6 +532,39 @@ describe("streaming", () => {
       expect(stderr).toContain("error: Oops");
       expect(onMessage).toHaveBeenCalled();
     });
+
+    it("returning a Response whose body stream is already locked calls the error handler", async () => {
+      let captured: { code: unknown; name: string; message: string } | null = null;
+      await using server = serve({
+        port: 0,
+        fetch() {
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("payload"));
+              controller.close();
+            },
+          });
+          // Lock the stream before handing it to the response. A locked stream
+          // cannot be piped, so the server must surface ERR_STREAM_CANNOT_PIPE
+          // instead of silently returning a 200 with an empty body.
+          stream.getReader();
+          return new Response(stream);
+        },
+        error(err: any) {
+          captured = { code: err.code, name: err.constructor.name, message: err.message };
+          return new Response("handled", { status: 500 });
+        },
+      });
+
+      const response = await fetch(server.url);
+      expect(await response.text()).toBe("handled");
+      expect(response.status).toBe(500);
+      expect(captured).toEqual({
+        code: "ERR_STREAM_CANNOT_PIPE",
+        name: "Error",
+        message: "Stream already used, please create a new one",
+      });
+    });
   });
 
   it("text from JS, one chunk", async () => {
@@ -2395,4 +2428,329 @@ it.if(isPosix)("serves /bun:info over a unix socket in development mode", async 
   const text = await res.text();
   expect(text).toContain("bun_version");
   expect(res.status).toBe(200);
+});
+
+// https://github.com/oven-sh/bun/issues/32469
+it("applies backpressure to a Response(ReadableStream) body when the client stalls", async () => {
+  const CHUNK = Buffer.alloc(64 * 1024, 65); // 64 KiB
+  // Without backpressure the producer runs to this cap (128 MiB) and closes;
+  // with it, pull plateaus at roughly the socket send buffer.
+  const CAP_CHUNKS = 2048;
+  let pulls = 0;
+  let producedEverything = false;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream(
+        {
+          pull(controller) {
+            pulls++;
+            controller.enqueue(CHUNK);
+            if (pulls >= CAP_CHUNKS) {
+              producedEverything = true;
+              controller.close();
+            }
+          },
+        },
+        { highWaterMark: 1 },
+      );
+      return new Response(stream);
+    },
+  });
+
+  // Raw client: send the request, read the head of the response, then stop
+  // reading so TCP backpressure propagates back to the server.
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    // Poll a bounded window for the absence of a runaway: wait until the pull
+    // count plateaus (backpressure engaged) or the server produces the whole
+    // capped body (the bug).
+    let last = -1;
+    let stable = 0;
+    while (!producedEverything && stable < 12) {
+      await Bun.sleep(25);
+      if (pulls === last) stable++;
+      else {
+        stable = 0;
+        last = pulls;
+      }
+    }
+
+    // Without backpressure the producer runs to CAP_CHUNKS and closes; with
+    // it, pulls plateau at roughly the kernel send/recv buffer. The exact
+    // count depends on per-platform socket sizing, so assert the property
+    // (plateau well below the cap) rather than a hard number. The lower bound
+    // proves pull() actually ran and was paused, not that nothing happened.
+    expect(producedEverything).toBe(false);
+    expect(pulls).toBeGreaterThan(0);
+    expect(pulls).toBeLessThan(CAP_CHUNKS / 2);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32469
+it("resumes a backpressured Response(ReadableStream) once the client drains and delivers the full body", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 66);
+  const TOTAL_CHUNKS = 512; // 128 MiB — well past any kernel socket buffer
+  let pulls = 0;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      let sent = 0;
+      const stream = new ReadableStream(
+        {
+          pull(controller) {
+            pulls++;
+            controller.enqueue(CHUNK);
+            if (++sent === TOTAL_CHUNKS) controller.close();
+          },
+        },
+        { highWaterMark: 1 },
+      );
+      return new Response(stream);
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+  let received = 0;
+  socket.on("data", chunk => {
+    received += chunk.length;
+  });
+  socket.on("close", () => onBodyDone());
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    // Wait for the producer to pause under backpressure.
+    let last = -1;
+    let stable = 0;
+    while (stable < 8 && pulls < TOTAL_CHUNKS) {
+      await Bun.sleep(25);
+      if (pulls === last) stable++;
+      else {
+        stable = 0;
+        last = pulls;
+      }
+    }
+    // The producer must have paused well before the full body.
+    expect(pulls).toBeLessThan(TOTAL_CHUNKS);
+
+    // Now drain the client and confirm the producer resumes and completes.
+    socket.resume();
+    await bodyDone;
+
+    expect(pulls).toBe(TOTAL_CHUNKS);
+    // received includes HTTP head + chunked framing, so just assert the full
+    // payload made it through.
+    expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32469
+it("type: direct stream awaiting flush(true) under backpressure does not re-enter pull", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 67);
+  const TOTAL_CHUNKS = 512; // 128 MiB
+  let pullEntries = 0;
+  let writes = 0;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          pullEntries++;
+          for (let i = 0; i < TOTAL_CHUNKS; i++) {
+            // write() returns a negative number when the socket is backed up;
+            // await flush(true) (the pending-flush promise) to pause until the
+            // drain.
+            const n = controller.write(CHUNK);
+            if (typeof n === "number" && n < 0) {
+              await controller.flush(true);
+            }
+            writes++;
+          }
+          await controller.end();
+        },
+      });
+      return new Response(stream);
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+  let received = 0;
+  socket.on("data", chunk => {
+    received += chunk.length;
+  });
+  socket.on("close", () => onBodyDone());
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    // Wait for pull to pause under backpressure.
+    let last = -1;
+    let stable = 0;
+    while (stable < 8 && writes < TOTAL_CHUNKS) {
+      await Bun.sleep(25);
+      if (writes === last) stable++;
+      else {
+        stable = 0;
+        last = writes;
+      }
+    }
+    expect(writes).toBeLessThan(TOTAL_CHUNKS);
+
+    socket.resume();
+    await bodyDone;
+
+    // pull must have been entered exactly once — on drain the sink resolves
+    // the flush(true) promise, it must not also re-invoke pull.
+    expect(pullEntries).toBe(1);
+    expect(writes).toBe(TOTAL_CHUNKS);
+    expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32469
+it("applies backpressure to a Response(async generator) body when the client stalls", async () => {
+  const CHUNK = Buffer.alloc(64 * 1024, 68);
+  const CAP_CHUNKS = 2048;
+  let yields = 0;
+  let producedEverything = false;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      async function* body() {
+        while (yields < CAP_CHUNKS) {
+          yields++;
+          yield CHUNK;
+        }
+        producedEverything = true;
+      }
+      return new Response(body());
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    let last = -1;
+    let stable = 0;
+    while (!producedEverything && stable < 12) {
+      await Bun.sleep(25);
+      if (yields === last) stable++;
+      else {
+        stable = 0;
+        last = yields;
+      }
+    }
+
+    expect(producedEverything).toBe(false);
+    expect(yields).toBeGreaterThan(0);
+    expect(yields).toBeLessThan(CAP_CHUNKS / 2);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32469
+it("type: direct stream — small write queued under backpressure is delivered intact after drain", async () => {
+  const BIG = Buffer.alloc(512 * 1024, 65);
+  const SMALL = Buffer.from("the-tail-marker\n");
+  let hitBackpressure = false;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          // Drive the socket into backpressure via the fast path (chunk ≥
+          // highWaterMark goes straight to uWS), then queue a small chunk
+          // below highWaterMark — it lands in the sink's local buffer while
+          // pending_flush is already parked.
+          for (let i = 0; i < 256 && !hitBackpressure; i++) {
+            const n = controller.write(BIG);
+            if (typeof n === "number" && n < 0) hitBackpressure = true;
+          }
+          controller.write(SMALL);
+          await controller.flush(true);
+          await controller.end();
+        },
+      });
+      return new Response(stream);
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+  const chunks: Buffer[] = [];
+  socket.on("data", c => chunks.push(c));
+  socket.on("close", () => onBodyDone());
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+    // Hold the client until the producer has parked on backpressure.
+    for (let i = 0; i < 200 && !hitBackpressure; i++) await Bun.sleep(5);
+    expect(hitBackpressure).toBe(true);
+    socket.resume();
+    await bodyDone;
+
+    const body = Buffer.concat(chunks).toString("latin1");
+    // on_writable resending from uWS's cumulative write_offset would drop the
+    // head of SMALL; it must arrive intact and contiguous.
+    expect(body.includes(SMALL.toString("latin1"))).toBe(true);
+  } finally {
+    socket.destroy();
+  }
 });

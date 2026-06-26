@@ -11,8 +11,6 @@ use bun_uws as uws;
 use crate::node::util::validators;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
 
-// Zig: `pub var autoSelectFamilyDefault: bool = true;`
-// PORT NOTE: reshaped for borrowck — Rust forbids safe `static mut`; use AtomicBool.
 pub(crate) static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
 // This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
@@ -23,7 +21,10 @@ pub(crate) static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true)
 // If this becomes used in more places, and especially if it can be read by other threads, we may
 // need to store it as a field in the VirtualMachine instead of in a `threadlocal`.
 thread_local! {
-    pub(crate) static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(250) };
+    // Node's default is 250ms with a documented floor of 10ms, but the CLI
+    // default in node_options.h is 500ms; the vendored test/common multiplies
+    // the default by 5 (upstream) assuming 500.
+    pub(crate) static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(500) };
 }
 
 pub(crate) fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
@@ -109,11 +110,10 @@ pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalOb
     )
 }
 
-// codegen (`generated_js2native.rs`) snake-cases the Zig symbol; alias the
+// codegen (`generated_js2native.rs`) snake-cases the symbol; alias the
 // PascalCase fns so both spellings resolve.
 pub use self::{BlockList as block_list, SocketAddress as socket_address};
 
-// Zig: `pub const SocketAddress = bun.jsc.Codegen.JSSocketAddress.getConstructor;`
 // Forward to the codegen'd `js_${Type}::get_constructor` wrappers — they go through
 // `jsc_abi_extern!` so the extern uses `extern "sysv64"` on win-x64 (matching
 // C++ `JSC_CALLCONV`). A bare `extern "C"` redecl here would be the wrong ABI on
@@ -123,7 +123,6 @@ pub fn SocketAddress(global: &JSGlobalObject) -> JSValue {
     crate::generated_classes::js_SocketAddress::get_constructor(global)
 }
 
-// Zig: `pub const BlockList = jsc.Codegen.JSBlockList.getConstructor;`
 #[allow(non_snake_case)]
 pub fn BlockList(global: &JSGlobalObject) -> JSValue {
     crate::generated_classes::js_BlockList::get_constructor(global)
@@ -134,14 +133,15 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
     let args = frame.arguments_as_array::<1>();
     let is_ssl = args[0].to_boolean();
 
-    // Zig field-default initializer: only `socket`, `ref_count`, `protos`, `handlers` are
-    // specified; the rest take their struct defaults (see `NewSocket` field decls in socket.zig).
+    // Only `socket`, `ref_count`, `protos`, `handlers` are
+    // specified; the rest take their struct defaults.
     fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
         let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
             protos: JsCell::new(None),
             handlers: Cell::new(None),
+            local_binding: JsCell::new(None),
             // — defaults —
             owned_ssl_ctx: Cell::new(None),
             flags: Cell::new(SocketFlags::default()),
@@ -173,5 +173,3 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let maybe_tls = prev.as_::<TLSSocket>();
     Listener::connect_inner(global, maybe_tcp, maybe_tls, opts)
 }
-
-// ported from: src/runtime/node/node_net_binding.zig

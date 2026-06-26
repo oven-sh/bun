@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "path";
@@ -469,4 +469,143 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.output).toEqual([null, null, null]);
   expect(x.stdout).toEqual(null);
   expect(x.stderr).toEqual(null);
+});
+
+// https://github.com/oven-sh/bun/issues/32067
+// Darwin's posix_spawn file actions reject any fd number >= OPEN_MAX (10240)
+// with EBADF at registration time, before checking whether the fd is open.
+// Bun used to swallow that error and spawn anyway with the action silently
+// dropped, so the child ran with closed stdio and looked like a successful
+// run that produced no output. The spawn must fail with EBADF, matching
+// node. On other POSIX platforms the child-side dup2 of an fd that is not
+// open fails with EBADF, so the observable behavior is the same.
+it.if(!isWindows)("spawn with an fd number at Darwin OPEN_MAX in stdio reports EBADF", () => {
+  // Precondition: fd 10240 is not open in this process, so the fd is
+  // invalid on every platform (on Darwin it is invalid by number alone).
+  expect(() => fs.fstatSync(10240)).toThrow();
+
+  const r = spawnSync("echo", ["hi"], { stdio: ["ignore", "pipe", "pipe", 10240] });
+  expect({
+    status: r.status ?? null,
+    stdout: r.stdout?.toString() ?? null,
+    error: r.error?.code ?? null,
+  }).toEqual({ status: null, stdout: null, error: "EBADF" });
+
+  // Async spawn throws synchronously: EBADF is not in node's delayed-error
+  // list (EACCES/EAGAIN/EMFILE/ENFILE/ENOENT), so node throws here too.
+  let asyncCode: string | undefined;
+  try {
+    spawn("echo", ["hi"], { stdio: ["ignore", "pipe", "pipe", 10240] });
+  } catch (err: any) {
+    asyncCode = err.code;
+  }
+  expect(asyncCode).toBe("EBADF");
+});
+
+// https://github.com/oven-sh/bun/issues/32067
+// The fd-pressure variant of the case above: with more than 10240 fds open,
+// freshly created stdio pipes get numbers past OPEN_MAX. Linux has no such
+// cap, so spawning must keep working. The test is Linux-only because default
+// macOS installs cap RLIMIT_NOFILE at kern.maxfilesperproc = 10240, which
+// makes it impossible to open this many fds there (the Darwin EBADF surface
+// is covered by the test above, which needs no fd pressure).
+it.if(isLinux)("spawn still works with more than 10240 fds open", async () => {
+  const script = /* js */ `
+      const fs = require("fs");
+      const { spawn, spawnSync } = require("child_process");
+
+      let opened = 0;
+      let setup = "ok";
+      try {
+        for (; opened < 11000; opened++) fs.openSync("/dev/null", "r");
+      } catch (err) {
+        setup = err.code + " after " + opened + " fds";
+      }
+
+      const r = spawnSync("echo", ["hi"], { stdio: ["ignore", "pipe", "pipe"] });
+      const sync = {
+        status: r.status ?? null,
+        stdout: r.stdout?.toString() ?? null,
+        error: r.error?.code ?? null,
+      };
+
+      let asyncResult;
+      try {
+        const child = spawn("echo", ["hi"], { stdio: ["ignore", "pipe", "pipe"] });
+        asyncResult = await new Promise(resolve => {
+          child.on("error", err => resolve({ outcome: "error-event", code: err.code }));
+          child.on("exit", code => resolve({ outcome: "exit", code }));
+        });
+      } catch (err) {
+        asyncResult = { outcome: "throw", code: err.code };
+      }
+
+      console.log(JSON.stringify({ setup, sync, async: asyncResult }));
+    `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  let result: any;
+  try {
+    result = JSON.parse(stdout);
+  } catch {
+    throw new Error(`child did not produce a result; stdout: ${JSON.stringify(stdout)} stderr: ${stderr}`);
+  }
+
+  expect(result).toEqual({
+    setup: "ok",
+    sync: { status: 0, stdout: "hi\n", error: null },
+    async: { outcome: "exit", code: 0 },
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Extra-stdio "pipe" slots are wrapped in net.Socket by child_process, which
+// hands the fd to usockets. The Subprocess's stdio_pipes slot must be
+// downgraded from OwnedFd to UnownedFd so that when the JS Subprocess is
+// GC'd, finalize_streams does not close the fd a second time (EBADF, or
+// worse, closing a reused fd number). Before the fix, Fd::close()'s
+// debug_assert!(err.is_none()) panicked under debug_assertions builds.
+it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () => {
+  // Run in a subprocess so GC/finalize timing is isolated from the test
+  // runner's own state, and so the assert abort surfaces as a non-zero
+  // exit rather than taking the whole test runner down.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { spawn } = require("node:child_process");
+        async function once() {
+          const child = spawn(process.execPath, ["-e", ""], {
+            stdio: ["ignore", "ignore", "ignore", "pipe", "pipe", "pipe"],
+          });
+          const sockets = child.stdio.slice(3);
+          if (sockets.length !== 3) throw new Error("expected 3 extra sockets");
+          await new Promise(r => child.on("exit", r));
+          for (const s of sockets) s.destroy();
+          await new Promise(r => setTimeout(r, 10));
+        }
+        for (let i = 0; i < 20; i++) {
+          await once();
+          Bun.gc(true);
+          await new Promise(r => setTimeout(r, 0));
+          Bun.gc(true);
+        }
+        console.log("OK");
+      `,
+    ],
+    env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
 });

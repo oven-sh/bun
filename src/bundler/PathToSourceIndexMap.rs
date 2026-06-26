@@ -28,7 +28,7 @@ pub struct PathToSourceIndexMap {
 
 pub type Map = StringHashMap<IndexInt>;
 
-/// Mirrors Zig's `Map.GetOrPutResult` — std `HashMap::entry` doesn't expose
+/// std `HashMap::entry` doesn't expose
 /// `found_existing` + value-ptr together, so we hand-roll a thin shim.
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
@@ -49,11 +49,10 @@ impl PathToSourceIndexMap {
         self.put(path.path_text(), value)
     }
 
-    // Takes `&[u8]` (not `impl AsRef<[u8]>`) to mirror Zig's `text: []const u8`
-    // and to avoid E0283 inference ambiguity at `.into()` call sites in bundle_v2.
+    // Takes `&[u8]` (not `impl AsRef<[u8]>`)
+    // to avoid E0283 inference ambiguity at `.into()` call sites in bundle_v2.
     pub fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_alloc::AllocError> {
-        // PERF(port): Zig used StringHashMapUnmanaged with arena-borrowed keys (no copy);
-        // bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
+        // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
         self.map.put(text, value)
     }
@@ -69,7 +68,7 @@ impl PathToSourceIndexMap {
         &mut self,
         text: impl AsRef<[u8]>,
     ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        // PERF(port): see note in `put` re: key duplication.
+        // PERF: see note in `put` re: key duplication.
         self.map.get_or_put(text.as_ref())
     }
 
@@ -81,5 +80,3 @@ impl PathToSourceIndexMap {
         self.remove(path.path_text())
     }
 }
-
-// ported from: src/bundler/PathToSourceIndexMap.zig

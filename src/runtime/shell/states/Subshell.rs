@@ -46,7 +46,7 @@ impl Subshell {
         }))
     }
 
-    /// Zig `Subshell.initDupeShellState` — dupe the parent env and `init`.
+    /// Dupe the parent env and `init`.
     /// Called by Stmt/Binary via `Interpreter::spawn_expr`. Pipeline does
     /// NOT use this (it dupes per-child itself and calls `init` directly).
     ///
@@ -82,7 +82,7 @@ impl Subshell {
         log!("Subshell {} next state={}", this, state_tag);
         match interp.as_subshell(this).state {
             SubshellState::Idle => {
-                // Spec (Subshell.zig start()): spawn Script directly with
+                // Spawn Script directly with
                 // `this.base.shell`. The env was already duped at construction
                 // (by `init_dupe_shell_state` or by Pipeline) — do NOT dupe
                 // again here.
@@ -92,8 +92,9 @@ impl Subshell {
                 };
                 let script_node: *const ast::Script = &raw const node.get().script;
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
-                // TODO(port): apply `(*node).redirect` / `redirect_flags`
-                // to `io` once IOWriter redirect open is wired.
+                // `node.redirect` is always `None` here: the parser rejects
+                // subshells with redirections ("Subshells with redirections
+                // are currently not supported", shell_parser/parse.rs).
                 let script = Script::init(interp, shell, script_node, this, io);
                 Script::start(interp, script)
             }
@@ -106,7 +107,6 @@ impl Subshell {
         }
     }
 
-    /// Spec: Subshell.zig `onIOWriterChunk` (lines 163-174).
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -154,5 +154,3 @@ impl Subshell {
         me.base.end_scope();
     }
 }
-
-// ported from: src/shell/states/Subshell.zig

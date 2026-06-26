@@ -1,7 +1,6 @@
 // Tier-0 leaf crate: pure Win32 typedefs/consts/externs over `core` only.
 // `no_std` so the standalone `bun_shim_impl.exe` (which depends on nothing
-// else from the workspace) links without the Rust runtime / CRT — matching
-// Zig's freestanding `bun_shim_impl.zig` build (no libc, ~13 KiB).
+// else from the workspace) links without the Rust runtime / CRT (no libc).
 #![no_std]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
@@ -14,7 +13,7 @@ pub use externs::*;
 // externs crate and must stay leaf. The `bun.windows.libuv` alias lives in the
 // higher-tier `bun_sys::windows` module (`pub use bun_libuv_sys as libuv`).
 
-/// `std.os.windows.NTSTATUS` value namespace. The `NTSTATUS` newtype carries
+/// `NTSTATUS` value namespace (`ntstatus.h`). The `NTSTATUS` newtype carries
 /// these as associated consts, but `bun_sys::windows` glob-imports them as
 /// bare match patterns (`use bun_windows_sys::ntstatus::*`); associated consts
 /// can't be glob-re-exported, so mirror them as free consts here.
@@ -40,4 +39,5 @@ pub mod ntstatus {
     pub const RETRY: NTSTATUS = NTSTATUS::RETRY;
     pub const DELETE_PENDING: NTSTATUS = NTSTATUS::DELETE_PENDING;
     pub const SHARING_VIOLATION: NTSTATUS = NTSTATUS::SHARING_VIOLATION;
+    pub const CANNOT_DELETE: NTSTATUS = NTSTATUS::CANNOT_DELETE;
 }

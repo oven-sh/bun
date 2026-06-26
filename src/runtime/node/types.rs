@@ -20,8 +20,8 @@ pub use jsc::MarkedArrayBuffer as Buffer;
 pub use jsc::ArgumentsSlice;
 
 // LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
-// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type validation
-// per Zig `bun.FD.fromJSValidated`). Re-exported so existing
+// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type
+// validation). Re-exported so existing
 // `crate::node::types::FdJsc` import paths keep resolving.
 pub use bun_sys_jsc::FdJsc;
 
@@ -280,7 +280,7 @@ impl Drop for StringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
-    /// Zig `BlobOrStringOrBuffer.deinitAndUnprotect`, JS-side half — owned
+    /// JS-side half of cleanup — owned
     /// payloads are released by `Drop` (which runs next when held in a
     /// [`bun_jsc::ThreadSafe`]).
     #[inline]
@@ -292,7 +292,7 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for StringOrBuffer {
-    /// Zig `StringOrBuffer.deinitAndUnprotect`, JS-side half — undo the
+    /// JS-side half of cleanup — undo the
     /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
     /// `from_js_maybe_async(.., is_async=true)`. Owned slices are released by
     /// `Drop`.
@@ -313,7 +313,6 @@ impl StringOrBuffer {
         match self {
             Self::String(s) => {
                 s.to_thread_safe();
-                // PORT NOTE: reshaped for borrowck — Zig moves the payload between variants.
                 let str = core::mem::take(s);
                 *self = Self::ThreadsafeString(str);
             }
@@ -357,7 +356,6 @@ impl StringOrBuffer {
             Self::ThreadsafeString(str) | Self::String(str) => str.transfer_to_js(ctx),
             Self::EncodedSlice(encoded_slice) => {
                 let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
-                // Zig: `defer { this.encoded_slice.deinit(); this.encoded_slice = .{}; }`
                 *encoded_slice = ZigStringSlice::default();
                 result
             }
@@ -370,7 +368,7 @@ impl StringOrBuffer {
         }
     }
 
-    /// Zig `StringOrBuffer.protect` — mirrors `to_thread_safe` but only
+    /// Mirrors `to_thread_safe` but only
     /// protects the JS-side buffer value (no string conversion).
     #[inline]
     pub fn protect(&self) {
@@ -390,7 +388,7 @@ impl StringOrBuffer {
     }
 
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
-    /// directly into `*out` (Zig result-location semantics) and returns
+    /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
     ///
@@ -425,7 +423,7 @@ impl StringOrBuffer {
                     str.deref();
 
                     if sliced.underlying.is_empty() {
-                        // PORT NOTE: partial-move out of `SliceWithUnderlyingString` —
+                        // partial-move out of `SliceWithUnderlyingString` —
                         // take `utf8` and leave the rest defaulted (no Drop on the type).
                         *out = Self::EncodedSlice(core::mem::take(&mut sliced.utf8));
                         return Ok(true);
@@ -633,7 +631,7 @@ impl StringOrBuffer {
     }
 }
 
-// `bun.String.encode` — see `crate::webcore::encoding::BunStringEncode`.
+// String encoding — see `crate::webcore::encoding::BunStringEncode`.
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -656,11 +654,25 @@ pub enum Encoding {
     Buffer,
 }
 
-// PORT NOTE: Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
-// `inMapCaseInsensitive`). With only 13 short keys spread across 7 distinct
-// lengths (max 4 keys at len==6) a length-gated byte match beats a
-// `phf::Map`'s hash+probe — see `Encoding::from` below. The case-insensitive
-// entry points lowercase into a stack buffer first.
+bun_core::comptime_string_map! {
+    /// Buffer encoding names → [`Encoding`]. Looked up case-insensitively
+    /// ([`Encoding::from`]), so keys must stay lowercase.
+    static ENCODING_MAP: Encoding = {
+        b"hex" => Encoding::Hex,
+        b"utf8" => Encoding::Utf8,
+        b"ucs2" => Encoding::Utf16le,
+        b"utf-8" => Encoding::Utf8,
+        b"ucs-2" => Encoding::Utf16le,
+        b"ascii" => Encoding::Ascii,
+        b"base64" => Encoding::Base64,
+        b"binary" => Encoding::Latin1,
+        b"latin1" => Encoding::Latin1,
+        b"buffer" => Encoding::Buffer,
+        b"utf16le" => Encoding::Utf16le,
+        b"utf16-le" => Encoding::Utf16le,
+        b"base64url" => Encoding::Base64url,
+    };
+}
 
 impl From<Encoding> for bun_core::NodeEncoding {
     fn from(e: Encoding) -> Self {
@@ -706,64 +718,22 @@ impl Encoding {
 
     /// Caller must verify the value is a string
     pub fn from(slice: &[u8]) -> Option<Encoding> {
-        // PERF(port): length-gated match in lieu of `phf::Map` — 13 keys over
-        // 7 distinct lengths (3..=9, max 4 collisions at len 6). The outer
-        // `match len` rejects almost every miss on a single `usize` compare;
-        // the inner byte compares are at known fixed lengths so LLVM lowers
-        // them to word-sized loads. Same pattern as `clap::find_param`
-        // (12577e958d71). Case-insensitive: lowercase into a 9-byte stack
-        // buffer first (longest key is "base64url").
-        let len = slice.len();
-        if len < 3 || len > 9 {
-            return None;
-        }
-        let (buf, _) = bun_core::ascii_lowercase_buf::<9>(slice)?;
-        let s = &buf[..len];
-        match len {
-            3 if s == b"hex" => Some(Encoding::Hex),
-            4 => match s {
-                b"utf8" => Some(Encoding::Utf8),
-                b"ucs2" => Some(Encoding::Utf16le),
-                _ => None,
-            },
-            5 => match s {
-                b"utf-8" => Some(Encoding::Utf8),
-                b"ucs-2" => Some(Encoding::Utf16le),
-                b"ascii" => Some(Encoding::Ascii),
-                _ => None,
-            },
-            6 => match s {
-                b"base64" => Some(Encoding::Base64),
-                b"binary" => Some(Encoding::Latin1),
-                b"latin1" => Some(Encoding::Latin1),
-                b"buffer" => Some(Encoding::Buffer),
-                _ => None,
-            },
-            7 if s == b"utf16le" => Some(Encoding::Utf16le),
-            8 if s == b"utf16-le" => Some(Encoding::Utf16le),
-            9 if s == b"base64url" => Some(Encoding::Base64url),
-            _ => None,
-        }
+        ENCODING_MAP.get_ascii_case_insensitive(slice).copied()
     }
 
-    /// Case-insensitive lookup against a `bun.String` without allocating.
-    /// Replaces the former `str.in_map_case_insensitive(&ENCODING_MAP)` path:
-    /// narrows UTF-16/Latin-1 code units into a stack buffer (rejecting any
-    /// non-ASCII unit — no encoding name contains one) and dispatches to
-    /// [`Encoding::from`].
+    /// Case-insensitive lookup against a `bun.String` without allocating
+    /// (`bun.String.inMapCaseInsensitive`): UTF-16 code units are narrowed
+    /// into a stack buffer (any non-ASCII unit ⇒ miss — no encoding name
+    /// contains one) before the map lookup.
     pub fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
-        // NOTE: tightens the Latin-1 path to reject `>= 0x80` (was pass-through);
-        // safe — no encoding name is non-ASCII, downstream match would miss anyway.
-        let mut buf = [0u8; 9];
-        Self::from(s.ascii_into(&mut buf)?)
+        s.in_map_case_insensitive(&ENCODING_MAP)
     }
 }
 
 impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
-        // PORT NOTE: ComptimeStringMap::fromJSCaseInsensitive — emulated via
-        // `from_bun_string` (stack-buffer narrow + length-gated match; no
-        // `to_utf8()` allocation needed for a ≤9-byte ASCII key).
+        // `from_bun_string` narrows into a stack buffer — no `to_utf8()`
+        // allocation needed for a short ASCII key.
         let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
         Ok(Self::from_bun_string(&str))
     }
@@ -811,13 +781,8 @@ impl Encoding {
             .throw()
     }
 
-    /// Zig `encodeWithSize(comptime size, *const [size]u8)`. In Zig the two
-    /// `encodeWith*` fns differed only in their comptime stack-buffer size
-    /// (`[size*4]u8` vs `[max_size*4]u8`); in Rust both heap-allocate, so the
-    /// match-arm bodies were byte-identical for Base64url/Hex/Buffer/else and
-    /// `size` was unused past the assert. Collapsed into a thin assertion
-    /// wrapper. Kept for Zig-port symmetry; currently has no Rust callers
-    /// (CryptoHasher.rs ported all sites to `encode_with_max_size`).
+    /// Thin assertion wrapper over `encode_with_max_size`; currently has no
+    /// callers (CryptoHasher.rs uses `encode_with_max_size` directly).
     #[inline]
     pub fn encode_with_size(
         self,
@@ -829,8 +794,8 @@ impl Encoding {
         self.encode_with_max_size(global_object, size, input)
     }
 
-    /// Zig `encodeWithMaxSize(comptime max_size, []const u8)`. `max_size` is a
-    /// runtime arg (see `encode_with_size`); callers pass `EVP_MAX_MD_SIZE` etc.
+    /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
+    /// `EVP_MAX_MD_SIZE` etc.
     pub fn encode_with_max_size(
         self,
         global_object: &JSGlobalObject,
@@ -843,8 +808,8 @@ impl Encoding {
             input.len(),
             max_size,
         );
-        // PERF(port): Zig used comptime-sized stack buffers; stable Rust forbids
-        // const-generic arithmetic in array lengths, so we heap-allocate.
+        // Stable Rust forbids const-generic arithmetic in array lengths, so
+        // we heap-allocate.
         match self {
             Self::Base64 => {
                 let encoded_len = bun_core::base64::encode_len(input);
@@ -862,7 +827,6 @@ impl Encoding {
                 Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
-                // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
                 // The byte-by-byte `write!` formatting machinery is pathologically
                 // slow in debug builds, so encode via LUT directly into the
                 // destination JS string buffer.
@@ -878,7 +842,6 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
-            // PERF(port): was comptime monomorphization (`inline else`) — profile if it shows up on a hot path
             enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
@@ -889,7 +852,8 @@ impl Encoding {
     }
 }
 
-// TODO(port): move to runtime_sys
+// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
+// and isn't already *_sys, leave them in place".
 unsafe extern "C" {
     safe fn WebCore_BufferEncodingType_toJS(
         global_object: &JSGlobalObject,
@@ -920,8 +884,6 @@ pub enum PathOrBuffer {
 impl PathOrBuffer {
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        // PORT NOTE: Zig only ever returns `self.path.slice()` here regardless of variant —
-        // preserved verbatim (likely a latent bug or this type is unused).
         match self {
             Self::Path(p) => p.slice(),
             Self::Buffer(_) => unreachable!("Zig accessed .path unconditionally"),
@@ -934,12 +896,8 @@ impl PathOrBuffer {
 pub struct CallbackTask<Result> {
     pub callback: jsc::C::JSObjectRef,
     pub option: CallbackTaskOption<Result>,
-    pub success: bool,
 }
 
-// PORT NOTE: Zig uses an untagged `union` discriminated by `success: bool`.
-// Represented here as a Rust enum; callers must keep `success` in sync.
-// TODO(refactor): drop the redundant `success` field entirely.
 pub enum CallbackTaskOption<Result> {
     Err(Box<bun_sys::SystemError>),
     Result(Result),
@@ -950,13 +908,11 @@ where
     CallbackTaskOption<Result>: Default,
 {
     fn default() -> Self {
-        // Zig only sets `success = false` and leaves the rest `undefined`;
-        // Rust requires every field initialized, so zero the callback handle
+        // Zero the callback handle
         // and lean on the `CallbackTaskOption<Result>: Default` bound.
         Self {
             callback: core::ptr::null_mut(),
             option: Default::default(),
-            success: false,
         }
     }
 }
@@ -975,7 +931,7 @@ pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 /// fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT caps paths
 /// at `PATH_MAX_WIDE` units, so such a path cannot exist on disk — callers
 /// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
-/// conversion overflow (mirrors the Zig-side fix in oven-sh/bun#27775).
+/// conversion overflow (oven-sh/bun#27775).
 #[derive(Debug, Clone, Copy)]
 pub struct NameTooLong;
 
@@ -1055,9 +1011,9 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike {
-    // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
-    // Rust const-generics can't change return mutability; we always return `&ZStr`.
-    // The single force=true caller (if any) needs `&mut ZStr` — handle if it comes up.
+    // Const-generics can't change return mutability, so this always returns
+    // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
+    // separate method.
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
         &'a self,
         buf: &'a mut PathBuffer,
@@ -1096,7 +1052,7 @@ impl PathLikeExt for PathLike {
                     // SAFETY: buf[4+n] == 0 written above.
                     return ZStr::from_buf(&buf[..], 4 + n);
                 }
-                // PORT NOTE: reshaped for borrowck — capture the length so
+                // reshaped for borrowck — capture the length so
                 // the `Ok` borrow ends at the match, then re-derive.
                 let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
                     Ok(res) => Some(res.len()),
@@ -1201,8 +1157,8 @@ impl PathLikeExt for PathLike {
                     return Err(NameTooLong);
                 }
                 // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
-                // alignment is runtime-asserted inside `bytes_as_slice_mut`
-                // (port of Zig `@alignCast`); see PathBuffer doc comment for
+                // alignment is runtime-asserted inside `bytes_as_slice_mut`;
+                // see PathBuffer doc comment for
                 // why the buffer is always sufficiently aligned in practice.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, s));
@@ -1388,7 +1344,6 @@ impl PathLikeExt for PathLike {
         str: &mut bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
-        // TODO(port): narrow error set
         if will_be_async {
             let sliced = str.to_thread_safe_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
@@ -1507,7 +1462,7 @@ impl Valid {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct VectorArrayBuffer {
-    // PORT NOTE: bare JSValue field — only sound while this lives on the stack.
+    // bare JSValue field — only sound while this lives on the stack.
     // Stored in a stack-local during writev; never heap-allocated.
     pub value: JSValue,
     pub buffers: Vec<PlatformIoVec>,
@@ -1692,11 +1647,11 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
 pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
-// PORT NOTE: Zig copies these tagged unions by value freely; the Rust port adds
-// `Drop` for the path-owning variants, so an explicit `dupe()` is provided for
+// The path-owning variants have
+// `Drop`, so an explicit `dupe()` is provided for
 // callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
 // bumped where the underlying type supports it; otherwise we bitwise-copy
-// (matching Zig semantics) and leave proper ref-counting to a later pass.
+// and leave proper ref-counting to a later pass.
 
 impl PathOrFdExt for PathOrFileDescriptor {
     fn from_js(
@@ -1725,7 +1680,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Non-exhaustive enum in Zig (`enum(c_int) { ... _ }`) → newtype over c_int.
+/// Non-exhaustive set of flag values; newtype over c_int.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct FileSystemFlags(pub c_int);
@@ -1737,10 +1692,9 @@ pub enum FileSystemFlagsKind {
 }
 
 impl FileSystemFlags {
-    // PORT NOTE: `pub type TagType = c_int;` would be an inherent associated
+    // `pub type TagType = c_int;` would be an inherent associated
     // type (unstable). Dropped — callers use `c_int` directly.
 
-    // Named variants from the Zig enum:
     /// Open file for appending. The file is created if it does not exist.
     pub const A: Self = Self(O::APPEND | O::WRONLY | O::CREAT);
     /// Open file for reading. An exception occurs if the file does not exist.
@@ -1757,19 +1711,13 @@ impl FileSystemFlags {
 impl FileSystemFlags {
     pub fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
         if val.is_number() {
-            if !val.is_int32() {
-                return Err(ctx.throw_value(
-                    ctx.err(
-                        jsc::ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "The value of \"flags\" is out of range. It must be an integer. Received {}",
-                            val.as_number()
-                        ),
-                    )
-                    .to_js(),
-                ));
-            }
-            let number = val.coerce_to_i32(ctx)?;
+            // Match Node's stringToFlags, which runs validateInt32 on a numeric
+            // `flags`: accept any integer-valued number in the int32 range,
+            // regardless of whether JSC boxed it as an int32 or a double. Go's
+            // `syscall/js` bridge reads arguments out of wasm memory with
+            // getFloat64, so valid flags like 578 (O_RDWR|O_CREAT|O_TRUNC)
+            // arrive double-boxed and must not be rejected.
+            let number = validators::validate_int32(ctx, val, "flags", None, None)?;
             let flags = number.max(0);
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
             // use the platform's native MSVC/libuv values which differ from the
@@ -1802,14 +1750,12 @@ impl FileSystemFlags {
             }
 
             let flags: Option<i32> = 'brk: {
-                // PERF(port): was comptime bool dispatch (`inline else`) — profile if it shows up on a hot path
                 if str.is_16bit() {
                     let chars = str.utf16_slice_aligned();
                     if (chars[0] as u8).is_ascii_digit() {
                         // node allows "0o644" as a string :(
                         let slice = str.to_slice();
                         // slice.deinit() on Drop
-                        // Zig: `@as(i32, @intCast(...))` — release builds wrap.
                         break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
                             .ok()
                             .map(|v| v as i32);
@@ -1821,11 +1767,10 @@ impl FileSystemFlags {
                     }
                 }
 
-                // PORT NOTE: Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-                // Convert the ZigString (≤12 bytes here) to a UTF-8 slice and
-                // dispatch through the length-gated match below.
+                // Convert the ZigString (≤12 bytes here) to a UTF-8 slice for
+                // the map lookup.
                 let key_slice = str.to_slice();
-                break 'brk lookup_file_system_flags(key_slice.slice());
+                break 'brk FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied();
             };
 
             let Some(flags) = flags else {
@@ -1842,9 +1787,6 @@ impl FileSystemFlags {
     }
 
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
-    // PORT NOTE: Zig took `comptime kind: enum { access, copy_file }`; lowered to a
-    // runtime arg here so callers (`node_fs.rs`) can pass it positionally without
-    // needing `adt_const_params` const-generic dispatch.
     pub fn from_js_number_only(
         global: &JSGlobalObject,
         value: JSValue,
@@ -1873,7 +1815,6 @@ impl FileSystemFlags {
                 return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
-                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
                         format_args!("mode is out of range: >= 0 and <= 7"),
                     )
                     .throw());
@@ -1885,7 +1826,6 @@ impl FileSystemFlags {
                 return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
-                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
                         format_args!("mode is out of range: >= 0 and <= 7"),
                     )
                     .throw());
@@ -1895,66 +1835,57 @@ impl FileSystemFlags {
     }
 }
 
-// PERF(port): Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-// A 44-entry `phf::Map` would work, but the keys are tiny (1..=3 bytes) and
-// cluster heavily by length (6/22/16). phf's hash+probe is dominated by the
-// SipHash of the input slice; a length-gated byte match rejects on a single
-// `usize` compare and lowers the inner arms to 1-2 register compares.
-// Same pattern as `clap::find_param` (12577e958d71).
-//
-// 2-level dispatch: `len` → `(b0, b1)` tuple. The original 44 keys are 22
-// distinct values × {lower, UPPER}; mixed case (e.g. "Rs") is *not* accepted,
-// so each arm lists both case variants explicitly rather than lowercasing.
-// Every length-3 key ends in `'+'`, so that byte is checked once up front and
-// the len-3 arm reuses the same `(b0, b1)` table as len-2 with RDWR semantics.
-#[inline]
-fn lookup_file_system_flags(bytes: &[u8]) -> Option<i32> {
-    match bytes.len() {
-        1 => match bytes[0] {
-            b'r' | b'R' => Some(O::RDONLY),
-            b'w' | b'W' => Some(O::TRUNC | O::CREAT | O::WRONLY),
-            b'a' | b'A' => Some(O::APPEND | O::CREAT | O::WRONLY),
-            _ => None,
-        },
-        2 => match (bytes[0], bytes[1]) {
-            (b'r', b'+') | (b'R', b'+') => Some(O::RDWR),
-            (b'w', b'+') | (b'W', b'+') => Some(O::TRUNC | O::CREAT | O::RDWR),
-            (b'a', b'+') | (b'A', b'+') => Some(O::APPEND | O::CREAT | O::RDWR),
-            (b'r', b's') | (b'R', b'S') | (b's', b'r') | (b'S', b'R') => Some(O::RDONLY | O::SYNC),
-            (b'w', b'x') | (b'W', b'X') | (b'x', b'w') | (b'X', b'W') => {
-                Some(O::TRUNC | O::CREAT | O::WRONLY | O::EXCL)
-            }
-            (b'a', b'x') | (b'A', b'X') | (b'x', b'a') | (b'X', b'A') => {
-                Some(O::APPEND | O::CREAT | O::WRONLY | O::EXCL)
-            }
-            (b'a', b's') | (b'A', b'S') | (b's', b'a') | (b'S', b'A') => {
-                Some(O::APPEND | O::CREAT | O::WRONLY | O::SYNC)
-            }
-            _ => None,
-        },
-        3 => {
-            // Every 3-byte flag is "<2-byte flag>+".
-            if bytes[2] != b'+' {
-                return None;
-            }
-            match (bytes[0], bytes[1]) {
-                (b'r', b's') | (b'R', b'S') | (b's', b'r') | (b'S', b'R') => {
-                    Some(O::RDWR | O::SYNC)
-                }
-                (b'w', b'x') | (b'W', b'X') | (b'x', b'w') | (b'X', b'W') => {
-                    Some(O::TRUNC | O::CREAT | O::RDWR | O::EXCL)
-                }
-                (b'a', b'x') | (b'A', b'X') | (b'x', b'a') | (b'X', b'A') => {
-                    Some(O::APPEND | O::CREAT | O::RDWR | O::EXCL)
-                }
-                (b'a', b's') | (b'A', b'S') | (b's', b'a') | (b'S', b'A') => {
-                    Some(O::APPEND | O::CREAT | O::RDWR | O::SYNC)
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    }
+bun_core::comptime_string_map! {
+    /// Node's fs flag strings → `bun.O` bits: 22 distinct flags × {lower,
+    /// UPPER}. Mixed case (e.g. "Rs") is *not* accepted, so every accepted
+    /// spelling is listed explicitly rather than going through
+    /// `get_ascii_case_insensitive`.
+    static FILE_SYSTEM_FLAGS_MAP: c_int = {
+        b"r" => O::RDONLY,
+        b"R" => O::RDONLY,
+        b"w" => O::TRUNC | O::CREAT | O::WRONLY,
+        b"W" => O::TRUNC | O::CREAT | O::WRONLY,
+        b"a" => O::APPEND | O::CREAT | O::WRONLY,
+        b"A" => O::APPEND | O::CREAT | O::WRONLY,
+        b"r+" => O::RDWR,
+        b"R+" => O::RDWR,
+        b"w+" => O::TRUNC | O::CREAT | O::RDWR,
+        b"W+" => O::TRUNC | O::CREAT | O::RDWR,
+        b"a+" => O::APPEND | O::CREAT | O::RDWR,
+        b"A+" => O::APPEND | O::CREAT | O::RDWR,
+        b"rs" => O::RDONLY | O::SYNC,
+        b"RS" => O::RDONLY | O::SYNC,
+        b"sr" => O::RDONLY | O::SYNC,
+        b"SR" => O::RDONLY | O::SYNC,
+        b"wx" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"WX" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"xw" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"XW" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"ax" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"AX" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"xa" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"XA" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"as" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"AS" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"sa" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"SA" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"rs+" => O::RDWR | O::SYNC,
+        b"RS+" => O::RDWR | O::SYNC,
+        b"sr+" => O::RDWR | O::SYNC,
+        b"SR+" => O::RDWR | O::SYNC,
+        b"wx+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"WX+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"xw+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"XW+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"ax+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"AX+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"xa+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"XA+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"as+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+        b"AS+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+        b"sa+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+        b"SA+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1987,7 +1918,8 @@ pub struct Dirent {
 
 pub type DirentKind = bun_sys::FileKind;
 
-// TODO(port): move to runtime_sys
+// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
+// and isn't already *_sys, leave them in place".
 // `&JSGlobalObject` / `&mut bun_core::String` are ABI-identical to non-null
 // pointers; `Option<&mut *mut JSString>` uses the niche-optimization layout
 // (`*mut *mut JSString`), so the validity proof lives in the type signature.
@@ -2088,5 +2020,3 @@ impl PathOrBlob {
         ))
     }
 }
-
-// ported from: src/runtime/node/types.zig

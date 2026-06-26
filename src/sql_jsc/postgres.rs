@@ -19,8 +19,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Submodule tree (files use PascalCase basenames, mirroring the Zig sources;
-// wired via `#[path]`).
+// Submodule tree (files use PascalCase basenames; wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "postgres/SASL.rs"]
@@ -64,20 +63,8 @@ pub mod postgres_request;
 pub mod data_cell;
 
 pub mod types {
-    #[path = "bool.rs"]
-    pub mod r#bool;
-
-    #[path = "bytea.rs"]
-    pub mod bytea;
-
     #[path = "date.rs"]
     pub mod date;
-
-    #[path = "json.rs"]
-    pub mod json;
-
-    #[path = "PostgresString.rs"]
-    pub mod postgres_string;
 
     #[path = "tag_jsc.rs"]
     pub mod tag_jsc;
@@ -86,13 +73,8 @@ pub mod types {
 pub mod protocol {
     #[path = "error_response_jsc.rs"]
     pub mod error_response_jsc;
-
-    #[path = "notice_response_jsc.rs"]
-    pub mod notice_response_jsc;
 }
 
-// Re-exports of base-crate protocol/types modules (Zig: thin re-exports).
+// Re-exports of base-crate protocol/types modules.
 pub use bun_sql::postgres::postgres_protocol as base_protocol;
 pub use bun_sql::postgres::postgres_types as base_types;
-
-// ported from: src/sql_jsc/postgres.zig

@@ -12,12 +12,12 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::{PathBuffer, resolve_path};
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
-/// `bun.cli.start_time` accessor — Zig had a mutable global; Rust keeps the
-/// single backing `OnceLock` in `bun_core` (written once in `Cli::start`).
+/// `start_time` accessor — the
+/// single backing `OnceLock` lives in `bun_core` (written once in `Cli::start`).
 #[inline]
 fn cli_start_time() -> i128 {
     crate::cli::start_time()
@@ -62,7 +62,6 @@ impl BuildCommand {
             long_running: true,
             ..Default::default()
         });
-        // PERF(port): allocator param dropped — global mimalloc
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
@@ -94,7 +93,6 @@ impl BuildCommand {
                     Vec::with_capacity(compile_define_keys.len() + define.keys.len());
                 keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
                 keys.append(&mut define.keys);
-                // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
                 let mut values: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_values.len() + define.values.len());
                 values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
@@ -116,11 +114,11 @@ impl BuildCommand {
             }
         }
 
-        // PORT NOTE: `Transpiler::init` now takes an arena. Process-lifetime —
+        // Note: `Transpiler::init` now takes an arena. Process-lifetime —
         // `exec` never returns until process exit (`exit_or_watch` diverges),
         // so use the shared CLI arena instead of allocating a fresh one.
         let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // PORT NOTE: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
+        // Note: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
         // borrows the transpiler for its full lifetime — dropck then rejects a
         // stack local because the borrow would still be live in its destructor.
         // Allocate in the process-lifetime arena (same rationale as `arena`;
@@ -142,7 +140,7 @@ impl BuildCommand {
             this_transpiler.options.ignore_module_resolution_errors = true;
         }
 
-        // PORT NOTE: clone the first entry point so `outfile` can borrow owned
+        // Note: clone the first entry point so `outfile` can borrow owned
         // storage instead of `this_transpiler.options.entry_points[0]`, which
         // would otherwise hold an immutable borrow of `this_transpiler` across
         // later `&mut self` calls (`configure_defines`, `generate_from_cli`).
@@ -194,6 +192,15 @@ impl BuildCommand {
             .clone_from(&ctx.bundler_options.asset_naming);
         this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
+        this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
+            if this_transpiler.options.target.is_server_side() {
+                bun_ast::runtime::ReactCompilerMode::Ssr
+            } else {
+                bun_ast::runtime::ReactCompilerMode::Client
+            }
+        } else {
+            bun_ast::runtime::ReactCompilerMode::Disabled
+        };
         this_transpiler.options.inline_entrypoint_import_meta_main =
             ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
@@ -291,6 +298,15 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
+                // When compiling to an executable, only `external` sourcemaps
+                // work, as the runtime does not look at the source map
+                // comment. After validating the user's choice, secretly
+                // override it. (Standalone HTML builds keep the user's choice
+                // because browsers do read the comment.)
+                if this_transpiler.options.source_map != options::SourceMapOption::None {
+                    this_transpiler.options.source_map = options::SourceMapOption::External;
+                }
+
                 let base_public_path =
                     bun_standalone_module_graph::StandaloneModuleGraph::target_base_public_path(
                         compile_target.os,
@@ -381,8 +397,10 @@ impl BuildCommand {
                 resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
             };
 
+            // `bun_sys::Dir` is the owning RAII
+            // handle; its Drop closes the fd when this block ends.
             let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {
-                Ok(d) => d,
+                Ok(d) => bun_sys::Dir { fd: d },
                 Err(err) => {
                     bun_core::pretty_errorln!(
                         "<r><red>{}<r> opening root directory {}",
@@ -392,9 +410,8 @@ impl BuildCommand {
                     Global::exit(1);
                 }
             };
-            // TODO(port): defer dir.close() — using explicit close after use; consider an RAII guard.
 
-            let result = match bun_sys::get_fd_path(dir, &mut src_root_dir_buf) {
+            let result = match bun_sys::get_fd_path(dir.fd, &mut src_root_dir_buf) {
                 Ok(p) => p,
                 Err(err) => {
                     bun_core::pretty_errorln!(
@@ -405,7 +422,6 @@ impl BuildCommand {
                     Global::exit(1);
                 }
             };
-            dir.close();
             break 'brk1 &*result;
         };
 
@@ -435,7 +451,7 @@ impl BuildCommand {
                 .append_slice(&[b"development" as &[u8]])?;
         }
 
-        // PORT NOTE: `resolver.opts` is the canonical
+        // Note: `resolver.opts` is the canonical
         // `bun_resolver::options::BundleOptions` subset, distinct from the
         // bundler-side `BundleOptions<'a>`; re-project the mutated options.
         this_transpiler.sync_resolver_opts();
@@ -452,7 +468,7 @@ impl BuildCommand {
                 this_transpiler.options.no_macros = true;
             }
             MacroOptions::Map(macros) => {
-                // PORT NOTE: `MacroOptions::Map` carries the
+                // Note: `MacroOptions::Map` carries the
                 // `bun_options_types::context::MacroMap` redeclaration; the
                 // bundler-side `options.macro_remap` is the resolver crate's
                 // `StringArrayHashMap` shape. Re-key into that shape here.
@@ -475,16 +491,14 @@ impl BuildCommand {
         let mut client_transpiler: Option<transpiler::Transpiler> = None;
         if this_transpiler.options.server_components {
             let mut ct = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
-            // PORT NOTE: Zig assigned `client_transpiler.options = this_transpiler.options`
-            // (struct copy). `BundleOptions<'a>` is non-`Clone` in Rust; instead
+            // Note: `BundleOptions<'a>` is non-`Clone`;
             // `Transpiler::init` above rebuilds options from the same `ctx.args`,
             // and the divergent fields are set explicitly below. `client_transpiler`
-            // is currently unused after this block (matching the Zig), so a
+            // is currently unused after this block, so a
             // perfect field-wise copy is not load-bearing.
             ct.options.target = bun_ast::Target::Browser;
             ct.options.server_components = true;
             ct.options.conditions = this_transpiler.options.conditions.clone()?;
-            // TODO(port): narrow error set
             this_transpiler
                 .options
                 .conditions
@@ -493,9 +507,26 @@ impl BuildCommand {
             this_transpiler.options.minify_syntax = true;
             ct.options.minify_syntax = true;
             {
+                use bun_bundler::DefineDataExt as _;
                 use bun_bundler::DefineExt as _;
+                // Feed `--define` entries into
+                // the client transpiler's Define table.
+                let user_defines = match &ctx.args.define {
+                    Some(input) => {
+                        let mut raw = bun_bundler::defines::RawDefines::default();
+                        raw.reserve(input.keys.len() + 4);
+                        for (key, value) in input.keys.iter().zip(input.values.iter()) {
+                            raw.insert(key.as_ref(), value.clone());
+                        }
+                        let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
+                        Some(bun_bundler::defines::DefineData::from_input(
+                            &raw, &drop, log_ref, arena,
+                        )?)
+                    }
+                    None => None,
+                };
                 ct.options.define = options::Define::init(
-                    None, // TODO(port): user_defines from ctx.args.define — RawDefines builder pending
+                    user_defines,
                     None,
                     this_transpiler.options.define.drop_debugger,
                     this_transpiler.options.dead_code_elimination
@@ -533,7 +564,7 @@ impl BuildCommand {
         let mut minify_duration: u64 = 0;
         let mut input_code_length: u64 = 0;
 
-        // PORT NOTE: `BundleV2::generate_from_cli` takes `&'a mut Transpiler<'a>`,
+        // Note: `BundleV2::generate_from_cli` takes `&'a mut Transpiler<'a>`,
         // which (with `'a = 'static` from the leaked arena) borrows
         // `this_transpiler` for the rest of its life. Snapshot every options
         // field read after that point so the borrow checker is satisfied.
@@ -703,7 +734,7 @@ impl BuildCommand {
 
         let mut had_err = false;
         'dump: {
-            // Output::flush() runs at end of this block (defer in Zig); see explicit calls below
+            // Output::flush() runs at end of this block; see explicit calls below
             let writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &opt_output_dir;
 
@@ -1110,8 +1141,10 @@ impl BuildCommand {
 
 fn exit_or_watch(code: u8, watch: bool) -> ! {
     if watch {
-        // the watcher thread will exit the process
-        // TODO(port): std.Thread.sleep(maxInt(u64)-1) — verify cross-platform sleep-forever
+        // the watcher thread will exit the process. `std::thread::sleep`
+        // accepts arbitrarily large Durations on every supported platform
+        // (the stdlib loops internally where the OS primitive is narrower),
+        // so this parks the thread for ~584 years — effectively forever.
         std::thread::sleep(std::time::Duration::from_secs(u64::MAX / 1_000_000_000));
     }
     Global::exit(u32::from(code));
@@ -1183,5 +1216,3 @@ fn print_summary(
     Output::print_elapsed_stdout_trim(bundle_elapsed as f64);
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
-
-// ported from: src/cli/build_command.zig

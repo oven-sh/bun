@@ -10,11 +10,9 @@ use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
 use crate::node::Encoding as NodeEncoding;
 
-// ── local shims ──────────────────────────────────────────────────────────
-// `bun.ComptimeStringMap.fromJSCaseInsensitive` — the upstream
 // `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
-// the case-insensitive variant is still cfg-gated. Map keys are all lower-case
-// ASCII, so lower the probe and do a direct phf lookup (mirrors PBKDF2.rs).
+// map keys are all lower-case ASCII, so lower the probe and do a direct lookup
+// (mirrors PBKDF2.rs / CryptoHasher.rs).
 fn algorithm_from_js_case_insensitive(
     global: &JSGlobalObject,
     input: JSValue,
@@ -23,31 +21,9 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// `JSValue.getOptional(_, _, ZigString.Slice)` — local shim until `bun_jsc`
-/// grows a typed `get_optional`. Returns `None` for missing/null/undefined.
-fn get_optional_slice(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &'static [u8],
-) -> JsResult<Option<ZigStringSlice>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => {
-            if !v.is_string() {
-                // SAFETY: `property` is a `&'static [u8]` literal supplied by
-                // the call-site (`b"algorithm"` etc.) — always ASCII.
-                let prop = unsafe { core::str::from_utf8_unchecked(property) };
-                return Err(global.throw_invalid_argument_type_value(prop, "string", v));
-            }
-            Ok(Some(v.to_slice(global)?))
-        }
-        _ => Ok(None),
-    }
-}
-
-/// `JSValue.getOptionalInt(_, _, u64)` — local shim. Spec (`JSValue.zig:1896`)
-/// delegates to `validateIntegerRange` with `[0, MAX_SAFE_INTEGER]`; that
-/// helper is defined on the cfg-gated `JSGlobalObject` impl, so inline the
-/// minimal u64 path here.
+/// Validates an optional integer property in `[0, MAX_SAFE_INTEGER]`.
+/// Differs from `JSValue::get_optional_int::<u64>` in rejecting NaN and in
+/// the error message wording expected by existing tests.
 fn get_optional_int_u64(
     target: JSValue,
     global: &JSGlobalObject,
@@ -94,8 +70,6 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
         secret = Some(js_secret.to_slice(global)?);
     }
-    // `defer if (secret) |s| s.deinit();` — handled by Drop on ZigStringSlice
-
     // Default values
     let mut expires_in: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
@@ -112,7 +86,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
 
         // Extract sessionId (optional)
-        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
+        if let Some(session_id_slice) = options_value.get_optional_slice(global, b"sessionId")? {
             if session_id_slice.slice().is_empty() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "sessionId must be a non-empty string"
@@ -238,11 +212,10 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         );
     }
     let token = js_token.to_slice(global)?;
-    // `defer token.deinit();` — handled by Drop on ZigStringSlice
 
     // Default values
     let mut secret: Option<ZigStringSlice> = None;
-    // `defer if (secret) |s| s.deinit();` — handled by Drop
+    // `secret` is freed by Drop.
     let mut max_age: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
     let mut session_id: Option<ZigStringSlice> = None;
@@ -254,7 +227,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         let options_value = args[1];
 
         // Extract the secret (required)
-        if let Some(secret_slice) = get_optional_slice(options_value, global, b"secret")? {
+        if let Some(secret_slice) = options_value.get_optional_slice(global, b"secret")? {
             if secret_slice.slice().is_empty() {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
@@ -263,7 +236,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
 
         // Extract sessionId (optional)
-        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
+        if let Some(session_id_slice) = options_value.get_optional_slice(global, b"sessionId")? {
             if session_id_slice.slice().is_empty() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "sessionId must be a non-empty string"
@@ -344,5 +317,3 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
     Ok(JSValue::from(is_valid))
 }
-
-// ported from: src/runtime/api/csrf_jsc.zig

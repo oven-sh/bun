@@ -2014,6 +2014,13 @@ impl PipeReader {
         match self.reader.start(self.stdio_result.unwrap(), true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
+                // `reader.start` reports a poll-registration failure through
+                // `on_reader_error` (not its return value), so the reader may
+                // already be errored/torn down here; same guard as
+                // `SubprocessPipeReader::start`.
+                if matches!(self.state, PipeReaderState::Err(_)) {
+                    return Ok(());
+                }
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct

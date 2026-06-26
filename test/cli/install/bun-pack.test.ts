@@ -469,6 +469,67 @@ describe("flags", () => {
     // Should still create the tarball
     expect(await exists(join(packageDir, "pack-quiet-test-1.1.1.tgz"))).toBeTrue();
   });
+
+  test("--silent", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-silent-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv, "--silent");
+
+    expect(out).toBe("pack-silent-test-1.1.1.tgz\n");
+    expect(await exists(join(packageDir, "pack-silent-test-1.1.1.tgz"))).toBeTrue();
+  });
+
+  test("--quiet with --destination", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-quiet-dest-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const dest = join(packageDir, "out");
+    const { out } = await pack(packageDir, bunEnv, "--quiet", `--destination=${dest}`);
+
+    const tarballPath = join(dest, "pack-quiet-dest-test-1.1.1.tgz");
+    expect(out).toBe(`${tarballPath}\n`);
+    expect(await exists(tarballPath)).toBeTrue();
+  });
+
+  test("--quiet with --dry-run", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-quiet-dry-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv, "--quiet", "--dry-run");
+    expect(out).toBe("pack-quiet-dry-test-1.1.1.tgz\n");
+
+    const dest = join(packageDir, "out");
+    const { out: destOut } = await pack(packageDir, bunEnv, "--quiet", "--dry-run", `--destination=${dest}`);
+    expect(destOut).toBe(`${join(dest, "pack-quiet-dry-test-1.1.1.tgz")}\n`);
+
+    // --dry-run never writes the tarball.
+    expect(await exists(join(packageDir, "pack-quiet-dry-test-1.1.1.tgz"))).toBeFalse();
+  });
 });
 
 test("shasum and integrity are consistent", async () => {

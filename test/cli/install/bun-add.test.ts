@@ -2504,8 +2504,11 @@ it("should update a package installed from one tarball URL to a different tarbal
     },
   });
   const server_url = server.url.href.replace(/\/+$/, "");
+  // Two distinct URLs for the same package. Differ by path rather than a query
+  // string: a "?" in a tarball URL lands in the extraction temp-dir name, which
+  // is rejected on Windows (a separate, pre-existing issue from this fix).
   const v1_url = `${server_url}/v1.tgz`;
-  const v2_url = `${server_url}/v2.tgz?x`;
+  const v2_url = `${server_url}/v2.tgz`;
 
   setHandler(dummyRegistry([]));
   await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));

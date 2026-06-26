@@ -178,12 +178,13 @@ pub struct Success {
     /// The package name from package.json, used for barrel optimization.
     pub package_name: ast::StoreStr,
 
-    /// Decoded trailing inline `//# sourceMappingURL=data:...` inner map,
-    /// parsed from the source bytes. `None` when the file had no inline
-    /// sourcemap comment, when sourcemaps are disabled on the build, or
-    /// when the inline payload was malformed (caller silently falls back
-    /// to the raw file bytes). Moved into `graph.input_files.input_source_map`
-    /// by `on_parse_task_complete`.
+    /// Inner map decoded from the file's trailing `//# sourceMappingURL=`
+    /// comment (inline `data:` URL or a sidecar `.map` file resolved on
+    /// disk). `None` when the file had no such comment, when sourcemaps
+    /// are disabled on the build, or when the payload was malformed or
+    /// unreadable (caller silently falls back to the raw file bytes).
+    /// Moved into `graph.input_files.input_source_map` by
+    /// `on_parse_task_complete`.
     pub input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
 }
 

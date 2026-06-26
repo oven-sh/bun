@@ -360,13 +360,14 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     /// as `line_offset_table_byte_offset_list` above.
     pub line_offset_table_first_non_ascii: &'static [u32],
 
-    /// When set, the bundler/printer input file carried an inline
-    /// `//# sourceMappingURL=data:...` comment; `add_source_mapping` will
-    /// remap each mapping through its inner map so the emitted
-    /// `source_index` / original `(line, col)` refer to the authored
-    /// source instead of the bundler's intermediate input. Unset
-    /// otherwise — the emitted mapping uses the Builder's own
-    /// `prev_state.source_index` (the outer source's slot).
+    /// When set, the bundler/printer input file carried a
+    /// `//# sourceMappingURL=` comment (inline `data:` URL or a sidecar
+    /// `.map` file resolved on disk); `add_source_mapping` will remap
+    /// each mapping through its inner map so the emitted `source_index`
+    /// / original `(line, col)` refer to the authored source instead of
+    /// the bundler's intermediate input. Unset otherwise — the emitted
+    /// mapping uses the Builder's own `prev_state.source_index` (the
+    /// outer source's slot).
     ///
     /// Borrow lives in `Graph::input_files[i].input_source_map`
     /// (`Option<Box<InputSourceMap>>`); the slot outlives every printer

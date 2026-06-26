@@ -329,6 +329,31 @@ describe("Glob.match", () => {
     expect(glob.match("bde")).toBeTrue();
   });
 
+  test("deeply nested braces in skipped branch do not overflow depth counter", () => {
+    const opens = Buffer.alloc(300, "{").toString();
+    const closes = Buffer.alloc(300, "}").toString();
+
+    // First branch matches; skip_branch must scan past >255 nested braces to
+    // find the closing brace of the outer group.
+    let glob = new Glob("{a," + opens + closes + "}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("b")).toBeFalse();
+
+    // Deeply nested braces in the first (non-matching) branch, second branch matches.
+    glob = new Glob("{" + opens + closes + ",a}");
+    expect(glob.match("a")).toBeTrue();
+
+    // Deep nest with content, surrounded by matching branches on both sides.
+    glob = new Glob("{a," + opens + "x" + closes + ",b}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("b")).toBeTrue();
+    expect(glob.match("y")).toBeFalse();
+
+    // Same shape inside a wildcard backtrack.
+    glob = new Glob("*{a," + opens + closes + "}");
+    expect(glob.match("za")).toBeTrue();
+  });
+
   // Most of the potential bugs when dealing with non-ASCII patterns is when the
   // pattern matching algorithm wants to deal with single chars, for example
   // using the `[...]` syntax, it tries to match each char in the brackets. With

@@ -67,7 +67,7 @@ struct State {
     wildcard: Wildcard,
     globstar: Wildcard,
 
-    brace_depth: u8,
+    brace_depth: u32,
 }
 
 impl State {
@@ -104,7 +104,7 @@ struct Wildcard {
     // Using u32 rather than usize for these results in 10% faster performance.
     glob_index: u32,
     path_index: u32,
-    brace_depth: u8,
+    brace_depth: u32,
 }
 
 /// This function checks returns a boolean value if the pathname `path` matches
@@ -435,7 +435,7 @@ fn match_brace(
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
 ) -> bool {
-    let mut brace_depth: i16 = 0;
+    let mut brace_depth: i32 = 0;
     let mut in_brackets = false;
 
     let open_brace_index = state.glob_index;
@@ -530,7 +530,7 @@ fn match_brace_branch(
     // Clone state
     let mut branch_state = *state;
     branch_state.glob_index = branch_index;
-    branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
+    branch_state.brace_depth = brace_stack.len() as u32;
 
     let matched = glob_match_impl(
         &mut branch_state,

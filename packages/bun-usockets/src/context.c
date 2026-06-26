@@ -373,7 +373,17 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches).
+         * Report via both the out-param and thread-local errno: Bun.listen
+         * reads *error, Bun.serve reads errno. */
+        int saved_errno = errno;
+        bsd_close_socket(listen_socket_fd);
+        us_poll_free(p, group->loop);
+        *error = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
@@ -395,7 +405,14 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        int saved_errno = errno;
+        bsd_close_socket(listen_socket_fd);
+        us_poll_free(p, group->loop);
+        *error = saved_errno;
+        errno = saved_errno;
+        return 0;
+    }
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
@@ -485,7 +502,13 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_WRITABLE);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        bsd_close_socket(connect_socket_fd);
+        us_poll_free(p, group->loop);
+        errno = saved_errno;
+        return NULL;
+    }
 
     struct us_socket_t *socket = (struct us_socket_t *) p;
     us_internal_init_connect_socket(socket, group, kind, options);
@@ -616,7 +639,13 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_WRITABLE);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
+        int saved_errno = errno;
+        bsd_close_socket(connect_socket_fd);
+        us_poll_free(p, group->loop);
+        errno = saved_errno;
+        return 0;
+    }
 
     struct us_socket_t *connect_socket = (struct us_socket_t *) p;
     us_internal_init_connect_socket(connect_socket, group, kind, options);
@@ -641,9 +670,16 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             continue;
         }
-        ++opened;
         bsd_socket_nodelay(connect_socket_fd, 1);
         struct us_socket_t *s = (struct us_socket_t *)us_create_poll(loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
+        struct us_poll_t *poll = &s->p;
+        us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+        if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            bsd_close_socket(connect_socket_fd);
+            us_poll_free(poll, loop);
+            continue;
+        }
+        ++opened;
         us_internal_init_connect_socket(s, group, c->kind, c->options);
         s->timeout = c->timeout;
         s->long_timeout = c->long_timeout;
@@ -655,10 +691,6 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->connect_next = c->connecting_head;
         c->connecting_head = s;
         s->connect_state = c;
-
-        struct us_poll_t *poll = &s->p;
-        us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-        us_poll_start(poll, loop, LIBUS_SOCKET_WRITABLE);
     }
     return opened;
 }

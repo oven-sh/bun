@@ -520,6 +520,94 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
   expect(text).toContain("Здравствуй, мир!");
 });
 
+// Cloning a body whose stream is locked must surface the builtin's TypeError as a
+// normal, catchable exception. The native tee glue used to report it through the
+// uncaught-exception machinery while it was still pending on the VM, so the catch
+// block received a bogus secondary error and the process was torn down as if the
+// (caught) error were uncaught.
+test("Request.clone() with a locked body throws a catchable TypeError", async () => {
+  const script = `
+    const events = [];
+    process.on("uncaughtException", err => {
+      events.push("uncaughtException: " + err.message);
+    });
+    const request = new Request("https://example.com", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(8));
+          controller.close();
+        },
+      }),
+    });
+    request.body.getReader();
+    for (let i = 0; i < 2; i++) {
+      try {
+        request.clone();
+        events.push("clone " + i + ": no error");
+      } catch (err) {
+        events.push("clone " + i + ": " + err.constructor.name + ": " + err.message);
+      }
+    }
+    setImmediate(() => console.log(JSON.stringify(events)));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(
+    JSON.stringify(["clone 0: TypeError: ReadableStream is locked", "clone 1: TypeError: ReadableStream is locked"]),
+  );
+  expect(exitCode).toBe(0);
+});
+
+test("Response.clone() with a locked body throws a catchable TypeError", async () => {
+  const script = `
+    const events = [];
+    process.on("uncaughtException", err => {
+      events.push("uncaughtException: " + err.message);
+    });
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(8));
+          controller.close();
+        },
+      }),
+    );
+    response.body.getReader();
+    for (let i = 0; i < 2; i++) {
+      try {
+        response.clone();
+        events.push("clone " + i + ": no error");
+      } catch (err) {
+        events.push("clone " + i + ": " + err.constructor.name + ": " + err.message);
+      }
+    }
+    setImmediate(() => console.log(JSON.stringify(events)));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(
+    JSON.stringify(["clone 0: TypeError: ReadableStream is locked", "clone 1: TypeError: ReadableStream is locked"]),
+  );
+  expect(exitCode).toBe(0);
+});
+
 test("Blob type from a consumed Response keeps the original content-type after clones with different content-types are consumed", async () => {
   // The Response and its clones share one underlying body store. Consuming a clone
   // with a different Content-Type must not change (or invalidate) the type of a Blob

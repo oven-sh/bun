@@ -121,7 +121,6 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
 
     auto callData = JSC::getCallData(function);
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
-    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
@@ -306,34 +305,11 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
     auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamTeePrivateName();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto invokeReadableStreamFunction = [](JSC::JSGlobalObject* lexicalGlobalObject, const JSC::Identifier& identifier, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& arguments) -> std::optional<JSC::JSValue> {
-        JSC::VM& vm = lexicalGlobalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::JSLockHolder lock(vm);
-
-        auto function = lexicalGlobalObject->get(lexicalGlobalObject, identifier);
-        scope.assertNoExceptionExceptTermination();
-        if (scope.exception()) [[unlikely]]
-            return {};
-        ASSERT(function.isCallable());
-
-        auto callData = JSC::getCallData(function);
-        auto result = JSC::call(lexicalGlobalObject, function, callData, thisValue, arguments);
-#if ASSERT_ENABLED
-        if (scope.exception()) [[unlikely]] {
-            Bun__reportError(lexicalGlobalObject, JSC::JSValue::encode(scope.exception()));
-        }
-#endif
-        EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-        RETURN_IF_EXCEPTION(scope, {});
-        return result;
-    };
-
     MarkedArgumentBuffer arguments;
     arguments.append(readableStream);
     arguments.append(JSC::jsBoolean(true));
     ASSERT(!arguments.hasOverflowed());
-    auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
+    auto returnedValue = invokeReadableStreamFunction(*lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
     RETURN_IF_EXCEPTION(scope, false);
     if (!returnedValue) return false;
 

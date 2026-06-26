@@ -2784,8 +2784,15 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
             Err(_) => return None,
         }
     };
-    let joined =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
+    // Checked join: returns None when base + src overflow the buffer, so a
+    // pathologically long image src or base_dir falls back to alt-text
+    // instead of aborting the process on the fixed-size path buffer.
+    let mut join_buf = bun_paths::PathBuffer::uninit();
+    let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+        base,
+        &mut join_buf[..],
+        &[&decoded],
+    )?;
     let abs = Box::<[u8]>::from(joined);
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true

@@ -181,7 +181,12 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             if cwd_val.is_string() {
                 let cwd_str = cwd_val.to_slice(global_this)?;
                 let cwd_bytes = cwd_str.slice();
-                if !cwd_bytes.is_empty() {
+                // Cap at MAX_PATH_BYTES: a longer value can't name a real
+                // directory, and feeding it into the fixed PathBuffer joins
+                // below would overflow and abort the process. Over-long cwd
+                // is dropped, leaving image_base_dir None (process-cwd
+                // fallback), mirroring the guard in read_png_dims.
+                if !cwd_bytes.is_empty() && cwd_bytes.len() < paths::MAX_PATH_BYTES {
                     if paths::is_absolute(cwd_bytes) {
                         // Dupe into an owned Vec so the `ZigString::Slice`
                         // backing `cwd_str` can be dropped safely.
@@ -189,19 +194,18 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                         cwd_is_owned = true;
                     } else {
                         let mut proc_cwd_buf = PathBuffer::uninit();
-                        match bun_core::getcwd(&mut proc_cwd_buf) {
-                            Ok(proc_cwd) => {
-                                let joined = paths::resolve_path::join_abs_string_buf::<
-                                    paths::resolve_path::platform::Auto,
-                                >(
-                                    proc_cwd, &mut cwd_abs_buf, &[cwd_bytes]
-                                );
+                        // join_abs_string_buf_checked returns None when the
+                        // joined+normalized path exceeds cwd_abs_buf (a short
+                        // relative cwd can still overflow once joined with a
+                        // long process cwd); leave image_base_dir None then.
+                        if let Ok(proc_cwd) = bun_core::getcwd(&mut proc_cwd_buf) {
+                            if let Some(joined) = paths::resolve_path::join_abs_string_buf_checked::<
+                                paths::resolve_path::platform::Auto,
+                            >(
+                                proc_cwd, &mut cwd_abs_buf, &[cwd_bytes]
+                            ) {
                                 cwd_abs_len = joined.len();
                             }
-                            // getcwd failure: leave image_base_dir None so
-                            // the renderer falls back to the process cwd
-                            // (same as if `cwd` wasn't passed).
-                            Err(_) => {}
                         }
                     }
                 }

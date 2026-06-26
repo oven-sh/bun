@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Accessing `proc.stdout` on a piped subprocess moves the already-registered

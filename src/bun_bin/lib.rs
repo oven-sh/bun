@@ -151,23 +151,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
-    // Restrict the default DLL search path to System32 before anything can
-    // LoadLibrary (delay-load resolution, dbghelp, WIC, bcryptprimitives).
-    // Explicit-path loads (`process.dlopen` of `.node` addons) are unaffected.
-    // The call cannot fail on supported Windows; the debug assert surfaces a
-    // regression on CI, and release degrades to the default (pre-hardening)
-    // search order rather than refusing to start over a defense-in-depth knob.
-    #[cfg(windows)]
-    {
-        let _hardened = bun_sys::windows::kernel32::SetDefaultDllDirectories(
-            bun_sys::windows::kernel32::LOAD_LIBRARY_SEARCH_SYSTEM32,
-        ) != 0;
-        debug_assert!(
-            _hardened,
-            "SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) failed"
-        );
-    }
-
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives

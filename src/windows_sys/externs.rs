@@ -595,8 +595,9 @@ pub mod kernel32 {
     pub const MEM_FREE: u32 = 0x10000;
 
     /// `LOAD_LIBRARY_SEARCH_SYSTEM32` (`libloaderapi.h`): restrict the DLL
-    /// search path to `%windir%\System32`. Passed to `SetDefaultDllDirectories`
-    /// (process-wide default) and to `LoadLibraryEx*` (per-call).
+    /// search to `%windir%\System32`. Passed as `dwFlags` to `LoadLibraryEx*`
+    /// for loads of system DLLs that must not be satisfied from the
+    /// application directory, CWD, or `PATH`.
     pub const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x0000_0800;
 
     #[link(name = "kernel32")]
@@ -644,11 +645,6 @@ pub mod kernel32 {
             lpOverlapped: *mut c_void,
         ) -> BOOL;
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
-        /// `SetDefaultDllDirectories` (`libloaderapi.h`): sets the process-wide
-        /// default DLL search path used by every `LoadLibrary[Ex]` call that does
-        /// not pass explicit `LOAD_LIBRARY_SEARCH_*` flags. No pointer
-        /// preconditions: `DirectoryFlags` is a by-value bitmask.
-        pub safe fn SetDefaultDllDirectories(DirectoryFlags: DWORD) -> BOOL;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;

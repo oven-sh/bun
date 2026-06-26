@@ -983,8 +983,9 @@ export const linkerFlags: Flag[] = [
   },
   {
     // Writes DependentLoadFlags into the PE load-config directory so the OS
-    // loader resolves bun.exe's static imports from System32 only. Delay-loads
-    // and runtime LoadLibrary are covered by SetDefaultDllDirectories in main().
+    // loader resolves bun.exe's static imports from System32 only. The
+    // /delayload set below is covered by the __pfnDliNotifyHook2 delay-load
+    // hook in src/jsc/bindings/WindowsDelayLoadHook.cpp.
     flag: "/DEPENDENTLOADFLAG:0x800",
     when: c => c.windows,
     desc: "Static DLL imports resolve from System32 only (LOAD_LIBRARY_SEARCH_SYSTEM32)",

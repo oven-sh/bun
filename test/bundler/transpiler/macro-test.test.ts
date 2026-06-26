@@ -147,7 +147,12 @@ test("object argument with a sparse numeric key", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Debug builds print "[macro] call take" to stdout before the script's own output.
-  expect(stdout).toEndWith("200000\n");
-  expect(exitCode).toBe(0);
+  // One combined assertion so stderr (where JSC prints the exception check failure) shows up in
+  // the diff if the child aborts. Debug builds print "[macro] call take" to stdout before the
+  // script's own output, so only the tail of stdout is matched.
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+    stdout: expect.stringMatching(/200000\n$/),
+    exitCode: 0,
+    signalCode: null,
+  });
 });

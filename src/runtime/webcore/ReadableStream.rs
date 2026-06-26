@@ -440,8 +440,10 @@ impl ReadableStream {
         // across-read ref (and root the wrapper) immediately so a GC before
         // JS first pulls cannot sweep the wrapper and free this box while the
         // poll is still armed. `on_start` checks `waiting_for_on_reader_done`
-        // and will not take a second ref.
-        if source.context.reader().has_pending_activity() {
+        // and will not take a second ref. Use the same predicate as
+        // `FileReader::on_start` so the ref is always paired with an eventual
+        // `on_reader_done`/`on_reader_error` release.
+        if !source.context.reader().is_done() {
             source.context.waiting_for_on_reader_done.set(true);
             source.increment_count();
         }

@@ -47,6 +47,7 @@ test.skipIf(isWindows)(
       const count = () =>
         heapStats().objectTypeCounts.FileInternalReadableStreamSource ?? 0;
 
+      let streams = 0;
       async function once() {
         const proc = Bun.spawn({
           cmd: [process.execPath, "-e", childScript],
@@ -57,7 +58,7 @@ test.skipIf(isWindows)(
         });
         // Materialize the ReadableStream so the live poll is re-parented
         // into a NewSource<FileReader>, but never pull from it.
-        void proc.stdout;
+        if (proc.stdout instanceof ReadableStream) streams++;
         await proc.exited;
       }
 
@@ -68,6 +69,7 @@ test.skipIf(isWindows)(
       const base = count();
 
       await Promise.all(Array.from({ length: ITERS }, once));
+      const afterSpawn = count() - base;
 
       // Direct children have exited; grandchildren still hold the write end.
       for (let i = 0; i < 20; i++) { Bun.gc(true); await Bun.sleep(1); }
@@ -84,7 +86,9 @@ test.skipIf(isWindows)(
         if (afterEof <= 0) break;
       }
 
-      console.log(JSON.stringify({ iters: ITERS, duringLivePipe, afterEof }));
+      console.log(JSON.stringify({
+        iters: ITERS, duringLivePipe, afterEof, base, afterSpawn, streams,
+      }));
     `;
 
     let stdout = "",
@@ -114,7 +118,13 @@ test.skipIf(isWindows)(
     const { iters, duringLivePipe, afterEof } = result;
     // Invariant: every FileReader whose pipe poll is still armed must be
     // pinned by its own Strong ref. Before the fix they were swept here
-    // (duringLivePipe ~ 0), which is exactly the UAF precondition.
+    // (duringLivePipe ~ 0), which is exactly the UAF precondition. The full
+    // result object carries base/afterSpawn/streams for CI diagnostics.
+    if (duringLivePipe < iters) {
+      expect({ duringLivePipe, ...result, stderr }).toEqual({
+        duringLivePipe: `>= ${iters}`,
+      });
+    }
     expect(duringLivePipe).toBeGreaterThanOrEqual(iters);
     // Once the pipe reaches EOF the ref is released and the wrappers become
     // collectable. One may survive via a conservatively-rooted final

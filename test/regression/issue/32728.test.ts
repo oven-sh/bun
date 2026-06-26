@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "node:path";
 
@@ -29,11 +29,7 @@ test("compile preserves parent-segment entrypoint path for Worker resolution", a
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [buildOut, buildErr, buildExit] = await Promise.all([
-    build.stdout.text(),
-    build.stderr.text(),
-    build.exited,
-  ]);
+  const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
   expect(buildErr).not.toContain("error:");
   expect(buildExit).toBe(0);
 
@@ -47,11 +43,7 @@ test("compile preserves parent-segment entrypoint path for Worker resolution", a
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [runOut, runErr, runExit] = await Promise.all([
-    run.stdout.text(),
-    run.stderr.text(),
-    run.exited,
-  ]);
+  const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   expect(runOut).toContain("RESULT:worker started");
   expect(runErr).not.toContain("ModuleNotFound");
   expect(runExit).toBe(0);

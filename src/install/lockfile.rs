@@ -924,12 +924,9 @@ impl Lockfile {
         Ok(())
     }
 
-    /// `bun add <url>` keys the new root dependency by its URL until the tarball
-    /// is fetched; `assign_root_resolution` then renames it to the resolved
-    /// name. If the package was already installed from a different URL, two root
-    /// dependencies now share one name but resolve to different packages, which
-    /// the tree hoister rejects as a dependency loop. The newly requested URL
-    /// supersedes the existing entry, so drop the stale one before the rebuild.
+    /// `bun add <url>` starts URL-keyed, then `assign_root_resolution` renames it.
+    /// If another URL already installed the same name, hoisting sees a loop.
+    /// The new request supersedes the stale root, so drop it before rebuilding.
     fn remove_superseded_root_dependencies(
         old: &mut Lockfile,
         manager: &mut PackageManager,
@@ -950,6 +947,7 @@ impl Lockfile {
         let res_slice: PackageIDSlice = old.packages.items_resolutions()[workspace_package_id];
         let n = dep_slice.len as usize;
         if n < 2
+            || res_slice.len as usize != n
             || dep_slice.off as usize + n > old.buffers.dependencies.len()
             || res_slice.off as usize + n > old.buffers.resolutions.len()
         {
@@ -965,7 +963,8 @@ impl Lockfile {
             // update requests the user typed. Only non-aliased URL adds get
             // renamed to the resolved name, so only those can collide.
             let mut matched = vec![false; n];
-            let mut superseding: Vec<(PackageNameHash, bool, PackageID)> = Vec::new();
+            let mut superseding: Vec<(PackageNameHash, dependency::Behavior, PackageID)> =
+                Vec::new();
             for (i, dep) in deps.iter().enumerate() {
                 for update in updates.iter() {
                     if update.matches(dep, string_buf) {
@@ -979,28 +978,24 @@ impl Lockfile {
                                     | dependency::Tag::Github
                             )
                         {
-                            superseding.push((
-                                dep.name_hash,
-                                dep.behavior.is_dev(),
-                                resolutions[i],
-                            ));
+                            superseding.push((dep.name_hash, dep.behavior, resolutions[i]));
                         }
                         break;
                     }
                 }
             }
 
-            // Mirror the tree hoister's loop condition exactly: same name and
-            // dev-ness, non-peer, resolving to a *different* package. A sibling
-            // that resolves to the same package does not loop, so keep it.
+            // Prune only within the same dependency group (identical behavior) and
+            // when the resolution differs, matching the package.json editor's
+            // single-group rewrite; a cross-group collision stays a loud loop.
             let mut keep = vec![true; n];
             for (i, dep) in deps.iter().enumerate() {
                 if matched[i] || dep.behavior.is_peer() {
                     continue;
                 }
-                for &(name_hash, is_dev, winner_resolution) in &superseding {
+                for &(name_hash, behavior, winner_resolution) in &superseding {
                     if dep.name_hash == name_hash
-                        && dep.behavior.is_dev() == is_dev
+                        && dep.behavior == behavior
                         && resolutions[i] != winner_resolution
                     {
                         keep[i] = false;

@@ -26,11 +26,7 @@ test("long comma expression does not blow up memory with target: bun", async () 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
     stdout: expect.stringMatching(/^\{"delta_mb":/),

@@ -1702,8 +1702,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     double byteOffsetD = 0;
 
     // An empty haystack is NOT an immediate -1: Node still finds an empty
-    // needle in it (Buffer.alloc(0).indexOf(Buffer.alloc(0)) === 0), and it
-    // still runs the byteOffset coercion (which can invoke user valueOf).
+    // needle in it (Buffer.alloc(0).indexOf(Buffer.alloc(0)) === 0).
     // computeIndexOfRange handles both the empty haystack and empty needle.
 
     auto valueValue = callFrame->argument(0);

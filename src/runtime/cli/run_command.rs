@@ -1668,9 +1668,11 @@ impl Run {
                             // SAFETY: `vm.jsc_vm` set in `init`.
                             let result = promise.result(unsafe { &mut *vm.jsc_vm });
                             let global = vm.global;
+                            // on_before_exit() set this; clear so a user
+                            // uncaughtException listener is consulted instead
+                            // of uncaught_exception() hard-exiting.
+                            vm.exit_on_uncaught_exception = false;
                             // SAFETY: `global` valid for VM lifetime.
-                            // uncaught_exception() sets exit_code=1 itself on
-                            // !handled; when handled, respect the listener.
                             let _ = vm.uncaught_exception(unsafe { &*global }, result, true);
                             promise.set_handled();
                             vm.pending_internal_promise_reported_at = vm.hot_reload_counter;

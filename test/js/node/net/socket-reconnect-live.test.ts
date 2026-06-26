@@ -1,11 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// `Socket.prototype.connect` on a socket that still has a live native handle
-// used to trip `debug_assert!(prev.socket.get().is_detached())` in
-// connect_finish (assert builds) and, on release builds, silently aliased two
-// native sockets onto one wrapper (the old us_socket_t's ext slot kept
-// pointing at the wrapper while `do_connect` overwrote `self.socket`).
+// connect_finish must tear down a still-live previous native socket before
+// reusing the wrapper, not alias two native sockets onto one ext slot.
 describe("socket.connect() on an already-connected socket", () => {
   it("does not crash and emits connect for the new connection", async () => {
     await using proc = Bun.spawn({

@@ -880,12 +880,14 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
 
     let trees_len = buffers.trees.len();
     let hoisted_len = buffers.hoisted_dependencies.len();
-    for tree in buffers.trees.iter() {
-        // `dependency_id` is a real dependency id or a sentinel
-        // (`ROOT_DEP_ID` / `invalid_dependency_id`, both above any real id);
-        // `buffers::load` already remapped legacy package-id keyed trees.
-        if (tree.dependency_id < Tree::ROOT_DEP_ID
-            && tree.dependency_id as usize >= dependencies_len)
+    for (tree_index, tree) in buffers.trees.iter().enumerate() {
+        // `invalid_dependency_id` is the only sentinel the consumers handle
+        // (`Tree::folder_name`); `ROOT_DEP_ID` is only ever written on the
+        // root node, which nothing takes the folder name of.
+        let dependency_id_valid = (tree.dependency_id as usize) < dependencies_len
+            || tree.dependency_id == invalid_dependency_id
+            || (tree_index == 0 && tree.dependency_id == Tree::ROOT_DEP_ID);
+        if !dependency_id_valid
             || (tree.parent != Tree::INVALID_ID && tree.parent as usize >= trees_len)
             || !slice_in_bounds(tree.dependencies.off, tree.dependencies.len, hoisted_len)
         {

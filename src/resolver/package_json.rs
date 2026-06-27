@@ -222,6 +222,18 @@ impl PackageJSON {
         bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
         Ok(normalized)
     }
+
+    /// A leading `/` or `\` in a `sideEffects` entry is package-root-relative,
+    /// not filesystem-absolute. Strip any leading separators so `r_fs.abs`
+    /// joins against the package dir instead of discarding it (`path.resolve`
+    /// treats an absolute later component as a new root, and `//x` is still
+    /// absolute after one strip). Matches esbuild's `filepath.Join`. #30320
+    fn strip_pattern_root(mut name: &[u8]) -> &[u8] {
+        while let [b'/' | b'\\', rest @ ..] = name {
+            name = rest;
+        }
+        name
+    }
 }
 
 #[derive(Default)]
@@ -254,7 +266,15 @@ impl SideEffects {
         match self {
             SideEffects::Unspecified => true,
             SideEffects::False => false,
-            SideEffects::Map(map) => map.contains_key(&StringHashMapUnownedKey::init(path)),
+            // Stored patterns are always slash-normalized (see `parse`); the
+            // runtime path may contain native separators on Windows, so we
+            // must normalize it the same way before hashing. See #30320.
+            SideEffects::Map(map) => {
+                let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
+                    return true;
+                };
+                map.contains_key(&StringHashMapUnownedKey::init(&normalized_path))
+            }
             SideEffects::Glob(glob_list) => {
                 // Normalize path for cross-platform glob matching
                 let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
@@ -269,18 +289,18 @@ impl SideEffects {
                 false
             }
             SideEffects::Mixed(mixed) => {
-                // First check exact matches
-                if mixed
-                    .exact
-                    .contains_key(&StringHashMapUnownedKey::init(path))
-                {
-                    return true;
-                }
-                // Then check glob patterns with normalized path
                 let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
                     return true;
                 };
 
+                // First check exact matches
+                if mixed
+                    .exact
+                    .contains_key(&StringHashMapUnownedKey::init(&normalized_path))
+                {
+                    return true;
+                }
+                // Then check glob patterns with normalized path
                 for pattern in mixed.globs.iter() {
                     if glob::r#match(pattern, &normalized_path).matches() {
                         return true;
@@ -749,6 +769,7 @@ impl PackageJSON {
                     map.reserve(items.len());
                     glob_list.reserve(items.len());
 
+                    let dir = json_source.path.name().dir_with_trailing_slash();
                     for item in items {
                         if let Some(name) = item.as_str() {
                             // Skip CSS files as they're not relevant for tree-shaking
@@ -756,23 +777,28 @@ impl PackageJSON {
                                 continue;
                             }
 
-                            // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
-
-                            let pattern = r_fs.join(&joined);
+                            // Build the absolute pattern using the same shape as runtime paths
+                            // (`r_fs.abs` / `join_abs_string`) so they compare equal after
+                            // normalization. `r_fs.join` here would produce a different shape
+                            // on Windows (leading `/` before the drive letter) that wouldn't
+                            // match the runtime path. See #30320.
+                            let joined: [&[u8]; 2] = [dir, Self::strip_pattern_root(name)];
+                            let pattern = r_fs.abs(&joined);
+                            let normalized_pattern = Self::normalize_path_for_glob(pattern)
+                                .unwrap_or_else(|_| pattern.to_vec());
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
                                 || strings::contains_char(name, b'[')
                                 || strings::contains_char(name, b'{')
                             {
-                                // Normalize pattern to use forward slashes for cross-platform compatibility
-                                let normalized_pattern = Self::normalize_path_for_glob(pattern)
-                                    .unwrap_or_else(|_| pattern.to_vec());
                                 glob_list.push(normalized_pattern.into_boxed_slice());
                             } else {
-                                let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
+                                // Exact-match keys must be normalized to match runtime paths
+                                // (callers feed `hasSideEffects` a path that is also run through
+                                // `normalize_path_for_glob` on lookup).
+                                let _ = map
+                                    .insert(StringHashMapUnownedKey::init(&normalized_pattern), ());
                             }
                         }
                     }
@@ -783,6 +809,7 @@ impl PackageJSON {
                 } else if has_globs {
                     // Only glob patterns
                     glob_list.reserve(items.len());
+                    let dir = json_source.path.name().dir_with_trailing_slash();
                     for item in items {
                         if let Some(name) = item.as_str() {
                             // Skip CSS files as they're not relevant for tree-shaking
@@ -790,12 +817,9 @@ impl PackageJSON {
                                 continue;
                             }
 
-                            // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
-
-                            let pattern = r_fs.join(&joined);
-                            // Normalize pattern to use forward slashes for cross-platform compatibility
+                            // See comment above about `r_fs.abs` vs `r_fs.join`.
+                            let joined: [&[u8]; 2] = [dir, Self::strip_pattern_root(name)];
+                            let pattern = r_fs.abs(&joined);
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
                             glob_list.push(normalized_pattern.into_boxed_slice());
@@ -805,13 +829,15 @@ impl PackageJSON {
                 } else {
                     // Only exact matches
                     map.reserve(items.len());
+                    let dir = json_source.path.name().dir_with_trailing_slash();
                     for item in items {
                         if let Some(name) = item.as_str() {
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
-
+                            let joined: [&[u8]; 2] = [dir, Self::strip_pattern_root(name)];
+                            let pattern = r_fs.abs(&joined);
+                            let normalized_pattern = Self::normalize_path_for_glob(pattern)
+                                .unwrap_or_else(|_| pattern.to_vec());
                             let _ =
-                                map.insert(StringHashMapUnownedKey::init(r_fs.join(&joined)), ());
+                                map.insert(StringHashMapUnownedKey::init(&normalized_pattern), ());
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);

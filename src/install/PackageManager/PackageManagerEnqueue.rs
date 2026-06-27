@@ -2007,19 +2007,26 @@ fn get_or_put_resolved_package_with_find_result(
         // If updating, only update packages in the current workspace.
         let is_root_dep = unsafe { &*(*this_ptr).lockfile }
             .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id);
-        let dep_name = dependency
-            .name
-            .slice(this.lockfile.buffers.string_bytes.as_slice());
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        let dep_name = dependency.name.slice(string_buf);
         // no need to do a look up if update requests are empty (`bun update` with no args)
         let in_update_set =
             this.update_requests.is_empty() || this.updating_packages.contains(dep_name);
         // A catalog entry is declared at the workspace root but consumed by
-        // member workspaces, so its dependency instance is not a root
-        // dependency of the install's workspace. Allow a named `bun update
-        // <pkg>` to re-resolve a catalog package it explicitly targets.
-        let is_named_catalog_update = !this.update_requests.is_empty()
-            && dependency.version.tag == dependency::version::Tag::Catalog
-            && this.updating_packages.contains(dep_name);
+        // member workspaces, so its dependency instance is not a root dependency
+        // of the install's workspace. Allow a named `bun update <pkg>` to
+        // re-resolve a catalog package it targets, scoped to the exact group so
+        // a same-named entry in another catalog is left alone.
+        let is_named_catalog_update = dependency.version.tag
+            == dependency::version::Tag::Catalog
+            && {
+                let dep_catalog = dependency.version.catalog().slice(string_buf);
+                this.update_requests.iter().any(|request| {
+                    request.is_catalog
+                        && strings::eql_long(request.get_name(), dep_name, true)
+                        && strings::eql_long(request.catalog_name.as_ref(), dep_catalog, true)
+                })
+            };
         this.to_update && in_update_set && (is_root_dep || is_named_catalog_update)
     };
 

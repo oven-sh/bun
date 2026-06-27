@@ -446,26 +446,31 @@ it("update <name> updates a named catalog entry instead of adding a root depende
     JSON.stringify({ name: "server", dependencies: { baz: "catalog:ai" } }),
   );
 
-  const { exited: installed } = spawn({
+  const install = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: "ignore",
     stderr: "pipe",
     env,
   });
-  expect(await installed).toBe(0);
+  const [installErr, installCode] = await Promise.all([new Response(install.stderr).text(), install.exited]);
+  expect(installErr).not.toContain("error:");
+  expect(installCode).toBe(0);
 
-  const { stdout, stderr, exited } = spawn({
+  const proc = spawn({
     cmd: [bunExe(), "update", "baz"],
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
-  const out = await new Response(stdout).text();
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
   expect(err).not.toContain("error:");
-  expect(await exited).toBe(0);
+  expect(code).toBe(0);
 
   const root = await file(join(package_dir, "package.json")).json();
   // No spurious top-level dependency is synthesized for the catalog package.
@@ -503,30 +508,89 @@ it("update <name> updates the default catalog entry, issue#32808", async () => {
     JSON.stringify({ name: "server", dependencies: { baz: "catalog:" } }),
   );
 
-  const { exited: installed } = spawn({
+  const install = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: "ignore",
     stderr: "pipe",
     env,
   });
-  expect(await installed).toBe(0);
+  const [installErr, installCode] = await Promise.all([new Response(install.stderr).text(), install.exited]);
+  expect(installErr).not.toContain("error:");
+  expect(installCode).toBe(0);
 
-  const { stderr, exited } = spawn({
+  const proc = spawn({
     cmd: [bunExe(), "update", "baz"],
     cwd: package_dir,
     stdout: "ignore",
     stderr: "pipe",
     env,
   });
-  expect(await new Response(stderr).text()).not.toContain("error:");
-  expect(await exited).toBe(0);
+  const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(code).toBe(0);
 
   const root = await file(join(package_dir, "package.json")).json();
   expect(root.dependencies).toBeUndefined();
   expect(root.catalog).toEqual({ baz: "~0.0.5" });
   const server = await file(join(package_dir, "packages", "server", "package.json")).json();
   expect(server.dependencies.baz).toBe("catalog:");
+});
+
+it("update <name> re-resolves a catalog entry when a newer in-range version is published, issue#32808", async () => {
+  const urls: string[] = [];
+  // Install while only 0.0.3 is published, so the lockfile pins baz@0.0.3.
+  setHandler(dummyRegistry(urls, { "0.0.3": { bin: { "baz-run": "index.js" } }, latest: "0.0.3" }));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      catalogs: { ai: { baz: "~0.0.3" } },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "server"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "server", "package.json"),
+    JSON.stringify({ name: "server", dependencies: { baz: "catalog:ai" } }),
+  );
+
+  const install = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [installErr, installCode] = await Promise.all([new Response(install.stderr).text(), install.exited]);
+  expect(installErr).not.toContain("error:");
+  expect(installCode).toBe(0);
+
+  // 0.0.5 is published afterwards; `bun update baz` must re-resolve past the
+  // locked 0.0.3 to the latest in-range version and bump the catalog entry.
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.3": { bin: { "baz-run": "index.js" } },
+      "0.0.5": { bin: { "baz-exec": "index.js" } },
+      latest: "0.0.5",
+    }),
+  );
+  const proc = spawn({
+    cmd: [bunExe(), "update", "baz"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(code).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  expect(root.dependencies).toBeUndefined();
+  expect(root.catalogs).toEqual({ ai: { baz: "~0.0.5" } });
 });
 
 it("should support --recursive flag", async () => {

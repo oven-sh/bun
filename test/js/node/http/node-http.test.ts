@@ -2990,6 +2990,93 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+describe("malformed request line reaches 'connection' and 'clientError' with a writable socket", () => {
+  it.each([
+    ["method token followed by CRLF", "BOGUS\r\n\r\n"],
+    ["known method followed by CRLF", "GET\r\n\r\n"],
+    ["single method char followed by CRLF", "G\r\n\r\n"],
+    ["single method char with full line", "G / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
+  ])("%s", async (_name, payload) => {
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push("request");
+      res.end("should not reach here");
+    });
+    server.on("connection", () => events.push("connection"));
+    const { promise: errored, resolve: onErrored, reject: onErroredFail } = Promise.withResolvers<void>();
+    server.on("clientError", (err: any, s) => {
+      events.push("clientError " + err.code);
+      try {
+        expect(s.writable).toBe(true);
+        expect(s.destroyed).toBe(false);
+        expect(err.rawPacket).toEqual(Buffer.from(payload));
+      } catch (e) {
+        onErroredFail(e);
+        return;
+      }
+      s.end("HTTP/1.1 418 I'm a teapot\r\nConnection: close\r\n\r\n");
+      onErrored();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const socket = connect(port, "127.0.0.1");
+      let wire = "";
+      socket.on("data", d => (wire += d));
+      socket.on("error", () => {});
+      const closed = new Promise<void>(r => socket.on("close", () => r()));
+      await once(socket, "connect");
+      socket.write(payload);
+
+      await errored;
+      await closed;
+
+      expect(events).toEqual(["connection", "clientError HPE_INVALID_METHOD"]);
+      expect(wire).toContain("HTTP/1.1 418");
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  });
+
+  it("a method fragmented across writes still parses", async () => {
+    const events: string[] = [];
+    const { promise: gotRequest, resolve: onRequest } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      events.push("request " + req.method + " " + req.url);
+      res.end("ok");
+      onRequest();
+    });
+    server.on("connection", () => events.push("connection"));
+    server.on("clientError", (err: any, s) => {
+      events.push("clientError " + err.code);
+      s.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const socket = connect(port, "127.0.0.1");
+      socket.setNoDelay(true);
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GE");
+      await new Promise(r => setImmediate(r));
+      socket.write("T /path HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+
+      await gotRequest;
+      socket.end();
+      expect(events).toEqual(["connection", "request GET /path"]);
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  });
+});
+
 it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () => {
   // true inside the 'upgrade' listener; false for an Upgrade-carrying request
   // that falls through to 'request' (no Connection: upgrade token here).

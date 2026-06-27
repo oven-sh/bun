@@ -590,7 +590,8 @@ namespace uWS
             if(start == data)  [[unlikely]] {
                 return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
             }
-            if (data - start < 2) [[unlikely]] {
+            if (data - start < 2 && data >= end) [[unlikely]] {
+                /* A single method char followed by the post-padding sentinel: wait for more. */
                 return ConsumeRequestLineResult::shortRead();
             }
 
@@ -649,8 +650,12 @@ namespace uWS
                 }
             }
 
-            /* If we stand at the post padded CR, we have fragmented input so try again later */
+            /* If we stand at the post padded CR, we have fragmented input so try again later.
+             * A real CR in the input here means the method was never followed by SP. */
             if (data[0] == '\r') {
+                if (data < end) {
+                    return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
+                }
                 return ConsumeRequestLineResult::shortRead(false, isConnect);
             }
 

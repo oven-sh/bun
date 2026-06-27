@@ -354,7 +354,14 @@ declare module "bun:sqlite" {
      * the transaction will be rolled back (and the exception will propagate as
      * usual).
      *
-     * @param insideTransaction The callback which runs inside a transaction
+     * The callback must be synchronous: the transaction is committed when the
+     * callback returns, so an `async` callback would escape it at its first
+     * `await`. Passing an async function throws a `TypeError`, as does invoking
+     * the transaction with a callback that returns a `Promise` (after rolling
+     * back anything the callback already ran). Run awaited work before starting
+     * the transaction.
+     *
+     * @param insideTransaction The synchronous callback which runs inside a transaction
      *
      * @example
      * ```ts

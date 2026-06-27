@@ -844,6 +844,59 @@ it("db.transaction()", () => {
   expect(db.inTransaction).toBe(false);
 });
 
+// An async callback is never transactional: the implicit transaction would end at
+// the first await, so later statements and the rollback would run outside of it.
+// https://github.com/oven-sh/bun/issues/24662
+it("db.transaction() rejects an async callback up front", () => {
+  const db = Database.open(":memory:");
+  const message =
+    "db.transaction() callback cannot be an async function. Run any awaited work before starting the transaction.";
+  expect(() => db.transaction(async () => {})).toThrow(TypeError);
+  expect(() => db.transaction(async () => {})).toThrow(message);
+  expect(() => db.transaction(async function () {})).toThrow(message);
+});
+
+it("db.transaction() rolls back and throws when the callback returns a Promise", () => {
+  const db = Database.open(":memory:");
+  db.exec("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)");
+  db.exec("INSERT INTO accounts VALUES (1, 100), (2, 0)");
+
+  // Not an async function, so it gets past db.transaction(), but it returns a
+  // Promise: the debit it already ran must be rolled back, not committed.
+  const transfer = db.transaction(amount => {
+    db.exec(`UPDATE accounts SET balance = balance - ${amount} WHERE id = 1`);
+    return Promise.resolve(amount);
+  });
+
+  const message =
+    "db.transaction() callback cannot return a Promise. Run any awaited work before starting the transaction.";
+  expect(() => transfer(60)).toThrow(TypeError);
+  expect(() => transfer(60)).toThrow(message);
+  expect(() => transfer.immediate(60)).toThrow(message);
+  expect(db.inTransaction).toBe(false);
+  expect(db.prepare("SELECT balance FROM accounts ORDER BY id").values()).toEqual([[100], [0]]);
+});
+
+it("db.transaction() rolls a nested Promise-returning callback back to its savepoint", () => {
+  const db = Database.open(":memory:");
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+
+  const inner = db.transaction(() => {
+    db.exec("INSERT INTO t VALUES (2)");
+    return Promise.resolve();
+  });
+  const outer = db.transaction(() => {
+    db.exec("INSERT INTO t VALUES (1)");
+    expect(() => inner()).toThrow(TypeError);
+    // Only the inner savepoint was undone; the outer transaction is still open.
+    expect(db.inTransaction).toBe(true);
+  });
+
+  outer();
+  expect(db.inTransaction).toBe(false);
+  expect(db.prepare("SELECT id FROM t ORDER BY id").values()).toEqual([[1]]);
+});
+
 // this bug was fixed by ensuring FinalObject has no more than 64 properties
 it("inlineCapacity #987", async () => {
   const db = new Database(":memory:");

@@ -558,9 +558,9 @@ impl OutdatedCommand {
                 let has_filtered_latest = latest.latest_is_filtered();
 
                 let update_result = update_version.unwrap();
-                let latest_is_newer = current_version
-                    .order(actual_latest.version, string_buf, &manifest.string_buf)
-                    == core::cmp::Ordering::Less;
+                let latest_is_newer =
+                    current_version.order(actual_latest.version, string_buf, &manifest.string_buf)
+                        == core::cmp::Ordering::Less;
                 // An in-range update can exist even when the installed version is
                 // at or ahead of the `latest` dist-tag (prereleases, `next` lines),
                 // and `bun update` would apply it, so surface the row here too.

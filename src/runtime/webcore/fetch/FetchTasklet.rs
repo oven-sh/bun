@@ -2132,6 +2132,15 @@ impl FetchTasklet {
         if self.signal_aborted() {
             return ResumableSinkBackpressure::Done;
         }
+        // An empty chunk is a no-op on every framing path. It must not reach
+        // the chunked framer below, which would serialize it as "0\r\n\r\n",
+        // the chunked-body TERMINATOR (RFC 9112 section 7.1), ending the
+        // message mid-upload. It must also never report Backpressure: nothing
+        // gets buffered, so the HTTP thread's report_drain (what resumes a
+        // paused sink) can never fire, and the upload stalls forever.
+        if data.is_empty() {
+            return ResumableSinkBackpressure::WantMore;
+        }
         // reshaped for borrowck — read sink HWM (Copy) before
         // borrowing the stream buffer so `self` is unborrowed during the
         // mutex critical section below.

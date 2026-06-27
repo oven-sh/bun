@@ -159,13 +159,19 @@ test.concurrent.each([
 });
 
 // docs/bundler/macros.mdx: a Response/Blob whose MIME type is application/json is inlined as
-// the parsed value. Content-Type values usually carry parameters (";charset=utf-8"), which
-// must not demote the result to a base64 data URL string.
+// the parsed value. Content-Type values usually carry parameters (";charset=utf-8") and the
+// type/subtype is case-insensitive; neither must demote the result to a base64 data URL string.
 test.concurrent.each([
   [
     "Response with application/json;charset=utf-8",
     `new Response(JSON.stringify({ hello: "world", list: [1, 2, 3] }), {
       headers: { "Content-Type": "application/json;charset=utf-8" },
+    })`,
+  ],
+  [
+    "Response with Application/JSON; charset=UTF-8",
+    `new Response(JSON.stringify({ hello: "world", list: [1, 2, 3] }), {
+      headers: { "Content-Type": "Application/JSON; charset=UTF-8" },
     })`,
   ],
   [
@@ -192,10 +198,13 @@ test.concurrent.each([
   });
 });
 
-// A parameterized text MIME type keeps being inlined as the response text.
-test.concurrent("macro returning a text/plain Response inlines the body text", async () => {
+// A parameterized or oddly-cased text MIME type keeps being inlined as the response text.
+test.concurrent.each([
+  ["a default text/plain;charset=utf-8 Response", `new Response("plain text body")`],
+  ["a TEXT/Plain Response", `new Response("plain text body", { headers: { "Content-Type": "TEXT/Plain" } })`],
+])("macro returning %s inlines the body text", async (_label, expression) => {
   using dir = tempDir("macro-text-mime", {
-    "macro.ts": `export function getValue() {\n  return new Response("plain text body");\n}\n`,
+    "macro.ts": `export function getValue() {\n  return ${expression};\n}\n`,
     "index.ts": `import { getValue } from "./macro.ts" with { type: "macro" };\nconsole.log(getValue());\n`,
   });
   await using proc = Bun.spawn({

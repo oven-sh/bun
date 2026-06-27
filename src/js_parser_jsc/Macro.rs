@@ -1073,13 +1073,15 @@ fn expr_from_blob(
     use bun_ast::{E, ExprData, StoreStr as Str};
 
     // Only the MIME essence picks the serialization: `Content-Type` values
-    // usually carry parameters (`application/json;charset=utf-8`), and those
-    // must not demote a JSON/text body to the base64 fallback.
+    // usually carry parameters (`application/json;charset=utf-8`) and the
+    // type/subtype match is ASCII case-insensitive (RFC 2045, section 5.1).
     let essence: &[u8] = match strings::index_of_char(mime_type, b';') {
         Some(semicolon) => &mime_type[..semicolon as usize],
         None => mime_type,
     }
     .trim_ascii();
+    let essence: &[u8] =
+        strings::copy_lowercase_if_needed(essence, bump.alloc_slice_fill_copy(essence.len(), 0u8));
 
     // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
     let is_json = essence == b"application/json"

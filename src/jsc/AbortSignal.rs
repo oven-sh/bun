@@ -198,9 +198,10 @@ impl AbortSignal {
         WebCore__AbortSignal__new(global)
     }
 
-    /// Creates a fresh signal that follows `parent` (per the DOM
-    /// "follow" algorithm): it aborts with `parent`'s reason when
-    /// `parent` aborts. Returns an owned ref.
+    /// Creates a fresh dependent signal that aborts with `parent`'s
+    /// reason when `parent` aborts. The link is held in weak sets on
+    /// both sides so collecting the dependent leaves nothing on the
+    /// parent. Returns an owned ref.
     pub fn create_following(global: &JSGlobalObject, parent: &AbortSignal) -> AbortSignalRef {
         crate::mark_binding!();
         let ptr = WebCore__AbortSignal__createFollowingSignal(global, parent);

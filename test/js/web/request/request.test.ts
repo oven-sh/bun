@@ -251,4 +251,39 @@ describe("Request.signal is a new dependent signal", () => {
     expect(req.signal.aborted).toBe(true);
     expect((req.signal.reason as Error).message).toBe("early");
   });
+
+  test("dependent signals do not accumulate on a long-lived controller", () => {
+    const { heapStats } = require("bun:jsc");
+    const c = new AbortController();
+    const iterations = 2000;
+
+    const measure = () => {
+      for (let i = 0; i < iterations; i++) {
+        const req = new Request("https://example.com/", { signal: c.signal });
+        // Materialize the JS wrapper so the reachability path is exercised.
+        req.signal;
+      }
+      Bun.gc(true);
+    };
+
+    measure();
+    Bun.gc(true);
+    const baseline = heapStats().objectTypeCounts.AbortSignal || 0;
+    measure();
+    measure();
+    Bun.gc(true);
+    const after = heapStats().objectTypeCounts.AbortSignal || 0;
+    // If each Request's dependent signal were pinned by the parent, `after`
+    // would exceed baseline by ~iterations. Allow generous headroom for the
+    // controller's own signal and GC timing.
+    expect(after - baseline).toBeLessThan(iterations / 4);
+    // The controller still works after all that churn.
+    const req = new Request("https://example.com/", { signal: c.signal });
+    let fired = false;
+    req.signal.addEventListener("abort", () => {
+      fired = true;
+    });
+    c.abort();
+    expect(fired).toBe(true);
+  });
 });

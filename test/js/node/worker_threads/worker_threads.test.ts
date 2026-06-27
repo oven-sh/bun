@@ -421,6 +421,99 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \{.*\}/s);
   });
+
+  test("preserves own properties on an uncaught Error", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const e = new Error("boom");
+      e.code = "EBOOM";
+      e.foo = { nested: [1, 2, 3] };
+      throw e;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("boom");
+    expect({ code: err.code, foo: err.foo }).toEqual({ code: "EBOOM", foo: { nested: [1, 2, 3] } });
+
+    const ownKeys = Object.getOwnPropertyNames(err).sort();
+    expect(ownKeys).toContain("code");
+    expect(ownKeys).toContain("foo");
+    expect(ownKeys).toContain("name");
+    expect(ownKeys).not.toContain("line");
+    expect(ownKeys).not.toContain("column");
+    expect(ownKeys).not.toContain("sourceURL");
+
+    expect(Object.getOwnPropertyDescriptor(err, "code")).toEqual({
+      value: "EBOOM",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(Object.getOwnPropertyDescriptor(err, "name")).toEqual({
+      value: "Error",
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  test("preserves own properties on an uncaught TypeError", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const e = new TypeError("bad type");
+      e.code = "ETYPE";
+      throw e;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(TypeError);
+    expect({ message: err.message, name: err.name, code: err.code }).toEqual({
+      message: "bad type",
+      name: "TypeError",
+      code: "ETYPE",
+    });
+  });
+
+  test("skips non-cloneable own properties but keeps the rest", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const e = new Error("with fn");
+      e.fn = () => {};
+      e.sym = Symbol("s");
+      e.code = "EFN";
+      throw e;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("with fn");
+    expect(err.code).toBe("EFN");
+    expect(Object.getOwnPropertyNames(err)).not.toContain("fn");
+    expect(Object.getOwnPropertyNames(err)).not.toContain("sym");
+  });
+
+  test("preserves non-enumerable own properties with their enumerability", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const e = new Error("boom");
+      e.code = "EBOOM";
+      Object.defineProperty(e, "hidden", { value: "secret", enumerable: false, configurable: true, writable: true });
+      throw e;`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect({ code: err.code, hidden: err.hidden }).toEqual({ code: "EBOOM", hidden: "secret" });
+    expect(Object.getOwnPropertyDescriptor(err, "hidden")?.enumerable).toBe(false);
+    expect(Object.getOwnPropertyDescriptor(err, "code")?.enumerable).toBe(true);
+  });
+
+  test.each(["'a string error'", "42", "null"])("non-Error thrown value %s is forwarded as-is", async src => {
+    const worker = new Worker(`throw ${src};`, { eval: true });
+    const [err] = await once(worker, "error");
+    // eslint-disable-next-line no-eval
+    expect(err).toBe(eval(src));
+  });
 });
 
 describe("getHeapSnapshot", () => {

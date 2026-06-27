@@ -32,7 +32,10 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/PropertyDescriptor.h>
+#include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Scope.h>
@@ -41,6 +44,7 @@
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include "MessageEvent.h"
+#include "WebCoreJSClientData.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
@@ -494,19 +498,132 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
     });
 }
 
+namespace {
+struct SerializedErrorExtra {
+    String key;
+    RefPtr<SerializedScriptValue> value;
+    bool enumerable;
+};
+}
+
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
+    auto& vm = JSC::getVM(workerGlobalObject);
+    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    if (catchScope.exception()) [[unlikely]]
+        (void)catchScope.tryClearException();
     if (!serialized)
         return false;
 
-    return postTaskToParent([protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) {
+    // Node.js preserves an error's own properties (code, errno, path, ...) when forwarding an
+    // uncaught worker exception to the parent. Structured clone of an Error only carries
+    // message/stack plus JSC-internal line/column/sourceURL, so serialize the remaining own
+    // properties separately and re-apply them on the parent side.
+    Vector<SerializedErrorExtra> extras;
+    bool isError = false;
+    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(value)) {
+        isError = true;
+
+        auto tryAppend = [&](const String& key, JSValue propValue, bool enumerable) {
+            if (!propValue || propValue.isCallable() || propValue.isSymbol())
+                return;
+            auto serializedProp = SerializedScriptValue::create(*workerGlobalObject, propValue, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+            if (catchScope.exception()) [[unlikely]]
+                (void)catchScope.tryClearException();
+            if (!serializedProp)
+                return;
+            extras.append({ key.isolatedCopy(), WTF::move(serializedProp), enumerable });
+        };
+
+        JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        errorInstance->methodTable()->getOwnPropertyNames(errorInstance, workerGlobalObject, propertyNames, JSC::DontEnumPropertiesMode::Include);
+        if (catchScope.exception()) [[unlikely]]
+            (void)catchScope.tryClearException();
+        else {
+            auto& bunNames = WebCore::builtinNames(vm);
+            for (const auto& propertyName : propertyNames) {
+                if (propertyName == vm.propertyNames->message
+                    || propertyName == vm.propertyNames->stack
+                    || propertyName == vm.propertyNames->line
+                    || propertyName == vm.propertyNames->column
+                    || propertyName == vm.propertyNames->sourceURL
+                    || propertyName == vm.propertyNames->name
+                    || propertyName == bunNames.originalLinePublicName()
+                    || propertyName == bunNames.originalColumnPublicName())
+                    continue;
+
+                JSC::PropertyDescriptor descriptor;
+                bool has = errorInstance->getOwnPropertyDescriptor(workerGlobalObject, propertyName, descriptor);
+                if (catchScope.exception()) [[unlikely]] {
+                    (void)catchScope.tryClearException();
+                    continue;
+                }
+                if (!has)
+                    continue;
+
+                JSValue propValue;
+                if (descriptor.isDataDescriptor()) {
+                    propValue = descriptor.value();
+                } else if (descriptor.getter() && descriptor.getter().isCallable()) {
+                    propValue = errorInstance->get(workerGlobalObject, propertyName);
+                    if (catchScope.exception()) [[unlikely]] {
+                        (void)catchScope.tryClearException();
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+                tryAppend(propertyName.string(), propValue, descriptor.enumerable());
+            }
+        }
+
+        // Node materializes `name` (from the prototype chain) as an own property.
+        JSValue nameValue = errorInstance->get(workerGlobalObject, vm.propertyNames->name);
+        if (catchScope.exception()) [[unlikely]]
+            (void)catchScope.tryClearException();
+        else
+            tryAppend(vm.propertyNames->name.string(), nameValue, false);
+    }
+
+    return postTaskToParent([protectedThis = Ref { *this }, serialized, extras = WTF::move(extras), isError](ScriptExecutionContext& context) {
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         ErrorEvent::Init init;
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
-        RETURN_IF_EXCEPTION(scope, );
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return;
+        }
+
+        if (isError) {
+            if (auto* obj = deserialized.getObject()) {
+                if (auto* errorObj = dynamicDowncast<JSC::ErrorInstance>(obj))
+                    errorObj->materializeErrorInfoIfNeeded(vm);
+                auto dropOwn = [&](const JSC::Identifier& ident) {
+                    JSC::DeletePropertySlot slot;
+                    obj->methodTable()->deleteProperty(obj, globalObject, ident, slot);
+                    if (scope.exception()) [[unlikely]]
+                        (void)scope.tryClearException();
+                };
+                dropOwn(vm.propertyNames->line);
+                dropOwn(vm.propertyNames->column);
+                dropOwn(vm.propertyNames->sourceURL);
+
+                for (const auto& extra : extras) {
+                    JSValue v = extra.value->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                        continue;
+                    }
+                    auto ident = JSC::Identifier::fromString(vm, extra.key);
+                    unsigned attrs = extra.enumerable ? 0 : static_cast<unsigned>(JSC::PropertyAttribute::DontEnum);
+                    obj->putDirect(vm, ident, v, attrs);
+                }
+            }
+        }
         init.error = deserialized;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);

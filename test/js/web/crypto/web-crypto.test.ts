@@ -105,6 +105,31 @@ describe("Web Crypto", () => {
     expect(isSigValid).toBe(true);
   });
 
+  // W3C WebCrypto: JsonWebKey.kty is not a required dictionary member; each
+  // algorithm's import key operation rejects a missing/wrong kty with DataError.
+  describe("importKey jwk with missing kty rejects with DataError", () => {
+    const cases: Array<[string, object, object, KeyUsage[]]> = [
+      ["AES-GCM", { k: "AAECAwQFBgcICQoLDA0ODw" }, { name: "AES-GCM" }, ["encrypt"]],
+      ["HMAC", { k: "AAECAwQFBgcICQoLDA0ODw" }, { name: "HMAC", hash: "SHA-256" }, ["sign"]],
+      [
+        "RSA-OAEP",
+        { n: "AQAB", e: "AQAB" },
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        ["encrypt"],
+      ],
+      ["ECDSA", { crv: "P-256", x: "", y: "" }, { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
+      ["Ed25519", { crv: "Ed25519", x: "" }, { name: "Ed25519" }, ["verify"]],
+    ];
+    it.each(cases)("%s", async (_name, jwk, alg, usages) => {
+      const err = await crypto.subtle.importKey("jwk", jwk as JsonWebKey, alg, true, usages).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
+    });
+  });
+
   describe("unwrapKey JWK error handling", () => {
     // Setup: AES-GCM key that can encrypt arbitrary bytes and also unwrap keys.
     // We encrypt payloads that decrypt to invalid JWK data so the JWK parse path
@@ -134,7 +159,7 @@ describe("Web Crypto", () => {
       expect(err.name).toBe("DataError");
     });
 
-    // Previously this promise never settled: the TypeError from JsonWebKey
+    // Previously this promise never settled: the exception from JsonWebKey
     // dictionary conversion escaped as an uncaught exception and the
     // DeferredPromise was left in m_pendingPromises forever.
     it("rejects when wrapped bytes are valid JSON but not a valid JWK", async () => {
@@ -145,8 +170,8 @@ describe("Web Crypto", () => {
           () => null,
           e => e,
         );
-      expect(err).toBeInstanceOf(TypeError);
-      expect(err.message).toContain("kty");
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
     });
 
     it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {

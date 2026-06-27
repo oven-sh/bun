@@ -156,9 +156,9 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
     if (!hashAlgorithmValue.isUndefined()) {
         V::validateString(scope, globalObject, hashAlgorithmValue, "options.hashAlgorithm"_s);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        hashString = hashAlgorithmValue.toString(globalObject);
+        hashAlgorithmString = hashAlgorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        hashView = hashString->view(globalObject);
+        hashAlgorithmView = hashAlgorithmString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
     if (!mgf1HashAlgorithmValue.isUndefined()) {
@@ -166,7 +166,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         mgf1HashAlgorithmString = mgf1HashAlgorithmValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        mgf1HashView = mgf1HashAlgorithmString->view(globalObject);
+        mgf1HashAlgorithmView = mgf1HashAlgorithmString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
     }
     if (!hashValue.isUndefined()) {

@@ -1672,6 +1672,38 @@ test.todo("RSA-PSS should work", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/32835
+describe("generateKeyPair('rsa-pss') deprecated hash aliases", () => {
+  const base = { modulusLength: 512, saltLength: 16 };
+  const errorCode = (fn: () => void): string | undefined => {
+    try {
+      fn();
+    } catch (e: any) {
+      return e?.code;
+    }
+    return undefined;
+  };
+
+  test.each([
+    ["hash", "hashAlgorithm"],
+    ["mgf1Hash", "mgf1HashAlgorithm"],
+  ])("conflicting %s / %s throws ERR_INVALID_ARG_VALUE", (deprecated, modern) => {
+    const options = { ...base, [deprecated]: "sha256", [modern]: "sha1" };
+    // Argument validation runs synchronously before key generation for both entry points.
+    expect(errorCode(() => generateKeyPairSync("rsa-pss", options as any))).toBe("ERR_INVALID_ARG_VALUE");
+    expect(errorCode(() => generateKeyPair("rsa-pss", options as any, () => {}))).toBe("ERR_INVALID_ARG_VALUE");
+  });
+
+  test.each([
+    ["hash", "hashAlgorithm"],
+    ["mgf1Hash", "mgf1HashAlgorithm"],
+  ])("matching %s / %s is not rejected by validation", (deprecated, modern) => {
+    const options = { ...base, [deprecated]: "sha256", [modern]: "sha256" };
+    // BoringSSL may still reject rsa-pss key generation, but never with the conflict error.
+    expect(errorCode(() => generateKeyPairSync("rsa-pss", options as any))).not.toBe("ERR_INVALID_ARG_VALUE");
+  });
+});
+
 test("Ed25519 should work", async () => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 

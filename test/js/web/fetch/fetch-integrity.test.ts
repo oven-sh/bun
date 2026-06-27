@@ -160,15 +160,19 @@ describe("fetch() integrity", () => {
     // The response never completes on its own; abort once the first chunk is
     // on the wire so the fetch is genuinely mid-buffering.
     const stream = await started.promise;
-    controller.abort();
-    await expect(promise).rejects.toThrow(/abort/i);
-    // Finish the server-side stream: without this, afterAll's server.stop(true)
-    // can hang on the open-ended response (a pre-existing race, reproducible on
-    // main without `integrity`). close() throws if the client's abort already
-    // cancelled the stream, which achieves the same thing.
     try {
-      stream.close();
-    } catch {}
+      controller.abort();
+      await expect(promise).rejects.toThrow(/abort/i);
+    } finally {
+      // Finish the server-side stream even when the assertion fails: without
+      // this, afterAll's server.stop(true) can hang on the open-ended response
+      // (a pre-existing race, reproducible on main without `integrity`).
+      // close() throws if the client's abort already cancelled the stream,
+      // which achieves the same thing.
+      try {
+        stream.close();
+      } catch {}
+    }
   });
 });
 

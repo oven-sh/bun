@@ -3444,10 +3444,14 @@ void GlobalObject::runImportMetaHotDisposeCallbacks(JSC::VM& vm)
         NakedPtr<JSC::Exception> returnedException = nullptr;
         JSC::profiledCall(this, ProfilingReason::API, callback, callData, jsUndefined(), args, returnedException);
         if (auto* ex = returnedException.get()) {
+            if (vm.isTerminationException(ex)) [[unlikely]]
+                return;
             Bun__reportUnhandledError(this, JSValue::encode(JSValue(ex)));
         }
-        if (scope.exception()) [[unlikely]] {
-            scope.clearException();
+        if (auto* ex = scope.exception()) [[unlikely]] {
+            if (vm.isTerminationException(ex)) [[unlikely]]
+                return;
+            (void)scope.tryClearException();
         }
     }
 }

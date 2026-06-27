@@ -627,10 +627,9 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotDispose, (JSC::JSGlobalObject * js
     return JSValue::encode(jsUndefined());
 }
 
-// `bun --hot` re-evaluates every module on each reload, so the full
-// Vite accept() graph / event semantics don't apply; accept()/decline()/
-// on()/off()/prune()/invalidate()/send() are all no-ops. They exist so
-// Vite-flavoured code guarded by `if (import.meta.hot)` does not throw.
+// `bun --hot` re-evaluates every module, so the Vite accept()/event API is
+// a no-op (accept/decline/on/off/prune/invalidate/send). The stubs exist so
+// code guarded by `if (import.meta.hot)` does not throw.
 JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotNoop, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
     return JSValue::encode(jsUndefined());

@@ -671,13 +671,15 @@ impl Options {
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }
 
-        // Captured before `maybe_cli` is moved — the forced-registry notice
-        // below needs to know whether `--registry` was passed, but the
+        // Captured before `maybe_cli` is moved — the forced-registry block
+        // below needs to know whether `--registry` was passed (the
         // `--registry` handler mutates `self.scope.url` without recomputing
-        // `url_hash`, so it can't be detected from `prev_scope` alone.
+        // `url_hash`, so it can't be detected from `prev_scope` alone) and
+        // whether an explicit `--token` was given.
         let had_cli_registry = maybe_cli
             .as_ref()
             .is_some_and(|cli| !cli.registry.is_empty());
+        let cli_token: &[u8] = maybe_cli.as_ref().map_or(b"", |cli| cli.token);
 
         if let Some(cli) = maybe_cli {
             self.do_.set(Do::ANALYZE, cli.analyze);
@@ -935,21 +937,57 @@ impl Options {
             }
 
             if let Some(force_registry) = forced {
-                let prev_url_hash = self.scope.url_hash;
-                let prev_token = core::mem::take(&mut self.scope.token);
+                let prev_scope = core::mem::replace(
+                    &mut self.scope,
+                    Npm::registry::Scope::from_api(b"", force_registry, env)?,
+                );
                 let had_scoped_registries = self.registries.count() > 0;
-                self.scope = Npm::registry::Scope::from_api(b"", force_registry, env)?;
                 // If the forced registry did not supply credentials of its
                 // own in *any* form `from_api` recognises — bearer token,
                 // basic-auth username/password, or the yarn-style
-                // `:_authToken=` / `:_auth=` URL suffix — inherit the token
-                // already resolved from `BUN_CONFIG_TOKEN`/`NPM_CONFIG_TOKEN`/
-                // `--token`, matching `BUN_CONFIG_REGISTRY`. Checking after
-                // `from_api` (rather than inspecting the input struct fields)
-                // means we don't clobber any credential encoding `from_api`
-                // knows how to extract.
+                // `:_authToken=` / `:_auth=` URL suffix — fall back to:
+                //
+                //   1. An explicitly provided device/user-level token
+                //      (`BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` /
+                //      `npm_config_token` / `--token`). These carry no host,
+                //      so they apply to the forced registry the same way
+                //      they apply to a `BUN_CONFIG_REGISTRY` override.
+                //
+                //   2. Otherwise the previous default scope's token, but
+                //      only when the host matches and the scheme does not
+                //      downgrade — the same guard the `BUN_CONFIG_REGISTRY`
+                //      handler above uses. That token may be host-scoped
+                //      (`~/.npmrc` `//host/:_authToken=`), and forwarding it
+                //      to a different host would let a project-checked-in
+                //      `forceRegistry` exfiltrate it.
                 if self.scope.token.is_empty() && self.scope.auth.is_empty() {
-                    self.scope.token = prev_token;
+                    let explicit_token: &[u8] = if !cli_token.is_empty() {
+                        cli_token
+                    } else {
+                        [
+                            b"BUN_CONFIG_TOKEN".as_slice(),
+                            b"NPM_CONFIG_TOKEN",
+                            b"npm_config_token",
+                        ]
+                        .into_iter()
+                        .find_map(|key| env.get(key).filter(|value| !value.is_empty()))
+                        .unwrap_or(b"")
+                    };
+
+                    if !explicit_token.is_empty() {
+                        self.scope.token = explicit_token.into();
+                    } else {
+                        let same_host_no_downgrade = {
+                            let prev_url = prev_scope.url.url();
+                            let new_url = self.scope.url.url();
+                            bun_core::without_trailing_slash(new_url.host)
+                                == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
+                        };
+                        if same_host_no_downgrade {
+                            self.scope.token.clone_from(&prev_scope.token);
+                        }
+                    }
                 }
                 // Discard scoped registries so `scope_for_package_name`
                 // always falls back to `self.scope` — every package
@@ -964,7 +1002,7 @@ impl Options {
                 // with no scopes and no `--registry` (nothing to be confused
                 // about).
                 if self.log_level != LogLevel::Silent
-                    && (prev_url_hash != *Npm::registry::DEFAULT_URL_HASH
+                    && (prev_scope.url_hash != *Npm::registry::DEFAULT_URL_HASH
                         || had_scoped_registries
                         || had_cli_registry)
                 {

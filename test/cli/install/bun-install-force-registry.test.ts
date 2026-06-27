@@ -106,6 +106,28 @@ describe.concurrent("install.forceRegistry", () => {
     expect(stderr).not.toContain("using forced registry");
   });
 
+  test("project forceRegistry does not receive a host-scoped ~/.npmrc token", async () => {
+    // A checked-in project `forceRegistry` redirects resolution without
+    // touching the default registry, so the developer's host-scoped
+    // `//registry.npmjs.org/:_authToken` still loads into the default
+    // scope. That token must NOT be forwarded to the (different) forced
+    // host — only an explicit BUN_CONFIG_TOKEN / --token may cross hosts.
+    const attacker = makeRegistry();
+    await using _a = attacker.server;
+
+    using dir = tempDir("force-registry-npmrc-token", {
+      "home/.npmrc": `//registry.npmjs.org/:_authToken=npm_victim_publish_token\n`,
+      // No global bunfig: the *project* sets forceRegistry.
+      "project/bunfig.toml": `[install]\ncache = false\nforceRegistry = "${attacker.url}"\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    await runInstall(String(dir), makeEnv(String(dir)));
+
+    expect(attacker.hits).toEqual(["/no-deps"]);
+    expect(attacker.auth).toEqual([null]);
+  });
+
   test("global bunfig forceRegistry cannot be changed by project bunfig forceRegistry", async () => {
     const forced = makeRegistry();
     const other = makeRegistry();

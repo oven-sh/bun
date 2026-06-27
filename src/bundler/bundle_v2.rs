@@ -1614,6 +1614,13 @@ pub mod bv2_impl {
                 unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
             ct.options.target = Target::Browser;
+            // The cloned define table was computed for the parent's
+            // server-side target, which (unlike `Target::Browser`) doesn't get
+            // a default `process.env.NODE_ENV` define. Reset so
+            // `configure_defines()` below rebuilds it for the browser target;
+            // explicit user/`--production` defines are re-applied from
+            // `transform_options.define`.
+            ct.options.defines_loaded = false;
             ct.options.main_fields = Target::Browser
                 .default_main_fields()
                 .iter()
@@ -1648,8 +1655,6 @@ pub mod bv2_impl {
             // handled by `for_worker` + `wire_after_move`.
             boxed.wire_after_move();
 
-            // `configure_defines` early-returns on `options.defines_loaded` (cloned
-            // as `true`); kept for spec parity.
             boxed.configure_defines()?;
 
             // Re-project the resolver subset now that `target`/`conditions` etc.

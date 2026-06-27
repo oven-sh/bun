@@ -272,6 +272,37 @@ describe("bundler", () => {
       capture: ["process.env.NODE_ENV", "process.env.OTHER"],
     });
   }
+  // An HTML import from a --target=bun build spins up a lazy browser
+  // transpiler. Its emitted chunk runs in a browser (no `process`), so
+  // NODE_ENV must still be inlined there even though the parent server
+  // bundle leaves it as a runtime read.
+  itBundled("edgecase/NodeEnvInlinedForBrowserChunkInServerBuild", {
+    files: {
+      "/entry.ts": /* js */ `
+        import html from "./index.html";
+        capture(process.env.NODE_ENV);
+        Bun.serve({ port: 0, routes: { "/": html } });
+      `,
+      "/index.html": `<!doctype html><script type="module" src="./client.ts"></script>`,
+      "/client.ts": /* js */ `
+        capture(process.env.NODE_ENV);
+      `,
+    },
+    target: "bun",
+    outdir: "/out",
+    env: { NODE_ENV: undefined },
+    onAfterBundle(api) {
+      const { readdirSync } = require("node:fs");
+      // Server chunk: not inlined (runtime read).
+      expect(api.captureFile("out/entry.js")).toEqual(["process.env.NODE_ENV"]);
+      // Browser chunk: inlined (no process in the browser).
+      const browserChunk = readdirSync(api.join("out")).find(
+        (f: string) => f.endsWith(".js") && f !== "entry.js",
+      );
+      expect(browserChunk).toBeDefined();
+      expect(api.captureFile(join("out", browserChunk!))).toEqual(['"development"']);
+    },
+  });
 
   itBundled("edgecase/StarExternal", {
     files: {

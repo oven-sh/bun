@@ -650,11 +650,7 @@ describe("empty hostname", () => {
 
   it("non-string hostname still throws ERR_INVALID_ARG_TYPE synchronously", () => {
     const resolver = new dns_promises.Resolver(resolverOptions);
-    expect(() => resolver.resolve4(123)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
-    expect(() => dns.resolve4(123, () => {})).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => resolver.resolve4(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => dns.resolve4(123, () => {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 });

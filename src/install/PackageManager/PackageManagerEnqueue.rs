@@ -2017,8 +2017,7 @@ fn get_or_put_resolved_package_with_find_result(
         // of the install's workspace. Allow a named `bun update <pkg>` to
         // re-resolve a catalog package it targets, scoped to the exact group so
         // a same-named entry in another catalog is left alone.
-        let is_named_catalog_update = dependency.version.tag
-            == dependency::version::Tag::Catalog
+        let is_named_catalog_update = dependency.version.tag == dependency::version::Tag::Catalog
             && {
                 let dep_catalog = dependency.version.catalog().slice(string_buf);
                 this.update_requests.iter().any(|request| {

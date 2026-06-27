@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import net from "node:net";
 
@@ -253,7 +254,6 @@ describe("Request.signal is a new dependent signal", () => {
   });
 
   test("dependent signals do not accumulate on a long-lived controller", () => {
-    const { heapStats } = require("bun:jsc");
     const c = new AbortController();
     const iterations = 2000;
 

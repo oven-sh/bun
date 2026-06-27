@@ -25,6 +25,7 @@
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
+const ArrayPrototypeUnshift = Array.prototype.unshift;
 
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
@@ -306,7 +307,7 @@ class AsyncResource {
     if (thisArg === undefined) {
       const resource = this;
       bound = function (...args) {
-        (args as unknown[]).unshift(fn, this);
+        ArrayPrototypeUnshift.$call(args, fn, this);
         return resource.runInAsyncScope.$apply(resource, args);
       };
     } else {

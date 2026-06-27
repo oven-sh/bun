@@ -777,6 +777,15 @@ const IS_UV_FS_COPYFILE_DISABLED =
       },
     );
 
+    it.skipIf(isWindows)("Bun.write to a non-regular file path (/dev/null) succeeds", async () => {
+      using dir = tempDir("bun-write-devnull", {
+        "src.txt": "hello world",
+      });
+      const src = join(String(dir), "src.txt");
+      const written = await Bun.write("/dev/null", Bun.file(src));
+      expect(written).toBe(11);
+    });
+
     // https://github.com/oven-sh/bun/issues/22456
     it.skipIf(isWindows)("reusing a BunFile as a destination does not cap the write at its previous size", async () => {
       using dir = tempDir("bun-write-reused-dest", {});

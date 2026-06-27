@@ -925,10 +925,11 @@ impl<'a> CopyFile<'a> {
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
             ) {
-                let same_file = match bun_sys::fstat(self.destination_fd) {
-                    bun_sys::Result::Ok(dest_stat) => {
-                        stat.st_dev == dest_stat.st_dev && stat.st_ino == dest_stat.st_ino
-                    }
+                let (same_file, dest_is_regular) = match bun_sys::fstat(self.destination_fd) {
+                    bun_sys::Result::Ok(dest_stat) => (
+                        stat.st_dev == dest_stat.st_dev && stat.st_ino == dest_stat.st_ino,
+                        bun_sys::S::ISREG(dest_stat.st_mode as _),
+                    ),
                     bun_sys::Result::Err(err) => {
                         self.system_error = Some(err.to_system_error());
                         self.do_close();
@@ -940,10 +941,14 @@ impl<'a> CopyFile<'a> {
                     self.do_close();
                     return;
                 }
-                if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, 0) {
-                    self.system_error = Some(err.to_system_error());
-                    self.do_close();
-                    return;
+                if dest_is_regular {
+                    if let bun_sys::Result::Err(err) =
+                        bun_sys::ftruncate(self.destination_fd, 0)
+                    {
+                        self.system_error = Some(err.to_system_error());
+                        self.do_close();
+                        return;
+                    }
                 }
             }
 

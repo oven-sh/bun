@@ -1041,11 +1041,22 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             continue;
                         }
                         bun_sys::FileKind::SymLink => {
-                            if self.walker.follow_symlinks {
-                                if !self.walker.eval_impl(&active, entry_name) {
-                                    continue;
-                                }
+                            // Follow the link when follow_symlinks is enabled, or
+                            // when the pattern names this segment literally. The
+                            // followSymlinks option governs wildcard traversal,
+                            // not explicitly-spelled path segments.
+                            let follow_active: Option<ComponentSet> =
+                                if self.walker.follow_symlinks {
+                                    self.walker
+                                        .eval_impl(&active, entry_name)
+                                        .then(|| active.clone().expect("OOM"))
+                                } else {
+                                    let subset =
+                                        self.walker.eval_literal_subset(&active, entry_name);
+                                    (subset.count() != 0).then_some(subset)
+                                };
 
+                            if let Some(follow_active) = follow_active {
                                 let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
                                 let subdir_entry_name = self.walker.join(subdir_parts)?;
                                 let joined = work_item_logical_path(&subdir_entry_name);
@@ -1055,7 +1066,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                                 self.walker.workbuf.push(WorkItem::new_symlink(
                                     subdir_entry_name,
-                                    active,
+                                    follow_active,
                                     entry_start,
                                 ));
                                 continue;
@@ -1129,7 +1140,16 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     }
                                 }
                                 bun_sys::FileKind::SymLink => {
-                                    if self.walker.follow_symlinks {
+                                    let follow_active: Option<ComponentSet> =
+                                        if self.walker.follow_symlinks {
+                                            Some(active.clone().expect("OOM"))
+                                        } else {
+                                            let subset = self
+                                                .walker
+                                                .eval_literal_subset(&active, entry_name);
+                                            (subset.count() != 0).then_some(subset)
+                                        };
+                                    if let Some(follow_active) = follow_active {
                                         let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
                                         let subdir_entry_name = self.walker.join(subdir_parts)?;
                                         let joined = work_item_logical_path(&subdir_entry_name);
@@ -1139,7 +1159,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         .unwrap();
                                         self.walker.workbuf.push(WorkItem::new_symlink(
                                             subdir_entry_name,
-                                            active,
+                                            follow_active,
                                             entry_start,
                                         ));
                                     } else if !self.walker.only_files {
@@ -1601,12 +1621,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         is_last: bool,
         add: &mut bool,
     ) -> Option<u32> {
-        if !self.dot && Self::starts_with_dot(entry_name) {
-            return None;
-        }
         if (self.is_ignored)(entry_name) {
             return None;
         }
+
+        let hidden = !self.dot && Self::starts_with_dot(entry_name);
 
         // Handle double wildcard `**`, this could possibly
         // propagate the `**` to the directory's children
@@ -1622,6 +1641,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 // children
                 if (component_idx + 1) as usize == self.pattern_components.len() - 1 {
                     *add = true;
+                    // Matched via the explicit next segment; don't keep the
+                    // wildcard recursion alive through a hidden directory.
+                    if hidden {
+                        return None;
+                    }
                     return Some(0);
                 }
 
@@ -1634,6 +1658,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 return Some(2);
             }
 
+            // `**` on its own does not match dotfiles without `dot: true`.
+            if hidden {
+                return None;
+            }
+
             if is_last {
                 *add = true;
             }
@@ -1641,6 +1670,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             return Some(0);
         }
 
+        // For non-`**` components the dot check lives in match_pattern_impl,
+        // which lets patterns that explicitly start with `.` through.
         let matches = self.match_pattern_impl(pattern, entry_name);
         if matches {
             if is_last {
@@ -1688,7 +1719,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn match_pattern_impl(&self, pattern_component: &Component, filepath: &[u8]) -> bool {
         log!("matchPatternImpl: {}", bstr::BStr::new(filepath));
-        if !self.dot && Self::starts_with_dot(filepath) {
+        // A pattern segment that itself starts with a literal `.` opts into
+        // matching dotfiles for that segment, regardless of the `dot` flag.
+        if !self.dot
+            && Self::starts_with_dot(filepath)
+            && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
+        {
             return false;
         }
         if (self.is_ignored)(filepath) {
@@ -1791,6 +1827,22 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             }
         }
         false
+    }
+
+    /// Subset of `active` whose components are non-wildcard literals that
+    /// match `entry_name`. Used to descend into a symlinked directory that the
+    /// pattern names explicitly even when `follow_symlinks` is off.
+    fn eval_literal_subset(&self, active: &ComponentSet, entry_name: &[u8]) -> ComponentSet {
+        let mut subset = self.make_set();
+        let mut it = active.iterator::<true, true>();
+        while let Some(idx) = it.next() {
+            let comp = &self.pattern_components[idx];
+            if comp.syntax_hint == SyntaxHint::Literal && self.match_pattern_impl(comp, entry_name)
+            {
+                subset.set(idx);
+            }
+        }
+        subset
     }
 
     #[inline]

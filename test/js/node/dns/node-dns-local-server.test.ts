@@ -86,9 +86,9 @@ afterAll(() => {
 });
 
 describe("resolveTxt", () => {
-  // A TXT resource record longer than 255 bytes is split into several
-  // <character-string>s; node returns one inner array per record so the
-  // standard SPF/DKIM/DMARC reassembly `entries.map(e => e.join(""))` works.
+  // https://github.com/oven-sh/bun/issues/21370: a TXT record longer than 255
+  // bytes is split into several <character-string>s; node returns one inner
+  // array per record so `entries.map(e => e.join(""))` reassembles it.
   test("groups the character-strings of one record together (promises)", async () => {
     expect(await promiseResolver.resolveTxt("txt.bun.test")).toEqual([["hello", "world"], ["single"]]);
   });

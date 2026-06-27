@@ -1620,6 +1620,7 @@ dependencies = [
  "bun_ptr",
  "bun_resolver",
  "bun_sys",
+ "bun_threading",
  "bun_url",
  "bun_wyhash",
  "const_format",

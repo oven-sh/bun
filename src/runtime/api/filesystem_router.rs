@@ -85,6 +85,10 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
         self.0.read_dir_info_ignore_error(path)
     }
+    #[inline]
+    fn generation(&self) -> bun_core::Generation {
+        self.0.generation
+    }
 }
 
 // `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`
@@ -360,87 +364,6 @@ impl FileSystemRouter {
         Ok(fs_router)
     }
 
-    pub fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
-        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
-        // `&mut` per use site so the recursive call (which does the same) doesn't pop our
-        // SB tag mid-loop.
-        let vm = global_this.bun_vm();
-        #[cfg(not(windows))]
-        let path = input_path;
-        #[cfg(windows)]
-        let path;
-        #[cfg(windows)]
-        let normalized: Vec<u8>;
-        #[cfg(windows)]
-        {
-            // Note: `with_borrow_mut` can't hand back a slice that outlives
-            // the closure, so copy out (cold reload path).
-            normalized = WIN32_NORMALIZE_BUF
-                .with_borrow_mut(|buf| vm.fs().normalize_buf(&mut buf[..], input_path).to_vec());
-            path = normalized.as_slice();
-        }
-
-        let root_dir_info = match vm.as_mut().transpiler.resolver.read_dir_info(path) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-
-        if let Some(dir_ref) = root_dir_info {
-            if let Some(entries) = dir_ref.get_entries_const() {
-                'outer: for &entry_ptr in entries.data.values() {
-                    // BACKREF: `entry_ptr` is a `*mut Entry` into the process-static
-                    // EntryStore; the store outlives this loop. Wrap once so the
-                    // shared-only reads below are safe `Deref`s.
-                    let entry = BackRef::from(
-                        core::ptr::NonNull::new(entry_ptr).expect("EntryStore entry"),
-                    );
-                    if entry.base().first() == Some(&b'.') {
-                        continue 'outer;
-                    }
-                    // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem`
-                    // accessor for the process-lifetime singleton; `&mut .fs` (the
-                    // `Implementation` field) is the lazy-stat receiver. `kind`
-                    // needs `&mut Entry` to update the cached stat; no shared
-                    // borrow of `*entry_ptr` is live across this block.
-                    let kind = {
-                        let fs_impl = &mut vm.transpiler.fs_mut().fs;
-                        // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
-                        // EntryStore (checked non-null above); no shared `&Entry` is live
-                        // here. entries_mutex held; fs_impl is the process-global RealFS.
-                        unsafe { (&*entry_ptr).kind(fs_impl, false) }
-                    };
-                    if kind == Fs::EntryKind::Dir {
-                        for banned_dir in Router::BANNED_DIRS.iter() {
-                            if entry.base() == *banned_dir {
-                                continue 'outer;
-                            }
-                        }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                        // `abs()` writes into a thread-local buffer; copy out
-                        // before recursing (recursion overwrites it).
-                        let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
-                        self.bust_dir_cache_recursive(global_this, &full_path);
-                    }
-                }
-            }
-        }
-
-        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
-    }
-
-    pub fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
-        let dir =
-            strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
-        // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
-        // recursive walk re-derives the path from the resolver per-iteration so a one-time
-        // copy is sufficient.
-        let dir = dir.to_vec();
-        self.bust_dir_cache_recursive(global_this, &dir);
-    }
-
     #[bun_jsc::host_fn(method)]
     pub fn reload(
         this: &Self,
@@ -449,7 +372,6 @@ impl FileSystemRouter {
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
 
-        let arena = Box::new(ArenaAllocator::new());
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
         let vm_ptr = global_this.bun_vm_ptr();
 
@@ -463,10 +385,11 @@ impl FileSystemRouter {
             )
         };
 
-        this.bust_dir_cache(global_this);
-        // Note: `bust_dir_cache` re-derives the VM borrow internally; rebind here so
-        // our `vm` borrow is fresh under Stacked Borrows.
+        // Bump the resolver generation so `RouteLoader::load` re-reads each
+        // directory in place (reusing Entry slots) instead of orphaning the
+        // cached BSSMap/EntryStore slots the way removing the entry would.
         let vm = global_this.bun_vm().as_mut();
+        vm.transpiler.resolver.generation = vm.transpiler.resolver.generation.wrapping_add(1);
 
         // R-2: snapshot the config fields up front so the `JsCell::get()` borrow is
         // released before `JsCell::set()` below installs the new router.
@@ -519,11 +442,10 @@ impl FileSystemRouter {
             }
         }
 
-        // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
-        // Note: order matters — old router borrows slices from old arena, so it must drop
-        // first.
+        // Drop the old route table. Note the existing `this.arena` is kept
+        // as-is: it backs the (unchanged) `extensions` / `assetPrefix` config
+        // slices that the new router's `RouteConfig` still points into.
         this.router.set(router);
-        this.arena.set(arena);
         // `js.routesSetCached` — wired via `codegen_cached_accessors!` above.
         routes_set_cached(this_value, global_this, JSValue::ZERO);
         Ok(this_value)
@@ -1057,12 +979,4 @@ impl MatchedRoute {
     }
 }
 
-// Note: `bun.ThreadlocalBuffers(struct { buf: if (isWindows) [MAX_PATH_BYTES*2]u8 else void })`
-// Heap-backed so only a Box pointer lives in TLS — a `const { [0u8; MAX_PATH_BYTES*2] }`
-// initializer here would put ~192 KB of zeros directly into the PE `.tls` section
-// (PE/COFF has no TLS-BSS). See test/js/bun/binary/tls-segment-size.
-#[cfg(windows)]
-thread_local! {
-    static WIN32_NORMALIZE_BUF: core::cell::RefCell<Box<[u8; MAX_PATH_BYTES * 2]>> =
-        core::cell::RefCell::new(bun_core::boxed_zeroed());
-}
+

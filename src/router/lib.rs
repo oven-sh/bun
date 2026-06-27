@@ -9,7 +9,7 @@ use core::ptr::NonNull;
 use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::strings;
+use bun_core::{Generation, strings};
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_sys::Fd;
 use bun_url::PathnameScanner;
@@ -181,6 +181,33 @@ impl RouteConfig {
 
         Ok(router)
     }
+}
+
+/// Intern `value` into the process-lifetime `DirnameStore`, returning the
+/// previously-interned slice when an identical one already exists.
+///
+/// `Route::parse` runs for every route on every `FileSystemRouter.reload()`;
+/// `DirnameStore::append` does not deduplicate, so without this a long-running
+/// dev server that calls `reload()` on every file event grows `DirnameStore`
+/// by O(routes) bytes per reload forever. The table below bounds that to one
+/// interned copy per distinct path for the process.
+fn intern_route_string(value: &[u8]) -> &'static [u8] {
+    // JS-thread only today (`FileSystemRouter` is not `Send`), but the
+    // DirnameStore backing is process-global so guard with a real mutex.
+    static CACHE: bun_threading::Guarded<Option<StringHashMap<&'static [u8]>>> =
+        bun_threading::Guarded::new(None);
+    let mut guard = CACHE.lock();
+    let map = guard.get_or_insert_with(StringHashMap::new);
+    if let Some(&existing) = map.get(value) {
+        return existing;
+    }
+    let interned = FileSystem::instance()
+        .dirname_store()
+        .append(value)
+        .expect("unreachable");
+    // Key borrows the DirnameStore-backed slice itself (process lifetime).
+    let _ = map.put_static_key(interned, interned);
+    interned
 }
 
 // `hash_const` is byte-identical to the runtime `bun_wyhash::hash` (seed 0);
@@ -796,7 +823,11 @@ impl<'a> RouteLoader<'a> {
     ) {
         let fs = self.fs;
 
-        if let Some(entries) = root_dir_info.get_entries_const() {
+        // Generation-aware: when the resolver's generation has advanced
+        // (e.g. `FileSystemRouter.reload()`), this re-reads the directory in
+        // place and reuses existing `Entry` slots rather than serving stale
+        // cached entries. `get_entries_const()` would return the stale set.
+        if let Some(entries) = root_dir_info.get_entries_ref(resolver.generation()) {
             let iter = entries.iter();
             'outer: for entry_ptr in iter {
                 // NOTE: `iter()` yields raw `*mut Entry`. Reborrow locally for
@@ -1101,18 +1132,18 @@ impl Route {
                     let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
                     let name_len = name.len();
 
-                    // NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                    // lifetime arena), so rebinding here drops the borrow on
-                    // `route_file_buf` and avoids needing lifetime transmutes
-                    // below.
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
+                    // NOTE: `intern_route_string` returns `&'static [u8]`
+                    // (DirnameStore-backed), so rebinding here drops the
+                    // borrow on `route_file_buf` and avoids needing lifetime
+                    // transmutes below.
+                    let public_path: &'static [u8] = intern_route_string(public_path);
                     let name: &'static [u8] = &public_path[name_offset..][0..name_len];
                     let match_name: &'static [u8] = if has_uppercase {
-                        dirname_store
-                            .append_lower_case(&name[1..])
-                            .expect("unreachable")
+                        let mut lc = name[1..].to_vec();
+                        for b in &mut lc {
+                            *b = b.to_ascii_lowercase();
+                        }
+                        intern_route_string(&lc)
                     } else {
                         &name[1..]
                     };
@@ -1121,9 +1152,7 @@ impl Route {
                     debug_assert!(name[0] == b'/');
                     (public_path, name, match_name)
                 } else {
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
+                    let public_path: &'static [u8] = intern_route_string(public_path);
                     (
                         public_path,
                         Route::INDEX_ROUTE_NAME,
@@ -1222,11 +1251,7 @@ impl Route {
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
                 );
-                let interned: &'static [u8] = FileSystem::instance()
-                    .dirname_store()
-                    .append(normalized)
-                    .expect("unreachable");
-                Interned::from_static(interned)
+                Interned::from_static(intern_route_string(normalized))
             };
             #[cfg(not(windows))]
             let abs_path = Interned::from_static(abs_path_str);
@@ -1241,15 +1266,13 @@ impl Route {
                 debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
             }
 
-            // NOTE: name/match_name/public_path are already `&'static` via
-            // DirnameStore::append above. `entry.base()` borrows the entry (it
-            // may be inline-stored for ≤31-byte names); intern it
-            // explicitly to get `&'static` without a lifetime transmute.
-            // SAFETY: read-only reborrow; the `&mut` write above is dead.
-            let basename: &'static [u8] = FileSystem::instance()
-                .dirname_store()
-                .append(unsafe { &*entry }.base())
-                .expect("unreachable");
+            // SAFETY: `entry` lives in the process-lifetime `EntryStore`
+            // BSSList (never freed, never moved) and `base_` is immutable
+            // after construction, so its bytes are process-lifetime whether
+            // inline (≤31 B) or in `FilenameStore`. Same widen as
+            // `add_entry_with_store` in `bun_resolver::fs`.
+            let basename: &'static [u8] =
+                unsafe { &*core::ptr::from_ref::<[u8]>((*entry).base()) };
 
             Some(Route {
                 name,
@@ -1484,6 +1507,12 @@ pub trait ResolverLike {
     /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
     /// borrow ends before the recursive `load()` re-borrows it.
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
+    /// Resolver cache generation. When higher than a cached `DirEntry`'s
+    /// generation, `get_entries_ref` re-reads that directory in place
+    /// (reusing the existing `Entry` slots) instead of serving stale entries.
+    fn generation(&self) -> Generation {
+        0
+    }
 }
 
 pub trait WatcherLike {

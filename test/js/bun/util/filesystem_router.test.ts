@@ -734,3 +734,62 @@ it("match() does not panic on a leading '?' or a path that percent-decodes to em
   });
   expect(exitCode).toBe(0);
 });
+
+it("reload() does not leak native memory", async () => {
+  // Before the fix, reload() removed the route directory from the resolver's
+  // BSSMap-backed caches (orphaning the slot and its Box<DirEntry> + N Entry
+  // slots forever) and re-interned every route's public_path/basename into
+  // the append-only DirnameStore. With 50 routes that was ~25 KB of native
+  // memory retained per reload(), invisible to the JS heap, and would
+  // eventually abort with OutOfMemory under sustained dev-server use.
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 50; i++) {
+    files[`pages/route-name-with-a-reasonably-long-path-${i}.tsx`] = "export default 1;";
+  }
+  files["pages/blog/[slug].tsx"] = "export default 1;";
+  using dir = tempDir("fsr-reload-leak", files);
+  const pages = path.join(String(dir), "pages");
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(pages)},
+      style: "nextjs",
+    });
+    for (let i = 0; i < 200; i++) router.reload();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 2000; i++) router.reload();
+    Bun.gc(true);
+    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
+    // Before the fix: ~50 MB over 2000 reloads. After: flat.
+    if (growthMB > 15) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+
+    // reload() must still produce a working route table.
+    const m = router.match("/blog/hello");
+    if (m?.params?.slug !== "hello") {
+      throw new Error("match after reload broken: " + JSON.stringify(m?.params));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", code],
+    env: {
+      ...bunEnv,
+      // ASAN parks freed allocations in a (default 256 MB) quarantine, so RSS
+      // grows with alloc/free churn even when nothing is retained. Disable it
+      // so the RSS delta measures only genuinely-retained memory.
+      ASAN_OPTIONS:
+        (bunEnv.ASAN_OPTIONS ? bunEnv.ASAN_OPTIONS + ":" : "") +
+        "quarantine_size_mb=0:thread_local_quarantine_size_kb=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: expect.stringMatching(/^RSS growth: [\d.]+MB\n$/),
+    exitCode: 0,
+  });
+}, 60_000);

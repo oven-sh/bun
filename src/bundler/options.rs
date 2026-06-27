@@ -954,11 +954,13 @@ pub fn defines_from_transform_options(
     }
 
     if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
-        // A browser bundle has no `process.env` at runtime, so `NODE_ENV` must
-        // be inlined. Server-side targets (`bun`/`node`, including `bun build
-        // --compile`) run against a real `process.env`; injecting a define there
-        // would freeze the build machine's `NODE_ENV` into the output. An
-        // explicit `--define` still wins either way via `get_or_put_value`.
+        // A browser bundle has no `process.env` at runtime, so `NODE_ENV`
+        // must be inlined. Server-side targets (`bun`/`node`, including `bun
+        // build --compile`) run against a real `process.env`; injecting a
+        // define there would freeze the build machine's ambient `NODE_ENV`
+        // into the output. An explicit `--define` (and `--production`, which
+        // seeds `maybe_input_define` in `build_command.rs`) still wins either
+        // way via the `user_defines` insertion above.
         if !target.is_server_side() {
             let quoted_node_env: Box<[u8]> = 'brk: {
                 if let Some(node_env) = node_env {

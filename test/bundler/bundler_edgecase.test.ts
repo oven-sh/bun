@@ -215,6 +215,22 @@ describe("bundler", () => {
         "process.env.BUN_ENV",
       ],
     });
+    // `--production` is an explicit opt-in documented as "set
+    // NODE_ENV=production", so it must still inline on server-side targets
+    // (enables DCE of `if (process.env.NODE_ENV !== 'production')` branches).
+    itBundled("edgecase/NodeEnvInlinedWithProduction_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.NODE_ENV === 'production');
+          capture(process.env.NODE_ENV !== 'production');
+        `,
+      },
+      target,
+      production: true,
+      backend: "cli",
+      capture: ['"production"', "!0", "!1"],
+    });
     // An explicit `--define` must still inline on server-side targets.
     itBundled("edgecase/NodeEnvInlinedWithDefine_" + target, {
       files: {

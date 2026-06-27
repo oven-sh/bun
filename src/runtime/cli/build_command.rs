@@ -84,6 +84,21 @@ impl BuildCommand {
 
         let compile_target = &ctx.bundler_options.compile_target;
 
+        // `--production` is documented as "Set NODE_ENV=production". For
+        // server-side targets the default `NODE_ENV` define is skipped (the
+        // bundle runs against a real `process.env`), so seed an explicit user
+        // define here to keep DCE of dev-only branches working. Prepended so
+        // a user-supplied `--define process.env.NODE_ENV=...` still wins.
+        if ctx.bundler_options.production {
+            let define = ctx.args.define.get_or_insert_with(Default::default);
+            define
+                .keys
+                .insert(0, Box::<[u8]>::from(b"process.env.NODE_ENV" as &[u8]));
+            define
+                .values
+                .insert(0, Box::<[u8]>::from(b"\"production\"" as &[u8]));
+        }
+
         if ctx.bundler_options.compile {
             let compile_define_keys = compile_target.define_keys();
             let compile_define_values = compile_target.define_values();

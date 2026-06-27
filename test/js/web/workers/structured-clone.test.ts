@@ -275,8 +275,60 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(blob, { transfer: [blob] });
           }).toThrow(DOMException);
         });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#dom-structuredclone
+        // `transfer` is a WebIDL sequence<object>: it is converted (and may throw)
+        // before anything is serialized, so a rejected call must not detach buffers.
+        test("an invalid entry in transfer throws TypeError without detaching other entries", () => {
+          const buffer = new ArrayBuffer(8);
+          for (const entry of [null, undefined, 42, "x", true, Symbol("s"), 123n]) {
+            expect(() => structuredCloneFn({ buffer }, { transfer: [buffer, entry as any] })).toThrow(TypeError);
+            expect(buffer.byteLength).toBe(8);
+          }
+        });
+        test("a transfer value that is not a sequence throws TypeError", () => {
+          const buffer = new ArrayBuffer(8);
+          for (const transfer of [5, "abc", {}, null, true]) {
+            expect(() => structuredCloneFn({ buffer }, { transfer: transfer as any })).toThrow(TypeError);
+            expect(buffer.byteLength).toBe(8);
+          }
+        });
+        test("options that are not an object throw TypeError", () => {
+          for (const options of [42, "x", true, Symbol("s")]) {
+            expect(() => structuredCloneFn(1, options as any)).toThrow(TypeError);
+          }
+        });
+        test("transfer accepts any iterable of transferables", () => {
+          const buffer = new ArrayBuffer(8);
+          const cloned = structuredCloneFn({ buffer }, { transfer: new Set([buffer]) as any });
+          expect(cloned.buffer.byteLength).toBe(8);
+          expect(buffer.byteLength).toBe(0);
+        });
       });
     }
+
+    describe("MessagePort", () => {
+      // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+      // MessagePort is transferable but not serializable: one that is not in the
+      // transfer list fails at serialize time with a DataCloneError.
+      test("an untransferred MessagePort fails with DataCloneError", () => {
+        const { port1, port2 } = new MessageChannel();
+        try {
+          for (const value of [port1, { port: port1 }, [port1]]) {
+            let error: unknown;
+            try {
+              structuredCloneFn(value);
+            } catch (e) {
+              error = e;
+            }
+            expect(error).toBeInstanceOf(DOMException);
+            expect((error as DOMException).name).toBe("DataCloneError");
+          }
+        } finally {
+          port1.close();
+          port2.close();
+        }
+      });
+    });
   });
 }
 

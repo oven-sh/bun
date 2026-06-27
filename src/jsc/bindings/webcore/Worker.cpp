@@ -43,8 +43,11 @@
 #include "MessageEvent.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
+#include "JSDOMConvertObject.h"
+#include "JSDOMConvertSequences.h"
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
+#include "JSStructuredSerializeOptions.h"
 
 namespace WebCore {
 
@@ -740,26 +743,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
 
-    if (options.isObject()) {
-        JSC::JSValue transferListValue;
-        // postMessage(message, sequence<object>) overload — second argument is the transfer list itself.
+    // postMessage(message, sequence<object>) and postMessage(message, { transfer })
+    // overloads. Both are converted per WebIDL before serializing, so an invalid
+    // transfer list throws a TypeError without detaching anything.
+    if (!options.isUndefinedOrNull()) {
         bool isSequence = hasIteratorMethod(globalObject, options);
         RETURN_IF_EXCEPTION(scope, {});
         if (isSequence) {
-            transferListValue = options;
+            transferList = convert<IDLSequence<IDLObject>>(*globalObject, options);
+            RETURN_IF_EXCEPTION(scope, {});
         } else {
-            // postMessage(message, { transfer }) overload.
-            JSC::JSObject* optionsObject = options.getObject();
-            transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+            auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
             RETURN_IF_EXCEPTION(scope, {});
-        }
-        if (transferListValue.isObject()) {
-            forEachInIterable(globalObject, transferListValue, [&transferList](JSC::VM& vm, JSC::JSGlobalObject*, JSC::JSValue nextValue) {
-                if (nextValue.isObject()) {
-                    transferList.append(JSC::Strong<JSC::JSObject>(vm, nextValue.getObject()));
-                }
-            });
-            RETURN_IF_EXCEPTION(scope, {});
+            transferList = WTF::move(serializeOptions.transfer);
         }
     }
 

@@ -1778,8 +1778,10 @@ private:
                     write(index->value);
                     return true;
                 }
-                // MessagePort object could not be found in transferred message ports
-                code = SerializationReturnCode::ValidationError;
+                // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+                // A MessagePort is transferable but not serializable: one that is not in
+                // the transfer list fails at serialize time with a DataCloneError.
+                code = SerializationReturnCode::DataCloneError;
                 return true;
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {

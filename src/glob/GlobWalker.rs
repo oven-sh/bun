@@ -1943,7 +1943,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                             // because that only applies negation if at the
                             // beginning of the string.
                             b'[' | b'{' | b'?' | b'*' | b'\\' => {
-                                break 'out_of_check_wildcard_filepath
+                                break 'out_of_check_wildcard_filepath;
                             }
                             _ => {}
                         }

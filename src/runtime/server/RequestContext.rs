@@ -2423,10 +2423,10 @@ where
         let resp = this.resp.expect("infallible: resp bound");
         this.set_response(response);
 
-        // `render` drops the body for these statuses on GET, so HEAD must not
-        // derive framing from that body (or the user headers) either
+        // `render` drops the body for a null-body status on GET, so HEAD must
+        // not derive framing from that body (or the user headers) either
         // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.
-        if matches!(response.status_code(), 101 | 103 | 204 | 205 | 304) {
+        if HTTPStatusText::is_null_body(response.status_code()) {
             Self::do_render_blob_corked(std::ptr::from_mut::<Self>(this));
             return;
         }
@@ -3683,7 +3683,7 @@ where
         ctx_log!("render");
         self.set_response(response);
 
-        if matches!(response.status_code(), 101 | 103 | 204 | 205 | 304) {
+        if HTTPStatusText::is_null_body(response.status_code()) {
             self.do_render_blob();
             return;
         }

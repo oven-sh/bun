@@ -112,11 +112,15 @@ public:
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        /* A no-body status (1xx / 204) must not carry a Content-Length header
-         * (RFC 9110 8.6). end() short-circuits on noBodyStatus, but tryEnd()
-         * reaches here directly with allowContentLength defaulted to true. */
+        /* A no-body status carries neither a Content-Length header (RFC 9110
+         * 8.6) nor any body bytes: RFC 9112 6.3 terminates the message at the
+         * blank line after the header fields regardless of what follows. end()
+         * already short-circuits on noBodyStatus; tryEnd() reaches here
+         * directly, so drop both the framing and the data. */
         if (httpResponseData->noBodyStatus) {
             allowContentLength = false;
+            data = {};
+            totalSize = 0;
         }
 
         /* In some cases, such as when refusing huge data we want to close the connection when drained */

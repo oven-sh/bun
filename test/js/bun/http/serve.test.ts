@@ -1193,9 +1193,11 @@ it("does not write body bytes for null body statuses", async () => {
 });
 
 describe("response framing", () => {
-  // Read the raw response head so that `Content-Length: 0` and an absent
-  // Content-Length are distinguishable (fetch normalizes the two cases away).
-  async function rawRequest(port: number, method: string): Promise<{ statusLine: string; headerNames: string[] }> {
+  type RawResponse = { statusLine: string; headerNames: string[]; headers: Record<string, string>; body: string };
+  // Read the raw response so that `Content-Length: 0` and an absent
+  // Content-Length are distinguishable (fetch normalizes the two cases away),
+  // and so body bytes smuggled after a no-body status's header block show up.
+  async function rawRequest(port: number, method: string): Promise<RawResponse> {
     const received: Buffer[] = [];
     const { resolve, reject, promise } = Promise.withResolvers<void>();
     await using connection = await Bun.connect({
@@ -1220,10 +1222,18 @@ describe("response framing", () => {
     connection.flush();
     await promise;
     const raw = Buffer.concat(received).toString();
-    const headLines = raw.slice(0, raw.indexOf("\r\n\r\n")).split("\r\n");
+    const headEnd = raw.indexOf("\r\n\r\n");
+    const headLines = raw.slice(0, headEnd).split("\r\n");
+    const headers: Record<string, string> = {};
+    for (const line of headLines.slice(1)) {
+      const colon = line.indexOf(":");
+      headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
+    }
     return {
       statusLine: headLines[0],
-      headerNames: headLines.slice(1).map(line => line.slice(0, line.indexOf(":")).toLowerCase()),
+      headerNames: Object.keys(headers),
+      headers,
+      body: raw.slice(headEnd + 4),
     };
   }
 
@@ -1255,6 +1265,61 @@ describe("response framing", () => {
       const { statusLine, headerNames } = await rawRequest(server.port, method);
       expect(statusLine).toStartWith(`HTTP/1.1 ${status} `);
       expect(headerNames).toContain("content-length");
+    });
+  });
+
+  // A Response body on a null-body status never reaches the wire: RFC 9112 6.3
+  // terminates a 204/304 at the blank line after the header fields regardless
+  // of what follows, so stray body bytes desync keep-alive. The fetch-handler
+  // path already drops the body in `render`; the static `routes:` path must too.
+  describe.each(["routes", "fetch"] as const)("%s: a Response body on a null-body status is dropped", kind => {
+    const cases: [status: number, method: string, contentLength: string | null][] = [
+      [101, "GET", null],
+      [101, "HEAD", null],
+      [204, "GET", null],
+      [204, "HEAD", null],
+      [205, "GET", "0"],
+      [205, "HEAD", "0"],
+      [304, "GET", "0"],
+      [304, "HEAD", "0"],
+    ];
+    it.each(cases)("%i %s", async (status, method, contentLength) => {
+      const makeResponse = () => new Response("data", { status });
+      using server = Bun.serve(
+        kind === "routes"
+          ? {
+              port: 0,
+              hostname: "127.0.0.1",
+              routes: { "/": makeResponse() },
+              fetch: () => new Response("unreachable", { status: 500 }),
+            }
+          : { port: 0, hostname: "127.0.0.1", fetch: makeResponse },
+      );
+      const { statusLine, headers, body } = await rawRequest(server.port, method);
+      expect({
+        statusLine: statusLine.slice(0, 12),
+        contentLength: headers["content-length"] ?? null,
+        body,
+      }).toEqual({ statusLine: `HTTP/1.1 ${status}`, contentLength, body: "" });
+    });
+  });
+
+  // `FileRoute` ships its body via sendfile / `HttpResponse::write()`, neither
+  // of which goes through `internalEnd`, so it needs its own null-body-status
+  // drop. 101 is the one null-body status its bodiless list was missing.
+  it.each(["GET", "HEAD"])("a Bun.file route on a null-body status serves no body bytes (%s)", async method => {
+    using dir = tempDir("framing-file-route", { "f.bin": "data" });
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/": new Response(Bun.file(join(String(dir), "f.bin")), { status: 101 }) },
+      fetch: () => new Response("unreachable", { status: 500 }),
+    });
+    const { statusLine, headers, body } = await rawRequest(server.port, method);
+    expect({ statusLine: statusLine.slice(0, 12), contentLength: headers["content-length"] ?? null, body }).toEqual({
+      statusLine: "HTTP/1.1 101",
+      contentLength: null,
+      body: "",
     });
   });
 

@@ -15,7 +15,7 @@ use bun_jsc::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
-use crate::server::{AnyServer, write_status};
+use crate::server::{AnyServer, HTTPStatusText, write_status};
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
@@ -284,7 +284,15 @@ impl StaticRoute {
 
     fn render_metadata_and_end(&self, resp: AnyResponse) {
         self.render_metadata(resp);
-        resp.write_header_int(b"Content-Length", self.cached_blob_size);
+        // `do_render_blob_corked` drops the body for a null-body status, so
+        // HEAD reports the zero bytes GET actually sends (RFC 9110 §9.3.2).
+        // (For 1xx/204 uWS suppresses the Content-Length header entirely.)
+        let size = if HTTPStatusText::is_null_body(self.status_code) {
+            0
+        } else {
+            self.cached_blob_size
+        };
+        resp.write_header_int(b"Content-Length", size);
         resp.end_without_body(resp.should_close_connection());
     }
 
@@ -408,6 +416,13 @@ impl StaticRoute {
 
     fn do_render_blob_corked(&self, resp: AnyResponse, did_finish: &mut bool) {
         self.render_metadata(resp);
+        // A null-body status never puts body bytes on the wire, the same drop
+        // `render` and `FileRoute` already do. Writing them here with no
+        // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
+        if HTTPStatusText::is_null_body(self.status_code) {
+            *did_finish = resp.try_end(b"", 0, resp.should_close_connection());
+            return;
+        }
         self.render_bytes(resp, did_finish);
     }
 

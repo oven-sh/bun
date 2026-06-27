@@ -493,10 +493,8 @@ describe("bundler", () => {
   });
 
   // ============================================================================
-  // Tests for nullish module.exports
-  // A CJS dependency may legitimately set module.exports to null or undefined.
-  // __toESM must not pass a nullish value to Object.getOwnPropertyNames, or the
-  // whole bundle throws at import time. Node and esbuild both handle this.
+  // Nullish module.exports: __toESM must not pass null/undefined to
+  // Object.getOwnPropertyNames or the bundle throws at import time.
   // ============================================================================
 
   // Test 24: module.exports = null, format=esm
@@ -556,11 +554,8 @@ describe("bundler", () => {
   });
 
   // ============================================================================
-  // Tests for the __commonJS wrapper function
-  // Node runs every CommonJS module inside a regular function, so a top-level
-  // `arguments` reference is legal. The wrapper passed to __commonJS must be a
-  // regular function (not an arrow) so `arguments` has a binding when the
-  // output format is ESM. esbuild emits a regular function here too.
+  // The __commonJS wrapper must be a regular function (not an arrow) so a
+  // top-level `arguments` reference in a CJS body has a binding in ESM output.
   // ============================================================================
 
   // Test 27: top-level `arguments` inside a CJS module
@@ -582,13 +577,9 @@ describe("bundler", () => {
     },
   });
 
-  // Test 28: `export *` from an external package with nullish exports, format=cjs
-  // In CommonJS output the linker emits
-  //   __reExport(exports_entry, require("ext"), module.exports);
-  // with the raw, unwrapped require() result, so __reExport itself must
-  // tolerate a nullish module.exports. A bundled (non-external) CJS target is
-  // always wrapped in __toESM first, which is why the external case is the one
-  // that reaches __reExport with null.
+  // Test 28: export * from an external package whose module.exports is null.
+  // CJS output emits __reExport(exports, require("ext"), module.exports) with
+  // the raw require() result, so __reExport itself must tolerate null.
   itBundled("cjs/__reExport_external_null_module_exports", {
     files: {
       "/entry.js": /* js */ `

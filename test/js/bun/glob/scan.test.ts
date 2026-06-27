@@ -628,6 +628,9 @@ describe.skipIf(isWindows)("backslash escapes non-special characters", () => {
       "foo.t s": "x",
     });
   });
+  afterAll(() => {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
 
   // `\x` quotes `x` whether or not `x` is special, so scan must agree with match.
   test.each([
@@ -644,6 +647,13 @@ describe.skipIf(isWindows)("backslash escapes non-special characters", () => {
     for (const name of expected) {
       expect(glob.match(name)).toBe(true);
     }
+  });
+
+  // `\\` is one literal `\`, so the on-disk name without a backslash must not match.
+  test("escaped backslash requires a literal backslash in the name", () => {
+    const glob = new Glob("sp\\\\ ace.txt");
+    expect(glob.match("sp ace.txt")).toBe(false);
+    expect(glob.match("sp\\ ace.txt")).toBe(true);
   });
 
   test("absolute path", async () => {

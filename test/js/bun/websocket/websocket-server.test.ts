@@ -1211,7 +1211,7 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
 
 // publish() fans out to N subscribers and must report backpressure/drops the
 // same way ws.send() does for a single socket.
-describe("publish() return value reflects subscriber backpressure", () => {
+describe.concurrent("publish() return value reflects subscriber backpressure", () => {
   // One paused raw-TCP subscriber; the server-side handle is captured so the
   // test can compare publish() to send() on the same socket.
   async function withSlowSubscriber(

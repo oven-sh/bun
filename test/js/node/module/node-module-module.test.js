@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -267,6 +267,42 @@ describe.concurrent("node-module-module", () => {
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
   });
+  test("require.resolve options.paths entries that are not absolute paths", async () => {
+    using dir = tempDir("resolve-paths-relative", {
+      "sub/node_modules/relative-paths-pkg/package.json": JSON.stringify({
+        name: "relative-paths-pkg",
+        main: "index.js",
+      }),
+      "sub/node_modules/relative-paths-pkg/index.js": "module.exports = 42;",
+      "main.js": `
+        const assert = require("assert");
+        const path = require("path");
+        const Module = require("module");
+        const expected = path.join(process.cwd(), "sub", "node_modules", "relative-paths-pkg", "index.js");
+        assert.strictEqual(require.resolve("relative-paths-pkg", { paths: ["sub"] }), expected);
+        assert.strictEqual(Module._resolveFilename("relative-paths-pkg", module, false, { paths: ["sub"] }), expected);
+        for (const bad of [{}, 123, null]) {
+          assert.throws(() => require.resolve("relative-paths-pkg", { paths: [bad] }), { code: "ERR_INVALID_ARG_TYPE" });
+          assert.throws(() => Module._resolveFilename("relative-paths-pkg", module, false, { paths: [bad] }), { code: "ERR_INVALID_ARG_TYPE" });
+        }
+        assert.throws(() => require.resolve("package-that-does-not-exist", { paths: ["dir-that-does-not-exist"] }), { code: "MODULE_NOT_FOUND" });
+        console.log("pass");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout.trim()).toBe("pass");
+    expect(await proc.exited).toBe(0);
+  });
+
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

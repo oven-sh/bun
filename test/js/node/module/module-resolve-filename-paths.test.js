@@ -183,6 +183,40 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
   }
 });
 
+test("require.resolve throws ERR_INVALID_ARG_TYPE for non-string entries in options.paths", () => {
+  for (const bad of [{}, 123, null]) {
+    let err;
+    try {
+      require.resolve("some-package-that-does-not-exist", { paths: [bad] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(err.message.includes('"paths[0]"')).toBe(true);
+  }
+});
+
+test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE for non-string entries in options.paths", () => {
+  let err;
+  try {
+    Module._resolveFilename("some-package-that-does-not-exist", null, false, { paths: [{}] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+  expect(err.message.includes('"paths[0]"')).toBe(true);
+});
+
+test("require.resolve with a relative options.paths entry reports MODULE_NOT_FOUND", () => {
+  let err;
+  try {
+    require.resolve("some-package-that-does-not-exist", { paths: ["some-dir-that-does-not-exist"] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("MODULE_NOT_FOUND");
+});
+
 test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {
   // Test with string (which is iterable but not an array)
   expect(() => {

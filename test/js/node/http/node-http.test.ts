@@ -2646,6 +2646,66 @@ it("close-delimited streaming writes carry raw bytes with no chunk framing artif
   }
 });
 
+describe("HTTP/1.0 close-delimited response with streaming writes", () => {
+  // An HTTP/1.0 client cannot receive Transfer-Encoding: chunked, so a
+  // response that streams via write() before end() is close-delimited. Once
+  // the first write() has terminated the header block, a later end(chunk)
+  // must emit only the raw body bytes and close the connection; it must not
+  // re-enter the header-serialization path and splice a Content-Length line
+  // into the body.
+  it.each([
+    [
+      "sync",
+      (res: ServerResponse) => {
+        res.writeHead(200);
+        res.write("a");
+        res.write("b");
+        res.end("c");
+      },
+    ],
+    [
+      "async",
+      (res: ServerResponse) => {
+        res.writeHead(200);
+        res.write("a");
+        setImmediate(() => {
+          res.write("b");
+          res.end("c");
+        });
+      },
+    ],
+  ] as const)("%s write/end", async (_, handler) => {
+    const server = createServer((req, res) => {
+      req.resume();
+      handler(res);
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const out = await new Promise<string>((resolve, reject) => {
+        const socket = connect(port, "127.0.0.1");
+        let data = "";
+        socket.on("data", chunk => (data += chunk));
+        socket.on("close", () => resolve(data));
+        socket.on("error", reject);
+        socket.write("GET / HTTP/1.0\r\nHost: a\r\n\r\n");
+      });
+
+      const sep = out.indexOf("\r\n\r\n");
+      const headers = out.slice(0, sep);
+      const body = out.slice(sep + 4);
+      expect({ headers: headers.replace(/^Date:.*$/m, "Date: <date>"), body }).toEqual({
+        headers: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close",
+        body: "abc",
+      });
+    } finally {
+      server.close();
+    }
+  });
+});
+
 // A bare `new IncomingMessage(null)` has httpVersionMajor/Minor === null;
 // `null < 1` is true, so the ServerResponse constructor's HTTP/1.0 branch
 // (matching node v26.3.0 lib/_http_server.js L214) sets shouldKeepAlive=false

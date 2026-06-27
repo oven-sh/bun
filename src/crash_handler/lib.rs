@@ -1618,8 +1618,9 @@ mod draft {
         },
     );
 
-    /// Extract `(pc, fp, lr)` from the `ucontext_t` the kernel hands the signal
-    /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
+    /// Extract `(pc, fp, lr, sp)` from the `ucontext_t` the kernel hands the
+    /// signal handler. Seeds the frame-pointer walk from the faulting frame.
+    /// Returns
     /// `None` on arch/OS combos we don't have register offsets for (the caller
     /// then falls back to a current-stack capture).
     ///

@@ -368,7 +368,7 @@ impl Expansion {
     /// able to broaden the match. Mirrors `do_brace_expand`'s escaping loop,
     /// but the glob matcher has no general backslash-escape that survives
     /// `build_pattern_components` on every platform, so each byte is wrapped
-    /// in a single-character class (`[c]`) — or a one-branch brace group for
+    /// in a single-character class (`[c]`) — or a two-branch brace group for
     /// a component-leading `!` — which the matcher provably treats as that
     /// literal character.
     /// `current_out` itself is not mutated: the no-match error message and the
@@ -391,18 +391,21 @@ impl Expansion {
                 // class wrapper. Only a `!` at the start of a path component
                 // (the same split `build_pattern_components` performs) can act
                 // as pattern syntax — the matcher's negation loop — so wrap
-                // that one in a one-branch brace group whose sole branch is
-                // the literal `!`. Every other `!` already matches literally
-                // and is emitted bare: wrapping each one costs a brace-stack
-                // slot per byte, and a run of more than 10 interpolated `!`
-                // would overflow the matcher's bounded brace stack and turn
-                // the whole word into a spurious no-match.
+                // that one in a brace group whose branches are both the
+                // literal `!`. The group needs a top-level comma: the matcher
+                // only expands a `{...}` that contains one and treats a
+                // comma-less group as the literal braces (same as bash).
+                // Every other `!` already matches literally and is emitted
+                // bare: wrapping each one costs a brace-stack slot per byte,
+                // and a run of more than 10 interpolated `!` would overflow
+                // the matcher's bounded brace stack and turn the whole word
+                // into a spurious no-match.
                 b'!' => {
                     let starts_component = pattern
                         .last()
                         .is_none_or(|&prev| bun_core::path_sep::is_sep_native(prev));
                     if starts_component {
-                        pattern.extend_from_slice(b"{!}");
+                        pattern.extend_from_slice(b"{!,!}");
                     } else {
                         pattern.push(b'!');
                     }

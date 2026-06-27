@@ -346,6 +346,28 @@ describe("Glob.match", () => {
     expect(glob.match("{a}.ts")).toBeTrue();
     expect(glob.match("a.ts")).toBeFalse();
 
+    // Only the braces become literal; glob syntax inside the group still
+    // applies. bash's `{*}` is a literal `{`, a wildcard, and a literal `}`;
+    // picomatch and minimatch agree.
+    glob = new Glob("{*}");
+    expect(glob.match("{*}")).toBeTrue();
+    expect(glob.match("{abc}")).toBeTrue();
+    expect(glob.match("abc")).toBeFalse();
+
+    glob = new Glob("{?}");
+    expect(glob.match("{x}")).toBeTrue();
+    expect(glob.match("x")).toBeFalse();
+
+    glob = new Glob("{[ab]}");
+    expect(glob.match("{a}")).toBeTrue();
+    expect(glob.match("{b}")).toBeTrue();
+    expect(glob.match("{c}")).toBeFalse();
+    expect(glob.match("a")).toBeFalse();
+
+    glob = new Glob("x{*}y");
+    expect(glob.match("x{abc}y")).toBeTrue();
+    expect(glob.match("xabcy")).toBeFalse();
+
     glob = new Glob("{}");
     expect(glob.match("{}")).toBeTrue();
     expect(glob.match("")).toBeFalse();
@@ -435,27 +457,30 @@ describe("Glob.match", () => {
   });
 
   test("deeply nested braces do not overflow depth counters", () => {
-    const opens = Buffer.alloc(300, "{").toString();
+    // Every level carries a top-level comma so the groups stay expansions;
+    // a comma-less group is a literal and would never reach the counters.
+    const opens = Buffer.alloc(900, "{a,").toString(); // 300 x "{a,"
     const closes = Buffer.alloc(300, "}").toString();
 
     // First branch matches; skip_branch must scan past >255 nested braces to
     // find the closing brace of the outer group.
-    let glob = new Glob("{a," + opens + closes + "}");
+    let glob = new Glob("{a," + opens + "x" + closes + "}");
     expect(glob.match("a")).toBeTrue();
     expect(glob.match("b")).toBeFalse();
 
-    // Deeply nested braces in the first (non-matching) branch, second branch matches.
-    glob = new Glob("{" + opens + closes + ",a}");
+    // Deeply nested braces in the first branch, second branch matches.
+    glob = new Glob("{" + opens + "x" + closes + ",z}");
     expect(glob.match("a")).toBeTrue();
+    expect(glob.match("z")).toBeTrue();
 
     // Deep nest with content, surrounded by matching branches on both sides.
-    glob = new Glob("{a," + opens + "x" + closes + ",b}");
-    expect(glob.match("a")).toBeTrue();
-    expect(glob.match("b")).toBeTrue();
+    glob = new Glob("{q," + opens + "x" + closes + ",r}");
+    expect(glob.match("q")).toBeTrue();
+    expect(glob.match("r")).toBeTrue();
     expect(glob.match("y")).toBeFalse();
 
     // Same shape inside a wildcard backtrack.
-    glob = new Glob("*{a," + opens + closes + "}");
+    glob = new Glob("*{a," + opens + "x" + closes + "}");
     expect(glob.match("za")).toBeTrue();
 
     // >32767 consecutive `{` with no closing brace: every `{` is literal.

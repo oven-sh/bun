@@ -111,11 +111,15 @@ struct Wildcard {
 /// Brace groups only expand when they contain at least one unescaped top-level
 /// comma; `{a}`, `{}`, and unclosed `{...` are taken literally, matching bash,
 /// picomatch, and minimatch. Returns a rewritten pattern with each such `{`/`}`
-/// escaped, or `None` if every brace group already has a comma.
+/// escaped, or `None` if no brace needs rewriting.
+///
+/// The rewritten bytes are for the matcher only: they must never be handed to
+/// `GlobWalker::build_pattern_components`, which treats `\` as a path
+/// separator on Windows and would split the pattern at the inserted escapes.
+/// `r#match` applies this itself, so walker components and every other caller
+/// of `r#match` get the behavior without seeing the rewritten form.
 pub fn escape_literal_braces(glob: &[u8]) -> Option<Vec<u8>> {
-    if strings::index_of_char(glob, b'{').is_none() {
-        return None;
-    }
+    strings::index_of_char(glob, b'{')?;
 
     let mut stack: SmallVec<[(u32, bool); 8]> = SmallVec::new();
     let mut literal: SmallVec<[u32; 8]> = SmallVec::new();
@@ -201,10 +205,10 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     }
 }
 
-/// Like `r#match`, but assumes every `{...}` in `glob` is a valid brace
-/// expansion (contains a top-level comma). Callers that retain a pattern
-/// across many matches should call `escape_literal_braces` once up front
-/// and pass the result here to avoid rescanning on every call.
+/// `r#match` without the `escape_literal_braces` pass. Only for callers that
+/// hold a pattern already returned by `escape_literal_braces` (or for which it
+/// returned `None`) and match it many times; everything else should use
+/// `r#match`.
 pub fn match_preprocessed(glob: &[u8], path: &[u8]) -> MatchResult {
     let mut state = State::default();
 

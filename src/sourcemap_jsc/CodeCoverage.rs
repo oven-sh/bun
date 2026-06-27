@@ -421,10 +421,9 @@ pub struct BasicBlockRange {
 }
 
 impl BasicBlockRange {
-    /// Hit count this block contributes to each line it covers; a line
-    /// reports the max across the blocks touching it. JSC reports
-    /// `has_executed` with a zero `execution_count` for the synthetic
-    /// function ranges, so executed blocks always count as at least 1.
+    /// Hit count this block contributes to each line (a line reports the
+    /// max over the blocks touching it). JSC's synthetic function ranges
+    /// have `has_executed` with a zero count, so executed blocks count ≥ 1.
     fn line_execution_count(&self) -> u32 {
         u32::try_from(self.execution_count.max(usize::from(self.has_executed))).unwrap_or(u32::MAX)
     }

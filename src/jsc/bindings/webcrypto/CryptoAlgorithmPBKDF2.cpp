@@ -53,8 +53,8 @@ void CryptoAlgorithmPBKDF2::deriveBits(const CryptoAlgorithmParameters& paramete
     }
 
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmPbkdf2Params>(parameters)), baseKey = WTF::move(baseKey), length = *length]() -> ExceptionOr<Vector<uint8_t>> {
-            return length ? platformDeriveBits(parameters, downcast<CryptoKeyRaw>(baseKey.get()), length) : Vector<uint8_t>();
+        [parameters = crossThreadCopy(downcast<CryptoAlgorithmPbkdf2Params>(parameters)), baseKey = WTF::move(baseKey), length = *length] {
+            return platformDeriveBits(parameters, downcast<CryptoKeyRaw>(baseKey.get()), length);
         });
 }
 

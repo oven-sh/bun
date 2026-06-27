@@ -499,6 +499,9 @@ describe("SubtleCrypto.deriveBits length", () => {
     ]);
     const hkAlg = { name: "HKDF", hash: "SHA-256", salt: enc.encode("salt"), info: enc.encode("info") };
     const pbAlg = { name: "PBKDF2", hash: "SHA-256", salt: enc.encode("salt"), iterations: 10 };
+    // A zero iteration count is an OperationError even when zero bits are requested;
+    // the zero-length path must still run the algorithm's parameter validation.
+    const pbIter0 = { ...pbAlg, iterations: 0 };
     expect({
       "hkdf 0": await probe(crypto.subtle.deriveBits(hkAlg, hk, 0)),
       "hkdf null": await probe(crypto.subtle.deriveBits(hkAlg, hk, null)),
@@ -508,6 +511,8 @@ describe("SubtleCrypto.deriveBits length", () => {
       "pbkdf2 null": await probe(crypto.subtle.deriveBits(pbAlg, pb, null)),
       "pbkdf2 7": await probe(crypto.subtle.deriveBits(pbAlg, pb, 7)),
       "pbkdf2 16": await probe(crypto.subtle.deriveBits(pbAlg, pb, 16)),
+      "pbkdf2 iterations 0 length 0": await probe(crypto.subtle.deriveBits(pbIter0, pb, 0)),
+      "pbkdf2 iterations 0 length 256": await probe(crypto.subtle.deriveBits(pbIter0, pb, 256)),
     }).toEqual({
       "hkdf 0": "",
       "hkdf null": "OperationError",
@@ -517,6 +522,8 @@ describe("SubtleCrypto.deriveBits length", () => {
       "pbkdf2 null": "OperationError",
       "pbkdf2 7": "OperationError",
       "pbkdf2 16": "2fb1",
+      "pbkdf2 iterations 0 length 0": "OperationError",
+      "pbkdf2 iterations 0 length 256": "OperationError",
     });
   });
 

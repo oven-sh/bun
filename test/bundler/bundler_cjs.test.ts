@@ -581,4 +581,29 @@ describe("bundler", () => {
       stdout: "[object Arguments]",
     },
   });
+
+  // Test 28: `export *` from an external package with nullish exports, format=cjs
+  // In CommonJS output the linker emits
+  //   __reExport(exports_entry, require("ext"), module.exports);
+  // with the raw, unwrapped require() result, so __reExport itself must
+  // tolerate a nullish module.exports. A bundled (non-external) CJS target is
+  // always wrapped in __toESM first, which is why the external case is the one
+  // that reaches __reExport with null.
+  itBundled("cjs/__reExport_external_null_module_exports", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "ext";
+        console.log("loaded ok");
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": /* js */ `module.exports = null;`,
+    },
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    run: {
+      stdout: "loaded ok",
+    },
+  });
 });

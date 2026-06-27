@@ -29,9 +29,7 @@ test("An+B idents shorter than a keyword are rejected, not prefix-matched", () =
     expect(() => minifyTest(`:nth-child(${sel}) {width: 20px}`, "")).toThrow("Unexpected token");
   }
   // Exact matches (any case) still work.
-  expect(minifyTest(":nth-child(EVEN) {width: 20px}", ":nth-child(2n){width:20px}")).toBe(
-    ":nth-child(2n){width:20px}",
-  );
+  expect(minifyTest(":nth-child(EVEN) {width: 20px}", ":nth-child(2n){width:20px}")).toBe(":nth-child(2n){width:20px}");
   expect(minifyTest(":nth-child(ODD) {width: 20px}", ":nth-child(odd){width:20px}")).toBe(
     ":nth-child(odd){width:20px}",
   );

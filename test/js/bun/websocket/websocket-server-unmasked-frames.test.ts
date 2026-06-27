@@ -72,7 +72,15 @@ describe.concurrent("unmasked client frames", () => {
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
         "\r\n",
     );
-    await upgraded.promise;
+    try {
+      await upgraded.promise;
+    } catch (error) {
+      // The disposable below (the only thing that stops the server) is never
+      // created when the handshake fails, so release everything here.
+      socket.destroy();
+      server.stop(true);
+      throw error;
+    }
 
     return {
       server,

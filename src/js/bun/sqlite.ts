@@ -103,6 +103,7 @@ interface CppSQLStatement {
   as: (...args: TODO[]) => TODO;
   values: (...args: TODO[]) => TODO;
   raw: (...args: TODO[]) => TODO;
+  reset: (...args: TODO[]) => TODO;
   finalize: (...args: TODO[]) => TODO;
   toString: (...args: TODO[]) => TODO;
   columns: string[];
@@ -193,8 +194,14 @@ class Statement {
   }
 
   *#iterateNoArgs() {
-    for (let res = this.#raw.iterate(); res; res = this.#raw.iterate()) {
-      yield res;
+    try {
+      for (let res = this.#raw.iterate(); res; res = this.#raw.iterate()) {
+        yield res;
+      }
+    } finally {
+      // Ending iteration early (break, return(), throw) leaves the statement's
+      // cursor open; reset it so the next execution starts from the first row.
+      this.#raw.reset();
     }
   }
 
@@ -254,16 +261,22 @@ class Statement {
   *#iterate(...args) {
     if (args.length === 0) return yield* this.#iterateNoArgs();
     var arg0 = args[0];
-    // ["foo"] => ["foo"]
-    // ("foo") => ["foo"]
-    // (Uint8Array(1024)) => [Uint8Array]
-    // (123) => [123]
-    let res =
-      !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-        ? this.#raw.iterate(args)
-        : this.#raw.iterate(...args);
-    for (; res; res = this.#raw.iterate()) {
-      yield res;
+    try {
+      // ["foo"] => ["foo"]
+      // ("foo") => ["foo"]
+      // (Uint8Array(1024)) => [Uint8Array]
+      // (123) => [123]
+      let res =
+        !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+          ? this.#raw.iterate(args)
+          : this.#raw.iterate(...args);
+      for (; res; res = this.#raw.iterate()) {
+        yield res;
+      }
+    } finally {
+      // Ending iteration early (break, return(), throw) leaves the statement's
+      // cursor open; reset it so the next execution starts from the first row.
+      this.#raw.reset();
     }
   }
 

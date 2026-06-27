@@ -731,6 +731,106 @@ it("db.query()", () => {
   db.close();
 });
 
+describe("Statement.iterate() ended early", () => {
+  const allRows = Array.from({ length: 10 }, (_, a) => ({ a }));
+
+  function openDB() {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    for (let i = 0; i < 10; i++) db.exec(`INSERT INTO t VALUES (${i})`);
+    return db;
+  }
+
+  it("break resets the statement so the next iterate() returns every row", () => {
+    using db = openDB();
+    using stmt = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const row of stmt.iterate()) break;
+
+    expect([...stmt.iterate()]).toEqual(allRows);
+  });
+
+  it("break resets a statement with bound parameters instead of failing to rebind", () => {
+    using db = openDB();
+    using stmt = db.prepare("SELECT a FROM t WHERE a >= ? ORDER BY a");
+
+    for (const row of stmt.iterate(0)) break;
+
+    // Without the reset, rebinding a busy statement fails with
+    // "bad parameter or other API misuse" (SQLITE_MISUSE).
+    expect([...stmt.iterate(0)]).toEqual(allRows);
+    expect([...stmt.iterate(5)]).toEqual(allRows.slice(5));
+  });
+
+  it("a throw from the loop body resets the statement", () => {
+    using db = openDB();
+    using stmt = db.prepare("SELECT a FROM t ORDER BY a");
+
+    expect(() => {
+      for (const row of stmt.iterate()) {
+        throw new Error("stop");
+      }
+    }).toThrow("stop");
+
+    expect([...stmt.iterate()]).toEqual(allRows);
+  });
+
+  it("destructuring the iterator resets the statement", () => {
+    using db = openDB();
+    using stmt = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const [first] = stmt.iterate();
+    expect(first).toEqual({ a: 0 });
+
+    expect([...stmt.iterate()]).toEqual(allRows);
+  });
+
+  it("break out of for..of over the Statement itself resets it", () => {
+    using db = openDB();
+    using stmt = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const row of stmt) break;
+
+    expect([...stmt]).toEqual(allRows);
+  });
+
+  it("stopping partway through resets the statement", () => {
+    using db = openDB();
+    using stmt = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const seen = [];
+    for (const row of stmt.iterate()) {
+      seen.push(row);
+      if (seen.length === 3) break;
+    }
+    expect(seen).toEqual(allRows.slice(0, 3));
+
+    expect([...stmt.iterate()]).toEqual(allRows);
+    expect(stmt.all()).toEqual(allRows);
+    expect(stmt.get()).toEqual(allRows[0]);
+  });
+
+  it("completing the iteration still allows the statement to be reused", () => {
+    using db = openDB();
+    using stmt = db.prepare("SELECT a FROM t ORDER BY a");
+
+    expect([...stmt.iterate()]).toEqual(allRows);
+    expect([...stmt.iterate()]).toEqual(allRows);
+  });
+
+  it("finalizing the statement inside the loop does not throw on break", () => {
+    using db = openDB();
+    using stmt = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const row of stmt.iterate()) {
+      stmt.finalize();
+      break;
+    }
+
+    expect(() => stmt.all()).toThrow("Statement has finalized");
+  });
+});
+
 it("db.run()", () => {
   const db = Database.open(":memory:");
 

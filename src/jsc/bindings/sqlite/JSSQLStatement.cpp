@@ -310,6 +310,7 @@ JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
 
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementFunctionFinalize);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementFunctionReset);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementToStringFunction);
 
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnNames);
@@ -635,6 +636,7 @@ static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRows, 1 } },
     { "raw"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRawRows, 1 } },
     { "finalize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFunctionFinalize, 0 } },
+    { "reset"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFunctionReset, 0 } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementToStringFunction, 0 } },
     { "columns"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnNames, 0 } },
     { "columnsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnCount, 0 } },
@@ -2810,6 +2812,23 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     if (castedThis->stmt) {
         sqlite3_finalize(castedThis->stmt);
         castedThis->stmt = nullptr;
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
+// Releases the cursor of a statement whose iteration ended early, so the next
+// execution starts from the first row instead of resuming (or failing to bind).
+// A finalized statement has nothing to reset; step errors were already thrown.
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionReset, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSSQLStatement* castedThis = dynamicDowncast<JSSQLStatement>(callFrame->thisValue());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CHECK_THIS
+
+    if (castedThis->stmt) {
+        sqlite3_reset(castedThis->stmt);
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));

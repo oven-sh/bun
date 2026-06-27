@@ -21,6 +21,7 @@ describe.concurrent("unmasked client frames", () => {
   // upgrade, then exposes exactly what the server observed.
   async function connectRaw() {
     const received: unknown[] = [];
+    const messageListeners: (() => void)[] = [];
     const firstMessage = Promise.withResolvers<string>();
     const serverClose = Promise.withResolvers<{ code: number; reason: string }>();
     const server = serve({
@@ -33,6 +34,7 @@ describe.concurrent("unmasked client frames", () => {
         message(ws, message) {
           received.push(message);
           firstMessage.resolve(`message:${JSON.stringify(message)}`);
+          for (const notify of messageListeners) notify();
         },
         close(ws, code, reason) {
           serverClose.resolve({ code, reason });
@@ -89,6 +91,15 @@ describe.concurrent("unmasked client frames", () => {
       firstMessage: firstMessage.promise,
       serverClose: serverClose.promise,
       closed: closed.promise,
+      // Resolves once the server's message handler has run `count` times.
+      waitForMessages(count: number): Promise<void> {
+        if (received.length >= count) return Promise.resolve();
+        const { promise, resolve } = Promise.withResolvers<void>();
+        messageListeners.push(() => {
+          if (received.length >= count) resolve();
+        });
+        return promise;
+      },
       [Symbol.dispose]() {
         socket.destroy();
         server.stop(true);
@@ -134,14 +145,17 @@ describe.concurrent("unmasked client frames", () => {
     expect(await raw.serverClose).toEqual({ code: 1006, reason: "Received an incorrectly masked frame" });
   });
 
-  // Control: the same raw client with correct masking is parsed and delivered.
+  // Control: the same raw client with correct masking is parsed and delivered,
+  // and the connection survives delivery (a follow-up frame arrives too).
   // Raced against `closed` so a wrongly rejected frame fails the assertion
   // instead of hanging until the test times out.
   it("a masked text frame from the same raw client is delivered", async () => {
     using raw = await connectRaw();
     raw.socket.write(maskedFrame(0x1, Buffer.from("hi")));
     expect(await Promise.race([raw.firstMessage, raw.closed])).toBe('message:"hi"');
-    expect(raw.received).toEqual(["hi"]);
+    raw.socket.write(maskedFrame(0x1, Buffer.from("again")));
+    await Promise.race([raw.waitForMessages(2), raw.closed]);
+    expect(raw.received).toEqual(["hi", "again"]);
   });
 
   // Control: a masked frame whose 2-byte base header arrives on its own must
@@ -152,6 +166,8 @@ describe.concurrent("unmasked client frames", () => {
     await new Promise<void>(resolve => raw.socket.write(frame.subarray(0, 2), () => resolve()));
     raw.socket.write(frame.subarray(2));
     expect(await Promise.race([raw.firstMessage, raw.closed])).toBe('message:"hi"');
-    expect(raw.received).toEqual(["hi"]);
+    raw.socket.write(maskedFrame(0x1, Buffer.from("again")));
+    await Promise.race([raw.waitForMessages(2), raw.closed]);
+    expect(raw.received).toEqual(["hi", "again"]);
   });
 });

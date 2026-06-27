@@ -11,9 +11,10 @@ describe.concurrent("WebSocket close() argument validation", () => {
   // Close codes an RFC 6455 endpoint must never put on the wire. close() has to
   // reject them: the peer treats them as a protocol error.
   const INVALID_CODES = [0, 999, 1004, 1005, 1006, 1015, 1016, 2999, 5000, 65535];
-  // Codes an endpoint may send (RFC 6455 7.4 + IANA). Unlike browsers, 1001-1014
-  // stay permitted: `ws` clients and Bun's inspector close with 1001/1011.
-  const VALID_CODES = [1000, 1001, 1002, 1003, 1007, 1008, 1011, 1012, 1014, 3000, 4999];
+  // Every code an endpoint may send (RFC 6455 7.4 + IANA): 1000-1014 minus the
+  // reserved 1004-1006, plus the 3000-4999 boundaries. Unlike browsers, the
+  // 1001-1014 band stays permitted: `ws` clients and Bun's inspector use 1001/1011.
+  const VALID_CODES = [1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 3000, 4999];
   const LONG_REASON = Buffer.alloc(124, "R").toString();
 
   // `constructor` is DOMException for InvalidAccessError, but the native

@@ -254,6 +254,33 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+function rethrowUncaught(err) {
+  throw err;
+}
+
+// Distinguishes "the user's checkServerIdentity threw" from any Error it
+// returned; the handshake is abandoned the way Node abandons onConnectSecure.
+const kCheckServerIdentityThrew = Symbol("kCheckServerIdentityThrew");
+
+/**
+ * Run the user's `checkServerIdentity` and return the verify Error it
+ * produced (or undefined). Node does not guard the callback: an exception it
+ * throws escapes the handshake as an uncaught exception rather than being
+ * downgraded to a socket 'error' by the native handler error routing, so the
+ * rethrow is deferred out of this callback's try frame.
+ */
+function runCheckServerIdentity(self, checkServerIdentity) {
+  const hostname = self.servername || self._host || "localhost";
+  const cert = self.getPeerCertificate(true);
+  if (!cert) return undefined;
+  try {
+    return checkServerIdentity(hostname, cert);
+  } catch (err) {
+    process.nextTick(rethrowUncaught, err);
+    return kCheckServerIdentityThrew;
+  }
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -416,11 +443,8 @@ const SocketHandlers: SocketHandler = {
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
-      }
+      verifyError = runCheckServerIdentity(self, checkServerIdentity);
+      if (verifyError === kCheckServerIdentityThrew) return;
     }
     let rejectUnauthorized;
     if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
@@ -1152,11 +1176,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        verifyError = checkServerIdentity(hostname, cert);
-      }
+      verifyError = runCheckServerIdentity(self, checkServerIdentity);
+      if (verifyError === kCheckServerIdentityThrew) return;
     }
     let rejectUnauthorized;
     if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {

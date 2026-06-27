@@ -137,17 +137,17 @@ function testRenegotiationUnsupported() {
 }
 
 /**
- * OpenSSL exposes the negotiated ephemeral key type, name, and size for TLS
- * clients. With BoringSSL the same ECDHE TLS 1.2 handshake succeeds, but
- * getEphemeralKeyInfo() returns null on the server side and an object whose
- * fields are undefined on the client side.
+ * BoringSSL has no DHE cipher suites and Bun does not plumb the `ecdhCurve`
+ * option, so the original test's finite-field DH cases and per-curve
+ * selections cannot run. The ECDHE case it keeps: getEphemeralKeyInfo()
+ * reports the negotiated group (BoringSSL prefers X25519) on the client and
+ * null on the server, like Node.
  */
-function testEphemeralKeyInfoUnsupported() {
+function testEphemeralKeyInfoEcdheOnly() {
   const server = tls.createServer({
     key: fixtures.readKey('agent2-key.pem'),
     cert: fixtures.readKey('agent2-cert.pem'),
     ciphers: 'ECDHE-RSA-AES256-GCM-SHA384',
-    ecdhCurve: 'prime256v1',
     maxVersion: 'TLSv1.2',
   }, common.mustCall((socket) => {
     assert.strictEqual(socket.getEphemeralKeyInfo(), null);
@@ -161,9 +161,9 @@ function testEphemeralKeyInfoUnsupported() {
       maxVersion: 'TLSv1.2',
     }, common.mustCall(() => {
       assert.deepStrictEqual(client.getEphemeralKeyInfo(), {
-        type: undefined,
-        name: undefined,
-        size: undefined,
+        type: 'ECDH',
+        name: 'X25519',
+        size: 253,
       });
       server.close();
     }));
@@ -337,7 +337,7 @@ module.exports = {
   assertMultiKeyUnsupported,
   assertNoCipherMatch,
   assertOpenSSLSecurityLevelsUnsupported,
-  testEphemeralKeyInfoUnsupported,
+  testEphemeralKeyInfoEcdheOnly,
   testLegacyProtocolUnsupported,
   testMultiPfxSelectionDifference,
   testPskTls13Unsupported,

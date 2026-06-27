@@ -513,10 +513,11 @@ test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
-// Node-API addons close handle scopes out of order, close them more times
-// than they opened them, or return without closing them at all. Node reports
-// a status for all of these (napi_handle_scope_mismatch at worst) and keeps
-// running; it never aborts the process.
+// Node-API addons close handle scopes out of order or close them more times
+// than they opened them. Node reports a status for both
+// (napi_handle_scope_mismatch at worst) and keeps running; it never aborts
+// the process. (Returning with a scope still open is different: Node aborts
+// on that too, so it is deliberately not covered here.)
 static napi_value
 test_napi_handle_scope_unbalanced_close(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();

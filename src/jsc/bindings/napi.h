@@ -457,10 +457,11 @@ public:
         return static_cast<bool>(m_pendingException);
     }
 
-    // Mirrors Node's env->open_handle_scopes: the number of handle scopes the
-    // addon has opened via napi_open_handle_scope /
-    // napi_open_escapable_handle_scope and not yet closed. Bun's own handle
-    // scopes are strictly LIFO and are not counted here.
+    // Mirrors Node's env->open_handle_scopes: napi_open_handle_scope /
+    // napi_open_escapable_handle_scope calls the addon has not yet balanced with a close. This is
+    // a call counter, not the chain depth: a scope popped as collateral of an out-of-order
+    // ancestor close still counts until the addon closes it. Bun's own handle scopes are strictly
+    // LIFO and are not counted here.
     void didOpenAddonHandleScope() { m_openAddonHandleScopes++; }
 
     // Returns false (napi_handle_scope_mismatch) if the addon has closed more

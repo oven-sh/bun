@@ -154,9 +154,10 @@ void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl
     if (!current) {
         return;
     }
-    // Fires when an addon leaves a handle scope open across a callback return (Node aborts on
-    // that too: the CHECK_EQ in napi_env__::CallIntoModule) or on a bug in Bun's own LIFO
-    // scopes. Out-of-order addon closes go through the tolerant NapiHandleScope__closeAddonScope.
+    // Fires on a bug in Bun's own strictly-LIFO handle scopes, or when an addon leaves a scope that
+    // is still on the chain open across a callback return. Node aborts on leaked addon scopes too
+    // (the CHECK_EQ in napi_env__::CallIntoModule); by counting instead of walking a chain it also
+    // catches a leak already popped by an out-of-order ancestor close, which Bun tolerates.
     RELEASE_ASSERT_WITH_MESSAGE(current == globalObject->m_currentNapiHandleScopeImpl.get(),
         "Unbalanced napi_handle_scope opens and closes");
     closeIfOpen(globalObject, current);

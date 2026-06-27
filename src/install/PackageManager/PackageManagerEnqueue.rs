@@ -2007,7 +2007,9 @@ fn get_or_put_resolved_package_with_find_result(
         // If updating, only update packages in the current workspace.
         let is_root_dep = unsafe { &*(*this_ptr).lockfile }
             .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id);
-        let dep_name = dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice());
+        let dep_name = dependency
+            .name
+            .slice(this.lockfile.buffers.string_bytes.as_slice());
         // no need to do a look up if update requests are empty (`bun update` with no args)
         let in_update_set =
             this.update_requests.is_empty() || this.updating_packages.contains(dep_name);

@@ -120,7 +120,11 @@ fn catalog_object_with_key(
 /// The concrete npm version a catalog package resolved to, formatted against
 /// the lockfile string buffer. Scans every dependency so a catalog entry
 /// consumed only by member workspaces is still found.
-fn resolved_catalog_version(lockfile: &Lockfile, name: &[u8], catalog_name: &[u8]) -> Option<Vec<u8>> {
+fn resolved_catalog_version(
+    lockfile: &Lockfile,
+    name: &[u8],
+    catalog_name: &[u8],
+) -> Option<Vec<u8>> {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let dep_resolutions = lockfile.buffers.resolutions.as_slice();

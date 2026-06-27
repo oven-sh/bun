@@ -1,0 +1,75 @@
+{
+	"name": "outdated-non-latest",
+	"versions": {
+		"1.0.0": {
+			"name": "outdated-non-latest",
+			"version": "1.0.0",
+			"_id": "outdated-non-latest@1.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-I05+e7XI93aPmbSbsc6ppT9+2+8PB5vgnZqUULFJ7dcmMyAD5GzbJiMg7U/zb/VA5yaqzFHtezPp2F3rtclwyA==",
+				"shasum": "f701fca0f4b5d63fcf8c5e694b69844c07025bb6",
+				"tarball": "http://localhost:4873/outdated-non-latest/-/outdated-non-latest-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "outdated-non-latest",
+			"version": "2.0.0",
+			"_id": "outdated-non-latest@2.0.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-C0dT49mqSTwC0PHnI0j/DVCFrhoq0YY3W/exvP9B3Rp1oBCEMNRE7KhzLQPvswmeGKrgDhvSwn6RLCTkQfk+hQ==",
+				"shasum": "dfb1bf1b2ea17147b6aa5b9780eb5636d7d1303e",
+				"tarball": "http://localhost:4873/outdated-non-latest/-/outdated-non-latest-2.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.1.0": {
+			"name": "outdated-non-latest",
+			"version": "2.1.0",
+			"_id": "outdated-non-latest@2.1.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Q43hG7AU8uGT+3nrrBKkiFOFuGozY3jh6O/++oERn5gBKNP39V4EpN6n5lggbp5a8Hl0EHnAK5vBDGj2+Vhs6Q==",
+				"shasum": "e58c6ae0fbd69f02f6b408a72d8436faab619cca",
+				"tarball": "http://localhost:4873/outdated-non-latest/-/outdated-non-latest-2.1.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-07T00:25:42.483Z",
+		"created": "2023-11-07T00:24:52.810Z",
+		"1.0.0": "2023-11-07T00:25:00.000Z",
+		"2.0.0": "2023-11-07T00:25:00.000Z",
+		"2.1.0": "2023-11-07T00:25:00.000Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0",
+		"next": "2.1.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"outdated-non-latest-1.0.0.tgz": {
+			"shasum": "f701fca0f4b5d63fcf8c5e694b69844c07025bb6",
+			"version": "1.0.0"
+		},
+		"outdated-non-latest-2.0.0.tgz": {
+			"shasum": "dfb1bf1b2ea17147b6aa5b9780eb5636d7d1303e",
+			"version": "2.0.0"
+		},
+		"outdated-non-latest-2.1.0.tgz": {
+			"shasum": "e58c6ae0fbd69f02f6b408a72d8436faab619cca",
+			"version": "2.1.0"
+		}
+	},
+	"_rev": "",
+	"_id": "outdated-non-latest",
+	"readme": "ERROR: No README data found!"
+}

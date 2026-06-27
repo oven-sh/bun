@@ -553,13 +553,20 @@ impl OutdatedCommand {
                 };
 
                 let current_version = resolution.npm().version;
-                if current_version.order(actual_latest.version, string_buf, &manifest.string_buf)
-                    != core::cmp::Ordering::Less
-                {
+                let has_filtered_update = update_version.latest_is_filtered();
+                let update_result = update_version.unwrap();
+
+                let newer_latest = current_version
+                    .order(actual_latest.version, string_buf, &manifest.string_buf)
+                    == core::cmp::Ordering::Less;
+                let newer_update = update_result.is_some_and(|uv| {
+                    current_version.order(uv.version, string_buf, &manifest.string_buf)
+                        == core::cmp::Ordering::Less
+                });
+                if !newer_latest && !newer_update {
                     continue;
                 }
 
-                let has_filtered_update = update_version.latest_is_filtered();
                 let has_filtered_latest = latest.latest_is_filtered();
                 if has_filtered_update || has_filtered_latest {
                     has_filtered_versions = true;
@@ -587,7 +594,7 @@ impl OutdatedCommand {
                 }
 
                 version_buf.clear();
-                if let Some(uv) = update_version.unwrap() {
+                if let Some(uv) = update_result {
                     write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
                         .expect("OOM writing version");
                 } else {

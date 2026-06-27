@@ -8350,6 +8350,86 @@ describe("outdated", () => {
     expect(await exited).toBe(0);
   });
 
+  test("shows in-range update when installed version is newer than latest dist-tag", async () => {
+    // `latest` dist-tag points at 1.0.0, but 2.0.0 and 2.1.0 exist. A user
+    // tracking the 2.x line has 2.0.0 locked; `bun update` would install
+    // 2.1.0, so `bun outdated` must list it even though current >= `latest`.
+    await registry.writeBunfig(packageDir, { saveTextLockfile: true });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "outdated-non-latest": "2.0.0" },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+    expect(
+      (await file(join(packageDir, "node_modules", "outdated-non-latest", "package.json")).json()).version,
+    ).toBe("2.0.0");
+
+    // Widen the dependency range to ^2.0.0 while keeping the locked
+    // resolution at 2.0.0, as if 2.1.0 was published after the install.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "outdated-non-latest": "^2.0.0" },
+      }),
+    );
+    const lockPath = join(packageDir, "bun.lock");
+    const lock = await file(lockPath).text();
+    expect(lock).toContain('"outdated-non-latest": "2.0.0"');
+    await write(lockPath, lock.replace('"outdated-non-latest": "2.0.0"', '"outdated-non-latest": "^2.0.0"'));
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, NO_COLOR: "1" },
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+
+    expect(out).toContain("outdated-non-latest");
+    // With NO_COLOR the table uses ASCII `|` separators.
+    const row = out.split("\n").find(l => l.includes("outdated-non-latest")) ?? "";
+    const cells = row
+      .split("|")
+      .map(s => s.trim())
+      .filter(Boolean);
+    expect(cells).toEqual(["outdated-non-latest", "2.0.0", "2.1.0", "1.0.0"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not list package already at the newest in-range version above latest dist-tag", async () => {
+    // Installed 2.1.0 is the highest matching ^2.0.0 and `latest` is 1.0.0.
+    // Nothing newer exists in-range or at `latest`, so no row is printed.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "outdated-non-latest": "^2.0.0" },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+    expect(
+      (await file(join(packageDir, "node_modules", "outdated-non-latest", "package.json")).json()).version,
+    ).toBe("2.1.0");
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("outdated-non-latest");
+    expect(exitCode).toBe(0);
+  });
+
   async function setupWorkspace() {
     await Promise.all([
       write(

@@ -715,16 +715,38 @@ fn missing_option_value(flag: &[u8]) -> ! {
     Global::exit(1);
 }
 
+fn cwd_prefix_scan_limit(remaining: &[&[u8]], positionals: &[&[u8]]) -> usize {
+    if positionals.iter().any(|p| *p == b"--") {
+        return 0;
+    }
+    remaining
+        .iter()
+        .position(|a| *a == b"--")
+        .unwrap_or(remaining.len())
+}
+
+fn passthrough_start(remaining: &[&[u8]], positionals: &[&[u8]]) -> usize {
+    if positionals.iter().any(|p| *p == b"--") {
+        return 0;
+    }
+    remaining
+        .iter()
+        .position(|a| *a == b"--")
+        .map(|i| i + 1)
+        .unwrap_or(0)
+}
+
 /// `--cwd` / `--prefix` can appear after the script name for `bun run` (npm-style).
 /// `stop_after_positional_at` leaves them in `remaining()` instead of `option()`.
 fn cwd_prefix_in_remaining<'a>(
     remaining: &'a [&'static [u8]],
+    scan_limit: usize,
 ) -> (Option<&'a [u8]>, Option<&'a [u8]>, Vec<usize>) {
     let mut cwd = None;
     let mut prefix = None;
     let mut skip = Vec::new();
     let mut i = 0;
-    while i < remaining.len() {
+    while i < scan_limit {
         let arg = remaining[i];
         let slot: &mut Option<&[u8]> = if arg == b"--cwd" {
             &mut cwd
@@ -821,12 +843,16 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     // ── --cwd / --prefix ─────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
+    let remaining = args.remaining();
+    let positionals = args.positionals();
+    let scan_limit = cwd_prefix_scan_limit(remaining, positionals);
+    let passthrough_start = passthrough_start(remaining, positionals);
     let (remaining_cwd, remaining_prefix, passthrough_skip) =
         if matches!(
             cmd,
             CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::RunAsNodeCommand
         ) {
-            cwd_prefix_in_remaining(args.remaining())
+            cwd_prefix_in_remaining(remaining, scan_limit)
         } else {
             (None, None, Vec::new())
         };
@@ -979,10 +1005,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         ctx.runtime_options.preserve_symlinks_main = true;
     }
 
-    ctx.passthrough = args
-        .remaining()
+    ctx.passthrough = remaining
         .iter()
         .enumerate()
+        .filter(|(i, _)| *i >= passthrough_start)
         .filter(|(i, _)| !passthrough_skip.contains(i))
         .map(|(_, s)| Box::<[u8]>::from(*s))
         .collect();

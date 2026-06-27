@@ -432,6 +432,29 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("should not treat --cwd or --prefix after -- as bun flags", async () => {
+    using dir = tempDir("bun-run-double-dash-cwd", {
+      "test.js": `console.log(JSON.stringify(process.argv.slice(2)));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "test.js", "--", "--cwd", "ignored"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.replaceAll("\r\n", "\n")).toBe('["--cwd","ignored"]\n');
+    expect(exitCode).toBe(0);
+  });
+
   it("DCE annotations are respected", async () => {
     using dir = tempDir("test", {
       "index.ts": `

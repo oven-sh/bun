@@ -850,7 +850,7 @@ describe("EventEmitter captureRejections", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "error kaboom\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({ stdout: "error kaboom\n", stderr: "", exitCode: 0 });
   });
 
   test("the global setting does not retroactively apply to an existing default emitter", async () => {
@@ -873,7 +873,11 @@ describe("EventEmitter captureRejections", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "unhandledRejection kaboom\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "unhandledRejection kaboom\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

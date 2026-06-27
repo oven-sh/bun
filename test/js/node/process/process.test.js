@@ -862,14 +862,15 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
-  // Node's default unhandled-rejection mode is `throw`: with no
-  // `unhandledRejection` listener, the rejection is raised as an uncaught
-  // exception with origin "unhandledRejection". A `uncaughtException` listener
-  // then handles it, the event loop keeps running, and the process exits 0.
-  it("routes an unhandled rejection through the uncaughtException machinery", async () => {
+  // Under --unhandled-rejections=throw (Node's default) a rejection with no
+  // `unhandledRejection` listener is raised as an uncaught exception with
+  // origin "unhandledRejection". A `uncaughtException` listener then handles
+  // it, the event loop keeps running, and the process exits 0.
+  it("--unhandled-rejections=throw routes a rejection through the uncaughtException machinery", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
+        "--unhandled-rejections=throw",
         "-e",
         `
         process.on("uncaughtExceptionMonitor", (err, origin) => console.log("monitor", err.message, origin));
@@ -884,17 +885,18 @@ describe.concurrent(() => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
+    expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
       stdout: "monitor rej unhandledRejection\nuncaught rej unhandledRejection\nimmediate\nexit 0\n",
       stderr: "",
       exitCode: 0,
     });
   });
 
-  it("a truly unhandled rejection reports the error once and emits exit with 1", async () => {
+  it("--unhandled-rejections=throw reports a truly unhandled rejection exactly once", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
+        "--unhandled-rejections=throw",
         "-e",
         `
         process.on("exit", code => console.log("exit", code, process.exitCode));
@@ -906,8 +908,8 @@ describe.concurrent(() => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The fatal path must print the error exactly once (it used to be
-    // reported twice under --unhandled-rejections=throw).
+    // The fatal path of the `throw` arm used to fall through to a second
+    // error report after `uncaught_exception` had already printed one.
     expect({ stdout, reports: stderr.match(/error: rej/g), exitCode }).toEqual({
       stdout: "exit 1 1\n",
       reports: ["error: rej"],

@@ -3261,7 +3261,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Routes an unhandled promise rejection to the configured `--unhandled-rejections` handler.
+    /// Routes an unhandled promise rejection to the configured handler, bumping the unhandled-error counter.
     pub fn unhandled_rejection(
         &mut self,
         global_object: &JSGlobalObject,
@@ -3287,7 +3287,7 @@ impl VirtualMachine {
         };
         // Wrapper over the `Bun__handleUnhandledRejection` FFI call (returns
         // whether a JS handler claimed it). Captures `global_object` / `reason`
-        // / `promise` so the branches below stay concise.
+        // / `promise` so the six branches below stay concise.
         let handle_unhandled =
             || -> bool { Bun__handleUnhandledRejection(global_object, reason, promise) > 0 };
         let emit_warning = |this: &mut Self| {
@@ -3302,45 +3302,64 @@ impl VirtualMachine {
         };
 
         match self.unhandled_rejections_mode() {
-            // Node's default: with no `unhandledRejection` listener the
-            // rejection is raised as an uncaught exception. `uncaught_exception`
-            // reports the error and sets the exit code to 1 if nothing handles it.
-            Mode::Bun | Mode::Throw => {
-                if !handle_unhandled() {
-                    let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
-                        global_object,
-                        reason,
-                    );
-                    let _ = self.uncaught_exception(global_object, wrapped, true);
+            Mode::Bun => {
+                if handle_unhandled() {
+                    return;
                 }
-                drain(self);
+                // continue to default handler
             }
             Mode::None => {
                 let _ = handle_unhandled();
-                drain(self); // ignore the unhandled rejection
+                drain(self);
+                return; // ignore the unhandled rejection
             }
             Mode::Warn => {
                 let _ = handle_unhandled();
                 emit_warning(self);
                 drain(self);
+                return;
             }
             Mode::WarnWithErrorCode => {
-                if !handle_unhandled() {
+                let handled = handle_unhandled();
+                if !handled {
                     emit_warning(self);
                     self.exit_handler.exit_code = 1;
                 }
                 drain(self);
+                if handled {
+                    return;
+                }
+                return;
             }
             Mode::Strict => {
                 let wrapped =
                     wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
                 let _ = self.uncaught_exception(global_object, wrapped, true);
-                if !handle_unhandled() {
+                let handled = handle_unhandled();
+                if !handled {
                     emit_warning(self);
                 }
                 drain(self);
+                return;
+            }
+            Mode::Throw => {
+                if handle_unhandled() {
+                    drain(self);
+                    return;
+                }
+                let wrapped =
+                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                if self.uncaught_exception(global_object, wrapped, true) {
+                    drain(self);
+                }
+                // `uncaught_exception` already reported the error and set the
+                // exit code to 1 when nothing handled it; falling through to
+                // the default handler would report it a second time.
+                return;
             }
         }
+        self.unhandled_error_counter += 1;
+        (self.on_unhandled_rejection)(self, global_object, reason);
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.

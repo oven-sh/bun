@@ -836,8 +836,14 @@ Object.defineProperties(EventEmitter, {
 
       EventEmitterPrototype[kCapture] = value;
       // Instances whose EventEmitter constructor never ran (util.inherits)
-      // dispatch through the prototype's emit; keep it in sync.
-      EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+      // dispatch through the prototype's emit; keep it in sync. Never clobber
+      // a user-installed prototype emit (Node's setter only flips [kCapture]).
+      if (
+        EventEmitterPrototype.emit === emitWithRejectionCapture ||
+        EventEmitterPrototype.emit === emitWithoutRejectionCapture
+      ) {
+        EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+      }
     },
     enumerable: true,
   },

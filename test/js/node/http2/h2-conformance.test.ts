@@ -491,7 +491,13 @@ describe("header block decoding errors (RFC 9113 §4.3)", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // COMPRESSION_ERROR (0x9) on the wire, and the process survived to serve the second request.
-    expect({ stdout, exitCode }).toEqual({ stdout: "goaway 9\nsecond request ok\n", exitCode: 0 });
+    // stderr is in the diff for debugging but only asserted not to carry the uncaught stream
+    // error (debug/ASAN builds write benign warnings to it).
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "goaway 9\nsecond request ok\n",
+      stderr: expect.not.stringContaining("ERR_HTTP2"),
+      exitCode: 0,
+    });
   });
 });
 

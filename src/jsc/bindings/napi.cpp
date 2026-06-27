@@ -131,9 +131,9 @@ public:
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
 // No do..while is used as this declares a variable that must outlive any inner ThrowScope.
-#define NAPI_PREAMBLE_NO_THROW_SCOPE(_env)                                             \
-    NAPI_LOG_CURRENT_FUNCTION;                                                         \
-    NAPI_CHECK_ARG(_env, _env);                                                        \
+#define NAPI_PREAMBLE_NO_THROW_SCOPE(_env)                                           \
+    NAPI_LOG_CURRENT_FUNCTION;                                                       \
+    NAPI_CHECK_ARG(_env, _env);                                                      \
     auto napi_preamble_boundary_scope__ = DECLARE_NAPI_BOUNDARY_SCOPE((_env)->vm()); \
     (void)napi_preamble_boundary_scope__
 

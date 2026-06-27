@@ -32,38 +32,31 @@ NAPI_MODULE_INIT() {
 }
 `;
 
-test.skipIf(isWindows || !cc)(
-  "N-API module Init runs under BUN_JSC_validateExceptionChecks",
-  async () => {
-    using dir = tempDir("napi-exception-check", {
-      "addon.c": addonSource,
-      "load.js": `const addon = require("./addon.node");\nconsole.log("loaded", addon.hello());\n`,
-    });
+test.skipIf(isWindows || !cc)("N-API module Init runs under BUN_JSC_validateExceptionChecks", async () => {
+  using dir = tempDir("napi-exception-check", {
+    "addon.c": addonSource,
+    "load.js": `const addon = require("./addon.node");\nconsole.log("loaded", addon.hello());\n`,
+  });
 
-    const compile = Bun.spawnSync({
-      cmd: [cc!, "-shared", "-fPIC", `-I${napiHeaderDir}`, "-o", "addon.node", "addon.c"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(compile.stderr.toString()).toBe("");
-    expect(compile.exitCode).toBe(0);
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", `-I${napiHeaderDir}`, "-o", "addon.node", "addon.c"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(compile.stderr.toString()).toBe("");
+  expect(compile.exitCode).toBe(0);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "load.js"],
-      cwd: String(dir),
-      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "load.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, exitCode }).toEqual({ stdout: "loaded 42\n", exitCode: 0 });
-    expect(stderr).not.toContain("Unchecked JS exception");
-  },
-);
+  expect({ stdout, exitCode }).toEqual({ stdout: "loaded 42\n", exitCode: 0 });
+  expect(stderr).not.toContain("Unchecked JS exception");
+});

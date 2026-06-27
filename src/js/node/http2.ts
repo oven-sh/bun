@@ -2238,6 +2238,10 @@ enum StreamState {
   // The native side fully closed and freed the stream (state 7 delivered): there is
   // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
+  // The server stream has been handed to user code (the 'stream' event or the pushStream
+  // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
+  // node never constructs the JS stream object before a complete header block arrives.
+  Delivered = 1 << 7, // 10000000 = 128
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2711,6 +2715,16 @@ class Http2Stream extends Duplex {
     // and req.on('error') regardless of which dispatch path reached _destroy first.
     if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL) {
       err = session?.[kSessionDestroyError] ?? $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
+    }
+    // A server stream user code was never handed (e.g. the peer's header block failed to decode,
+    // so the 'stream' event never fired) cannot have an 'error' listener; emitting would raise an
+    // uncaught exception any peer can trigger. The session already reported the protocol error.
+    if (
+      err != null &&
+      this instanceof ServerHttp2Stream &&
+      (this[bunHTTP2StreamStatus] & StreamState.Delivered) === 0
+    ) {
+      err = null;
     }
 
     this[bunHTTP2Session] = null;
@@ -3317,6 +3331,9 @@ class ServerHttp2Stream extends Http2Stream {
     // writable side is already ended when the callback runs; respond() then forces endStream so
     // END_STREAM rides on the response HEADERS frame.
     if (pushedStream) {
+      // The callback is how user code receives the pushed stream; from here on it may have an
+      // 'error' listener.
+      pushedStream[bunHTTP2StreamStatus] |= StreamState.Delivered;
       if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
         pushedStream[kHeadRequest] = true;
         pushedStream.end();
@@ -4165,7 +4182,7 @@ class ServerHttp2Session extends Http2Session {
         // and wrote it back AFTER the emit, we'd clobber any bits set by the
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
-        stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+        stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded | StreamState.Delivered;
         if (onServerStreamCreatedChannel.hasSubscribers) {
           onServerStreamCreatedChannel.publish({ stream, headers });
         }

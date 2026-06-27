@@ -422,6 +422,79 @@ describe("frame size limit (checklist §4.2)", () => {
   });
 });
 
+describe("header block decoding errors (RFC 9113 §4.3)", () => {
+  // The stream is rejected before the 'stream' event ever fires, so no user code can have
+  // attached an 'error' listener to it. The error must stay at the connection level
+  // (GOAWAY COMPRESSION_ERROR) instead of being raised as an uncaught exception that kills
+  // the process. Run in a child so a regression shows up as the child dying, not this runner.
+  test("an undecodable HEADERS block does not kill the server process", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      const server = http2.createServer((req, res) => res.end("ok"));
+      server.listen(0, "127.0.0.1", () => {
+        const port = server.address().port;
+        // Raw prior-knowledge h2c client: preface, empty SETTINGS, then a HEADERS frame
+        // (END_HEADERS | END_STREAM, stream 1) whose payload is not a valid HPACK block.
+        const raw = net.connect(port, "127.0.0.1", () => {
+          const preface = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
+          const settings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
+          const block = Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff]);
+          const headers = Buffer.alloc(9);
+          headers.writeUIntBE(block.length, 0, 3);
+          headers[3] = 0x01;
+          headers[4] = 0x05;
+          headers.writeUInt32BE(1, 5);
+          raw.write(Buffer.concat([preface, settings, headers, block]));
+        });
+        let received = Buffer.alloc(0);
+        raw.on("data", d => (received = Buffer.concat([received, d])));
+        raw.on("error", () => {});
+        // The server answers with GOAWAY and closes the connection; only then prove the
+        // process is still alive and still serving by completing a real request.
+        raw.on("close", () => {
+          let goawayCode = -1;
+          for (let i = 0; i + 9 <= received.length; i += 9 + received.readUIntBE(i, 3)) {
+            if (received[i + 3] === 0x07) {
+              goawayCode = received.readUInt32BE(i + 9 + 4);
+              break;
+            }
+          }
+          console.log("goaway", goawayCode);
+          const client = http2.connect("http://127.0.0.1:" + port);
+          client.on("error", err => {
+            console.error(err);
+            process.exit(3);
+          });
+          const req = client.request({ ":path": "/" });
+          req.setEncoding("utf8");
+          let body = "";
+          req.on("data", c => (body += c));
+          req.on("error", err => {
+            console.error(err);
+            process.exit(4);
+          });
+          req.on("end", () => {
+            console.log("second request", body);
+            client.close();
+            server.close();
+          });
+          req.end();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // COMPRESSION_ERROR (0x9) on the wire, and the process survived to serve the second request.
+    expect({ stdout, exitCode }).toEqual({ stdout: "goaway 9\nsecond request ok\n", exitCode: 0 });
+  });
+});
+
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`
 // client and asserts the client's wire behavior (push stream states, SETTINGS ack ordering).
 

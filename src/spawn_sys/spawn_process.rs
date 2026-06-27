@@ -895,6 +895,7 @@ pub unsafe fn spawn_process_posix(
         }
     }
 
+    let mut ignored_extra_fds: Vec<Fd> = Vec::new();
     for (i, ipc) in options.extra_fds.iter().enumerate() {
         let fileno = Fd::from_native(FdT::try_from(3 + i).unwrap());
 
@@ -905,7 +906,10 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ignore => {
-                actions.open_z(fileno, c"/dev/null", bun_sys::O::RDWR as u32, 0o664)?;
+                // Node leaves fds >= 3 closed for "ignore"; only 0-2 get /dev/null.
+                // Defer the close until after all dup2s so a later slot that uses
+                // this fd as its source is not broken.
+                ignored_extra_fds.push(fileno);
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Path(path) => {
@@ -955,6 +959,10 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::UnownedFd(*fd));
             }
         }
+    }
+
+    for fileno in ignored_extra_fds {
+        actions.close(fileno)?;
     }
 
     // SAFETY: argv is null-terminated, argv[0] is non-null

@@ -609,3 +609,66 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
 });
+
+describe.skipIf(isWindows)("stdio[N>=3] set to 'ignore'/null leaves the fd closed", () => {
+  // Node only opens /dev/null for "ignore" on fds 0-2; fds >= 3 are left closed.
+  // Probe via sh so the child's own startup doesn't consume low fds.
+  const probeFd = (fd: number) => `( : <&${fd} ) 2>/dev/null && printf OPEN || printf CLOSED`;
+
+  it.each([
+    ["'ignore'", "ignore"],
+    ["null", null],
+    ["undefined", undefined],
+  ] as const)("spawnSync leaves fd 3 closed for %s", (_, entry) => {
+    const r = spawnSync("sh", ["-c", probeFd(3)], {
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe", entry],
+    });
+    expect({ stdout: r.stdout?.toString(), stderr: r.stderr?.toString(), status: r.status }).toEqual({
+      stdout: "CLOSED",
+      stderr: "",
+      status: 0,
+    });
+  });
+
+  it("spawn leaves fd 3 closed for 'ignore'", async () => {
+    const child = spawn("sh", ["-c", probeFd(3)], {
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe", "ignore"],
+    });
+    let out = "";
+    let err = "";
+    child.stdout!.on("data", d => (out += d));
+    child.stderr!.on("data", d => (err += d));
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.on("close", resolve);
+      child.on("error", reject);
+    });
+    expect({ stdout: out, stderr: err, code }).toEqual({ stdout: "CLOSED", stderr: "", code: 0 });
+  });
+
+  it("an ignored slot does not break a user-supplied fd at a higher index", () => {
+    const src = fs.openSync(import.meta.path, "r");
+    try {
+      const r = spawnSync("sh", ["-c", probeFd(3) + "; printf ' '; " + probeFd(4)], {
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", "ignore", src],
+      });
+      expect({ stdout: r.stdout?.toString(), stderr: r.stderr?.toString(), status: r.status }).toEqual({
+        stdout: "CLOSED OPEN",
+        stderr: "",
+        status: 0,
+      });
+    } finally {
+      fs.closeSync(src);
+    }
+  });
+
+  it("fd 0 still gets /dev/null for 'ignore'", () => {
+    const r = spawnSync("sh", ["-c", probeFd(0)], {
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect({ stdout: r.stdout?.toString(), status: r.status }).toEqual({ stdout: "OPEN", status: 0 });
+  });
+});

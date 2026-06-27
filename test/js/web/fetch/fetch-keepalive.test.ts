@@ -73,14 +73,9 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
   expect(plain).not.toBe(overrideA);
 });
 
-// An idempotent request (PUT) on a reused keep-alive connection that the peer
-// resets is transparently retried, but a ReadableStream body is consumed as it
-// is uploaded and cannot be replayed: the already written chunks are gone, so a
-// retry silently sends a truncated body, and flushing the still-draining stream
-// onto the retry's not-yet-opened socket put body bytes ahead of the headers
-// and panicked with "range start index N out of range for slice of length M"
-// in send_initial_request_payload. Runs in a subprocess: the panic aborts the
-// whole process.
+// A reused keep-alive connection reset during a streaming PUT must reject with
+// ECONNRESET, not retry: the stream body is already consumed, and the retry
+// panicked in send_initial_request_payload. Subprocess: the panic aborts the process.
 test("PUT with a ReadableStream body is not retried on keep-alive disconnect", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -109,6 +104,10 @@ test("PUT with a ReadableStream body is not retried on keep-alive disconnect", a
               return;
             }
             if (socket.data.buffer.startsWith("PUT /stream")) {
+              // Wait for the full headers plus at least one body byte so the
+              // stream body has actually started being consumed before the reset.
+              const i = socket.data.buffer.indexOf(CRLF + CRLF);
+              if (i < 0 || socket.data.buffer.length <= i + 4) return;
               streamRequests++;
               socket.data.buffer = "";
               // Reset the connection mid-upload.

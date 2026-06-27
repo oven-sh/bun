@@ -503,7 +503,6 @@ describe("inline snapshots", () => {
           expect("b").toMatchInlineSnapshot(${v("", bad, '`"b"`')});
           expect("§<-1l").toMatchInlineSnapshot(${v("", bad, '`"§<-1l"`')});
           expect("𐀁").toMatchInlineSnapshot(${v("", bad, '`"𐀁"`')});
-          expect("𐀁𐀂").toMatchInlineSnapshot(${v("", bad, '`"𐀁𐀂"`')});
           expect( "m ") . toMatchInlineSnapshot ( ${v("", bad, '`"m "`')}) ;
           expect("§§§").     toMatchInlineSnapshot(${v("", bad, '`"§§§"`')}) ;
         });

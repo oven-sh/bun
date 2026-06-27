@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // Runtime-transpiled modules store an InternalSourceMap blob (varint stream +
 // sync points) instead of expanding VLQ into a Mapping.List. These tests pin
@@ -106,6 +107,44 @@ describe("InternalSourceMap", () => {
     // `a1` being the all-ASCII control.
     const frames = [...stdout.matchAll(/at ([a-d]1) \(.*index\.ts:(\d+):(\d+)\)/g)].map(m => `${m[1]} ${m[2]}:${m[3]}`);
     expect(frames).toEqual(["a1", "b1", "c1", "d1"].map((fn, i) => `${fn} ${i + 1}:${lines[i].indexOf("Error(") + 1}`));
+    expect(exited).toBe(0);
+  });
+
+  // `toMatchInlineSnapshot` resolves its call site from the remapped stack
+  // position, which counts UTF-16 code units. An astral character earlier on
+  // the line made the updater land past the callee and fail with
+  // "Could not find 'toMatchInlineSnapshot' here".
+  test("inline snapshot call sites resolve after astral characters on the same line", async () => {
+    const fixture = [
+      `import { test, expect } from "bun:test";`,
+      `test("astral", () => {`,
+      `  expect("𐀁").toMatchInlineSnapshot();`,
+      `  expect("𐀁𐀂").toMatchInlineSnapshot();`,
+      `});`,
+      ``,
+    ].join("\n");
+    using dir = tempDir("inline-snapshot-astral", { "astral.test.ts": fixture });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "-u", "astral.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Failed to update inline snapshot");
+    expect(await Bun.file(join(String(dir), "astral.test.ts")).text()).toBe(
+      [
+        `import { test, expect } from "bun:test";`,
+        `test("astral", () => {`,
+        '  expect("𐀁").toMatchInlineSnapshot(`"𐀁"`);',
+        '  expect("𐀁𐀂").toMatchInlineSnapshot(`"𐀁𐀂"`);',
+        `});`,
+        ``,
+      ].join("\n"),
+    );
     expect(exited).toBe(0);
   });
 

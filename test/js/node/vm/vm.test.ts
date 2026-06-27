@@ -745,6 +745,82 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.runInThisContext()).toBe(4);
 });
 
+test("rejects corrupted cachedData instead of crashing", async () => {
+  // Corrupting, truncating, or extending createCachedData() output must set
+  // cachedDataRejected (or throw ERR_VM_MODULE_CACHED_DATA_REJECTED for modules)
+  // and recompile from source, like Node. Runs in a child process since the
+  // broken behavior is a process crash.
+  const code = /* js */ `
+    const vm = require("node:vm");
+    const assert = require("node:assert");
+
+    function corruptions(good) {
+      const variants = [];
+      for (let offset = 0; offset < Math.min(good.length, 128); offset += 8) {
+        const copy = Buffer.from(good);
+        copy[offset] ^= 0xff;
+        variants.push(copy);
+      }
+      variants.push(good.subarray(0, 20));
+      variants.push(good.subarray(0, good.length >> 1));
+      variants.push(Buffer.concat([good, Buffer.from([0xde, 0xad])]));
+      variants.push(Buffer.alloc(good.length, 0x2a));
+      return variants;
+    }
+
+    {
+      const source = "function f(){return 1234} f()";
+      const good = new vm.Script(source).createCachedData();
+      for (const cachedData of corruptions(good)) {
+        const script = new vm.Script(source, { cachedData });
+        assert.strictEqual(script.cachedDataRejected, true);
+        assert.strictEqual(script.runInThisContext(), 1234);
+      }
+      const intact = new vm.Script(source, { cachedData: good });
+      assert.strictEqual(intact.cachedDataRejected, false);
+      assert.strictEqual(intact.runInThisContext(), 1234);
+      console.log("script ok");
+    }
+
+    {
+      const params = ["a"];
+      const source = "return a + 1234;";
+      const good = vm.compileFunction(source, params, { produceCachedData: true }).cachedData;
+      assert.ok(good.length > 0);
+      for (const cachedData of corruptions(good)) {
+        const fn = vm.compileFunction(source, params, { cachedData });
+        assert.strictEqual(fn.cachedDataRejected, true);
+        assert.strictEqual(fn(1), 1235);
+      }
+      const intact = vm.compileFunction(source, params, { cachedData: good });
+      assert.strictEqual(intact.cachedDataRejected, false);
+      assert.strictEqual(intact(1), 1235);
+      console.log("compileFunction ok");
+    }
+
+    {
+      const source = "export const value = 1234;";
+      const good = new vm.SourceTextModule(source).createCachedData();
+      for (const cachedData of corruptions(good)) {
+        assert.throws(() => new vm.SourceTextModule(source, { cachedData }), {
+          code: "ERR_VM_MODULE_CACHED_DATA_REJECTED",
+        });
+      }
+      new vm.SourceTextModule(source, { cachedData: good });
+      console.log("module ok");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "script ok\ncompileFunction ok\nmodule ok\n", exitCode: 0 });
+});
+
 describe("codeGeneration options", () => {
   test("disabling codeGeneration.strings should block eval and Function constructor", () => {
     const context = createContext(

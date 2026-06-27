@@ -38,6 +38,9 @@
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
 #include "GCDefferalContext.h"
 #include "JSBuffer.h"
+#include "xxhash3.h"
+
+#include <wtf/MallocSpan.h>
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
@@ -125,6 +128,65 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
+// JSC's bytecode decoder follows offsets embedded in the payload and is only safe on
+// an intact copy of its own serializer's output, so cachedData carries this header and
+// anything that does not round-trip it byte for byte is rejected instead of decoded.
+struct CachedDataHeader {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t hash;
+};
+static_assert(sizeof(CachedDataHeader) == 16, "header layout is part of the cachedData format");
+
+static constexpr uint32_t cachedDataMagic = 0x436E7542; // "BunC"
+static constexpr uint32_t cachedDataVersion = 1;
+
+static uint64_t hashCachedDataPayload(std::span<const uint8_t> payload)
+{
+    return highway_xxhash3_64(payload.data(), payload.size(), 0);
+}
+
+JSC::JSUint8Array* createCachedDataBuffer(JSGlobalObject* globalObject, std::span<const uint8_t> bytecode)
+{
+    JSC::JSUint8Array* buffer = WebCore::createUninitializedBuffer(globalObject, sizeof(CachedDataHeader) + bytecode.size());
+    if (!buffer) [[unlikely]] {
+        return nullptr;
+    }
+
+    const CachedDataHeader header { cachedDataMagic, cachedDataVersion, hashCachedDataPayload(bytecode) };
+    uint8_t* data = buffer->typedVector();
+    memcpy(data, &header, sizeof(header));
+    if (!bytecode.empty()) {
+        memcpy(data + sizeof(header), bytecode.data(), bytecode.size());
+    }
+    return buffer;
+}
+
+RefPtr<JSC::CachedBytecode> unwrapCachedData(std::span<const uint8_t> cachedData)
+{
+    if (cachedData.size() <= sizeof(CachedDataHeader)) {
+        return nullptr;
+    }
+
+    CachedDataHeader header;
+    memcpy(&header, cachedData.data(), sizeof(header));
+    if (header.magic != cachedDataMagic || header.version != cachedDataVersion) {
+        return nullptr;
+    }
+
+    std::span<const uint8_t> payload = cachedData.subspan(sizeof(CachedDataHeader));
+    if (header.hash != hashCachedDataPayload(payload)) {
+        return nullptr;
+    }
+
+    // Decoded functions keep a reference to the decoder (and through it, to these
+    // bytes) for lazy code block decoding, so the payload must own its memory
+    // rather than borrow the caller's buffer.
+    auto payloadCopy = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(payload.size());
+    memcpySpan(payloadCopy.mutableSpan(), payload);
+    return JSC::CachedBytecode::create(WTF::move(payloadCopy), {});
+}
+
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
 {
     ASSERT(scope);
@@ -202,9 +264,11 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TriState bytecodeAccepted = TriState::Indeterminate;
 
     if (!options.cachedData.isEmpty()) {
-        cachedBytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
-        SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-        unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
+        cachedBytecode = unwrapCachedData(std::span(options.cachedData));
+        if (cachedBytecode) {
+            SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
+            unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
+        }
         if (unlinkedProgramCodeBlock == nullptr) {
             bytecodeAccepted = TriState::False;
         } else {
@@ -245,7 +309,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         if (options.produceCachedData) {
             RefPtr<JSC::CachedBytecode> producedBytecode = getBytecode(globalObject, programExecutable, sourceCode);
             if (producedBytecode) {
-                JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, producedBytecode->span());
+                JSC::JSUint8Array* buffer = createCachedDataBuffer(globalObject, producedBytecode->span());
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
                 function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedData"_s), buffer);
                 function->putDirect(vm, JSC::Identifier::fromString(vm, "cachedDataProduced"_s), jsBoolean(true));
@@ -468,8 +532,7 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
         return throwVMError(globalObject, scope, "createCachedData failed"_s);
     }
 
-    std::span<const uint8_t> bytes = bytecode->span();
-    JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
+    JSC::JSUint8Array* buffer = createCachedDataBuffer(globalObject, bytecode->span());
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!buffer) {

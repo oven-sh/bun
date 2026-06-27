@@ -2426,7 +2426,8 @@ fn transpile_source_code_inner(
                     allow_commonjs: true,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     runtime_hot: unsafe { (*jsc_vm).hot_reload }
-                        == bun_options_types::context::HotReload::Hot as u8,
+                        == bun_options_types::context::HotReload::Hot as u8
+                        && unsafe { &*jsc_vm }.is_main_thread(),
                     module_type: module_type_only_for_wrappables,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     inject_jest_globals: unsafe {

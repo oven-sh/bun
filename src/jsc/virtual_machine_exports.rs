@@ -33,7 +33,9 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
 
 // HOST_EXPORT(Bun__VirtualMachine__isHotReloadMode, c)
 pub fn is_hot_reload_mode(this: &VirtualMachine) -> bool {
-    this.hot_reload == crate::virtual_machine::HOT_RELOAD_HOT
+    // Workers inherit `hot_reload` from the parent but have no watcher and
+    // never `reload()`, so `import.meta.hot` is only exposed on the main VM.
+    this.hot_reload == crate::virtual_machine::HOT_RELOAD_HOT && this.is_main_thread()
 }
 
 // HOST_EXPORT(Bun__getVM, c)

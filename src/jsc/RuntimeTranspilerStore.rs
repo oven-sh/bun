@@ -842,8 +842,9 @@ impl TranspilerJob {
             replace_exports: Default::default(),
             dont_bundle_twice: true,
             allow_commonjs: true,
-            // SAFETY: leaf-field read on `*vm.hot_reload`; see `vm` note above.
-            runtime_hot: unsafe { (*vm).hot_reload } == crate::virtual_machine::HOT_RELOAD_HOT,
+            // SAFETY: leaf-field reads on `*vm`; see `vm` note above.
+            runtime_hot: unsafe { (*vm).hot_reload } == crate::virtual_machine::HOT_RELOAD_HOT
+                && unsafe { &*vm }.is_main_thread(),
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
             // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.
             set_breakpoint_on_first_line: unsafe { &(*vm).debugger }

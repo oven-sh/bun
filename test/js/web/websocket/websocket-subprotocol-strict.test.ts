@@ -61,7 +61,9 @@ async function createTestServer(
   return {
     port: port!,
     [Symbol.asyncDispose]: async () => {
-      server.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close(err => (err ? reject(err) : resolve()));
+      });
     },
   };
 }

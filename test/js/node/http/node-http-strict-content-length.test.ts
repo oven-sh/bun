@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
+import { tls as tlsCert } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import http2 from "node:http2";
 import net from "node:net";
 import tls from "node:tls";
-import { tls as tlsCert } from "harness";
 
 // When res.strictContentLength is set and the first end()/write() call
 // detects a mismatch, Node throws before any bytes reach the wire. Bun was

@@ -21,14 +21,9 @@ function referenceSignature(presignedUrl: string, secretAccessKey: string): { go
     .filter(pair => !pair.startsWith("X-Amz-Signature="))
     .sort()
     .join("&");
-  const canonicalRequest = [
-    "GET",
-    url.pathname,
-    canonicalQuery,
-    `host:${url.host}\n`,
-    "host",
-    "UNSIGNED-PAYLOAD",
-  ].join("\n");
+  const canonicalRequest = ["GET", url.pathname, canonicalQuery, `host:${url.host}\n`, "host", "UNSIGNED-PAYLOAD"].join(
+    "\n",
+  );
   const stringToSign = [
     "AWS4-HMAC-SHA256",
     amzDate,

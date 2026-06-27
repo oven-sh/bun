@@ -380,7 +380,12 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     }
 
     let user_data = entry.cast::<core::ffi::c_void>();
-    app.head(path, Some(head::<SSL, T>), user_data);
+    // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
+    // RFC 9110 section 9.3.2) or that is registered for HEAD itself. A later
+    // registration for the same method and path replaces an earlier one in uWS.
+    if serves_head(&method) {
+        app.head(path, Some(head::<SSL, T>), user_data);
+    }
     match method {
         http_method::Optional::Any => {
             app.any(path, Some(handler::<SSL, T>), user_data);
@@ -390,6 +395,16 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
             while let Some(method_) = iter.next() {
                 app.method(method_, path, Some(handler::<SSL, T>), user_data);
             }
+        }
+    }
+}
+
+/// Whether a static route registered for `method` should also answer HEAD.
+fn serves_head(method: &http_method::Optional) -> bool {
+    match method {
+        http_method::Optional::Any => true,
+        http_method::Optional::Method(set) => {
+            set.contains(Method::GET) || set.contains(Method::HEAD)
         }
     }
 }
@@ -443,7 +458,9 @@ pub(crate) fn apply_static_route_h3<T>(
         };
     }
 
-    app.head(path, entry, head::<T>);
+    if serves_head(&method) {
+        app.head(path, entry, head::<T>);
+    }
     match method {
         http_method::Optional::Any => app.any(path, entry, handler::<T>),
         http_method::Optional::Method(m) => {

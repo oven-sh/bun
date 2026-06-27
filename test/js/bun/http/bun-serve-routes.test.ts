@@ -177,6 +177,44 @@ describe("implicit HEAD for per-method route objects", () => {
     expect(res.status).toBe(200);
   });
 
+  test("an explicit static HEAD Response takes precedence over the GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/explicit-static": {
+          GET: () => new Response("get-body"),
+          HEAD: new Response(null, { headers: { "x-static-head": "1" } }),
+        },
+      },
+    });
+
+    const res = await fetch(new URL("/explicit-static", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-static-head")).toBe("1");
+    expect(res.status).toBe(200);
+  });
+
+  test("a static Response for another method does not capture HEAD away from GET", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/mixed": {
+          GET: () => new Response("hello-get"),
+          POST: new Response("static-post-response"),
+        },
+      },
+    });
+
+    const head = await fetch(new URL("/mixed", server.url), { method: "HEAD" });
+    expect(await head.text()).toBe("");
+    expect(head.headers.get("content-length")).toBe("9");
+    expect(head.status).toBe(200);
+
+    const get = await fetch(new URL("/mixed", server.url));
+    expect(await get.text()).toBe("hello-get");
+    const post = await fetch(new URL("/mixed", server.url), { method: "POST" });
+    expect(await post.text()).toBe("static-post-response");
+  });
+
   test("HEAD is not derived for route objects without a GET handler", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -185,6 +223,20 @@ describe("implicit HEAD for per-method route objects", () => {
 
     const res = await fetch(new URL("/post-only", server.url), { method: "HEAD" });
     expect(res.status).toBe(404);
+  });
+
+  test("HEAD is not derived for a static Response under a non-GET method", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/post-only-static": { POST: new Response("post-only") } },
+    });
+
+    const head = await fetch(new URL("/post-only-static", server.url), { method: "HEAD" });
+    expect(head.status).toBe(404);
+
+    const post = await fetch(new URL("/post-only-static", server.url), { method: "POST" });
+    expect(await post.text()).toBe("post-only");
+    expect(post.status).toBe(200);
   });
 });
 

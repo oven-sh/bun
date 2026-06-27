@@ -49,6 +49,7 @@ use crate::package_manager_real::{
 };
 use crate::package_manager_task as Task;
 
+use super::block_exotic_subdeps;
 use super::security_scanner;
 
 pub fn install_with_manager(
@@ -748,6 +749,13 @@ pub fn install_with_manager(
                     log_level,
                 )?;
                 had_any_diffs |= !moved_by_overrides.is_empty();
+            }
+        }
+
+        if manager.options.enable.block_exotic_subdeps() {
+            let violations = block_exotic_subdeps::enforce_block_exotic_subdeps(manager);
+            if violations > 0 {
+                Global::exit(1);
             }
         }
 

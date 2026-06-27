@@ -837,7 +837,7 @@ describe("import.meta.hot", () => {
       });
 
       let stderr = "";
-      (async () => {
+      const stderrDone = (async () => {
         for await (const chunk of runner.stderr) stderr += new TextDecoder().decode(chunk);
       })();
 
@@ -861,6 +861,10 @@ describe("import.meta.hot", () => {
         }
         if (lines.length >= 3) break;
       }
+
+      runner.kill();
+      await runner.exited;
+      await stderrDone;
 
       try {
         expect(lines).toEqual([
@@ -928,7 +932,7 @@ describe("import.meta.hot", () => {
       });
 
       let stderr = "";
-      (async () => {
+      const stderrDone = (async () => {
         for await (const chunk of runner.stderr) stderr += new TextDecoder().decode(chunk);
       })();
 
@@ -950,6 +954,10 @@ describe("import.meta.hot", () => {
         }
         if (lines.length >= 2) break;
       }
+
+      runner.kill();
+      await runner.exited;
+      await stderrDone;
 
       expect(lines).toEqual([
         { gen: 1, secondRan: null },

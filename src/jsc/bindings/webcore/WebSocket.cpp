@@ -1241,11 +1241,11 @@ WebSocket::State WebSocket::readyState() const
 
 unsigned WebSocket::bufferedAmount() const
 {
-    // While OPEN, query the live send-buffer size from the connection so
-    // backpressure is observable. Once closed the connection is gone, but the
-    // spec requires bufferedAmount not to reset to 0: close()/terminate()
-    // snapshot the final backlog into m_bufferedAmount, and send() after close
-    // adds to m_bufferedAmountAfterClose, so the total only ever increases.
+    // While the connection is live (including the deferred-close window) query
+    // the live send-buffer size so backpressure is observable; it falls as the
+    // peer drains. Once the connection is gone, m_bufferedAmount holds the final
+    // snapshot from didClose()/didFailWithErrorCode() (or terminate()'s eager
+    // one), plus m_bufferedAmountAfterClose for any send() after close.
     unsigned buffered = m_bufferedAmount;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client:

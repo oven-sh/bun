@@ -94,11 +94,7 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     // buffering without bound.
     const { promise: ready, resolve } = Promise.withResolvers<void>();
     await using child = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `process.send("ready"); const end = Date.now() + 120000; while (Date.now() < end) {}`,
-      ],
+      cmd: [bunExe(), "-e", `process.send("ready"); const end = Date.now() + 120000; while (Date.now() < end) {}`],
       env: bunEnv,
       stdio: ["ignore", "ignore", "ignore"],
       serialization: mode,

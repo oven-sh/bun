@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.Cookie and Bun.CookieMap", () => {
   // Basic Cookie tests
@@ -359,5 +360,87 @@ describe("invalid delete usage", () => {
       // @ts-ignore
       v2.delete(v2);
     }).toThrow("Cookie name is required");
+  });
+});
+
+// A Cookie header value is percent-decoded only if the whole value decodes
+// cleanly, matching node's `cookie` package. RFC 6265 allows a literal "%"
+// in a cookie value, so a value that was never percent-encoded must come
+// through verbatim instead of being corrupted with U+FFFD.
+describe("Bun.CookieMap percent-decoding", () => {
+  test("values that do not decode cleanly are kept raw", () => {
+    const cases: Record<string, string> = {
+      // a "%" that never forms a %XX escape
+      "50%": "50%",
+      "%zz": "%zz",
+      "x%": "x%",
+      "%": "%",
+      "%1": "%1",
+      "50%-off": "50%-off",
+      "a%%b": "a%%b",
+      // a syntactically valid %XX whose decoded bytes are not valid UTF-8
+      "a%C3b": "a%C3b",
+      "a%b2c": "a%b2c",
+      "%ED%A0%80": "%ED%A0%80",
+      "%C0%80": "%C0%80",
+      // all-or-nothing: one bad escape keeps the whole value raw
+      "a%25b%zz": "a%25b%zz",
+      "ok%20but%": "ok%20but%",
+    };
+    const parsed = Object.fromEntries(Object.keys(cases).map(raw => [raw, new Bun.CookieMap(`v=${raw}`).get("v")]));
+    expect(parsed).toEqual(cases);
+  });
+
+  test("values that decode cleanly are percent-decoded", () => {
+    const cases: Record<string, string> = {
+      "%41": "A",
+      "100%25": "100%",
+      "a%20b": "a b",
+      "%E8%AF%BB": "读",
+      "caf%C3%A9": "café",
+      "%F0%9F%8D%AA": "🍪",
+    };
+    const parsed = Object.fromEntries(Object.keys(cases).map(raw => [raw, new Bun.CookieMap(`v=${raw}`).get("v")]));
+    expect(parsed).toEqual(cases);
+  });
+
+  test("literal % values in a Cookie header are preserved verbatim", () => {
+    const map = new Bun.CookieMap("a=50%; b=%zz; c=x%");
+    expect(Object.fromEntries(map)).toEqual({ a: "50%", b: "%zz", c: "x%" });
+  });
+
+  // The old parser routed every value through an ASCII-only decoder as soon
+  // as any value in the header contained a "%", which misread non-ASCII
+  // values as Latin-1. Run in a subprocess: the unfixed debug build asserts.
+  test("non-ASCII values are preserved alongside percent-encoded siblings", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = new Bun.CookieMap("a=é; b=读%E5%86%99; c=🍪; d=%41");
+         process.stdout.write(JSON.stringify(Object.fromEntries(m)));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({
+      stdout: JSON.stringify({ a: "é", b: "读写", c: "🍪", d: "A" }),
+      exitCode: 0,
+    });
+  });
+
+  test("req.cookies preserves a literal % in values", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/": req => Response.json(req.cookies),
+      },
+    });
+    const res = await fetch(server.url, {
+      headers: { Cookie: "a=50%; b=%zz; c=x%; d=a%20b" },
+    });
+    expect(await res.json()).toEqual({ a: "50%", b: "%zz", c: "x%", d: "a b" });
+    expect(res.status).toBe(200);
   });
 });

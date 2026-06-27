@@ -6,10 +6,36 @@
 #include <wtf/text/ParsingUtilities.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "HTTPParsers.h"
-#include "decodeURIComponentSIMD.h"
 #include "BunString.h"
+#include <wtf/ASCIICType.h>
 #include <wtf/HashSet.h>
 namespace WebCore {
+
+// Percent-decodes a Cookie header value only if the whole value decodes
+// cleanly, matching node's `cookie` package. Returns a null String on any
+// malformed escape or invalid UTF-8 so the caller keeps the raw value.
+static String percentDecodeCookieValue(StringView valueView)
+{
+    Bun::UTF8View utf8View(valueView);
+    auto input = utf8View.bytes();
+    Vector<uint8_t, 64> decoded;
+    decoded.reserveInitialCapacity(input.size());
+    for (size_t i = 0; i < input.size();) {
+        if (input[i] != '%') {
+            decoded.append(input[i]);
+            i++;
+            continue;
+        }
+        // RFC 6265 allows a literal '%' in a cookie-octet, so a '%' that is
+        // not followed by two hex digits is data, not a truncated escape.
+        if (i + 2 >= input.size() || !isASCIIHexDigit(input[i + 1]) || !isASCIIHexDigit(input[i + 2]))
+            return String();
+        decoded.append(toASCIIHexValue(input[i + 1], input[i + 2]));
+        i += 3;
+    }
+    // String::fromUTF8 returns a null String if the bytes are not valid UTF-8.
+    return String::fromUTF8(decoded.span());
+}
 
 template<typename Res>
 static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, Res* res)
@@ -95,7 +121,6 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
             auto pairs = forCookieHeader.split(';');
             Vector<KeyValuePair<String, String>> cookies;
 
-            bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
             for (auto pair : pairs) {
                 String name = ""_s;
                 String value = ""_s;
@@ -114,11 +139,13 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
 
                 name = nameView.toString();
 
-                if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(valueView);
-                    value = Bun::decodeURIComponentSIMD(utf8View.bytes());
-                } else {
+                if (valueView.find('%') == notFound) {
                     value = valueView.toString();
+                } else {
+                    value = percentDecodeCookieValue(valueView);
+                    if (value.isNull()) {
+                        value = valueView.toString();
+                    }
                 }
 
                 cookies.append(KeyValuePair<String, String>(name, value));

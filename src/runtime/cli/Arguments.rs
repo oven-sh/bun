@@ -908,8 +908,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             | CommandTag::BuildCommand
             | CommandTag::TestCommand
     ) {
-        if !args.options(b"--conditions").is_empty() {
-            opts.conditions = slice_to_owned(args.options(b"--conditions"));
+        let cli_conditions = args.options(b"--conditions");
+        if !cli_conditions.is_empty() {
+            // Append CLI conditions to any set from bunfig.toml so both sources
+            // stack rather than the CLI clobbering the config.
+            opts.conditions.extend(slice_to_owned(cli_conditions));
         }
     }
 

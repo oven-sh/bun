@@ -143,7 +143,7 @@ JsonWebKey CryptoKeyHMAC::exportJwk() const
     return result;
 }
 
-ExceptionOr<size_t> CryptoKeyHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
+ExceptionOr<std::optional<size_t>> CryptoKeyHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
     auto& aesParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
 

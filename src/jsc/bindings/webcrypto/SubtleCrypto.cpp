@@ -970,7 +970,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
         promise->reject(result.releaseException().code(), "Cannot get key length from derivedKeyType"_s);
         return;
     }
-    size_t length = result.releaseReturnValue();
+    std::optional<size_t> length = result.releaseReturnValue();
 
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
@@ -1005,7 +1005,7 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
     RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
 }
 
-void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, unsigned length, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, std::optional<unsigned> length, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

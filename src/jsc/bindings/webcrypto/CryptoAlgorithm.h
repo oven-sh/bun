@@ -31,6 +31,7 @@
 #include "CryptoKeyUsage.h"
 #include "ExceptionOr.h"
 #include "JsonWebKey.h"
+#include <optional>
 #include <variant>
 #include <wtf/Function.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -69,16 +70,21 @@ public:
     virtual void verify(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, Vector<uint8_t>&& signature, Vector<uint8_t>&&, BoolCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&);
     virtual void digest(Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&);
     virtual void generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&);
-    virtual void deriveBits(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, size_t length, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&);
+    virtual void deriveBits(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, std::optional<size_t> length, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&);
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=169262
     virtual void importKey(CryptoKeyFormat, KeyData&&, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyCallback&&, ExceptionCallback&&);
     virtual void exportKey(CryptoKeyFormat, Ref<CryptoKey>&&, KeyDataCallback&&, ExceptionCallback&&);
     virtual void wrapKey(Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&);
     virtual void unwrapKey(Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&);
-    virtual ExceptionOr<size_t> getKeyLength(const CryptoAlgorithmParameters&);
+    virtual ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&);
 
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
+
+    // Truncates `secret` to the first `length` bits, zeroing the unused trailing bits of the
+    // final byte, per https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits. A null
+    // `length` returns `secret` unchanged; a `length` larger than `secret` yields nullopt.
+    static std::optional<Vector<uint8_t>> extractDerivedBits(std::optional<size_t> length, Vector<uint8_t>&& secret);
 };
 
 } // namespace WebCore

@@ -179,7 +179,7 @@ void CryptoAlgorithmAES_KW::unwrapKey(Ref<CryptoKey>&& key, Vector<uint8_t>&& da
     callback(result.releaseReturnValue());
 }
 
-ExceptionOr<size_t> CryptoAlgorithmAES_KW::getKeyLength(const CryptoAlgorithmParameters& parameters)
+ExceptionOr<std::optional<size_t>> CryptoAlgorithmAES_KW::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
     return CryptoKeyAES::getKeyLength(parameters);
 }

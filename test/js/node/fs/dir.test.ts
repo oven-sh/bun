@@ -134,6 +134,95 @@ describe("fs.Dir", () => {
       }); // </when closed>
     }); // </when an empty directory is opened>
   }); // </given an empty temp directory>
+
+  describe("explicit resource management", () => {
+    let dirname: string;
+
+    beforeAll(() => {
+      const name = "dir-dispose.test." + String(Math.random() * 100).substring(0, 6);
+      dirname = path.join(os.tmpdir(), name);
+      fs.mkdirSync(dirname);
+      fs.writeFileSync(path.join(dirname, "entry.txt"), "x");
+    });
+
+    afterAll(() => {
+      fs.rmSync(dirname, { recursive: true, force: true });
+    });
+
+    it("has Symbol.dispose and Symbol.asyncDispose on the prototype", () => {
+      const dir = fs.opendirSync(dirname);
+      try {
+        const proto = Object.getPrototypeOf(dir);
+        expect(Object.getOwnPropertyDescriptor(proto, Symbol.dispose)).toEqual({
+          value: expect.any(Function),
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        });
+        expect(Object.getOwnPropertyDescriptor(proto, Symbol.asyncDispose)).toEqual({
+          value: expect.any(Function),
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        });
+      } finally {
+        dir.closeSync();
+      }
+    });
+
+    it("`using` closes the directory at scope exit", () => {
+      let dir: fs.Dir;
+      {
+        using d = fs.opendirSync(dirname);
+        dir = d;
+        expect(d.readSync()).not.toBeNull();
+      }
+      expect(() => dir.readSync()).toThrow(expect.objectContaining({ code: "ERR_DIR_CLOSED" }));
+    });
+
+    it("`await using` closes the directory at scope exit", async () => {
+      let dir: fs.Dir;
+      {
+        await using d = fs.opendirSync(dirname);
+        dir = d;
+        expect(await d.read()).not.toBeNull();
+      }
+      expect(() => dir.readSync()).toThrow(expect.objectContaining({ code: "ERR_DIR_CLOSED" }));
+    });
+
+    it("Symbol.dispose is a no-op on an already-closed directory", () => {
+      const dir = fs.opendirSync(dirname);
+      dir.closeSync();
+      expect(dir[Symbol.dispose]()).toBeUndefined();
+    });
+
+    it("Symbol.asyncDispose is a no-op on an already-closed directory", async () => {
+      const dir = fs.opendirSync(dirname);
+      dir.closeSync();
+      await expect(dir[Symbol.asyncDispose]()).resolves.toBeUndefined();
+    });
+
+    it("Symbol.dispose throws ERR_DIR_CONCURRENT_OPERATION with an in-flight async op", async () => {
+      const dir = fs.opendirSync(dirname);
+      const pending = dir.read();
+      try {
+        expect(() => dir[Symbol.dispose]()).toThrow(
+          expect.objectContaining({ code: "ERR_DIR_CONCURRENT_OPERATION" }),
+        );
+      } finally {
+        await pending.catch(() => {});
+        await dir.close().catch(() => {});
+      }
+    });
+
+    it("Symbol.asyncDispose queues behind an in-flight async op", async () => {
+      const dir = fs.opendirSync(dirname);
+      const pending = dir.read();
+      await expect(dir[Symbol.asyncDispose]()).resolves.toBeUndefined();
+      await pending.catch(() => {});
+      expect(() => dir.readSync()).toThrow(expect.objectContaining({ code: "ERR_DIR_CLOSED" }));
+    });
+  }); // </explicit resource management>
 }); // </fs.Dir>
 
 describe("fs.opendir async validation", () => {

@@ -1178,6 +1178,16 @@ class Dir {
     this.#handle = -1;
   }
 
+  [Symbol.dispose]() {
+    if (this.#handle < 0) return;
+    this.closeSync();
+  }
+
+  async [Symbol.asyncDispose]() {
+    if (this.#handle < 0) return;
+    await this.close();
+  }
+
   get path() {
     if (!(#path in this)) throw $ERR_INVALID_THIS("Dir");
     return this.#path;

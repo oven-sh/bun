@@ -82,10 +82,9 @@ public:
         DROPPED
     };
 
-    /* Report what send() would return right now without actually sending:
-     * DROPPED when bufferedAmount is over maxBackpressure, BACKPRESSURE when
-     * there is any buffered data, otherwise SUCCESS. Used by publish() to
-     * surface per-subscriber backpressure to the caller. */
+    /* Report what send() would return right now without sending: DROPPED over
+     * maxBackpressure, BACKPRESSURE if anything is buffered, else SUCCESS.
+     * publish() uses this to surface per-subscriber backpressure. */
     SendStatus sendStatus() {
         WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
         size_t buffered = getBufferedAmount();
@@ -373,12 +372,9 @@ public:
         }
     }
 
-    /* Publish a message to a topic according to MQTT rules and syntax. Returns the aggregated
-     * SendStatus across all receiving subscribers: DROPPED if the topic has no receivers or any
-     * receiver is over its backpressure limit, BACKPRESSURE if any receiver has buffered data,
-     * otherwise SUCCESS. We, the WebSocket, must be subscribed to the topic itself and if so - no
-     * message will be sent to ourselves. Use App::publish for an unconditional publish that simply
-     * publishes to whomever might be subscribed. */
+    /* MQTT-style publish that never delivers to this WebSocket (the sender).
+     * Returns the worst receiver SendStatus; no receivers is DROPPED.
+     * Use App::publish for an unconditional broadcast. */
     SendStatus publish(std::string_view topic, std::string_view message, OpCode opCode = OpCode::TEXT, bool compress = false) {
         WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 

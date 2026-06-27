@@ -216,11 +216,9 @@ public:
         return this->publish(topic, message, (OpCode)opCode, compress);
     }
 
-    /* Publishes a message to all websocket contexts - conceptually as if publishing to the one single
-     * TopicTree of this app (technically there are many TopicTrees, however the concept is that one
-     * app has one conceptual Topic tree). Returns the aggregated SendStatus across all subscribers:
-     * DROPPED if the topic has no subscribers or any subscriber is over its backpressure limit,
-     * BACKPRESSURE if any subscriber has buffered data, otherwise SUCCESS. */
+    /* Publishes a message to the app's one conceptual websocket Topic tree.
+     * Returns the worst subscriber SendStatus; no subscribers is DROPPED,
+     * then BACKPRESSURE beats SUCCESS. */
     PublishStatus publish(std::string_view topic, std::string_view message, OpCode opCode, bool compress = false) {
         /* Anything big bypasses corking efforts */
         if (message.length() >= LoopData::CORK_BUFFER_SIZE) {

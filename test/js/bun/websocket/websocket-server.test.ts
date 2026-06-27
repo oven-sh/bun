@@ -1209,10 +1209,8 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
   expect(exitCode).toBe(0);
 });
 
-// publish() fans out to N subscribers; it must report backpressure/drops the
-// same way ws.send() does for a single socket. Previously it always returned
-// the payload length as long as the topic had any subscriber, even when every
-// subscriber was over backpressureLimit and the data was being discarded.
+// publish() fans out to N subscribers and must report backpressure/drops the
+// same way ws.send() does for a single socket.
 describe("publish() return value reflects subscriber backpressure", () => {
   // One paused raw-TCP subscriber; the server-side handle is captured so the
   // test can compare publish() to send() on the same socket.
@@ -1251,6 +1249,7 @@ describe("publish() return value reflects subscriber backpressure", () => {
       const { promise, resolve, reject } = Promise.withResolvers<void>();
       sender.onopen = () => resolve();
       sender.onerror = e => reject(e);
+      sender.onclose = () => reject(new Error("sender closed before open"));
       await promise;
     }
 
@@ -1267,15 +1266,21 @@ describe("publish() return value reflects subscriber backpressure", () => {
           "Sec-WebSocket-Version: 13\r\n\r\n",
       );
     });
-    slow.once("data", (d: Buffer) => {
-      if (d.toString().includes(" 101 ")) {
+    // Buffer until the response headers are complete; the 101 may be split
+    // across TCP segments.
+    let response = "";
+    slow.on("data", (d: Buffer) => {
+      response += d.toString("latin1");
+      if (!response.includes("\r\n\r\n")) return;
+      if (response.includes(" 101 ")) {
         slow.pause();
         handshake.resolve();
       } else {
-        handshake.reject(new Error("upgrade failed: " + d.toString()));
+        handshake.reject(new Error("upgrade failed: " + response));
       }
     });
     slow.on("error", handshake.reject);
+    slow.on("close", () => handshake.reject(new Error("slow socket closed before upgrade")));
     try {
       await handshake.promise;
       await opened.slow.promise;
@@ -1284,7 +1289,6 @@ describe("publish() return value reflects subscriber backpressure", () => {
     } finally {
       sender.close();
       slow.destroy();
-      server.stop(true);
     }
   }
 

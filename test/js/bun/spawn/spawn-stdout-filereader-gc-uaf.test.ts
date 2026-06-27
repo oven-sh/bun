@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Accessing `proc.stdout` on a piped subprocess moves the already-registered
@@ -171,4 +171,135 @@ test.skipIf(isWindows)(
     expect(exitCode).toBe(0);
   },
   60_000,
+);
+
+// FileReader::on_read_chunk resolves the pending read promise from inside
+// PosixBufferedReader::read_with_fn, while that function still holds `&mut`
+// into the NewSource<FileReader> box. Resolving it drains microtasks, so user
+// JS runs mid-dispatch; if it calls reader.cancel() there, on_reader_done
+// releases the across-read ref (taken in from_pipe) and the box's count drops
+// to the JS wrapper's own ref, downgrading the wrapper's native Strong to
+// Weak. A GC in that same microtask drain then sweeps the wrapper, whose
+// finalizer frees the box, and the io caller's next access to it
+// (register_poll / on_error / _offset) is a heap-use-after-free.
+//
+// This asserts the lifetime invariant directly rather than racing for the
+// crash (which needs a GC to land in the short window before read_with_fn
+// returns, and conservative stack scanning makes that non-deterministic):
+// the source wrapper must still be Strong-protected immediately after the
+// re-entrant cancel, because on_read_chunk holds its own ref across p.run()
+// so the re-entrant release never reaches the downgrade-at-one threshold.
+// The from_pipe pin from the test above is what makes it Strong to begin
+// with; protectedBefore proves that precondition held.
+//
+// The chunk must exceed the 128 KiB mid-loop flush threshold in read_with_fn,
+// otherwise the flush happens on the tail retry path and nothing touches the
+// reader afterwards. A detached grandchild fills the stdout socketpair buffer
+// while the fixture is blocked in sleepSync so the whole payload arrives in
+// one poll dispatch, and keeps the write end open so received_hup stays false.
+//
+// Windows uses libuv for pipe I/O; the read_with_fn path under test is POSIX.
+test.skipIf(isWindows)(
+  "re-entrant cancel inside a subprocess stdout read keeps the FileReader pinned for the rest of the dispatch",
+  async () => {
+    using dir = tempDir("fr-cancel-uaf", {});
+    const flag = join(String(dir), "go");
+    const pidFile = join(String(dir), "gcpid");
+
+    const script = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const fs = require("node:fs");
+      const FLAG = ${JSON.stringify(flag)};
+      const PIDFILE = ${JSON.stringify(pidFile)};
+
+      const protectedSrc = () =>
+        heapStats().protectedObjectTypeCounts.FileInternalReadableStreamSource ?? 0;
+
+      globalThis.__done = Promise.withResolvers();
+
+      globalThis.__onchunk = function __onchunk({ value, done }) {
+        const chunkLen = done ? 0 : value.byteLength;
+        const protectedBefore = protectedSrc();
+        // cancel() synchronously reaches FileReader::on_reader_done, which
+        // drops the across-read ref while read_with_fn is still on the stack.
+        globalThis.__r.cancel().catch(() => {});
+        const protectedAfter = protectedSrc();
+        fs.writeSync(1, JSON.stringify({ chunkLen, protectedBefore, protectedAfter }) + "\\n");
+        globalThis.__done.resolve();
+      };
+
+      // sh backgrounds a subshell that inherits stdout, writes its pid, and
+      // exits immediately; the grandchild waits for FLAG, blasts 512 KiB at
+      // the socketpair, then idles holding fd 1 so received_hup stays false.
+      const proc = Bun.spawn({
+        cmd: [
+          "/bin/sh",
+          "-c",
+          '( while [ ! -e "$0" ]; do sleep 0.02; done; ' +
+            'dd if=/dev/zero bs=65536 count=8 2>/dev/null; exec sleep 15 ) & ' +
+            'echo $! > "$1"',
+          FLAG,
+          PIDFILE,
+        ],
+        stdin: "ignore",
+        stdout: "pipe", // from_pipe: FileReader created, across-read ref taken
+        stderr: "ignore",
+      });
+      globalThis.__s = proc.stdout;
+      await proc.exited; // sh has exited; only the grandchild holds the pipe
+      globalThis.__r = globalThis.__s.getReader();
+      globalThis.__r.read().then(globalThis.__onchunk);
+
+      // Release the grandchild, then block without ticking the event loop so
+      // it fills the socketpair buffer past the 128 KiB flush threshold
+      // before the readable poll can dispatch.
+      fs.writeFileSync(FLAG, "");
+      Bun.sleepSync(800);
+
+      await globalThis.__done.promise;
+      try { process.kill(Number(fs.readFileSync(PIDFILE, "utf8").trim()), "SIGKILL"); } catch {}
+    `;
+
+    let stdout = "",
+      stderr = "",
+      exitCode: number | null = null;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", script],
+        // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which
+        // kills a detached grandchild the moment its intermediate parent
+        // exits. This test needs it to outlive sh and keep the pipe's write
+        // end open; cleanup is explicit (the fixture and the finally below).
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    } finally {
+      // Always reap the detached grandchild; the fixture's own kill is
+      // skipped if it crashes first.
+      try {
+        process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL");
+      } catch {}
+    }
+
+    let result: { chunkLen: number; protectedBefore: number; protectedAfter: number };
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+    }
+    // Precondition: the delivered chunk exceeded read_with_fn's mid-loop
+    // flush threshold (stack_buffer_len/2 = 128 KiB), so on_read_chunk's
+    // p.run() ran with more of read_with_fn's loop still ahead of it.
+    expect(result.chunkLen).toBeGreaterThan(128 * 1024);
+    // Precondition: the from_pipe pin made the wrapper Strong before cancel.
+    expect(result.protectedBefore).toBeGreaterThanOrEqual(1);
+    // Invariant: the re-entrant cancel must not downgrade the wrapper while
+    // read_with_fn is still on the stack. Before the fix, protectedAfter is 0
+    // here, and a GC in this window frees the box read_with_fn is using.
+    expect(result.protectedAfter).toBeGreaterThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
 );

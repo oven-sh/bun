@@ -1651,7 +1651,12 @@ mod draft {
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            Some((mc.pc as usize, mc.regs[29] as usize, mc.regs[30] as usize, 0))
+            Some((
+                mc.pc as usize,
+                mc.regs[29] as usize,
+                mc.regs[30] as usize,
+                0,
+            ))
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -2099,7 +2104,15 @@ mod draft {
         let pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
         // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
         // by `pc`; the frame-pointer slot is unused.
-        crash_handler(reason, TraceSeed::Fault { pc, fp: 0, lr: 0, sp: 0 });
+        crash_handler(
+            reason,
+            TraceSeed::Fault {
+                pc,
+                fp: 0,
+                lr: 0,
+                sp: 0,
+            },
+        );
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]

@@ -395,7 +395,13 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 /// `RtlCaptureStackBackTrace` instead — it works with or without unwind tables
 /// since `.pdata` is always emitted — and trim the handler's own frames by
 /// scanning for `pc`. `fp` / `lr` / `sp` are unused on Windows.
-pub fn capture_from_context(pc: usize, fp: usize, lr: usize, sp: usize, out: &mut [usize]) -> usize {
+pub fn capture_from_context(
+    pc: usize,
+    fp: usize,
+    lr: usize,
+    sp: usize,
+    out: &mut [usize],
+) -> usize {
     if out.is_empty() {
         return 0;
     }
@@ -486,5 +492,3 @@ pub fn capture_from_context(pc: usize, fp: usize, lr: usize, sp: usize, out: &mu
     }
     n
 }
-
-

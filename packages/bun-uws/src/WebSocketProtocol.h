@@ -36,6 +36,7 @@ const std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivit
 const std::string_view ERR_INVALID_TEXT("Received invalid UTF-8");
 const std::string_view ERR_TOO_BIG_MESSAGE_INFLATION("Received too big message, or other inflation error");
 const std::string_view ERR_INVALID_CLOSE_PAYLOAD("Received invalid close payload");
+const std::string_view ERR_INVALID_MASKING("Received an incorrectly masked frame");
 
 enum OpCode : unsigned char {
     CONTINUATION = 0,
@@ -238,6 +239,7 @@ protected:
     static inline unsigned char payloadLength(char *frame) {return ((unsigned char *) frame)[1] & 127;}
     static inline bool rsv23(char *frame) {return *((unsigned char *) frame) & 48;}
     static inline bool rsv1(char *frame) {return *((unsigned char *) frame) & 64;}
+    static inline bool isMasked(char *frame) {return ((unsigned char *) frame)[1] & 128;}
 
     template <int N>
     static inline void UnrolledXor(char * __restrict data, char * __restrict mask) {
@@ -403,6 +405,14 @@ public:
         if (wState->state.wantsHead) {
             parseNext:
             while (length >= SHORT_MESSAGE_HEADER) {
+
+                /* RFC 6455 5.1: a server must refuse unmasked frames, a client masked ones.
+                 * The MESSAGE_HEADER constants assume the mask bit matches our role, so a
+                 * mismatched frame would otherwise desync the parser. */
+                if (isMasked(src) != isServer) {
+                    Impl::forceClose(wState, user, ERR_INVALID_MASKING);
+                    return;
+                }
 
                 // invalid reserved bits / invalid opcodes / invalid control frames / set compressed frame
                 if ((rsv1(src) && !Impl::setCompressed(wState, user)) || rsv23(src) || (getOpCode(src) > 2 && getOpCode(src) < 8) ||

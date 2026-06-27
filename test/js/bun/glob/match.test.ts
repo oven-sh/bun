@@ -136,6 +136,20 @@ describe("Glob.match", () => {
     expect(new Glob("x{[a,b}y").match("xby")).toBeTrue();
   });
 
+  test("a run of unterminated [ stays linear", () => {
+    // Every `[` is unterminated (no `]` anywhere), so each is a literal.
+    // A naive per-`[` scan-to-end would be quadratic and time this test out.
+    const opens = Buffer.alloc(100_000, "[").toString();
+    expect(new Glob(opens).match(opens)).toBeTrue();
+    expect(new Glob(opens).match(opens.slice(1))).toBeFalse();
+    // The brace scanner classifies every `[` in the group the same way.
+    expect(new Glob(`{${opens},x}`).match(opens)).toBeTrue();
+    expect(new Glob(`{${opens},x}`).match("x")).toBeTrue();
+    // A single trailing `]` closes the run into one class containing `[`.
+    expect(new Glob("[[[[[]").match("[")).toBeTrue();
+    expect(new Glob("[[[[[]").match("a")).toBeFalse();
+  });
+
   test("no early globstar lock-in", () => {
     // see https://github.com/oven-sh/bun/issues/14934
     expect(new Glob(`**/*abc*`).match(`a/abc`)).toBeTrue();

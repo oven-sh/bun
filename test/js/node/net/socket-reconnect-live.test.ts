@@ -44,11 +44,9 @@ describe.concurrent("socket.connect() re-entry", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "first second", stderr, exitCode: 0 });
   });
 
-  // Node rejects a connect() issued while the previous one is still in flight
-  // with EALREADY (libuv: handle->connect_req != NULL) and destroys the
-  // socket. The in-flight attempt must never emit 'connect'. Any connect()
-  // after the EALREADY destroy is dropped by the `connecting` guard, so two
-  // and three calls produce the same single error.
+  // Node rejects connect() while a prior connect is in flight with EALREADY
+  // and destroys the socket; further connect()s are dropped by the `connecting`
+  // guard, so two and three calls produce the same single error.
   it.each([
     ["one extra connect()", 1],
     ["two extra connect()s", 2],

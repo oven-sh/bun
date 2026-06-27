@@ -245,7 +245,7 @@ impl_cares_linked!(
     c_ares::struct_ares_caa_reply,
     c_ares::struct_ares_srv_reply,
     c_ares::struct_ares_mx_reply,
-    c_ares::struct_ares_txt_reply,
+    c_ares::struct_ares_txt_ext,
     c_ares::struct_ares_naptr_reply,
 );
 
@@ -366,35 +366,82 @@ pub(crate) fn mx_reply_to_js(
     Ok(obj)
 }
 
-// ── struct_ares_txt_reply ──────────────────────────────────────────────────
+// ── struct_ares_txt_ext ────────────────────────────────────────────────────
+// A TXT RR's rdata is one or more <=255-byte character-strings. c-ares emits
+// one linked-list node per character-string; `record_start` marks the first
+// node of each RR. Group chunks per RR so the outer array has one entry per
+// record, matching Node.js (which uses the same `ares_parse_txt_reply_ext`).
+fn txt_ext_to_grouped_js_array(
+    head: &mut c_ares::struct_ares_txt_ext,
+    global_this: &JSGlobalObject,
+    mut wrap: impl FnMut(&JSGlobalObject, JSValue) -> JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    let mut records: usize = 0;
+    let mut p: *mut c_ares::struct_ares_txt_ext = head;
+    while !p.is_null() {
+        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
+        let node = unsafe { &*p };
+        if node.record_start != 0 {
+            records += 1;
+        }
+        p = node.next;
+    }
+
+    let outer = JSValue::create_empty_array(global_this, records)?;
+
+    p = head;
+    let mut i: u32 = 0;
+    while !p.is_null() {
+        let mut chunks: usize = 0;
+        let mut q = p;
+        while !q.is_null() {
+            // SAFETY: `q` walks the c-ares-owned linked list (CAresLinked invariant).
+            let node = unsafe { &*q };
+            if chunks > 0 && node.record_start != 0 {
+                break;
+            }
+            chunks += 1;
+            q = node.next;
+        }
+
+        let inner = JSValue::create_empty_array(global_this, chunks)?;
+        let mut j: u32 = 0;
+        while !p.is_null() {
+            // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
+            let node = unsafe { &*p };
+            if j > 0 && node.record_start != 0 {
+                break;
+            }
+            inner.put_index(global_this, j, utf8_to_js(global_this, node.txt_bytes())?)?;
+            j += 1;
+            p = node.next;
+        }
+
+        outer.put_index(global_this, i, wrap(global_this, inner)?)?;
+        i += 1;
+    }
+
+    Ok(outer)
+}
+
 pub(crate) fn txt_reply_to_js_response(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &mut c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, txt_reply_to_js)
-}
-
-pub(crate) fn txt_reply_to_js(
-    this: &mut c_ares::struct_ares_txt_reply,
-    global_this: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    let array = JSValue::create_empty_array(global_this, 1)?;
-    let value = this.txt_bytes();
-    array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
-    Ok(array)
+    txt_ext_to_grouped_js_array(this, global_this, |_, inner| Ok(inner))
 }
 
 pub(crate) fn txt_reply_to_js_for_any(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &mut c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    let array =
-        cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
-    let obj = JSValue::create_empty_object(global_this, 1);
-    obj.put(global_this, b"entries", array);
-    Ok(obj)
+    txt_ext_to_grouped_js_array(this, global_this, |g, inner| {
+        let obj = JSValue::create_empty_object(g, 1);
+        obj.put(g, b"entries", inner);
+        Ok(obj)
+    })
 }
 
 // ── struct_ares_naptr_reply ────────────────────────────────────────────────

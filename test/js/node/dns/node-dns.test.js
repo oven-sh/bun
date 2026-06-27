@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -570,5 +571,100 @@ describe("hostnames containing NUL bytes", () => {
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
     expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+describe("TXT records with multiple character-strings in one RR", () => {
+  // A single TXT RR's rdata may contain multiple <=255-byte character-strings
+  // (RFC 1035 §3.3.14). Node returns one inner array per RR with each chunk as
+  // an element; callers join them. Long SPF/DKIM records rely on this.
+  const wireName = s =>
+    Buffer.concat([
+      ...s
+        .split(".")
+        .filter(Boolean)
+        .map(l => Buffer.concat([Buffer.from([l.length]), Buffer.from(l)])),
+      Buffer.from([0]),
+    ]);
+  const u16 = v => {
+    const b = Buffer.alloc(2);
+    b.writeUInt16BE(v);
+    return b;
+  };
+  const u32 = v => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(v >>> 0);
+    return b;
+  };
+  const rr = (name, type, ttl, rdata) =>
+    Buffer.concat([wireName(name), u16(type), u16(1), u32(ttl), u16(rdata.length), rdata]);
+  const txtRdata = (...strs) => Buffer.concat(strs.map(s => Buffer.concat([Buffer.from([s.length]), Buffer.from(s)])));
+
+  const NAME = "txt.test.zone";
+
+  async function withAuthoritativeTxtServer(answers, fn) {
+    const server = dgram.createSocket("udp4");
+    const onError = Promise.withResolvers();
+    server.on("error", onError.reject);
+    server.on("message", (msg, rinfo) => {
+      let i = 12;
+      while (msg[i]) i += msg[i] + 1;
+      i++;
+      const header = Buffer.alloc(12);
+      header.writeUInt16BE(msg.readUInt16BE(0), 0);
+      header.writeUInt16BE(0x8400, 2);
+      header.writeUInt16BE(1, 4);
+      header.writeUInt16BE(answers.length, 6);
+      const ans = answers.map(rd => rr(NAME, 16, 60, rd));
+      server.send(Buffer.concat([header, msg.subarray(12, i + 4), ...ans]), rinfo.port, rinfo.address);
+    });
+    await new Promise(resolve => server.bind(0, "127.0.0.1", resolve));
+    try {
+      const resolver = new dns_promises.Resolver();
+      resolver.setServers(["127.0.0.1:" + server.address().port]);
+      await Promise.race([fn(resolver), onError.promise]);
+    } finally {
+      server.close();
+    }
+  }
+
+  it("resolveTxt groups character-strings per RR", async () => {
+    // One TXT RR with two character-strings, plus a second single-string TXT RR.
+    await withAuthoritativeTxtServer([txtRdata("hello", "world"), txtRdata("single")], async resolver => {
+      const records = await resolver.resolveTxt(NAME);
+      expect(records).toEqual([["hello", "world"], ["single"]]);
+    });
+  });
+
+  it("resolveTxt with a single RR containing one character-string", async () => {
+    await withAuthoritativeTxtServer([txtRdata("only")], async resolver => {
+      const records = await resolver.resolveTxt(NAME);
+      expect(records).toEqual([["only"]]);
+    });
+  });
+
+  it("resolveTxt with one RR containing many character-strings", async () => {
+    await withAuthoritativeTxtServer([txtRdata("a", "b", "c", "d")], async resolver => {
+      const records = await resolver.resolveTxt(NAME);
+      expect(records).toEqual([["a", "b", "c", "d"]]);
+    });
+  });
+
+  it("resolve('TXT') groups character-strings per RR", async () => {
+    await withAuthoritativeTxtServer([txtRdata("hello", "world"), txtRdata("single")], async resolver => {
+      const records = await resolver.resolve(NAME, "TXT");
+      expect(records).toEqual([["hello", "world"], ["single"]]);
+    });
+  });
+
+  it("resolveAny emits one {type: 'TXT', entries} object per RR", async () => {
+    await withAuthoritativeTxtServer([txtRdata("hello", "world"), txtRdata("single")], async resolver => {
+      const records = await resolver.resolveAny(NAME);
+      const txt = records.filter(r => r.type === "TXT");
+      expect(txt).toEqual([
+        { type: "TXT", entries: ["hello", "world"] },
+        { type: "TXT", entries: ["single"] },
+      ]);
+    });
   });
 });

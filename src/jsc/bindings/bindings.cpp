@@ -5581,6 +5581,17 @@ extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* 
     return abortSignal.leakRef();
 }
 
+// Creates a new AbortSignal that follows `parent` (aborts when `parent`
+// aborts, with the same reason). Returns a +1 ref that the caller owns.
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__createFollowingSignal(JSC::JSGlobalObject* globalObject, WebCore::AbortSignal* parent)
+{
+    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* context = thisObject->scriptExecutionContext();
+    RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
+    abortSignal->signalFollow(*parent);
+    return abortSignal.leakRef();
+}
+
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);

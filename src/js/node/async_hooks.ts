@@ -74,8 +74,6 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
 }
 
 class AsyncLocalStorage {
-  #disabled = false;
-
   constructor() {
     setAsyncHooksEnabled(true);
 
@@ -110,8 +108,6 @@ class AsyncLocalStorage {
 
   enterWith(store) {
     cleanupLater();
-    // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    this.#disabled = false;
     var context = get();
     if (!context) {
       set([this, store]);
@@ -146,9 +142,6 @@ class AsyncLocalStorage {
     var previous_value;
     var i = 0;
     var contextWasAlreadyInit = !context;
-    // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    const wasDisabled = this.#disabled;
-    this.#disabled = false;
     if (contextWasAlreadyInit) {
       set((context = [this, store_value]));
     } else {
@@ -173,42 +166,43 @@ class AsyncLocalStorage {
     try {
       return callback(...args);
     } finally {
-      // Note: early `return` will prevent `throw` above from working. I think...
-      // Set AsyncContextFrame to undefined if we are out of context values
-      if (!wasDisabled) {
-        var context2 = get()! as any[]; // we make sure to .slice() before mutating
-        if (context2 === context && contextWasAlreadyInit) {
-          $assert(context2.length === 2, "context was mutated without copy");
-          set(undefined);
-        } else {
-          context2 = context2.slice(); // array is cloned here
-          $assert(context2[i] === this);
+      // The callback may have called disable() (clearing our entry and
+      // possibly the whole context) or enterWith() on other stores, so
+      // re-read the context and re-locate our entry before restoring.
+      var context2 = get() as any[] | undefined;
+      if (context2 === context && contextWasAlreadyInit) {
+        set(undefined);
+      } else if (context2) {
+        context2 = context2.slice();
+        var j = context2.indexOf(this);
+        if (j > -1) {
+          $assert(j % 2 === 0);
           if (hasPrevious) {
-            context2[i + 1] = previous_value;
-            set(context2);
+            context2[j + 1] = previous_value;
           } else {
-            // i wonder if this is a fair assert to make
-            context2.splice(i, 2);
-            $assert(context2.length % 2 === 0);
-            set(context2.length ? context2 : undefined);
+            context2.splice(j, 2);
           }
+        } else if (hasPrevious) {
+          context2.push(this, previous_value);
         }
-        $assert(
-          this.getStore() === previous_value,
-          "run: previous_value",
-          Bun.inspect(previous_value),
-          "was not restored, i see",
-          this.getStore(),
-        );
+        $assert(context2.length % 2 === 0);
+        set(context2.length ? context2 : undefined);
+      } else if (hasPrevious) {
+        set([this, previous_value]);
       }
+      $assert(
+        this.getStore() === previous_value,
+        "run: previous_value",
+        Bun.inspect(previous_value),
+        "was not restored, i see",
+        this.getStore(),
+      );
     }
   }
 
   disable() {
     $debug("disable " + (this as any).__id__);
     // In this case, we actually do want to mutate the context state
-    if (this.#disabled) return;
-    this.#disabled = true;
     var context = get() as any[];
     if (context) {
       var { length } = context;
@@ -224,8 +218,6 @@ class AsyncLocalStorage {
 
   getStore() {
     $debug("getStore " + (this as any).__id__);
-    // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    if (this.#disabled) return;
     var context = get();
     if (!context) return;
     var { length } = context;
@@ -295,7 +287,7 @@ class AsyncResource {
   }
 
   emitDestroy() {
-    //
+    return this;
   }
 
   runInAsyncScope(fn, thisArg, ...args) {
@@ -310,7 +302,24 @@ class AsyncResource {
 
   bind(fn, thisArg) {
     validateFunction(fn, "fn");
-    return this.runInAsyncScope.bind(this, fn, thisArg ?? this);
+    let bound;
+    if (thisArg === undefined) {
+      const resource = this;
+      bound = function (...args) {
+        (args as unknown[]).unshift(fn, this);
+        return resource.runInAsyncScope.$apply(resource, args);
+      };
+    } else {
+      bound = this.runInAsyncScope.bind(this, fn, thisArg);
+    }
+    $Object.$defineProperty(bound, "length", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: fn.length,
+      writable: false,
+    });
+    return bound;
   }
 
   static bind(fn, type, thisArg) {

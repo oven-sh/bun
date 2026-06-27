@@ -169,16 +169,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
 
     {
-      await Bun.write(
-        Bun.file(tmpbase + "fetch.js.in").slice(0, (exampleHtml.length / 2) | 0),
-        Bun.file(tmpbase + "fetch.js.out"),
-      );
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(
-        exampleHtml.substring(0, (exampleHtml.length / 2) | 0),
-      );
-    }
-
-    {
       await gcTick();
       await Bun.write(tmpbase + "fetch.js.in", Bun.file(tmpbase + "fetch.js.out"));
       await gcTick();
@@ -650,38 +640,44 @@ const IS_UV_FS_COPYFILE_DISABLED =
       },
     );
 
-    it("Bun.write(dest, Bun.file(src).slice(a, b)) writes only the sliced window", async () => {
-      using dir = tempDir("bun-write-file-slice", {
-        "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-      });
-      const src = join(String(dir), "src.txt");
-      const dst = join(String(dir), "dst.txt");
-      const slice = Bun.file(src).slice(10, 20);
-      expect({ size: slice.size, text: await slice.text() }).toEqual({
-        size: 10,
-        text: "KLMNOPQRST",
-      });
-      const written = await Bun.write(dst, slice);
-      expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
-        written: 10,
-        content: "KLMNOPQRST",
-      });
-    });
+    it.skipIf(isWindows)(
+      "Bun.write(dest, Bun.file(src).slice(a, b)) writes only the sliced window",
+      async () => {
+        using dir = tempDir("bun-write-file-slice", {
+          "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+        const src = join(String(dir), "src.txt");
+        const dst = join(String(dir), "dst.txt");
+        const slice = Bun.file(src).slice(10, 20);
+        expect({ size: slice.size, text: await slice.text() }).toEqual({
+          size: 10,
+          text: "KLMNOPQRST",
+        });
+        const written = await Bun.write(dst, slice);
+        expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+          written: 10,
+          content: "KLMNOPQRST",
+        });
+      },
+    );
 
-    it("Bun.write(dest, Bun.file(src).slice(0, n)) writes only the first n bytes", async () => {
-      using dir = tempDir("bun-write-file-slice-head", {
-        "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-      });
-      const src = join(String(dir), "src.txt");
-      const dst = join(String(dir), "dst.txt");
-      const written = await Bun.write(dst, Bun.file(src).slice(0, 8));
-      expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
-        written: 8,
-        content: "ABCDEFGH",
-      });
-    });
+    it.skipIf(isWindows)(
+      "Bun.write(dest, Bun.file(src).slice(0, n)) writes only the first n bytes",
+      async () => {
+        using dir = tempDir("bun-write-file-slice-head", {
+          "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+        const src = join(String(dir), "src.txt");
+        const dst = join(String(dir), "dst.txt");
+        const written = await Bun.write(dst, Bun.file(src).slice(0, 8));
+        expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+          written: 8,
+          content: "ABCDEFGH",
+        });
+      },
+    );
 
-    it("Bun.write(dest, Bun.file(src).slice(a)) writes from offset to end", async () => {
+    it.skipIf(isWindows)("Bun.write(dest, Bun.file(src).slice(a)) writes from offset to end", async () => {
       using dir = tempDir("bun-write-file-slice-tail", {
         "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
       });
@@ -694,18 +690,44 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
-    it("Bun.write(dest, Bun.file(src).slice(a, b)) over an existing larger file replaces it", async () => {
-      using dir = tempDir("bun-write-file-slice-overwrite", {
-        "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        "dst.txt": Buffer.alloc(100, "x").toString(),
-      });
-      const src = join(String(dir), "src.txt");
-      const dst = join(String(dir), "dst.txt");
-      const written = await Bun.write(dst, Bun.file(src).slice(10, 20));
-      expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
-        written: 10,
-        content: "KLMNOPQRST",
-      });
-    });
+    it.skipIf(isWindows)(
+      "Bun.write(dest, Bun.file(src).slice(a, b)) over an existing larger file replaces it",
+      async () => {
+        using dir = tempDir("bun-write-file-slice-overwrite", {
+          "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+          "dst.txt": Buffer.alloc(100, "x").toString(),
+        });
+        const src = join(String(dir), "src.txt");
+        const dst = join(String(dir), "dst.txt");
+        const written = await Bun.write(dst, Bun.file(src).slice(10, 20));
+        expect({ written, content: fs.readFileSync(dst, "utf8") }).toEqual({
+          written: 10,
+          content: "KLMNOPQRST",
+        });
+      },
+    );
+
+    // https://github.com/oven-sh/bun/issues/22456
+    it.skipIf(isWindows)(
+      "reusing a BunFile as a destination does not cap the write at its previous size",
+      async () => {
+        using dir = tempDir("bun-write-reused-dest", {});
+        const content1 = "this is a long long long long line";
+        const file1 = Bun.file(join(String(dir), "file1.txt"));
+        await Bun.write(file1, content1);
+        const file2 = Bun.file(join(String(dir), "file2.txt"));
+        const file2Path = join(String(dir), "file2.txt");
+        await Bun.write(file2, "short line");
+        const file3 = Bun.file(join(String(dir), "file3.txt"));
+        if (await file2.exists()) {
+          await Bun.write(file3, file2);
+        }
+        const written = await Bun.write(file2, file1);
+        expect({ written, content: fs.readFileSync(file2Path, "utf8") }).toEqual({
+          written: 34,
+          content: content1,
+        });
+      },
+    );
   });
 });

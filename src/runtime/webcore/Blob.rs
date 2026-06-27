@@ -4797,14 +4797,11 @@ pub fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
-            // Read range comes from the source slice; the destination's
-            // size still caps the write so `Bun.write(dest.slice(0,n), src)`
-            // keeps its existing behaviour.
             let mut file_copier = copy_file::CopyFile::create(
                 destination_store,
                 source_store,
                 source_blob.offset.get(),
-                source_blob.size.get().min(destination_blob.size.get()),
+                source_blob.size.get(),
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,

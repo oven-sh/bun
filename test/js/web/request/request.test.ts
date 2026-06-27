@@ -178,11 +178,9 @@ describe("RequestInit signal presence", () => {
 });
 
 describe("Request.signal is a new dependent signal", () => {
-  // https://fetch.spec.whatwg.org/#dom-request step 30/31: each Request gets a
-  // new AbortSignal that follows the input signal. Returning the caller's
-  // controller signal directly means request-scoped mutation (onabort,
-  // removeEventListener) reaches into the user's AbortController.
-
+  // https://fetch.spec.whatwg.org/#dom-request step 30/31: each Request gets
+  // a new AbortSignal following the input; sharing the caller's object would
+  // let request-scoped mutation reach into the user's AbortController.
   test("new Request(url, { signal }) returns a distinct signal", () => {
     const c = new AbortController();
     const req = new Request("https://example.com/", { signal: c.signal });

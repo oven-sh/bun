@@ -120,28 +120,38 @@ test("AsyncLocalStorage.disable inside a nested run does not throw", () => {
 test("AsyncLocalStorage.disable inside run with another store active", () => {
   const a = new AsyncLocalStorage<string>();
   const b = new AsyncLocalStorage<string>();
-  b.enterWith("B");
-  a.run("A", () => {
-    expect(a.getStore()).toBe("A");
-    expect(b.getStore()).toBe("B");
-    a.disable();
+  try {
+    b.enterWith("B");
+    a.run("A", () => {
+      expect(a.getStore()).toBe("A");
+      expect(b.getStore()).toBe("B");
+      a.disable();
+      expect(a.getStore()).toBe(undefined);
+      expect(b.getStore()).toBe("B");
+    });
     expect(a.getStore()).toBe(undefined);
     expect(b.getStore()).toBe("B");
-  });
-  expect(a.getStore()).toBe(undefined);
-  expect(b.getStore()).toBe("B");
+  } finally {
+    a.disable();
+    b.disable();
+  }
 });
 
 test("AsyncLocalStorage.run restores correctly when this store is another store's value", () => {
   const a = new AsyncLocalStorage();
   const b = new AsyncLocalStorage();
-  b.enterWith("x");
-  a.run("v", () => {
-    // Make `a` appear at an odd (value) slot in the context array.
-    b.enterWith(a);
-  });
-  expect(b.getStore()).toBe(a);
-  expect(a.getStore()).toBe(undefined);
+  try {
+    b.enterWith("x");
+    a.run("v", () => {
+      // Make `a` appear at an odd (value) slot in the context array.
+      b.enterWith(a);
+    });
+    expect(b.getStore()).toBe(a);
+    expect(a.getStore()).toBe(undefined);
+  } finally {
+    a.disable();
+    b.disable();
+  }
 });
 
 test("AsyncResource.prototype.bind forwards call-site `this` when no thisArg is given", () => {

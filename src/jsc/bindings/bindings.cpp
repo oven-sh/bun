@@ -5581,11 +5581,9 @@ extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* 
     return abortSignal.leakRef();
 }
 
-// Creates a new dependent AbortSignal that aborts when `parent` aborts
-// (with the same reason). Uses the source/dependent WeakListHashSet path
-// used by AbortSignal.any() so the link self-prunes when the dependent
-// is collected; the legacy signalFollow() would leave a permanent entry
-// in the parent's algorithm vector. Returns a +1 ref the caller owns.
+// Creates a dependent AbortSignal via AbortSignal::any() so the weak
+// source/dependent link self-prunes on collection (signalFollow() would
+// leave a permanent algorithm entry). Returns a +1 ref the caller owns.
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__createFollowingSignal(JSC::JSGlobalObject* globalObject, WebCore::AbortSignal* parent)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);

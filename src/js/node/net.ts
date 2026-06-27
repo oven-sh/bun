@@ -47,7 +47,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 
-const { UV_EALREADY, UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
+const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
@@ -112,6 +112,10 @@ const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+
+// process.binding("uv").UV_EALREADY cannot be used here: on Windows it is the
+// MSVC CRT errno, which util.getSystemErrorName (the UV_E table) rejects.
+const ealreadyErrorCode = $newRustFunction("node_util_binding.rs", "ealreadyErrorCode", 0);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -1283,7 +1287,7 @@ function kConnectDispatch(self, req, opts) {
   // flight. readyState 2 is that state natively; without this, doConnect
   // tears the in-flight attempt down and silently starts over.
   if (handle.readyState === 2) {
-    return UV_EALREADY;
+    return ealreadyErrorCode();
   }
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; doConnect instead fires connectError inside this call. Bracket

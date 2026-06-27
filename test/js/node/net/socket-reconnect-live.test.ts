@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
+import os from "node:os";
 
-// libuv's value differs per platform (-114 on Linux, -37 on macOS, -4084 on
-// Windows); read it the same way net.ts does so the assertion stays exact.
-const { UV_EALREADY } = process.binding("uv");
+// libuv's UV_EALREADY is -errno on POSIX and a fixed synthetic on Windows
+// (uv/errno.h). process.binding("uv").UV_EALREADY is not usable here: on
+// Windows it reports the MSVC CRT errno, which getSystemErrorName rejects.
+const UV_EALREADY = isWindows ? -4084 : -os.constants.errno.EALREADY;
 
 async function runNetFixture(source: string) {
   await using proc = Bun.spawn({

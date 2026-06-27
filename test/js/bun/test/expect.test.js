@@ -4020,6 +4020,71 @@ describe("expect()", () => {
     expect("bob").not.toEndWith("alice");
   });
 
+  describe("toBeInstanceOf()", () => {
+    test("prototype chain", () => {
+      class A {}
+      class B extends A {}
+      expect(new B()).toBeInstanceOf(B);
+      expect(new B()).toBeInstanceOf(A);
+      expect(new B()).toBeInstanceOf(Object);
+      expect(new A()).not.toBeInstanceOf(B);
+      expect({}).not.toBeInstanceOf(A);
+    });
+
+    test("honors Symbol.hasInstance on class with primitive received", () => {
+      class H {
+        static [Symbol.hasInstance]() {
+          return true;
+        }
+      }
+      expect(1 instanceof H).toBe(true);
+      expect(1).toBeInstanceOf(H);
+      expect("x").toBeInstanceOf(H);
+      expect(null).toBeInstanceOf(H);
+      expect(true).toBeInstanceOf(H);
+    });
+
+    test("honors Symbol.hasInstance on class with object received", () => {
+      class H {
+        static [Symbol.hasInstance](v) {
+          return v && v.tag === "ok";
+        }
+      }
+      expect({ tag: "ok" }).toBeInstanceOf(H);
+      expect({ tag: "no" }).not.toBeInstanceOf(H);
+      expect(new H()).not.toBeInstanceOf(H);
+    });
+
+    test("honors Symbol.hasInstance returning false for default instance", () => {
+      class H {
+        static [Symbol.hasInstance]() {
+          return false;
+        }
+      }
+      expect(new H() instanceof H).toBe(false);
+      expect(new H()).not.toBeInstanceOf(H);
+    });
+
+    test("accepts non-constructor function with Symbol.hasInstance", () => {
+      const H = () => {};
+      Object.defineProperty(H, Symbol.hasInstance, { value: v => typeof v === "number" });
+      expect(typeof H).toBe("function");
+      expect(1 instanceof H).toBe(true);
+      expect(1).toBeInstanceOf(H);
+      expect("x").not.toBeInstanceOf(H);
+    });
+
+    test("rejects non-function expected", () => {
+      expect(() => expect({}).toBeInstanceOf({})).toThrow("Expected value must be a function");
+      expect(() => expect({}).toBeInstanceOf(1)).toThrow("Expected value must be a function");
+      // Jest requires `typeof expected === "function"`, so a plain object with
+      // Symbol.hasInstance (a valid `instanceof` RHS) is still rejected.
+      const nonCallable = { [Symbol.hasInstance]: () => true };
+      expect(1 instanceof nonCallable).toBe(true);
+      expect(() => expect(1).toBeInstanceOf(nonCallable)).toThrow("Expected value must be a function");
+    });
+  });
+
   describe("asymmetric matchers", () => {
     test("expect.any", () => {
       class Thing {}

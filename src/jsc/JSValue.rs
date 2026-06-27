@@ -2787,10 +2787,8 @@ impl JSValue {
 
     // ── instanceof / constructor. ─────────────────
     /// `JSValue.isInstanceOf` — `self instanceof constructor`.
+    /// Dispatches through `constructor[Symbol.hasInstance]`, so a primitive LHS can still match.
     pub fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool> {
-        if !self.is_cell() {
-            return Ok(false);
-        }
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__isInstanceOf(self, global, constructor)
         })

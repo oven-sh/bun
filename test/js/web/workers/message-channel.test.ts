@@ -537,9 +537,10 @@ describe("onmessage event-loop ref", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
         stdout: "END",
+        stderr: "",
         exitCode: 0,
         signalCode: null,
       });
@@ -565,9 +566,10 @@ describe("onmessage event-loop ref", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
         stdout: "END",
+        stderr: "",
         exitCode: 0,
         signalCode: null,
       });
@@ -612,11 +614,12 @@ describe("onmessage event-loop ref", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // The port message and the worker-close notification come from two
       // event sources, so don't assume their relative order.
-      expect({ lines: stdout.trim().split("\n").sort(), exitCode, signalCode: proc.signalCode }).toEqual({
+      expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
         lines: ["echo:hi", "worker closed"],
+        stderr: "",
         exitCode: 0,
         signalCode: null,
       });
@@ -648,9 +651,10 @@ describe("onmessage event-loop ref", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
         stdout: "END\nGOT:ping",
+        stderr: "",
         exitCode: 0,
         signalCode: null,
       });

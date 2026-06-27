@@ -455,10 +455,10 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 template<bool isSSL>
 static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
 {
-    app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
+    app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, int code) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
-        socket->onClose();
+        socket->onClose(code);
     });
     app->setOnSocketDrain([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);

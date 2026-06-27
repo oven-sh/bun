@@ -199,7 +199,7 @@ private:
         return s;
     }
 
-    static us_socket_t *onClose(us_socket_t *s, int /*code*/, void * /*reason*/) {
+    static us_socket_t *onClose(us_socket_t *s, int code, void * /*reason*/) {
         ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
         /* Get socket ext */
@@ -225,7 +225,7 @@ private:
         }
 
         if (httpResponseData->socketData && httpContextData->onSocketClosed) {
-            httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
+            httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s, code);
         }
         /* Signal broken HTTP request only if we have a pending request */
         if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {

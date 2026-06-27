@@ -102,7 +102,7 @@ public:
     }
 
     void detach();
-    void onClose();
+    void onClose(int code = 0);
     void onDrain();
     void onData(const char* data, int length, bool last);
 

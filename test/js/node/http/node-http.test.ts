@@ -2990,6 +2990,64 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+describe("'connection' socket emits disconnect events", () => {
+  async function probe(rst: boolean) {
+    const ev: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const requestServed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.resume();
+      res.end("ok");
+      res.on("finish", requestServed.resolve);
+    });
+    server.on("connection", s => {
+      ev.push("connection");
+      s.on("end", () => ev.push("socket-end"));
+      s.on("error", (e: any) => ev.push("socket-error " + e.code));
+      s.on("close", () => {
+        ev.push("socket-close");
+        closed.resolve();
+      });
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const responseReceived = Promise.withResolvers<void>();
+      const client = connect(port, "127.0.0.1");
+      client.setNoDelay(true);
+      client.on("error", () => {});
+      client.on("connect", () => client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
+      let buf = "";
+      client.on("data", chunk => {
+        buf += chunk.toString("latin1");
+        if (buf.includes("\r\n\r\nok")) responseReceived.resolve();
+      });
+      // Wait for the response to be fully sent and received so the server
+      // socket is in keep-alive idle state when the client disconnects.
+      await Promise.all([requestServed.promise, responseReceived.promise]);
+      if (rst) {
+        client.resetAndDestroy();
+      } else {
+        client.end();
+      }
+      await closed.promise;
+    } finally {
+      server.close();
+    }
+    return ev;
+  }
+
+  it("on FIN: 'end' then 'close'", async () => {
+    expect(await probe(false)).toEqual(["connection", "socket-end", "socket-close"]);
+  });
+
+  it("on RST: 'error' ECONNRESET then 'close'", async () => {
+    expect(await probe(true)).toEqual(["connection", "socket-error ECONNRESET", "socket-close"]);
+  });
+});
+
 it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () => {
   // true inside the 'upgrade' listener; false for an Upgrade-carrying request
   // that falls through to 'request' (no Connection: upgrade token here).

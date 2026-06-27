@@ -53,7 +53,7 @@ private:
     /* We could be a subscriber */
     Subscriber *subscriber = nullptr;
 public:
-    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, int code);
     void *socketData = nullptr;
     /* node http compatibility callbacks */
     OnSocketClosedCallback onSocketClosed = nullptr;

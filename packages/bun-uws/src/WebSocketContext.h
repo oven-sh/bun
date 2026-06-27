@@ -281,7 +281,7 @@ private:
         /* For whatever reason, if we already have emitted close event, do not emit it again */
         WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(s));
         if (webSocketData->socketData && webSocketData->onSocketClosed) {
-            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s);
+            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s, code);
         }
         if (!webSocketData->isShuttingDown) {
             /* Emit close event */

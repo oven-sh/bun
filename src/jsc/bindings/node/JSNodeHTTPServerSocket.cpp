@@ -142,7 +142,7 @@ void JSNodeHTTPServerSocket::detach()
     this->strongThis.clear();
 }
 
-void JSNodeHTTPServerSocket::onClose()
+void JSNodeHTTPServerSocket::onClose(int code)
 {
     this->socket = nullptr;
     if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
@@ -169,7 +169,7 @@ void JSNodeHTTPServerSocket::onClose()
         return;
     }
 
-    scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
+    scriptExecutionContext->postTask([self = this, code](ScriptExecutionContext& context) {
         WTF::NakedPtr<JSC::Exception> exception;
         auto* globalObject = defaultGlobalObject(context.globalObject());
         auto* thisObject = self;
@@ -183,6 +183,7 @@ void JSNodeHTTPServerSocket::onClose()
         }
         auto callData = JSC::getCallData(callbackObject);
         MarkedArgumentBuffer args;
+        args.append(JSC::jsNumber(code));
         EnsureStillAliveScope ensureStillAlive(self);
 
         if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {

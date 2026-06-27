@@ -431,6 +431,14 @@ describe("Bun.Transpiler replMode", () => {
         expect(result.functions).toBe("");
       });
 
+      test("declarations reading an import binding are excluded", () => {
+        // Import statements are never part of the `functions` string, so a
+        // declaration that eagerly reads an import binding cannot be replayed.
+        const code = transpiler.transformSync('import { foo } from "mod"; const x = foo; const y = 1');
+        expect(code).toContain("var y = 1");
+        expect(code).not.toContain("var x = foo");
+      });
+
       test("using declarations are never serialized", () => {
         // With `target: "bun"` a non-null `using` reaches the REPL transform
         // unlowered; replaying it as a plain `var` would drop its disposal

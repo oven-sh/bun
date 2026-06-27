@@ -1049,10 +1049,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             | ExprData::EImportMeta(_)
             // Function bodies are deferred, not evaluated by the declaration.
             | ExprData::EFunction(_)
-            | ExprData::EArrow(_)
-            // Import bindings resolve through the module namespace.
-            | ExprData::EImportIdentifier(_)
-            | ExprData::ECommonjsExportIdentifier(_) => true,
+            | ExprData::EArrow(_) => true,
+            // Import bindings are never part of the serialized source (import
+            // statements are not replayable), so an eager read of one cannot
+            // be satisfied on a fresh VM.
+            ExprData::EImportIdentifier(_) | ExprData::ECommonjsExportIdentifier(_) => false,
             ExprData::EIdentifier(ex) => {
                 // Unbound identifiers resolve against the replaying context's
                 // globals, the same way the original evaluation did.

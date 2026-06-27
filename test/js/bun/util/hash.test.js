@@ -54,6 +54,13 @@ it(`Bun.hash.xxHash3()`, () => {
   gcTick();
   expect(Bun.hash.xxHash3(new TextEncoder().encode("hello world"))).toBe(0xd447b1ea40e6988bn);
   gcTick();
+  // Test with seed larger than u32: XXH3_64bits_withSeed uses all 64 bits, so
+  // seed 2^32 must not collapse to seed 0 (which hashes "" to 0x2d06800538d394c2).
+  expect(Bun.hash.xxHash3("", 0n)).toBe(0x2d06800538d394c2n);
+  expect(Bun.hash.xxHash3("", 0x1_0000_0000n)).toBe(0x34b7a180c41f536fn);
+  // An exactly-representable Number seed above 2^32 is used in full too.
+  expect(Bun.hash.xxHash3("", 2 ** 32)).toBe(0x34b7a180c41f536fn);
+  gcTick();
 });
 it(`Bun.hash.murmur32v3()`, () => {
   expect(Bun.hash.murmur32v3("hello world")).toBe(0x5e928f0f);
@@ -137,13 +144,99 @@ describe("xxHash3 SIMD kernel", () => {
     }
   });
 
+  // Same input generator, but every seed needs more than 32 bits. Expected
+  // values come from the xxHash reference (XXH3_64bits_withSeed). The seeds
+  // cover: 2^32 (low 32 bits are zero, so a u32 truncation collapses it to the
+  // unseeded fast path), 2^32 + 42 (would collide with seed 42), a random
+  // 64-bit seed, and all bits set.
+  // [length, seed, expected]
+  const REFERENCE_64BIT_SEED = [
+    [0, 0x1_0000_0000n, 0x34b7a180c41f536fn],
+    [0, 0x1_0000_002an, 0x1eec14ff1bfafb7an],
+    [0, 0xdeadbeefcafebaben, 0x21605795bc1bc9c4n],
+    [0, 0xffffffffffffffffn, 0x4c093276ae47a555n],
+    [1, 0x1_0000_0000n, 0x76083b0812f63e66n],
+    [1, 0x1_0000_002an, 0x4787dccafeec6e52n],
+    [1, 0xdeadbeefcafebaben, 0x914a5d5f0cb39defn],
+    [1, 0xffffffffffffffffn, 0x9dd1943f75a68ec3n],
+    [3, 0x1_0000_0000n, 0xfa1f55661f405f0en],
+    [3, 0x1_0000_002an, 0x334789ce348f8f30n],
+    [3, 0xdeadbeefcafebaben, 0x201a4a464c313160n],
+    [3, 0xffffffffffffffffn, 0xc7209797f0b3f0b2n],
+    [8, 0x1_0000_0000n, 0x3f8c1b077159226cn],
+    [8, 0x1_0000_002an, 0x8eaeed133d5c99fbn],
+    [8, 0xdeadbeefcafebaben, 0xb362175be8ce7283n],
+    [8, 0xffffffffffffffffn, 0x176977e76b669459n],
+    [16, 0x1_0000_0000n, 0x2cea1730bd3b4f14n],
+    [16, 0x1_0000_002an, 0x4e6bc3e009e4c5ban],
+    [16, 0xdeadbeefcafebaben, 0x1d65946cf1e688f6n],
+    [16, 0xffffffffffffffffn, 0x7343404694b19f93n],
+    [17, 0x1_0000_0000n, 0x477041e817de75fbn],
+    [17, 0x1_0000_002an, 0x4a0e7cca2ac8bf41n],
+    [17, 0xdeadbeefcafebaben, 0x508784431f977d55n],
+    [17, 0xffffffffffffffffn, 0x6023b88d7c2c8a95n],
+    [64, 0x1_0000_0000n, 0x1ead349149a9c75dn],
+    [64, 0x1_0000_002an, 0xb406c9992d4c37c1n],
+    [64, 0xdeadbeefcafebaben, 0x868f02e01945550en],
+    [64, 0xffffffffffffffffn, 0x5ec12bd9b5c31ca0n],
+    [128, 0x1_0000_0000n, 0x022d53557314659an],
+    [128, 0x1_0000_002an, 0x695a773a4469a409n],
+    [128, 0xdeadbeefcafebaben, 0x15bb71a9e0c2e76cn],
+    [128, 0xffffffffffffffffn, 0x2ac2a3addb897e9an],
+    [129, 0x1_0000_0000n, 0x10f541264e0ab54cn],
+    [129, 0x1_0000_002an, 0x752fd7499752306en],
+    [129, 0xdeadbeefcafebaben, 0xaba4932ad6b61569n],
+    [129, 0xffffffffffffffffn, 0xb2b376bbec64b83en],
+    [200, 0x1_0000_0000n, 0xf1c19981126cb60en],
+    [200, 0x1_0000_002an, 0xbc9d3b30ee04493dn],
+    [200, 0xdeadbeefcafebaben, 0x594334aeb7e1e229n],
+    [200, 0xffffffffffffffffn, 0x380a4c82bfe8ad13n],
+    [240, 0x1_0000_0000n, 0x82b4a745e11a2284n],
+    [240, 0x1_0000_002an, 0x7538c1601784cb26n],
+    [240, 0xdeadbeefcafebaben, 0x4b699e262b946c53n],
+    [240, 0xffffffffffffffffn, 0xa3689d7835f72d8fn],
+    // Long-input path (> 240): a nonzero seed selects the derived custom
+    // secret, so a seed whose low 32 bits are zero must not fall back to the
+    // unseeded default secret.
+    [241, 0x1_0000_0000n, 0x233fdf5a3231abd4n],
+    [241, 0x1_0000_002an, 0x7f8d4ffecca0c8c4n],
+    [241, 0xdeadbeefcafebaben, 0x1828fc39f5dd61dan],
+    [241, 0xffffffffffffffffn, 0x302a3fc8ce1044c9n],
+    [256, 0x1_0000_0000n, 0x7f61e6e11d99a1f1n],
+    [256, 0x1_0000_002an, 0x4cd233e3f03449b8n],
+    [256, 0xdeadbeefcafebaben, 0x21b82d1205eddbcan],
+    [256, 0xffffffffffffffffn, 0xdd2eb8c75f9e6238n],
+    [1024, 0x1_0000_0000n, 0x7950e29cb545cf6en],
+    [1024, 0x1_0000_002an, 0x0b2904ef363f21a8n],
+    [1024, 0xdeadbeefcafebaben, 0x9f0406dc1ef68f04n],
+    [1024, 0xffffffffffffffffn, 0xd7aea37dc6b3021fn],
+    [4096, 0x1_0000_0000n, 0x421b68434e1cd82en],
+    [4096, 0x1_0000_002an, 0x121e40bb0906d661n],
+    [4096, 0xdeadbeefcafebaben, 0x28d85661e3715d8cn],
+    [4096, 0xffffffffffffffffn, 0xfa107e6d17eff164n],
+    // Multi-block.
+    [131072, 0x1_0000_0000n, 0xa6d7500df52ad0ban],
+    [131072, 0x1_0000_002an, 0xa21b7370adbdad08n],
+    [131072, 0xdeadbeefcafebaben, 0xa784652718de2161n],
+    [131072, 0xffffffffffffffffn, 0x7c00937f49671574n],
+  ];
+
+  it("matches the xxHash reference for 64-bit seeds across every length branch", () => {
+    for (const [len, seed, expected] of REFERENCE_64BIT_SEED) {
+      const input = makeInput(len);
+      expect(Bun.hash.xxHash3(input, seed)).toBe(expected);
+      expect(xxHash3ForTesting(input, seed)).toBe(expected);
+    }
+  });
+
   it("the dispatched kernel agrees with Bun.hash.xxHash3 on large inputs", () => {
-    // Bun.hash.xxHash3 truncates the seed to u32 (@truncate); use seeds that
-    // fit in u32 so both surfaces take the same seed. The hook accepts the seed
-    // as either a number or a bigint — both must agree.
+    // The hook accepts the seed as a number or a bigint; both representations
+    // must agree with each other and with Bun.hash.xxHash3, including seeds
+    // that need all 64 bits.
+    const seeds = [0, 1, 0xabcdef01, 2 ** 32, 0x1_0000_0000n, 0xdeadbeefcafebaben, 0xffffffffffffffffn];
     for (const len of [241, 256, 513, 1024, 65536, 131072]) {
-      for (const seed of [0, 1, 0xabcdef01]) {
-        const input = makeInput(len);
+      const input = makeInput(len);
+      for (const seed of seeds) {
         expect(xxHash3ForTesting(input, seed)).toBe(xxHash3ForTesting(input, BigInt(seed)));
         expect(Bun.hash.xxHash3(input, seed)).toBe(xxHash3ForTesting(input, seed));
       }

@@ -484,8 +484,7 @@ pub fn index_of_space_or_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> 
 /// input — only the long-input stripe loop is vectorized and its per-64-bit-
 /// lane math does not depend on vector width.
 ///
-/// `seed` is the full 64-bit seed. Callers wanting the JS `@truncate(seed)`
-/// semantics must truncate before calling (as `HashObject` does).
+/// `seed` is the full 64-bit seed.
 #[inline(always)]
 pub fn xxhash3_64(seed: u64, input: &[u8]) -> u64 {
     // SAFETY: `input.ptr/len` are a valid readable range; for an empty slice

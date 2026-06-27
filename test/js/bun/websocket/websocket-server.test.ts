@@ -903,15 +903,23 @@ describe("ServerWebSocket", () => {
           },
         });
         const url = `ws://${server.hostname}:${server.port}/`;
+        // A socket that errors or closes before the server's open() handler ran would
+        // otherwise leave one of the awaited slots pending until the test timeout.
+        const fail = (who: string) => (ev: Event) => {
+          const err = new Error(`${who} websocket ${ev.type}`);
+          subscribed.reject(err);
+          published.reject(err);
+          received.reject(err);
+        };
         const sub = new WebSocket(url);
         sub.binaryType = "arraybuffer";
         sub.onmessage = e => received.resolve(e.data);
-        sub.onerror = e => received.reject(e);
+        sub.onerror = sub.onclose = fail("subscriber");
         await subscribed.promise;
         expect(server.subscriberCount("chat")).toBe(1);
         const pub = new WebSocket(url);
         pub.onmessage = e => received.reject(new Error("publisher must not receive: " + e.data));
-        pub.onerror = e => received.reject(e);
+        pub.onerror = pub.onclose = fail("publisher");
 
         const ret = await published.promise;
         expect(ret).toBe(Buffer.byteLength(payload));

@@ -8,10 +8,8 @@ import { join } from "path";
 setDefaultTimeout(1000 * 60 * 5);
 
 // Checks that `bun install` picks the same version npm does for npm ranges.
-// Every expectation in this file was verified against npm 11 (and
-// npm-pick-manifest directly) using the same packuments served from a local
-// registry. The registry only has to serve packuments because resolution runs
-// with `--lockfile-only`, so tarballs are never requested.
+// Every expectation was verified against npm 11 / npm-pick-manifest with the
+// same packuments; `--lockfile-only` means tarballs are never requested.
 
 type Packages = Record<string, { versions: string[]; latest?: string; time?: Record<string, string> }>;
 

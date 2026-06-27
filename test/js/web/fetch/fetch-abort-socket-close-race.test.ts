@@ -91,11 +91,7 @@ test.skipIf(!isASAN)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const summary = stdout.trim();
     expect({ summary, stderr, exitCode }).toEqual({
@@ -162,11 +158,7 @@ test.skipIf(!isASAN)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ summary: stdout.trim(), stderr, exitCode }).toEqual({
       summary: JSON.stringify({ iters: 300, settled: 300 }),

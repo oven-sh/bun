@@ -206,9 +206,7 @@ describe("fs.Dir", () => {
       const dir = fs.opendirSync(dirname);
       const pending = dir.read();
       try {
-        expect(() => dir[Symbol.dispose]()).toThrow(
-          expect.objectContaining({ code: "ERR_DIR_CONCURRENT_OPERATION" }),
-        );
+        expect(() => dir[Symbol.dispose]()).toThrow(expect.objectContaining({ code: "ERR_DIR_CONCURRENT_OPERATION" }));
       } finally {
         await pending.catch(() => {});
         await dir.close().catch(() => {});

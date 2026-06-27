@@ -117,6 +117,28 @@ fn catalog_object_with_key(
     obj.has_property(key).then_some(obj)
 }
 
+/// Overwrite a catalog entry's constraint in place. Used before install to
+/// honor an explicit `@<version>` or `--latest` so resolution targets the
+/// requested range rather than the catalog's current one.
+fn rewrite_catalog_constraint(
+    arena: &bun_alloc::Arena,
+    package_json: &mut Expr,
+    catalog_name: &[u8],
+    name: &[u8],
+    literal: &[u8],
+) -> Result<(), bun_alloc::AllocError> {
+    let Some(mut catalog_store) = catalog_object_with_key(package_json, catalog_name, name) else {
+        return Ok(());
+    };
+    let catalog_obj: &mut E::Object = &mut catalog_store;
+    let value_expr = Expr::allocate(
+        arena,
+        E::EString::init(arena_str(arena, literal)),
+        bun_ast::Loc::EMPTY,
+    );
+    catalog_obj.put(arena, arena_dup(arena, name), value_expr)
+}
+
 /// The concrete npm version a catalog package resolved to, formatted against
 /// the lockfile string buffer. Scans every dependency so a catalog entry
 /// consumed only by member workspaces is still found.
@@ -921,6 +943,34 @@ pub(crate) fn edit(
             }
             if request.is_catalog {
                 remaining -= 1;
+            }
+        }
+
+        // Honor an explicit `@<version>` or `--latest` by rewriting the catalog
+        // constraint before install so resolution targets the request; a bare
+        // `bun update <pkg>` leaves it untouched and stays within range.
+        if options.before_install {
+            let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
+            for request in updates.iter() {
+                if !request.is_catalog {
+                    continue;
+                }
+                let new_literal: Option<&[u8]> = if update_to_latest {
+                    Some(b"latest")
+                } else if request.version.tag == dependency::Tag::Npm {
+                    Some(request.version.literal.slice(request.version_buf()))
+                } else {
+                    None
+                };
+                if let Some(literal) = new_literal {
+                    rewrite_catalog_constraint(
+                        arena,
+                        current_package_json,
+                        &request.catalog_name,
+                        request.get_name(),
+                        literal,
+                    )?;
+                }
             }
         }
     }

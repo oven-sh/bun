@@ -127,10 +127,12 @@ describe.concurrent("unmasked client frames", () => {
   });
 
   // Control: the same raw client with correct masking is parsed and delivered.
+  // Raced against `closed` so a wrongly rejected frame fails the assertion
+  // instead of hanging until the test times out.
   it("a masked text frame from the same raw client is delivered", async () => {
     using raw = await connectRaw();
     raw.socket.write(maskedFrame(0x1, Buffer.from("hi")));
-    expect(await raw.firstMessage).toBe('message:"hi"');
+    expect(await Promise.race([raw.firstMessage, raw.closed])).toBe('message:"hi"');
     expect(raw.received).toEqual(["hi"]);
   });
 
@@ -141,7 +143,7 @@ describe.concurrent("unmasked client frames", () => {
     const frame = maskedFrame(0x1, Buffer.from("hi"));
     await new Promise<void>(resolve => raw.socket.write(frame.subarray(0, 2), () => resolve()));
     raw.socket.write(frame.subarray(2));
-    expect(await raw.firstMessage).toBe('message:"hi"');
+    expect(await Promise.race([raw.firstMessage, raw.closed])).toBe('message:"hi"');
     expect(raw.received).toEqual(["hi"]);
   });
 });

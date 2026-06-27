@@ -1183,6 +1183,10 @@ private:
                 write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
                 return true;
             }
+            if (obj->inherits<JSDOMException>()) {
+                dumpDOMException(obj, code);
+                return true;
+            }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
                 if (!startObjectInternal(errorInstance)) // handle duplicates
                     return true;
@@ -1391,10 +1395,6 @@ private:
                 return true;
             }
 #endif
-            if (obj->inherits<JSDOMException>()) {
-                dumpDOMException(obj, code);
-                return true;
-            }
 
             // write bun types
             auto _cloneable = StructuredCloneableSerialize::fromJS(value);

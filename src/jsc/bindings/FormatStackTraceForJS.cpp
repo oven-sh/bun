@@ -22,6 +22,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "JSDOMException.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -414,10 +415,15 @@ static String computeErrorInfoWithoutPrepareStackTrace(
             if (!lexicalGlobalObject) {
                 lexicalGlobalObject = errorInstance->globalObject();
             }
-            name = instance->sanitizedNameString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            message = instance->sanitizedMessageString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+            if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(instance)) {
+                name = domException->wrapped().name();
+                message = domException->wrapped().message();
+            } else {
+                name = instance->sanitizedNameString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                message = instance->sanitizedMessageString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
     }
 

@@ -38,6 +38,16 @@ pub struct TextDecoder {
     pub lead_byte: Cell<Option<u8>>,
     pub lead_surrogate: Cell<Option<u16>>,
 
+    // https://encoding.spec.whatwg.org/#textdecoder-bom-seen-flag
+    // False at the start of each stream. Becomes true once the stream's BOM
+    // decision has been made: either a leading U+FEFF was suppressed, or the
+    // stream started with something else so no later U+FEFF may be dropped.
+    bom_seen: Cell<bool>,
+    // https://encoding.spec.whatwg.org/#textdecoder-do-not-flush-flag
+    // True when the previous `decode()` was a `{stream: true}` chunk, so the
+    // next call continues that stream instead of starting a new one.
+    do_not_flush: Cell<bool>,
+
     // WebKit `PAL::TextCodec` for every other encoding. The codec owns the
     // streaming state (lead byte, ISO-2022-JP mode, GB18030 first/second/third),
     // so it must live across `{stream: true}` chunks. Created lazily on first
@@ -57,6 +67,8 @@ impl Default for TextDecoder {
             buffered: Cell::new(Buffered::default()),
             lead_byte: Cell::new(None),
             lead_surrogate: Cell::new(None),
+            bom_seen: Cell::new(false),
+            do_not_flush: Cell::new(false),
             codec: Cell::new(None),
             ignore_bom: false,
             fatal: false,
@@ -222,6 +234,15 @@ impl TextDecoder {
             false
         };
 
+        // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2:
+        // a decode() that follows a flushing one starts a new stream, which
+        // re-arms the per-stream BOM suppression. The rest of the per-stream
+        // state (`buffered`, `lead_byte`, `lead_surrogate`, `codec`) is
+        // already reset by the flushing call itself.
+        if !self.do_not_flush.replace(stream) {
+            self.bom_seen.set(false);
+        }
+
         // Hoisted out of the labeled block — `ArrayBuffer::slice` borrows from
         // the by-value `ArrayBuffer`, so it must outlive the `'input_slice` block.
         let array_buffer;
@@ -256,6 +277,10 @@ impl TextDecoder {
         global_this: &JSGlobalObject,
         uint8array: &mut JSUint8Array,
     ) -> JsResult<JSValue> {
+        // Same stream bookkeeping as `decode()`, with `stream` always false.
+        if !self.do_not_flush.replace(false) {
+            self.bom_seen.set(false);
+        }
         self.decode_slice::<true>(global_this, uint8array.slice())
     }
 
@@ -290,33 +315,43 @@ impl TextDecoder {
                 })
             }
             EncodingLabel::Utf8 => {
-                let maybe_without_bom =
-                    if !self.ignore_bom && buffer_slice.starts_with(b"\xef\xbb\xbf") {
-                        &buffer_slice[3..]
-                    } else {
-                        buffer_slice
-                    };
-
-                let (input, deinit): (&[u8], bool);
+                // Prepend the partial UTF-8 sequence carried over from the
+                // previous `{stream: true}` chunk. The BOM check below must see
+                // the JOINED bytes: the three BOM bytes may arrive in
+                // different chunks.
                 let joined_owned: Box<[u8]>;
                 let buffered = self.buffered.get();
-                if buffered.len > 0 {
+                let joined: &[u8] = if buffered.len > 0 {
                     let buffered_len = buffered.len as usize;
-                    let mut joined =
-                        vec![0u8; maybe_without_bom.len() + buffered_len].into_boxed_slice();
-                    joined[0..buffered_len].copy_from_slice(buffered.slice());
-                    joined[buffered_len..][0..maybe_without_bom.len()]
-                        .copy_from_slice(maybe_without_bom);
+                    let mut storage =
+                        vec![0u8; buffered_len + buffer_slice.len()].into_boxed_slice();
+                    storage[0..buffered_len].copy_from_slice(buffered.slice());
+                    storage[buffered_len..].copy_from_slice(buffer_slice);
                     self.buffered.set(Buffered::default());
-                    joined_owned = joined;
-                    input = &joined_owned;
-                    deinit = true;
+                    joined_owned = storage;
+                    &joined_owned
                 } else {
-                    joined_owned = Box::default();
-                    let _ = &joined_owned;
-                    input = maybe_without_bom;
-                    deinit = false;
-                }
+                    buffer_slice
+                };
+
+                // https://encoding.spec.whatwg.org/#concept-td-serialize: at
+                // most one leading U+FEFF is suppressed per stream, never one
+                // appearing later. A strict prefix of the BOM ("", EF, EF BB)
+                // is still ambiguous, so it leaves `bom_seen` unset and gets
+                // carried over in `buffered` until another chunk (or the
+                // flush) resolves it.
+                const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
+                let input: &[u8] = if self.ignore_bom || self.bom_seen.get() {
+                    joined
+                } else if let Some(rest) = joined.strip_prefix(UTF8_BOM) {
+                    self.bom_seen.set(true);
+                    rest
+                } else if UTF8_BOM.starts_with(joined) {
+                    joined
+                } else {
+                    self.bom_seen.set(true);
+                    joined
+                };
 
                 // Dispatch the runtime `fatal` bool to a const-generic parameter.
                 let maybe_decode_result = if self.fatal {
@@ -328,7 +363,7 @@ impl TextDecoder {
                 let maybe_decode_result = match maybe_decode_result {
                     Ok(v) => v,
                     Err(err) => {
-                        // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
+                        // `joined_owned` drops at scope exit.
                         if self.fatal {
                             if matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
                                 return Err(global_this
@@ -346,7 +381,7 @@ impl TextDecoder {
                 };
 
                 if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
-                    // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
+                    // `joined_owned` drops at scope exit.
                     debug_assert!(self.buffered.get().len == 0);
                     if !FLUSH {
                         if leftover_len != 0 {
@@ -375,31 +410,32 @@ impl TextDecoder {
                     return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
                 }
 
-                debug_assert!(input.is_empty() || !deinit);
-
+                // All-ASCII input needed no conversion. `ZigString::init(..).to_js`
+                // COPIES into a GC-managed JSString, so `input` may borrow either
+                // the caller's buffer or `joined_owned`.
                 // Experiment: using mimalloc directly is slightly slower
                 Ok(ZigString::init(input).to_js(global_this))
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
-                // inline .@"UTF-16LE", .@"UTF-16BE" => |utf16_encoding| { ... }
                 let big_endian = matches!(enc, EncodingLabel::Utf16Be);
-                let bom: &[u8] = if !big_endian {
-                    b"\xff\xfe"
+                let (mut decoded, saw_error) = if big_endian {
+                    self.decode_utf16::<true, FLUSH>(buffer_slice)?
                 } else {
-                    b"\xfe\xff"
-                };
-                let input = if !self.ignore_bom && buffer_slice.starts_with(bom) {
-                    &buffer_slice[2..]
-                } else {
-                    buffer_slice
+                    self.decode_utf16::<false, FLUSH>(buffer_slice)?
                 };
 
-                let (decoded, saw_error) = if big_endian {
-                    self.decode_utf16::<true, FLUSH>(input)?
-                } else {
-                    self.decode_utf16::<false, FLUSH>(input)?
-                };
+                // https://encoding.spec.whatwg.org/#concept-td-serialize: the
+                // stream's very first code unit is the only U+FEFF that gets
+                // dropped. This must happen at the code-unit level, not on the
+                // raw chunk bytes: the two BOM bytes may arrive in different
+                // `{stream: true}` chunks (the first is held in `lead_byte`).
+                if !self.ignore_bom && !self.bom_seen.get() && !decoded.is_empty() {
+                    self.bom_seen.set(true);
+                    if decoded[0] == 0xFEFF {
+                        decoded.remove(0);
+                    }
+                }
 
                 if saw_error && self.fatal {
                     drop(decoded);
@@ -515,18 +551,21 @@ impl TextDecoder {
             let str = encoding_value.to_slice(global_this)?;
             // `str` drops at scope exit (matches `defer str.deinit()`).
 
-            if let Some(label) = EncodingLabel::which(str.slice()) {
-                decoder.encoding = label;
-            } else {
-                return Err(global_this
-                    .err(
-                        jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
-                        format_args!(
-                            "Unsupported encoding label \"{}\"",
-                            bstr::BStr::new(str.slice())
-                        ),
-                    )
-                    .throw());
+            match EncodingLabel::which(str.slice()) {
+                // https://encoding.spec.whatwg.org/#dom-textdecoder: "If
+                // encoding is failure or replacement, then throw a RangeError."
+                Some(label) if label != EncodingLabel::Replacement => decoder.encoding = label,
+                _ => {
+                    return Err(global_this
+                        .err(
+                            jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
+                            format_args!(
+                                "Unsupported encoding label \"{}\"",
+                                bstr::BStr::new(str.slice())
+                            ),
+                        )
+                        .throw());
+                }
             }
         } else if encoding_value.is_undefined() {
             // default to utf-8

@@ -331,6 +331,106 @@ describe("TextDecoder ignoreBOM", () => {
   });
 });
 
+// https://encoding.spec.whatwg.org/#concept-td-serialize: per stream, the
+// decoder suppresses the FIRST output code point if it is U+FEFF. That is a
+// code-point-level rule: the BOM bytes may be split across `{stream: true}`
+// chunks, and BOM-shaped bytes that are not at the very start of the stream
+// must NOT be dropped.
+describe("TextDecoder BOM across {stream: true} chunks", () => {
+  const decodeChunks = (encoding, chunks) => {
+    const d = new TextDecoder(encoding);
+    let out = "";
+    for (let i = 0; i < chunks.length; i++) {
+      out += d.decode(Uint8Array.from(chunks[i]), { stream: i + 1 < chunks.length });
+    }
+    return out;
+  };
+
+  it.each([
+    // A BOM split across chunks is still the stream's BOM.
+    ["utf-8", [[0xef], [0xbb, 0xbf, 0x41]], "A"],
+    [
+      "utf-8",
+      [
+        [0xef, 0xbb],
+        [0xbf, 0x41],
+      ],
+      "A",
+    ],
+    ["utf-8", [[0xef], [0xbb], [0xbf], [0x41]], "A"],
+    ["utf-16le", [[0xff], [0xfe, 0x41, 0x00]], "A"],
+    ["utf-16be", [[0xfe], [0xff, 0x00, 0x41]], "A"],
+    // A second U+FEFF, or one not at the start of the stream, is literal.
+    [
+      "utf-8",
+      [
+        [0xef, 0xbb, 0xbf],
+        [0xef, 0xbb, 0xbf, 0x41],
+      ],
+      "\uFEFFA",
+    ],
+    ["utf-8", [[0x41], [0xef, 0xbb, 0xbf, 0x42]], "A\uFEFFB"],
+    [
+      "utf-16le",
+      [
+        [0x41, 0x00],
+        [0xff, 0xfe, 0x42, 0x00],
+      ],
+      "A\uFEFFB",
+    ],
+    [
+      "utf-16be",
+      [
+        [0x00, 0x41],
+        [0xfe, 0xff, 0x00, 0x42],
+      ],
+      "A\uFEFFB",
+    ],
+    // Bytes that only LOOK like a BOM prefix are not silently dropped.
+    ["utf-8", [[0xef], [0x41]], "\uFFFDA"],
+    ["utf-16be", [[0xfe], [0xff, 0x41]], "\uFFFD"],
+    // The UTF-16LE BOM is FF FE; FE FF decodes to U+FFFE and is kept.
+    ["utf-16le", [[0xfe, 0xff, 0x41, 0x00]], "\uFFFEA"],
+  ])("%s %j -> %j", (encoding, chunks, expected) => {
+    expect(decodeChunks(encoding, chunks)).toBe(expected);
+  });
+
+  it.each(["utf-8", "utf-16le", "utf-16be"])("%s: ignoreBOM keeps a split BOM", encoding => {
+    const bom = { "utf-8": [0xef, 0xbb, 0xbf], "utf-16le": [0xff, 0xfe], "utf-16be": [0xfe, 0xff] }[encoding];
+    const a = { "utf-8": [0x41], "utf-16le": [0x41, 0x00], "utf-16be": [0x00, 0x41] }[encoding];
+    const d = new TextDecoder(encoding, { ignoreBOM: true });
+    let out = d.decode(Uint8Array.of(bom[0]), { stream: true });
+    out += d.decode(Uint8Array.from(bom.slice(1).concat(a)));
+    expect(out).toBe("\uFEFFA");
+  });
+
+  it("each new stream on the same decoder strips its own BOM", () => {
+    const d = new TextDecoder();
+    expect(d.decode(Uint8Array.of(0xef), { stream: true })).toBe("");
+    expect(d.decode(Uint8Array.of(0xbb, 0xbf, 0x41))).toBe("A");
+    // The flushing decode ended the stream, so the next decode starts a new
+    // one whose (again split) BOM must also be stripped.
+    expect(d.decode(Uint8Array.of(0xef, 0xbb), { stream: true })).toBe("");
+    expect(d.decode(Uint8Array.of(0xbf, 0x42))).toBe("B");
+  });
+
+  // https://github.com/oven-sh/bun/issues/25495
+  it("only the first U+FEFF of a stream is the BOM", () => {
+    // The BOM of the first chunk is consumed; the same three bytes in later
+    // chunks of the SAME stream are a literal U+FEFF.
+    const d = new TextDecoder();
+    expect(d.decode(Uint8Array.of(0xef, 0xbb, 0xbf), { stream: true })).toBe("");
+    expect(d.decode(Uint8Array.of(0xef, 0xbb, 0xbf), { stream: true })).toBe("\uFEFF");
+    expect(d.decode(Uint8Array.of(0xef, 0xbb, 0xbf))).toBe("\uFEFF");
+
+    // A BOM assembled from two chunks is still consumed, not emitted.
+    const n = new TextDecoder();
+    expect(n.decode(Uint8Array.of(0xef), { stream: true })).toBe("");
+    expect(n.decode(Uint8Array.of(0xbb, 0xbf), { stream: true })).toBe("");
+    expect(n.decode()).toBe("");
+  });
+});
+
 it("truncated sequences", () => {
   const assert_equals = (a, b) => expect(a).toBe(b);
 

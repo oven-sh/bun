@@ -166,3 +166,54 @@ describe("TextDecoder - streaming across chunk boundaries", () => {
     expect(d2.decode(new Uint8Array([0x40]))).toBe("@");
   });
 });
+
+// Malformed input must not corrupt what follows it, and error recovery must
+// match https://encoding.spec.whatwg.org/ exactly. Expectations verified
+// against encoding_rs (Firefox's Encoding Standard implementation).
+describe("TextDecoder - error recovery", () => {
+  const codePoints = (encoding: string, bytes: number[]) =>
+    Array.from(new TextDecoder(encoding).decode(new Uint8Array(bytes)), c => c.codePointAt(0));
+
+  // https://encoding.spec.whatwg.org/#euc-jp-decoder step 5.3 unconditionally
+  // sets the jis0212 flag to false. An aborted JIS X 0212 sequence (0x8F lead)
+  // must not leave the flag set, or the NEXT valid JIS X 0208 pair silently
+  // decodes through the wrong index.
+  test("EUC-JP: aborted JIS X 0212 sequence does not leak into the next pair", () => {
+    // 8F A1 starts a JIS X 0212 sequence; 0x61 aborts it. A1 A1 is then a
+    // plain JIS X 0208 pair: pointer 0 is U+3000 IDEOGRAPHIC SPACE.
+    expect(codePoints("euc-jp", [0x8f, 0xa1, 0x61, 0xa1, 0xa1])).toEqual([0xfffd, 0x61, 0x3000]);
+    // Pointer 3102 differs between the two indexes (U+81D3 in jis0208,
+    // U+661E in jis0212), so the leak is silent mojibake, not a U+FFFD.
+    expect(codePoints("euc-jp", [0x8f, 0xa1, 0x61, 0xc2, 0xa1])).toEqual([0xfffd, 0x61, 0x81d3]);
+  });
+
+  // https://encoding.spec.whatwg.org/#big5-decoder step 3.6: an ASCII trail
+  // byte of a pair with no entry in index Big5 is restored to the queue, not
+  // consumed by the error.
+  test("Big5: ASCII trail byte of an unmapped pair is restored", () => {
+    expect(codePoints("big5", [0x81, 0x40, 0x41])).toEqual([0xfffd, 0x40, 0x41]);
+    // A non-ASCII trail byte is not restored.
+    expect(codePoints("big5", [0x81, 0xa1, 0x41])).toEqual([0xfffd, 0x41]);
+  });
+
+  // https://encoding.spec.whatwg.org/#iso-2022-jp-decoder "escape" step 8:
+  // when the byte after an escape lead is not a valid suffix, the lead and the
+  // byte are restored to the queue and reprocessed, so the bad suffix also
+  // produces its own error.
+  test("ISO-2022-JP: invalid escape suffix produces its own replacement", () => {
+    // ESC $ 0E: not an escape; 0x24 is reprocessed as '$' and 0x0E errors.
+    expect(codePoints("iso-2022-jp", [0x1b, 0x24, 0x0e])).toEqual([0xfffd, 0x24, 0xfffd]);
+  });
+
+  // https://encoding.spec.whatwg.org/#iso-2022-jp-decoder "escape" step 8: at
+  // end-of-queue the escape lead is restored and decoded through the decoder
+  // OUTPUT state, not appended verbatim.
+  test("ISO-2022-JP: escape lead at end of stream is decoded in the output state", () => {
+    // ESC ( I puts the output state in katakana; the restored 0x24 of the
+    // truncated ESC $ is then a halfwidth katakana (U+FF64), not "$".
+    expect(codePoints("iso-2022-jp", [0x1b, 0x28, 0x49, 0x21, 0x1b, 0x24])).toEqual([0xff61, 0xfffd, 0xff64]);
+    // ESC $ B puts the output state in lead byte; the restored 0x24 becomes a
+    // lead that itself hits end-of-queue, producing a second replacement.
+    expect(codePoints("iso-2022-jp", [0x1b, 0x24, 0x42, 0x1b, 0x24])).toEqual([0xfffd, 0xfffd]);
+  });
+});

@@ -85,6 +85,12 @@ export const iniInternals = {
   loadNpmrc: $newRustFunction("ini.rs", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
+export const dnsInternals = {
+  interleaveAddresses: $newRustFunction("runtime/dns_jsc/dns.rs", "internal.interleaveAddressesForTesting", 1) as (
+    families: number[],
+  ) => { family: number; index: number }[],
+};
+
 export const cssInternals = {
   minifyTestWithOptions: $newRustFunction("css_internals.rs", "minifyTestWithOptions", 3),
   minifyErrorTestWithOptions: $newRustFunction("css_internals.rs", "minifyErrorTestWithOptions", 3),

@@ -2611,6 +2611,52 @@ pub mod internal {
         pub addr: SockaddrStorage,
     }
 
+    /// Reorder `results` in place so address families alternate, keeping the
+    /// first entry in place and preserving relative order within each family.
+    /// With `CONCURRENT_CONNECTIONS` parallel connect attempts in usockets this
+    /// guarantees both families are represented in the first batch, so a host
+    /// with broken IPv6 but a reachable A record (or the reverse) still
+    /// connects quickly instead of waiting for kernel SYN-retry exhaustion on
+    /// every address of the unreachable family.
+    pub(crate) fn interleave_addresses(results: &mut [ResultEntry]) {
+        let count = results.len();
+        if count < 2 {
+            return;
+        }
+        let first_family = results[0].info.ai_family;
+        let other_family = if first_family == netc::AF_INET6 {
+            netc::AF_INET
+        } else {
+            netc::AF_INET6
+        };
+        // Alternate starting from the second slot; at each slot, if the family
+        // does not match `want`, pull the next matching entry forward by
+        // rotating the tail so relative order within each family is preserved.
+        let mut want = other_family;
+        for idx in 1..count {
+            if results[idx].info.ai_family != want {
+                let mut found = None;
+                for j in (idx + 1)..count {
+                    if results[j].info.ai_family == want {
+                        found = Some(j);
+                        break;
+                    }
+                }
+                match found {
+                    Some(j) => results[idx..=j].rotate_right(1),
+                    // No more of the wanted family: the rest is homogeneous
+                    // and already in its original relative order.
+                    None => break,
+                }
+            }
+            want = if want == first_family {
+                other_family
+            } else {
+                first_family
+            };
+        }
+    }
+
     // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
     fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
@@ -2654,25 +2700,7 @@ pub mod internal {
         // SAFETY: every slot 0..count was written above
         let mut results: Box<[ResultEntry]> = unsafe { results.assume_init() };
 
-        // sort (interleave ipv4 and ipv6)
-        let mut want = netc::AF_INET6 as usize;
-        'outer: for idx in 0..count {
-            if results[idx].info.ai_family as usize == want {
-                continue;
-            }
-            for j in (idx + 1)..count {
-                if results[j].info.ai_family as usize == want {
-                    results.swap(idx, j);
-                    want = if want == netc::AF_INET6 as usize {
-                        netc::AF_INET as usize
-                    } else {
-                        netc::AF_INET6 as usize
-                    };
-                }
-            }
-            // the rest of the list is all one address family
-            break 'outer;
-        }
+        interleave_addresses(&mut results);
 
         // set up pointers
         for idx in 0..count {
@@ -2988,6 +3016,56 @@ pub mod internal {
             JSValue::js_number(GETADDRINFO_CALLS.load(Ordering::Relaxed) as f64),
         );
         Ok(object)
+    }
+
+    /// `bun:internal-for-testing` hook: given an array of address-family
+    /// numbers (4 or 6), return the order `interleave_addresses` would hand
+    /// to the connect path.
+    pub(crate) fn interleave_addresses_for_testing(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+        if arguments.len() < 1 {
+            return Err(global_this.throw_not_enough_arguments("interleaveAddresses", 1, 0));
+        }
+        let input = arguments[0];
+        let len = input.get_length(global_this)? as u32;
+        let mut entries: Vec<ResultEntry> = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            let fam = input.get_index(global_this, i)?.coerce_to_i32(global_this)?;
+            let mut info: AddrInfo = bun_core::ffi::zeroed();
+            info.ai_family = if fam == 6 {
+                netc::AF_INET6
+            } else {
+                netc::AF_INET
+            };
+            // Tag ai_flags with the original index so the test can observe
+            // relative ordering within a family, not just the family sequence.
+            info.ai_flags = i as _;
+            entries.push(ResultEntry {
+                info,
+                addr: bun_core::ffi::zeroed(),
+            });
+        }
+        interleave_addresses(&mut entries);
+        let out = JSValue::create_empty_array(global_this, entries.len())?;
+        for (i, entry) in (0u32..).zip(entries.iter()) {
+            let obj = JSValue::create_empty_object(global_this, 2);
+            let fam: i32 = if entry.info.ai_family == netc::AF_INET6 {
+                6
+            } else {
+                4
+            };
+            obj.put(global_this, b"family", JSValue::js_number(f64::from(fam)));
+            obj.put(
+                global_this,
+                b"index",
+                JSValue::js_number(f64::from(entry.info.ai_flags as i32)),
+            );
+            out.put_index(global_this, i, obj)?;
+        }
+        Ok(out)
     }
 
     pub(crate) fn getaddrinfo(
@@ -6085,4 +6163,8 @@ export_host_fn!(
 export_host_fn!(
     Resolver::get_runtime_default_result_order_option,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption"
+);
+export_host_fn!(
+    internal::interleave_addresses_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_interleaveAddressesForTesting"
 );

@@ -769,9 +769,11 @@ const IS_UV_FS_COPYFILE_DISABLED =
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        expect(JSON.parse(stdout.trim())).toEqual({ written: 10, content: "KLMNOPQRST" });
-        expect(exitCode).toBe(0);
+        expect({ result: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+          result: { written: 10, content: "KLMNOPQRST" },
+          stderr: "",
+          exitCode: 0,
+        });
       },
     );
 

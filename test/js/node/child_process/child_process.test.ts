@@ -354,6 +354,20 @@ describe("spawnSync()", () => {
     const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
     expect(isValidSemver(stdout.trim())).toBe(true);
   });
+
+  it.if(!isWindows)("detached: true starts the child in a new process group", () => {
+    const pgidOf = (detached: boolean) =>
+      spawnSync("sh", ["-c", "ps -o pgid= -p $$"], { detached, encoding: "utf8" }).stdout.trim();
+    const parentPgid = spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], {
+      encoding: "utf8",
+    }).stdout.trim();
+
+    expect(parentPgid).toMatch(/^\d+$/);
+    expect(pgidOf(false)).toBe(parentPgid);
+    const detachedPgid = pgidOf(true);
+    expect(detachedPgid).toMatch(/^\d+$/);
+    expect(detachedPgid).not.toBe(parentPgid);
+  });
 });
 
 describe("execFileSync()", () => {

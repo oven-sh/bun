@@ -566,6 +566,7 @@ function spawnSync(file, args, options) {
       env: options[kBunEnv] || options.env || undefined,
       cwd: options.cwd || undefined,
       stdio: bunStdio,
+      detached: options.detached,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],

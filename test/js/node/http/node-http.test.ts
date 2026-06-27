@@ -2646,6 +2646,108 @@ it("close-delimited streaming writes carry raw bytes with no chunk framing artif
   }
 });
 
+// A pipelined request that arrives while the previous response is still being
+// produced asynchronously must not destroy the connection before that first
+// response is delivered. The pipelined request may be dropped (with the
+// socket closing after the first response drains so the client retries on a
+// new connection, RFC 9112 9.3.2) or, like Node.js, queued and served.
+it("delivers the in-flight response when a pipelined request arrives behind an async handler", async () => {
+  const calls: string[] = [];
+  const server = createServer((req, res) => {
+    calls.push(req.url!);
+    req.resume();
+    if (req.url === "/a") {
+      setImmediate(() => {
+        res.writeHead(200);
+        res.write("A1");
+        setImmediate(() => res.end("A2"));
+      });
+    } else {
+      res.writeHead(200);
+      res.end("B");
+    }
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { wire, serverClosed } = await new Promise<{ wire: string; serverClosed: boolean }>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      let fin = false;
+      socket.on("connect", () => {
+        socket.write(
+          "GET /a HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n" +
+            "GET /b HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n",
+        );
+      });
+      socket.on("data", chunk => {
+        data += chunk;
+        // Under Node.js both pipelined responses are served and the
+        // keep-alive socket stays open; end from the client once the
+        // first response's final chunk is on the wire.
+        if (data.includes("A2")) socket.end();
+      });
+      socket.on("end", () => (fin = true));
+      socket.on("close", () => resolve({ wire: data, serverClosed: fin }));
+      socket.on("error", reject);
+    });
+
+    // The first request's handler ran and its full response reached the wire.
+    expect(calls[0]).toBe("/a");
+    expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(wire).toContain("A1");
+    expect(wire).toContain("A2");
+    // If the pipelined request was dropped the server must close the socket
+    // so the client knows to retry on a new connection.
+    if (calls.length === 1) expect(serverClosed).toBe(true);
+  } finally {
+    server.close();
+  }
+});
+
+it("delivers the in-flight response when a pipelined request arrives in a later packet", async () => {
+  const firstRequestSeen = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    req.resume();
+    if (req.url === "/a") {
+      firstRequestSeen.resolve();
+      setImmediate(() => setImmediate(() => res.end("FIRST")));
+    } else {
+      res.end("SECOND");
+    }
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const wire = await new Promise<string>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      socket.on("connect", () => {
+        socket.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\n");
+        firstRequestSeen.promise.then(() => {
+          // /a has been dispatched but not yet responded to.
+          socket.write("GET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+        });
+      });
+      socket.on("data", chunk => {
+        data += chunk;
+        if (data.includes("FIRST")) socket.end();
+      });
+      socket.on("close", () => resolve(data));
+      socket.on("error", reject);
+    });
+
+    expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(wire).toContain("FIRST");
+  } finally {
+    server.close();
+  }
+});
+
 // A bare `new IncomingMessage(null)` has httpVersionMajor/Minor === null;
 // `null < 1` is true, so the ServerResponse constructor's HTTP/1.0 branch
 // (matching node v26.3.0 lib/_http_server.js L214) sets shouldKeepAlive=false

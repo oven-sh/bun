@@ -2380,6 +2380,51 @@ server.listen(0, "127.0.0.1", () => {
   expect(exitCode).toBe(0);
 });
 
+// uWS has one HttpResponseData per socket, so a request that arrives while
+// the previous fetch handler is still pending cannot be dispatched. The
+// in-flight response must still reach the wire; the socket closes once it
+// is drained and the client retries the dropped request on a new connection.
+it("delivers the in-flight response when a pipelined request arrives behind an async fetch handler", async () => {
+  let calls = 0;
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      calls++;
+      if (new URL(req.url).pathname === "/a") {
+        await new Promise(r => setImmediate(r));
+        return new Response("FIRST");
+      }
+      return new Response("SECOND");
+    },
+  });
+
+  const { wire, serverClosed } = await new Promise<{ wire: string; serverClosed: boolean }>((resolve, reject) => {
+    const socket = net.connect(server.port!, "127.0.0.1");
+    let data = "";
+    let fin = false;
+    socket.on("connect", () => {
+      socket.write(
+        "GET /a HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n" +
+          "GET /b HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n",
+      );
+    });
+    socket.on("data", chunk => {
+      data += chunk;
+      if (data.includes("FIRST")) socket.end();
+    });
+    socket.on("end", () => (fin = true));
+    socket.on("close", () => resolve({ wire: data, serverClosed: fin }));
+    socket.on("error", reject);
+  });
+
+  expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(wire).toContain("FIRST");
+  // The pipelined request was dropped without dispatch; the server closes
+  // the connection so the client knows to resend it.
+  expect(calls).toBe(1);
+  expect(serverClosed).toBe(true);
+});
+
 it("only serves /bun:info to loopback clients in development mode", async () => {
   using server = Bun.serve({
     port: 0,

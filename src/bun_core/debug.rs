@@ -58,6 +58,19 @@ pub fn frame_address() -> usize {
     }
 }
 
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn mach_vm_read_overwrite(
+        target_task: libc::mach_port_t,
+        address: u64,
+        size: u64,
+        data: u64,
+        out_size: *mut u64,
+    ) -> libc::kern_return_t;
+    // `mach_task_self()` in C is `#define mach_task_self() mach_task_self_`.
+    safe static mach_task_self_: libc::mach_port_t;
+}
+
 /// Reads memory from any address of the current process, tolerating unmapped
 /// or corrupt pages so a damaged stack can't fault the walker itself.
 struct MemoryAccessor {
@@ -76,6 +89,28 @@ impl MemoryAccessor {
     };
 
     fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            // `msync` only checks *mapped*, not *readable*, so a PROT_NONE
+            // page (guard, mimalloc/JSC reservation) would pass and the raw
+            // copy below would fault — inside the SIGSEGV handler, with
+            // SA_RESETHAND set, that loses the whole report.
+            // `mach_vm_read_overwrite` asks the kernel to do the copy and
+            // returns KERN_INVALID_ADDRESS / KERN_PROTECTION_FAILURE instead.
+            let mut out: u64 = 0;
+            // SAFETY: `buf` is a valid writable slice; the kernel validates
+            // `address` and writes at most `buf.len()` bytes into `buf`.
+            let kr = unsafe {
+                mach_vm_read_overwrite(
+                    mach_task_self_,
+                    address as u64,
+                    buf.len() as u64,
+                    buf.as_mut_ptr() as u64,
+                    &mut out,
+                )
+            };
+            return kr == 0 && out == buf.len() as u64;
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             match self.mem {
@@ -137,14 +172,17 @@ impl MemoryAccessor {
                 }
             }
         }
-        if !is_valid_memory(address) {
-            return false;
+        #[cfg(not(target_os = "macos"))]
+        {
+            if !is_valid_memory(address) {
+                return false;
+            }
+            // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
+            unsafe {
+                core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
+            }
+            true
         }
-        // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
-        unsafe {
-            core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
-        }
-        true
     }
 
     fn load_usize(&mut self, address: usize) -> Option<usize> {
@@ -185,6 +223,7 @@ impl Drop for MemoryAccessor {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn is_valid_memory(address: usize) -> bool {
     let page_size = bun_alloc::page_size();
     let aligned_address = address & !(page_size - 1);

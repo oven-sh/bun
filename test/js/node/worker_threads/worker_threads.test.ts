@@ -2,7 +2,7 @@ import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -108,8 +108,8 @@ test("all worker_threads worker instance properties are present", async () => {
   expect(worker.ref).toBeFunction();
   expect(worker.unref).toBeFunction();
   expect(worker.stdin).toBeNull();
-  expect(worker.stdout).toBeNull();
-  expect(worker.stderr).toBeNull();
+  expect(worker.stdout).toBeInstanceOf(Readable);
+  expect(worker.stderr).toBeInstanceOf(Readable);
   expect(worker.performance).toBeDefined();
   expect(worker.terminate).toBeFunction();
   expect(worker.postMessage).toBeFunction();
@@ -627,4 +627,142 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   // and Set entries deserialized to the same single instance
   expect(fh.fd).toBe(-1);
   expect(message).toEqual({ sameInstance: true, text: "hello" });
+});
+
+describe("worker stdio", () => {
+  test("stdout and stderr are always Readable streams", async () => {
+    const w = new Worker("process.exit(0)", { eval: true });
+    try {
+      expect(w.stdin).toBeNull();
+      expect(w.stdout).toBeInstanceOf(Readable);
+      expect(w.stderr).toBeInstanceOf(Readable);
+      expect(w.stdout.constructor.name).toBe("ReadableWorkerStdio");
+      expect(w.stderr.constructor.name).toBe("ReadableWorkerStdio");
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test("stdin is a Writable when { stdin: true }", async () => {
+    const w = new Worker("process.exit(0)", { eval: true, stdin: true });
+    try {
+      expect(w.stdin).toBeInstanceOf(Writable);
+      expect(w.stdin.constructor.name).toBe("WritableWorkerStdio");
+    } finally {
+      await w.terminate();
+    }
+  });
+
+  test("captures stdout and stderr with { stdout: true, stderr: true }", async () => {
+    // eval-workers do not load node:worker_threads on their own, so the
+    // worker-side stdio redirect only happens once it is required.
+    const w = new Worker(
+      `require("node:worker_threads");
+       console.log("hello-out");
+       console.error("hello-err");
+       process.stdout.write("raw-out\\n");
+       process.stderr.write("raw-err\\n");`,
+      { eval: true, stdout: true, stderr: true },
+    );
+    let out = "";
+    let err = "";
+    w.stdout.setEncoding("utf8").on("data", d => (out += d));
+    w.stderr.setEncoding("utf8").on("data", d => (err += d));
+    const [code] = await once(w, "exit");
+    expect({ out, err, code }).toEqual({
+      out: "hello-out\nraw-out\n",
+      err: "hello-err\nraw-err\n",
+      code: 0,
+    });
+  });
+
+  test("process.stdout/stderr/stdin inside the worker are the redirected streams", async () => {
+    const w = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       parentPort.postMessage({
+         out: process.stdout.constructor.name,
+         err: process.stderr.constructor.name,
+         in: process.stdin.constructor.name,
+         isStdio: process.stdout._isStdio,
+       });`,
+      { eval: true },
+    );
+    const [msg] = await once(w, "message");
+    await once(w, "exit");
+    expect(msg).toEqual({
+      out: "WritableWorkerStdio",
+      err: "WritableWorkerStdio",
+      in: "ReadableWorkerStdio",
+      isStdio: true,
+    });
+  });
+
+  test("stdin data reaches the worker and ends", async () => {
+    const w = new Worker(
+      `require("node:worker_threads");
+       let buf = "";
+       process.stdin.setEncoding("utf8");
+       process.stdin.on("data", d => (buf += d));
+       process.stdin.on("end", () => console.log("got:", buf.trim()));`,
+      { eval: true, stdin: true, stdout: true },
+    );
+    let out = "";
+    w.stdout.setEncoding("utf8").on("data", d => (out += d));
+    w.stdin.write("hello-stdin\n");
+    w.stdin.end();
+    const [code] = await once(w, "exit");
+    expect({ out, code }).toEqual({ out: "got: hello-stdin\n", code: 0 });
+  });
+
+  test("workerData is unchanged by stdio wrapping", async () => {
+    const w = new Worker(
+      `const { workerData, parentPort } = require("node:worker_threads");
+       parentPort.postMessage(workerData);`,
+      { eval: true, workerData: { a: 1, b: [2, 3], c: null } },
+    );
+    const [msg] = await once(w, "message");
+    await once(w, "exit");
+    expect(msg).toEqual({ a: 1, b: [2, 3], c: null });
+  });
+
+  test("worker with { stdin: true } that never reads stdin exits cleanly", async () => {
+    const w = new Worker(`require("node:worker_threads");`, { eval: true, stdin: true });
+    const [code] = await once(w, "exit");
+    expect(code).toBe(0);
+  });
+
+  test("streams end when the worker exits", async () => {
+    const w = new Worker(`require("node:worker_threads");`, { eval: true, stdout: true, stderr: true });
+    const outEnded = once(w.stdout, "end");
+    const errEnded = once(w.stderr, "end");
+    w.stdout.resume();
+    w.stderr.resume();
+    await once(w, "exit");
+    await Promise.all([outEnded, errEnded]);
+    expect(w.stdout.readableEnded).toBe(true);
+    expect(w.stderr.readableEnded).toBe(true);
+  });
+
+  test("forwards output to parent stdout/stderr by default", async () => {
+    // Run in a subprocess so the forwarded output is observable.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(
+           'require("node:worker_threads"); console.log("out-default"); console.error("err-default");',
+           { eval: true },
+         );
+         w.on("exit", () => {});`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("out-default\n");
+    expect(stderr).toBe("err-default\n");
+    expect(exitCode).toBe(0);
+  });
 });

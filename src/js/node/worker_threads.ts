@@ -6,6 +6,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+let Writable;
 
 const {
   MessageChannel,
@@ -205,6 +206,175 @@ function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unk
 const kRestoreJSTransferables = Symbol("kRestoreJSTransferables");
 const kFinalizeJSTransferables = Symbol("kFinalizeJSTransferables");
 
+// worker.stdin / worker.stdout / worker.stderr are implemented by shipping a
+// dedicated MessagePort to the worker through workerData. The worker side of
+// node:worker_threads replaces process.stdout/stderr/stdin (and console) with
+// port-backed streams; the parent exposes Readable/Writable streams fed by
+// that port. A plain string key so it survives structured clone, like
+// kJSTransferableMarker above.
+const kBunStdioMarker = "__bunNodeWorkerStdio";
+
+const STDIO_PAYLOAD = 0;
+
+const kPort = Symbol("kPort");
+const kName = Symbol("kName");
+const kIncrementsPortRef = Symbol("kIncrementsPortRef");
+const kStartedReading = Symbol("kStartedReading");
+const kWaitingStreams = Symbol("kWaitingStreams");
+const kOnRead = Symbol("kOnRead");
+
+class ReadableWorkerStdio extends Readable {
+  [kPort]: MessagePort;
+  [kName]: string;
+  [kIncrementsPortRef]: boolean;
+  [kStartedReading]: boolean;
+  [kOnRead]: (() => void) | undefined;
+
+  constructor(port: MessagePort, name: string) {
+    super();
+    this[kPort] = port;
+    this[kName] = name;
+    this[kIncrementsPortRef] = true;
+    this[kStartedReading] = false;
+    this.on("end", () => {
+      if (this[kStartedReading] && this[kIncrementsPortRef]) {
+        if (--this[kPort][kWaitingStreams] === 0) this[kPort].unref();
+      }
+    });
+  }
+
+  _read() {
+    if (!this[kStartedReading] && this[kIncrementsPortRef]) {
+      this[kStartedReading] = true;
+      if (this[kPort][kWaitingStreams]++ === 0) this[kPort].ref();
+    }
+    this[kOnRead]?.();
+  }
+}
+
+let _WritableWorkerStdio: any;
+function getWritableWorkerStdio() {
+  if (_WritableWorkerStdio) return _WritableWorkerStdio;
+  Writable ??= require("internal/streams/writable");
+  _WritableWorkerStdio = class WritableWorkerStdio extends Writable {
+    [kPort]: MessagePort;
+    [kName]: string;
+
+    constructor(port: MessagePort, name: string) {
+      super({ decodeStrings: false });
+      this[kPort] = port;
+      this[kName] = name;
+    }
+
+    _writev(chunks: Array<{ chunk: unknown; encoding: string }>, cb: (err?: Error | null) => void) {
+      const toSend = new Array(chunks.length);
+      for (let i = 0; i < chunks.length; i++) {
+        const { chunk, encoding } = chunks[i];
+        toSend[i] = { chunk, encoding };
+      }
+      this[kPort].postMessage({ type: STDIO_PAYLOAD, stream: this[kName], chunks: toSend });
+      cb();
+    }
+
+    _final(cb: () => void) {
+      this[kPort].postMessage({ type: STDIO_PAYLOAD, stream: this[kName], chunks: [{ chunk: null, encoding: "" }] });
+      cb();
+    }
+  };
+  return _WritableWorkerStdio;
+}
+
+function dispatchStdioMessage(streams: Record<string, any>, message: any) {
+  if (message?.type === STDIO_PAYLOAD) {
+    const readable = streams[message.stream];
+    const chunks = message.chunks;
+    if (readable) {
+      for (let i = 0; i < chunks.length; i++) {
+        const { chunk, encoding } = chunks[i];
+        readable.push(chunk, encoding);
+      }
+    }
+  }
+}
+
+function overrideProcessStdio(name: string, getStream: () => any) {
+  let stream;
+  Object.defineProperty(process, name, {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      if (!stream) {
+        stream = getStream();
+        stream._isStdio = true;
+      }
+      return stream;
+    },
+    set: () => {},
+  });
+}
+
+function setupWorkerStdio(info: { port: MessagePort; hasStdin: boolean }) {
+  const port = info.port;
+  port[kWaitingStreams] = 0;
+
+  overrideProcessStdio("stdout", () => new (getWritableWorkerStdio())(port, "stdout"));
+  overrideProcessStdio("stderr", () => new (getWritableWorkerStdio())(port, "stderr"));
+  overrideProcessStdio("stdin", () => {
+    const stdin = new ReadableWorkerStdio(port, "stdin");
+    stdin[kIncrementsPortRef] = false;
+    // Transferred MessagePorts take an event-loop ref for every message
+    // listener that unref() does not release. Work around that by only
+    // listening while stdin is actively being read; stdout/stderr flow in
+    // the other direction so no listener is needed for them.
+    let listening = false;
+    const streams = { __proto__: null, stdin };
+    const handler = (ev: MessageEvent) => dispatchStdioMessage(streams, ev.data);
+    const stopListening = () => {
+      if (listening) {
+        listening = false;
+        port.removeEventListener("message", handler);
+        port.unref();
+      }
+    };
+    if (!info.hasStdin) {
+      stdin.push(null);
+    } else {
+      stdin[kOnRead] = () => {
+        if (!listening) {
+          listening = true;
+          port.addEventListener("message", handler);
+          port.start();
+        }
+      };
+      stdin.once("end", stopListening);
+      stdin.once("close", stopListening);
+    }
+    return stdin;
+  });
+
+  // Bun's native console writes straight to fd 1/2. Redirect the common
+  // console methods to the port-backed streams without building a full
+  // Console instance (which binds ~20 methods and costs hundreds of ms in
+  // debug builds for every nested worker).
+  const nativeConsole = globalThis.console;
+  let format: (...args: unknown[]) => string;
+  const consoleWriter = (target: "stdout" | "stderr") =>
+    function (this: unknown, ...args: unknown[]) {
+      format ??= require("node:util").format;
+      process[target].write(format.$apply(undefined, args) + "\n");
+    };
+  const toStdout = consoleWriter("stdout");
+  const toStderr = consoleWriter("stderr");
+  const workerConsole = Object.create(nativeConsole, {
+    log: { value: toStdout, writable: true, configurable: true, enumerable: true },
+    info: { value: toStdout, writable: true, configurable: true, enumerable: true },
+    debug: { value: toStdout, writable: true, configurable: true, enumerable: true },
+    warn: { value: toStderr, writable: true, configurable: true, enumerable: true },
+    error: { value: toStderr, writable: true, configurable: true, enumerable: true },
+  });
+  globalThis.console = workerConsole;
+}
+
 function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   const transferList = options?.transferList;
   if (!transferList || !$isArray(transferList) || transferList.length === 0) return options;
@@ -353,7 +523,20 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   return packed;
 }
 
-let workerData = unpackJSTransferables(_workerData);
+let workerData = _workerData;
+if (
+  !isMainThread &&
+  workerData !== null &&
+  typeof workerData === "object" &&
+  Object.prototype.hasOwnProperty.$call(workerData, kBunStdioMarker)
+) {
+  const info = workerData[kBunStdioMarker];
+  workerData = workerData.data;
+  if (info && info.port instanceof _MessagePort) {
+    setupWorkerStdio(info);
+  }
+}
+workerData = unpackJSTransferables(workerData);
 let threadId = _threadId;
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
@@ -468,10 +651,53 @@ class Worker extends EventEmitter {
   #onExitPromise: Promise<number> | number | undefined = undefined;
   #urlToRevoke = "";
 
+  #stdioPort: MessagePort;
+  #stdin: any = null;
+  #stdout: ReadableWorkerStdio;
+  #stderr: ReadableWorkerStdio;
+
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
 
     options = packJSTransferables(options);
+
+    const hasStdin = !!(options && options.stdin);
+    const captureStdout = !!(options && options.stdout);
+    const captureStderr = !!(options && options.stderr);
+    const stdioChannel = new MessageChannel();
+    this.#stdioPort = stdioChannel.port1;
+    this.#stdioPort[kWaitingStreams] = 0;
+
+    if (hasStdin) this.#stdin = new (getWritableWorkerStdio())(this.#stdioPort, "stdin");
+    this.#stdout = new ReadableWorkerStdio(this.#stdioPort, "stdout");
+    this.#stderr = new ReadableWorkerStdio(this.#stdioPort, "stderr");
+    // Readable.prototype.pipe is significantly slower than a plain data
+    // listener and would add three listeners to process.stdout/stderr for
+    // every Worker (tripping MaxListenersExceededWarning in pool setups),
+    // so forward chunks manually when the user is not capturing.
+    if (!captureStdout) {
+      this.#stdout[kIncrementsPortRef] = false;
+      this.#stdout.on("data", chunk => process.stdout.write(chunk));
+    }
+    if (!captureStderr) {
+      this.#stderr[kIncrementsPortRef] = false;
+      this.#stderr.on("data", chunk => process.stderr.write(chunk));
+    }
+    const parentStreams = { __proto__: null, stdin: this.#stdin, stdout: this.#stdout, stderr: this.#stderr };
+    this.#stdioPort.onmessage = ({ data }) => dispatchStdioMessage(parentStreams, data);
+    this.#stdioPort.unref();
+
+    options = {
+      ...options,
+      workerData: {
+        [kBunStdioMarker]: { port: stdioChannel.port2, hasStdin },
+        data: options?.workerData,
+      },
+      transferList:
+        $isArray(options?.transferList) && options.transferList.length > 0
+          ? [...options.transferList, stdioChannel.port2]
+          : [stdioChannel.port2],
+    };
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
@@ -495,6 +721,9 @@ class Worker extends EventEmitter {
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
       }
+      this.#stdioPort.onmessage = null;
+      this.#stdioPort.close();
+      stdioChannel.port2.close();
       throw e;
     }
     // The transfer is committed - release fds that were transferred but are
@@ -533,18 +762,15 @@ class Worker extends EventEmitter {
   }
 
   get stdin() {
-    // TODO:
-    return null;
+    return this.#stdin;
   }
 
   get stdout() {
-    // TODO:
-    return null;
+    return this.#stdout;
   }
 
   get stderr() {
-    // TODO:
-    return null;
+    return this.#stderr;
   }
 
   get performance() {
@@ -599,6 +825,10 @@ class Worker extends EventEmitter {
 
   #onClose(e) {
     this.#onExitPromise = e.code;
+    if (!this.#stdout.readableEnded) this.#stdout.push(null);
+    if (!this.#stderr.readableEnded) this.#stderr.push(null);
+    this.#stdioPort.onmessage = null;
+    this.#stdioPort.close();
     this.emit("exit", e.code);
   }
 

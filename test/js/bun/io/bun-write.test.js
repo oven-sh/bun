@@ -640,6 +640,42 @@ const IS_UV_FS_COPYFILE_DISABLED =
       },
     );
 
+    it.skipIf(isWindows)(
+      "Bun.write(path, Bun.file(path).slice(0, n)) truncates the file to n bytes",
+      async () => {
+        using dir = tempDir("bun-write-self-slice-head", {
+          "f.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+        const p = join(String(dir), "f.txt");
+        const written = await Bun.write(p, Bun.file(p).slice(0, 8));
+        expect({ written, content: fs.readFileSync(p, "utf8") }).toEqual({
+          written: 8,
+          content: "ABCDEFGH",
+        });
+      },
+    );
+
+    it.skipIf(isWindows)(
+      "Bun.write(path, Bun.file(path).slice(a, b)) works for windows larger than one read chunk",
+      async () => {
+        using dir = tempDir("bun-write-self-slice-large", {});
+        const p = join(String(dir), "f.bin");
+        const total = 200 * 1024;
+        const buf = Buffer.alloc(total);
+        for (let i = 0; i < total; i++) buf[i] = i & 0xff;
+        fs.writeFileSync(p, buf);
+        const a = 1000;
+        const b = 1000 + 150 * 1024;
+        const written = await Bun.write(p, Bun.file(p).slice(a, b));
+        const out = fs.readFileSync(p);
+        expect({ written, length: out.length, equal: out.equals(buf.subarray(a, b)) }).toEqual({
+          written: b - a,
+          length: b - a,
+          equal: true,
+        });
+      },
+    );
+
     it.skipIf(isWindows)("Bun.write(dest, Bun.file(src).slice(a, b)) writes only the sliced window", async () => {
       using dir = tempDir("bun-write-file-slice", {
         "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",

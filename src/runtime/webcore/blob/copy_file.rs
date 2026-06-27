@@ -310,8 +310,8 @@ impl<'a> CopyFile<'a> {
     }
 
     /// Source and destination are the same inode. A full copy is a no-op;
-    /// a sliced copy buffers the window before truncating so the source
-    /// data isn't destroyed before it is read.
+    /// a head slice is a bare truncate; a tail/mid slice shifts bytes
+    /// backward with a chunked pread/pwrite loop then truncates.
     #[cfg(not(windows))]
     fn do_copy_same_file(&mut self, stat: &Stat) -> Result<(), bun_core::Error> {
         let stat_size = if stat.st_size > 0 {
@@ -326,42 +326,96 @@ impl<'a> CopyFile<'a> {
             return Ok(());
         }
 
-        let mut buf = vec![0u8; len as usize];
-        let mut read_total: usize = 0;
-        while read_total < buf.len() {
-            match bun_sys::pread(
+        if self.offset == 0 {
+            if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, len as i64)
+            {
+                self.system_error = Some(err.to_system_error());
+                return Err(bun_core::errno_to_zig_err(err.errno as i32));
+            }
+            self.read_len = len;
+            return Ok(());
+        }
+
+        // offset > 0: each byte at position i comes from offset+i, so the
+        // read position is always ahead of the write position and a chunked
+        // in-place copy never clobbers unread data.
+        let mut buf = [0u8; 64 * 1024];
+        let mut copied: u64 = 0;
+        while copied < len as u64 {
+            let want = ((len as u64 - copied) as usize).min(buf.len());
+            let n = match bun_sys::pread(
                 self.source_fd,
-                &mut buf[read_total..],
-                self.offset as i64 + read_total as i64,
+                &mut buf[..want],
+                self.offset as i64 + copied as i64,
             ) {
                 bun_sys::Result::Ok(0) => break,
-                bun_sys::Result::Ok(n) => read_total += n,
+                bun_sys::Result::Ok(n) => n,
                 bun_sys::Result::Err(err) => {
                     self.system_error = Some(err.to_system_error());
                     return Err(bun_core::errno_to_zig_err(err.errno as i32));
                 }
+            };
+            let mut slice = &buf[..n];
+            let mut off = copied as i64;
+            while !slice.is_empty() {
+                match bun_sys::pwrite(self.destination_fd, slice, off) {
+                    bun_sys::Result::Ok(0) => break,
+                    bun_sys::Result::Ok(w) => {
+                        slice = &slice[w..];
+                        off += w as i64;
+                    }
+                    bun_sys::Result::Err(err) => {
+                        self.system_error = Some(err.to_system_error());
+                        return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                    }
+                }
+            }
+            copied += (n - slice.len()) as u64;
+            if !slice.is_empty() {
+                break;
             }
         }
-        buf.truncate(read_total);
-
-        if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, 0) {
+        if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, copied as i64) {
             self.system_error = Some(err.to_system_error());
             return Err(bun_core::errno_to_zig_err(err.errno as i32));
         }
+        self.read_len = copied as SizeType;
+        Ok(())
+    }
 
-        let mut remaining = buf.as_slice();
-        while !remaining.is_empty() {
-            match bun_sys::write(self.destination_fd, remaining) {
+    /// Copy at most `limit` bytes from `source_fd` (current position) to
+    /// `destination_fd`. Used when the source is sliced and the destination
+    /// may not be truncatable (stdout, a pipe, a socket).
+    #[cfg(target_os = "macos")]
+    fn do_copy_bounded(&mut self, limit: u64) -> Result<u64, bun_core::Error> {
+        let mut buf = [0u8; 64 * 1024];
+        let mut written: u64 = 0;
+        while written < limit {
+            let want = ((limit - written) as usize).min(buf.len());
+            let n = match bun_sys::read(self.source_fd, &mut buf[..want]) {
                 bun_sys::Result::Ok(0) => break,
-                bun_sys::Result::Ok(n) => remaining = &remaining[n..],
+                bun_sys::Result::Ok(n) => n,
                 bun_sys::Result::Err(err) => {
                     self.system_error = Some(err.to_system_error());
                     return Err(bun_core::errno_to_zig_err(err.errno as i32));
                 }
+            };
+            let mut slice = &buf[..n];
+            while !slice.is_empty() {
+                match bun_sys::write(self.destination_fd, slice) {
+                    bun_sys::Result::Ok(0) => return Ok(written),
+                    bun_sys::Result::Ok(w) => {
+                        slice = &slice[w..];
+                        written += w as u64;
+                    }
+                    bun_sys::Result::Err(err) => {
+                        self.system_error = Some(err.to_system_error());
+                        return Err(bun_core::errno_to_zig_err(err.errno as i32));
+                    }
+                }
             }
         }
-        self.read_len = (buf.len() - remaining.len()) as SizeType;
-        Ok(())
+        Ok(written)
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -971,57 +1025,31 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "macos")]
             {
+                let stat_size = if stat.st_size > 0 {
+                    SizeType::try_from(stat.st_size).expect("int cast")
+                } else {
+                    0
+                };
                 // fcopyfile copies from the start of the source regardless
-                // of its position, so use a read/write loop for slices.
-                if self.offset > 0 {
-                    let mut total_written: u64 = 0;
-                    let limit = if self.max_length == MAX_SIZE {
-                        0
-                    } else {
-                        self.max_length as usize
-                    };
-                    match node_fs::NodeFS::copy_file_using_read_write_loop(
-                        bun_core::ZStr::EMPTY,
-                        bun_core::ZStr::EMPTY,
-                        self.source_fd,
-                        self.destination_fd,
-                        limit,
-                        &mut total_written,
-                    ) {
-                        bun_sys::Result::Err(err) => {
-                            self.system_error = Some(err.to_system_error());
+                // of its position and reads to EOF, so it can't honour a
+                // slice; use a bounded read/write loop for that case so no
+                // extra bytes reach a non-truncatable destination.
+                let is_sliced = self.offset > 0 || (stat_size > 0 && self.max_length < stat_size);
+                if is_sliced {
+                    match self.do_copy_bounded(self.max_length as u64) {
+                        Err(_) => {
                             self.do_close();
                             return;
                         }
-                        bun_sys::Result::Ok(()) => {
-                            self.read_len = if self.max_length != MAX_SIZE {
-                                total_written.min(self.max_length as u64) as SizeType
-                            } else {
-                                total_written as SizeType
-                            };
+                        Ok(written) => {
+                            self.read_len = written as SizeType;
                         }
                     }
                 } else if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
                     self.do_close();
                     return;
                 } else {
-                    let stat_size = if stat.st_size > 0 {
-                        SizeType::try_from(stat.st_size).expect("int cast")
-                    } else {
-                        0
-                    };
                     self.read_len = stat_size.min(self.max_length);
-                }
-                if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                {
-                    // SAFETY: `destination_fd` is open; libc ftruncate(2).
-                    let _ = unsafe {
-                        bun_sys::darwin::ftruncate(
-                            self.destination_fd.native(),
-                            i64::try_from(self.max_length).expect("int cast"),
-                        )
-                    };
                 }
 
                 self.do_close();

@@ -842,7 +842,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        if (c1->type() == ProxyObjectType || c2->type() == ProxyObjectType) {
+            // calculatedClassName() reports the internal "ProxyObject" for any Proxy, so
+            // compare observable prototypes instead. A transparent Proxy then matches its
+            // target, as in Node's util.isDeepStrictEqual and Jest's toStrictEqual.
+            JSValue p1 = o1->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue p2 = o2->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (p1 != p2) {
+                return false;
+            }
+        } else if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
     }
@@ -1630,7 +1641,7 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
 
@@ -1639,12 +1650,40 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
+    bool objIsArray = isArray(globalObject, objValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    bool subsetIsArray = isArray(globalObject, subsetValue);
+    RETURN_IF_EXCEPTION(throwScope, false);
+
+    // An array expectation only matches an array. The reverse is allowed: a
+    // plain-object expectation is a key subset, so a received array can satisfy it.
+    if (subsetIsArray && !objIsArray) {
+        return false;
+    }
+
     // arrays should match exactly
-    if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
-        if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+    if (objIsArray && subsetIsArray) {
+        uint64_t objLength = 0;
+        uint64_t subsetLength = 0;
+        if (!obj->isProxy() && !subsetObj->isProxy()) {
+            objLength = obj->getArrayLength();
+            subsetLength = subsetObj->getArrayLength();
+        } else {
+            // getArrayLength() reads internal indexed storage, which a Proxy does not
+            // have; read the observable length so a Proxy over an array matches as one.
+            JSValue lengthValue = obj->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            objLength = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            lengthValue = subsetObj->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            subsetLength = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, false);
+        }
+        if (objLength != subsetLength) {
             return false;
         }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
         obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (objProps.size() != subsetProps.size()) {

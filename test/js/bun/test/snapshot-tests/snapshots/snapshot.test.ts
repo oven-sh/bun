@@ -317,10 +317,9 @@ for (const inlineSnapshot of [false, true]) {
         );
       });
 
-      // This is the only test in the file not registered through
-      // SnapshotTester.test, so it needs the same debug-aware timeout. When
-      // it times out, its in-flight toMatchSnapshot() lands on whichever test
-      // runs next, silently appending a bogus entry to this file's snapshot.
+      // This test does the most child spawns in the file (4 update calls) and
+      // needs the debug-aware timeout SnapshotTester.test applies, or it times
+      // out and leaks a stray toMatchSnapshot() onto the next test's counter.
       test(
         "grow file for new snapshot",
         async () => {

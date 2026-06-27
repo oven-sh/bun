@@ -147,6 +147,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
     let mut brace_stack = BraceStack::default();
     let mut brace_budget = BRACE_BRANCH_BUDGET;
+    let has_unclosed = has_unclosed_brace(glob, state.glob_index);
     let matched = glob_match_impl(
         &mut state,
         glob,
@@ -154,6 +155,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
         path,
         &mut brace_stack,
         &mut brace_budget,
+        has_unclosed,
     );
 
     // TODO: consider just returning a bool
@@ -184,6 +186,7 @@ fn glob_match_impl(
     path: &[u8],
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
+    has_unclosed: bool,
 ) -> bool {
     'main_loop: while (state.glob_index as usize) < glob.len()
         || (state.path_index as usize) < path.len()
@@ -362,7 +365,20 @@ fn glob_match_impl(
                                     continue 'main_loop;
                                 }
                             }
-                            return match_brace(state, glob, path, brace_stack, brace_budget);
+                            // An unclosed `{` is a literal (bash/picomatch/minimatch semantics).
+                            // `has_unclosed` is a one-shot scan over the whole glob so the common
+                            // all-balanced case avoids re-scanning here.
+                            if has_unclosed && !has_closing_brace(glob, state.glob_index) {
+                                break 'to_else;
+                            }
+                            return match_brace(
+                                state,
+                                glob,
+                                path,
+                                brace_stack,
+                                brace_budget,
+                                has_unclosed,
+                            );
                         }
                         b',' => {
                             if state.brace_depth > 0 {
@@ -428,12 +444,58 @@ fn glob_match_impl(
     true
 }
 
+/// Returns `true` iff `glob[start..]` contains a `{` without a matching `}`.
+/// Mirrors `match_brace`'s scan (depth-counted, `[...]`-aware, `\`-escaped).
+fn has_unclosed_brace(glob: &[u8], start: u32) -> bool {
+    let mut i = start as usize;
+    let mut depth: u32 = 0;
+    let mut in_brackets = false;
+    while i < glob.len() {
+        match glob[i] {
+            b'{' if !in_brackets => depth += 1,
+            b'}' if !in_brackets => depth = depth.saturating_sub(1),
+            b'[' if !in_brackets => in_brackets = true,
+            b']' => in_brackets = false,
+            b'\\' => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    depth != 0
+}
+
+/// Returns `true` if the `{` at `glob[open_idx]` has a matching `}`.
+fn has_closing_brace(glob: &[u8], open_idx: u32) -> bool {
+    debug_assert_eq!(glob[open_idx as usize], b'{');
+    let mut i = open_idx as usize;
+    let mut depth: u32 = 0;
+    let mut in_brackets = false;
+    while i < glob.len() {
+        match glob[i] {
+            b'{' if !in_brackets => depth += 1,
+            b'}' if !in_brackets => {
+                depth -= 1;
+                if depth == 0 {
+                    return true;
+                }
+            }
+            b'[' if !in_brackets => in_brackets = true,
+            b']' => in_brackets = false,
+            b'\\' => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 fn match_brace(
     state: &mut State,
     glob: &[u8],
     path: &[u8],
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
+    has_unclosed: bool,
 ) -> bool {
     let mut brace_depth: i32 = 0;
     let mut in_brackets = false;
@@ -464,6 +526,7 @@ fn match_brace(
                             branch_index,
                             brace_stack,
                             brace_budget,
+                            has_unclosed,
                         ) {
                             return true;
                         }
@@ -484,6 +547,7 @@ fn match_brace(
                         branch_index,
                         brace_stack,
                         brace_budget,
+                        has_unclosed,
                     ) {
                         return true;
                     }
@@ -513,6 +577,7 @@ fn match_brace_branch(
     branch_index: u32,
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
+    has_unclosed: bool,
 ) -> bool {
     if *brace_budget == 0 {
         return false;
@@ -539,6 +604,7 @@ fn match_brace_branch(
         path,
         brace_stack,
         brace_budget,
+        has_unclosed,
     );
 
     let _ = brace_stack.pop();

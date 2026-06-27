@@ -10,7 +10,6 @@ use bun_ast::Loader;
 use bun_ast::Log;
 use bun_bundler::bundle_v2::BundleV2Result;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
-use bun_bundler::output_file::Value as OutputFileValue;
 use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
@@ -622,34 +621,25 @@ impl Route {
                     };
                     headers.append(b"Content-Type", content_type);
                     let is_html = output_files[i].loader == Loader::Html;
-                    if matches!(output_files[i].value, OutputFileValue::Buffer { .. }) {
-                        // Source maps don't carry a precomputed chunk hash; hash
-                        // their bytes so every served file gets a unique ETag.
-                        let hash = match output_files[i].hash {
-                            0 => bun_core::hash::xxhash64(0, blob.slice()),
-                            h => h,
-                        };
-                        let mut hashbuf = [0u8; 64];
-                        let n = {
-                            use std::io::Write as _;
-                            let mut cursor = std::io::Cursor::new(&mut hashbuf[..]);
-                            write!(cursor, "\"{:016x}\"", hash)
-                                .expect("64 bytes fits a quoted 16-hex-digit ETag");
-                            cursor.position() as usize
-                        };
-                        headers.append(b"ETag", &hashbuf[..n]);
-                        if !server.config().is_development() {
-                            // Non-HTML outputs are served at content-hashed paths, so they
-                            // can be cached forever. HTML must be revalidated each request.
-                            headers.append(
-                                b"Cache-Control",
-                                if is_html {
-                                    b"no-cache"
-                                } else {
-                                    b"public, max-age=31536000, immutable"
-                                },
-                            );
-                        }
+                    // Source maps don't carry a precomputed chunk hash; hash
+                    // their bytes so every served file gets a unique ETag.
+                    let hash = match output_files[i].hash {
+                        0 => bun_core::hash::xxhash64(0, blob.slice()),
+                        h => h,
+                    };
+                    let mut hashbuf: bun_http_types::ETag::FormatBuffer = [0; 40];
+                    headers.append(b"ETag", bun_http_types::ETag::format(hash, &mut hashbuf));
+                    if !server.config().is_development() {
+                        // Non-HTML outputs are served at content-hashed paths, so they
+                        // can be cached forever. HTML must be revalidated each request.
+                        headers.append(
+                            b"Cache-Control",
+                            if is_html {
+                                b"no-cache"
+                            } else {
+                                b"public, max-age=31536000, immutable"
+                            },
+                        );
                     }
 
                     // Add a SourceMap header if we have a source map index

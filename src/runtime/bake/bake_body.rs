@@ -1521,6 +1521,23 @@ pub(crate) fn add_import_meta_defines(
         DefineData::init_boolean(mode == Mode::ProductionStatic),
     )?;
 
+    // The server/SSR graphs target `bun`, for which
+    // `defines_from_transform_options` does not auto-inline
+    // `process.env.NODE_ENV`. Production is explicit here, so seed the
+    // define so dev-only branches (React, react-dom/server, ...) are
+    // still DCE'd. The client graph targets the browser and already gets
+    // this via `defines_from_transform_options`.
+    if side == Side::Server && mode != Mode::Development {
+        define.insert(
+            b"process.env.NODE_ENV",
+            DefineData::init_static_string(&MODE_PRODUCTION),
+        )?;
+        define.insert(
+            b"process.env.BUN_ENV",
+            DefineData::init_static_string(&MODE_PRODUCTION),
+        )?;
+    }
+
     Ok(())
 }
 

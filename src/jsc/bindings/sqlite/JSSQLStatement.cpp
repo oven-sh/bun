@@ -196,10 +196,10 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 // An iterator returned by Statement.prototype.iterate() owns the statement's cursor until
 // it is exhausted or returned from. Anything else that resets or steps the cursor would
 // restart or corrupt that iteration, so it is an error (matching better-sqlite3).
-#define CHECK_NOT_ITERATING                                                                                                        \
-    if (castedThis->isIterating) [[unlikely]] {                                                                                    \
+#define CHECK_NOT_ITERATING                                                                                                             \
+    if (castedThis->isIterating) [[unlikely]] {                                                                                         \
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "This statement is busy executing a query"_s)); \
-        return {};                                                                                                                 \
+        return {};                                                                                                                      \
     }
 
 #define CHECK_PREPARED_JIT                                                                                         \

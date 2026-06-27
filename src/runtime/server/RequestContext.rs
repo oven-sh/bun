@@ -4002,7 +4002,13 @@ where
                 if matches!(old, Body::Value::Locked(_)) {
                     let _exit = vm.enter_event_loop_scope();
 
-                    let _ = Body::Value::resolve(&mut old, body, global_this, None); // TODO: properly propagate exception upwards
+                    // Carry the request Content-Type onto the resolved Blob;
+                    // `resolve` reads it from the request's fetch headers.
+                    let headers = this
+                        .request_weakref
+                        .get()
+                        .and_then(|req| Body::BodyMixin::get_fetch_headers(req));
+                    let _ = Body::Value::resolve(&mut old, body, global_this, headers); // TODO: properly propagate exception upwards
                 }
                 return;
             }

@@ -1238,7 +1238,12 @@ impl All {
                 let signal = (*t).signal;
                 (*t).signal = core::ptr::null_mut();
                 if !signal.is_null() {
-                    crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
+                    let signal = crate::jsc::abort_signal::AbortSignal::opaque_ref(signal);
+                    // This path never reaches cancelTimer(), so release the
+                    // async context snapshot timeout() captured; the unref
+                    // below may not be the last reference.
+                    signal.clear_timeout_async_context();
+                    signal.unref();
                 }
             }
         }

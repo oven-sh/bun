@@ -139,6 +139,11 @@ public:
 
     AbortSignalTimeout getTimeout() const { return m_timeout; }
 
+    // Every path that retires the timeout (cancelTimer(), and the Rust timer
+    // teardown paths that unref the signal without reaching it) must call this
+    // so m_timeoutAsyncContext never outlives the timer as a GC root.
+    void clearTimeoutAsyncContext();
+
 private:
     enum class Aborted : bool {
         No,
@@ -205,7 +210,7 @@ private:
     JSValueInWrappedObject m_reason;
     // AbortSignal.timeout() only: the async context active when timeout() was
     // called, restored around the timer-driven abort and released by
-    // cancelTimer(). See AsyncContextFrame::captureCurrentContext.
+    // clearTimeoutAsyncContext(). See AsyncContextFrame::captureCurrentContext.
     JSC::Strong<JSC::Unknown> m_timeoutAsyncContext;
     CommonAbortReason m_commonReason { CommonAbortReason::None };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;

@@ -34,7 +34,9 @@ public:
     // native-to-GC cycle. Only use the Strong overload when a GC-independent
     // release is guaranteed to run: AbortSignal.timeout() needs it (its abort
     // is observed through a dependent AbortSignal.any() signal's wrapper, not
-    // its own) and its timer heap guarantees cancelTimer() drops the handle.
+    // its own), and every path that retires its timer, including the Rust
+    // teardown paths that never reach cancelTimer(), calls
+    // clearTimeoutAsyncContext() to drop the handle.
     static void captureCurrentContext(JSC::JSGlobalObject* globalObject, WebCore::JSValueInWrappedObject& slot);
     static void captureCurrentContext(JSC::JSGlobalObject* globalObject, JSC::Strong<JSC::Unknown>& slot);
 

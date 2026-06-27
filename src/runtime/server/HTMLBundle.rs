@@ -475,6 +475,20 @@ impl Route {
             config.minify.syntax = true;
         }
 
+        // Match the HMR dev server (bake::add_import_meta_defines) so
+        // `import.meta.env.*` folds to constants instead of reaching the
+        // browser as a runtime property access that throws.
+        let (dev_bool, prod_bool, mode_str): (&[u8], &[u8], &[u8]) = if is_development {
+            (b"true", b"false", b"\"development\"")
+        } else {
+            (b"false", b"true", b"\"production\"")
+        };
+        config.define.put(b"import.meta.env.DEV", dev_bool)?;
+        config.define.put(b"import.meta.env.PROD", prod_bool)?;
+        config.define.put(b"import.meta.env.MODE", mode_str)?;
+        config.define.put(b"import.meta.env.SSR", b"false")?;
+        config.define.put(b"import.meta.env.STATIC", b"false")?;
+
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
             // `StringMap` exposes only put/insert (no bulk re-index);
@@ -611,22 +625,22 @@ impl Route {
                     if output_files[i].loader != Loader::Html
                         && matches!(output_files[i].value, OutputFileValue::Buffer { .. })
                     {
+                        // Source maps don't carry a precomputed chunk hash; hash
+                        // their bytes so every served file gets a unique ETag.
+                        let hash = match output_files[i].hash {
+                            0 => bun_core::hash::xxhash64(0, blob.slice()),
+                            h => h,
+                        };
                         let mut hashbuf = [0u8; 64];
                         let n = {
                             use std::io::Write as _;
                             let mut cursor = std::io::Cursor::new(&mut hashbuf[..]);
-                            write!(
-                                cursor,
-                                "{}",
-                                bun_core::fmt::hex_int_lower::<16>(output_files[i].hash)
-                            )
-                            .expect("64 bytes fits 16 hex digits");
+                            write!(cursor, "\"{:016x}\"", hash)
+                                .expect("64 bytes fits a quoted 16-hex-digit ETag");
                             cursor.position() as usize
                         };
                         headers.append(b"ETag", &hashbuf[..n]);
-                        if !server.config().is_development()
-                            && output_files[i].output_kind == bundler_options::OutputKind::Chunk
-                        {
+                        if !server.config().is_development() {
                             headers.append(b"Cache-Control", b"public, max-age=31536000");
                         }
                     }

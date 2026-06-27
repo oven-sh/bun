@@ -281,21 +281,23 @@ private:
         auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
-            /* For every request we reset the timeout and hang until user makes action */
-            /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
-            us_socket_timeout((us_socket_t *) s, 0);
-
             /* Reset httpResponse */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
             /* Are we not ready for another request yet? Async pipelining is not
              * supported (one HttpResponseData per socket): drop this request and
              * mark the in-flight response for connection-close so the socket
-             * closes once it drains. Closing now would lose the first response. */
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+             * closes once it drains. Closing now would lose the first response.
+             * Once the socket is marked for close no later pipelined request
+             * may be dispatched either (it would be misattributed). */
+            if (httpResponseData->state & (HttpResponseData<SSL>::HTTP_RESPONSE_PENDING | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE)) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 return s;
             }
+
+            /* For every request we reset the timeout and hang until user makes action */
+            /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
+            us_socket_timeout((us_socket_t *) s, 0);
 
             httpResponseData->offset = 0;
 

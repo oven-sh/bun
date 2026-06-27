@@ -148,6 +148,14 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
 
+# Needs full async HTTP/1.1 pipelining (second request dispatched while the
+# first response is still pending). uWS has one HttpResponseData per socket
+# so the second request is dropped; the test's handler never advances past
+# `first = res` and the process hangs. Previously passed only because the
+# pipelined request triggered a hard socket close (the process exited before
+# the test's logic ran). Unskip once #32488 lands the queued-response path.
+test/js/node/test/parallel/test-http-pipeline-socket-parser-typeerror.js [ FAIL ] # needs async pipelining (queued responses); see #32488
+
 # node:http2 tests ported together with the HTTP/2 engine overhaul that do not pass yet
 # (remaining compatibility work: ALPN/h1-fallback, tunnelling, perf_hooks entries, stream
 # write semantics, async_hooks integration, node-internal-module dependencies). Burn these

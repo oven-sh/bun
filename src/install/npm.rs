@@ -1560,7 +1560,16 @@ impl PackageManifest {
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
                 if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
-                    if newest_filtered.is_none() {
+                    // `newest_filtered` is shared by the release and
+                    // prerelease scans: keep the highest filtered version.
+                    let is_newer = match *newest_filtered {
+                        Some(existing) => {
+                            existing.order(version, &self.string_buf, &self.string_buf)
+                                == core::cmp::Ordering::Less
+                        }
+                        None => true,
+                    };
+                    if is_newer {
                         *newest_filtered = Some(version);
                     }
                     prev_package_blocked_from_age = Some(package);

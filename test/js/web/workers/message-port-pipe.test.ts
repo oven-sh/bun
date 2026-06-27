@@ -228,6 +228,46 @@ describe("MessagePort pipe", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The onmessage setter's jsRef() holds a self-ref on the native MessagePort.
+  // Removing the handler must release it so that, once the wrapper is
+  // collected, the native port is destroyed and its pipe side closes. The
+  // peers (pinned only by isOtherSideOpen) then become collectable; if the
+  // self-ref leaked, every peer stays pinned and every native port leaks.
+  test("clearing onmessage releases the native port once its wrapper is collected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const finalized = { A: 0, B: 0 };
+          const reg = new FinalizationRegistry(which => { finalized[which]++; });
+          for (let i = 0; i < 200; i++) {
+            const { port1: A, port2: B } = new MessageChannel();
+            A.onmessage = () => {}; // A stays alive while B's pipe side is open
+            B.onmessage = () => {};
+            B.onmessage = null;
+            reg.register(A, "A");
+            reg.register(B, "B");
+          }
+          for (let i = 0; i < 10; i++) { Bun.gc(true); await Bun.sleep(0); }
+          console.log(JSON.stringify(finalized));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const finalized = JSON.parse(stdout.trim());
+    // The B wrappers are collectable either way (no listener left); the A
+    // wrappers only become collectable after the B natives were destroyed.
+    expect(finalized.B).toBeGreaterThan(0);
+    expect(finalized.A).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+  });
+
   // A port transferred through a carrier whose destination is already
   // closed never reaches a new owner. The endpoint must be marked Closed
   // when the in-transit struct is dropped, otherwise the peer's

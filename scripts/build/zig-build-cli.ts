@@ -29,7 +29,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { delimiter, join, resolve } from "node:path";
 import { downloadWithRetry } from "./download.ts";
-import { BuildError, assert } from "./error.ts";
+import { assert, BuildError } from "./error.ts";
 
 /** Absolute path to this file, for ninja rule command strings. */
 export const zigBuildCliPath: string = import.meta.filename;

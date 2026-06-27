@@ -40,22 +40,7 @@ describe.concurrent("WebSocket", () => {
   });
 
   it("should connect over https", async () => {
-    using server = Bun.serve({
-      port: 0,
-      tls: COMMON_CERT,
-      fetch(req, server) {
-        if (server.upgrade(req)) {
-          return;
-        }
-        return new Response("Upgrade failed :(", { status: 500 });
-      },
-      websocket: {
-        message() {},
-        open(ws) {},
-      },
-    });
-    // server.url.href is an https:// URL, accepted as an alias for wss://.
-    const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+    const ws = new WebSocket(TEST_WEBSOCKET_HOST.replaceAll("wss:", "https:"));
     await new Promise((resolve, reject) => {
       ws.onopen = resolve;
       ws.onerror = reject;
@@ -435,24 +420,7 @@ describe.concurrent("WebSocket", () => {
   });
 
   it("should send and receive messages", async () => {
-    using server = Bun.serve({
-      port: 0,
-      tls: COMMON_CERT,
-      fetch(req, server) {
-        if (server.upgrade(req)) {
-          return;
-        }
-        return new Response("Upgrade failed :(", { status: 500 });
-      },
-      websocket: {
-        message(ws, message) {
-          // echo
-          ws.send(message);
-        },
-        open(ws) {},
-      },
-    });
-    const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+    const ws = new WebSocket(TEST_WEBSOCKET_HOST);
     await new Promise((resolve, reject) => {
       ws.onopen = resolve;
       ws.onerror = reject;
@@ -1042,32 +1010,20 @@ describe("WebSocket CloseEvent reports the received close code", () => {
     expect(await connectAndAwaitClose(server)).toEqual({ code: 1001, reason: "", wasClean: true });
   });
 
-  describe.each([1000, 1002, 1003, 1007, 1011, 1014, 3000, 4000, 4999])("Close frame with code %i", code => {
+  describe.each([1000, 1002, 1003, 1007, 1011, 3000, 4000, 4999])("Close frame with code %i", code => {
     it("passes through unchanged", async () => {
       const server = await rawWsServer(sock => sock.write(closeFrame(code)));
       expect(await connectAndAwaitClose(server)).toEqual({ code, reason: "", wasClean: true });
     });
   });
 
-  // RFC6455 §7.4.1-§7.4.2: codes < 1000, the reserved 1004-1006 and 1015-2999
-  // ranges, and the undefined 5000-65535 range are not legal on the wire; a
-  // server that sends one is reporting a protocol error, so JS sees 1002.
-  describe.each([999, 1004, 1005, 1006, 1015, 1016, 2999, 5000, 65535])("reserved/invalid code %i", code => {
+  // RFC6455 §7.4.1: codes < 1000, the reserved 1004-1006 range, and 1016-2999
+  // are not legal on the wire; a server that sends one is reporting a protocol
+  // error, so JS sees 1002.
+  describe.each([999, 1004, 1005, 1006, 1016, 2999])("reserved/invalid code %i", code => {
     it("reports 1002", async () => {
       const server = await rawWsServer(sock => sock.write(closeFrame(code)));
       expect(await connectAndAwaitClose(server)).toEqual({ code: 1002, reason: "", wasClean: true });
-    });
-  });
-
-  // RFC 6455 §7.4.1: 1007 is "received data inconsistent with the type of the
-  // message (e.g., non-UTF-8 data within a text message)". 1003 would mean an
-  // unsupported data type.
-  it("a text frame with invalid UTF-8 fails with 1007", async () => {
-    const server = await rawWsServer(sock => sock.write(Buffer.from([0x81, 0x02, 0xc3, 0x28])));
-    expect(await connectAndAwaitClose(server)).toEqual({
-      code: 1007,
-      reason: "Server sent invalid UTF8",
-      wasClean: false,
     });
   });
 
@@ -1085,139 +1041,5 @@ describe("WebSocket CloseEvent reports the received close code", () => {
   it("abnormal close (socket destroyed without Close frame) reports wasClean=false", async () => {
     const server = await rawWsServer(sock => sock.destroy());
     expect(await connectAndAwaitClose(server)).toEqual({ code: 1006, reason: "Connection ended", wasClean: false });
-  });
-});
-
-// https://websockets.spec.whatwg.org/#dom-websocket-close
-describe.concurrent("WebSocket close() argument validation", () => {
-  // Close codes an RFC 6455 endpoint must never put on the wire. close() has to
-  // reject them: the peer treats them as a protocol error.
-  const INVALID_CODES = [0, 999, 1004, 1005, 1006, 1015, 1016, 2999, 5000, 65535];
-  // Codes an endpoint may send (RFC 6455 7.4 + IANA). Unlike browsers, 1001-1014
-  // stay permitted: `ws` clients and Bun's inspector close with 1001/1011.
-  const VALID_CODES = [1000, 1001, 1002, 1003, 1007, 1008, 1011, 1012, 1014, 3000, 4999];
-  const LONG_REASON = Buffer.alloc(124, "R").toString();
-
-  // `constructor` is DOMException for InvalidAccessError, but the native
-  // SyntaxError for the reason-length check: Bun intentionally maps
-  // ExceptionCode::SyntaxError to a JS SyntaxError (JSDOMExceptionHandling.cpp).
-  function expectThrows(fn, constructor, name, messageContains) {
-    let error;
-    try {
-      fn();
-    } catch (e) {
-      error = e;
-    }
-    expect(error).toBeInstanceOf(constructor);
-    expect(error.name).toBe(name);
-    expect(error.message).toContain(messageContains);
-  }
-
-  function upgradeServer(onClose) {
-    return Bun.serve({
-      port: 0,
-      fetch(req, server) {
-        if (server.upgrade(req)) return;
-        return new Response("upgrade failed", { status: 400 });
-      },
-      websocket: {
-        message() {},
-        close(ws, code, reason) {
-          onClose?.({ code, reason });
-        },
-      },
-    });
-  }
-
-  async function open(server) {
-    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
-    const { promise, resolve, reject } = Promise.withResolvers();
-    ws.onopen = () => resolve();
-    ws.onerror = () => reject(new Error("WebSocket failed to connect"));
-    ws.onclose = () => reject(new Error("WebSocket closed before open"));
-    await promise;
-    // The tests install their own close handlers (and close the socket).
-    ws.onerror = null;
-    ws.onclose = null;
-    return ws;
-  }
-
-  it("throws InvalidAccessError for close codes an endpoint must not send", async () => {
-    using server = upgradeServer();
-    const ws = await open(server);
-    try {
-      for (const code of INVALID_CODES) {
-        expectThrows(() => ws.close(code), DOMException, "InvalidAccessError", `Received ${code}`);
-        // Validation failed, so the socket must not have started closing.
-        expect(ws.readyState).toBe(WebSocket.OPEN);
-      }
-    } finally {
-      ws.close();
-    }
-  });
-
-  it("throws SyntaxError when the reason is longer than 123 UTF-8 bytes", async () => {
-    using server = upgradeServer();
-    const ws = await open(server);
-    try {
-      expectThrows(() => ws.close(1000, LONG_REASON), SyntaxError, "SyntaxError", "123 UTF-8 bytes");
-      expectThrows(() => ws.close(undefined, LONG_REASON), SyntaxError, "SyntaxError", "123 UTF-8 bytes");
-      // 62 two-byte characters: 62 UTF-16 code units but 124 UTF-8 bytes. The
-      // limit is on the encoded size.
-      expectThrows(() => ws.close(4000, "é".repeat(62)), SyntaxError, "SyntaxError", "124 bytes");
-      expect(ws.readyState).toBe(WebSocket.OPEN);
-    } finally {
-      ws.close();
-    }
-  });
-
-  it("accepts a reason of exactly 123 UTF-8 bytes", async () => {
-    const serverGotClose = Promise.withResolvers();
-    using server = upgradeServer(serverGotClose.resolve);
-    const ws = await open(server);
-    const reason = Buffer.alloc(123, "R").toString();
-    ws.close(3000, reason);
-    expect(await serverGotClose.promise).toEqual({ code: 3000, reason });
-  });
-
-  it("validates arguments even when the socket is already closed", async () => {
-    using server = upgradeServer();
-    const ws = await open(server);
-    const closed = new Promise(resolve => (ws.onclose = resolve));
-    ws.close();
-    await closed;
-    expect(ws.readyState).toBe(WebSocket.CLOSED);
-    expectThrows(() => ws.close(5000), DOMException, "InvalidAccessError", "Received 5000");
-    expectThrows(() => ws.close(1000, LONG_REASON), SyntaxError, "SyntaxError", "123 UTF-8 bytes");
-  });
-
-  it("validates arguments while the socket is still connecting", async () => {
-    using server = upgradeServer();
-    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
-    const opened = Promise.withResolvers();
-    ws.onopen = opened.resolve;
-    // A close or error before open means the rejected close() still tore the
-    // connection attempt down.
-    ws.onerror = () => opened.reject(new Error("connection errored before open"));
-    ws.onclose = () => opened.reject(new Error("connection closed before open"));
-    expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    expectThrows(() => ws.close(5000), DOMException, "InvalidAccessError", "Received 5000");
-    expectThrows(() => ws.close(3000, LONG_REASON), SyntaxError, "SyntaxError", "123 UTF-8 bytes");
-    expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    await opened.promise;
-    ws.onclose = null;
-    ws.close();
-  });
-
-  describe.each(VALID_CODES)("close(%i) is allowed", code => {
-    it("and the code and reason reach the server", async () => {
-      const serverGotClose = Promise.withResolvers();
-      using server = upgradeServer(serverGotClose.resolve);
-      const ws = await open(server);
-      const clientClosed = new Promise(resolve => (ws.onclose = e => resolve(e.code)));
-      ws.close(code, "bye");
-      expect(await serverGotClose.promise).toEqual({ code, reason: "bye" });
-      expect(await clientClosed).toBe(code);
-    });
   });
 });

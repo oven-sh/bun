@@ -69,6 +69,8 @@ test.skipIf(isWindows || !cc)("N-API module Init runs under BUN_JSC_validateExce
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout, exitCode }).toEqual({ stdout: "loaded 42\n", exitCode: 0 });
+  // stderr is in the received object so the abort report shows up in the
+  // failure diff, but its contents are not asserted (debug builds write noise).
+  expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: "loaded 42\n", exitCode: 0 });
   expect(stderr).not.toContain("Unchecked JS exception");
 });

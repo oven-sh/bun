@@ -8,16 +8,29 @@ import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// SHELL_FAIL_RECV=1 makes every recv fail with ENOMEM; SHELL_FAIL_EPOLL=1
-// makes every epoll_ctl ADD/MOD on a pipe-like fd fail with ENOMEM. FilePoll
-// registers the socketpair through the raw syscall(SYS_epoll_ctl, ...) wrapper,
-// not the libc epoll_ctl symbol, so the epoll mode interposes syscall(2).
+// Four env-selected fault modes:
+//   SHELL_FAIL_RECV=1        every recv() fails with ENOMEM.
+//   SHELL_FAIL_EPOLL=1       every epoll_ctl ADD/MOD on a pipe-like fd fails
+//                            with ENOMEM.
+//   SHELL_FAIL_EPOLL_AFTER=1 the first epoll_ctl ADD on each AF_UNIX socket
+//                            succeeds (so the PipeReader starts and the eager
+//                            read runs); every later ADD/MOD on that fd fails
+//                            with ENOMEM. This is the poll re-registration
+//                            after an EAGAIN.
+//   SHELL_RECV_ONE_CHUNK=1   the first recv() on each AF_UNIX socket returns
+//                            a fixed chunk ("FAKE-CHUNK\\n"), every later one
+//                            returns EAGAIN. Pins the "child wrote some bytes,
+//                            then stalled" interleaving so it is deterministic.
+// FilePoll registers the socketpair through the raw syscall(SYS_epoll_ctl,
+// ...) wrapper, not the libc epoll_ctl symbol, so the epoll modes interpose
+// syscall(2).
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -25,26 +38,40 @@ const SHIM_C = /* c */ `
 #include <sys/types.h>
 #include <unistd.h>
 
+#define MAX_FD 65536
+#define CHUNK "FAKE-CHUNK\\n"
+#define CHUNK_LEN (sizeof(CHUNK) - 1)
+
 static ssize_t (*real_recv)(int, void *, size_t, int);
 static long (*real_syscall)(long, long, long, long, long, long, long);
+static int (*real_close)(int);
 static int fail_recv = -1;
 static int fail_epoll = -1;
+static int fail_epoll_after = -1;
+static int recv_one_chunk = -1;
+static unsigned char recv_count[MAX_FD];
+static unsigned char epoll_count[MAX_FD];
 
 static void init_modes(void) {
   if (fail_recv < 0) fail_recv = getenv("SHELL_FAIL_RECV") != NULL;
   if (fail_epoll < 0) fail_epoll = getenv("SHELL_FAIL_EPOLL") != NULL;
+  if (fail_epoll_after < 0) fail_epoll_after = getenv("SHELL_FAIL_EPOLL_AFTER") != NULL;
+  if (recv_one_chunk < 0) recv_one_chunk = getenv("SHELL_RECV_ONE_CHUNK") != NULL;
+}
+
+static int is_unix_sock(int fd) {
+  struct stat st;
+  if (fstat(fd, &st) != 0 || !S_ISSOCK(st.st_mode)) return 0;
+  int domain = 0;
+  socklen_t len = sizeof(domain);
+  return getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &len) == 0 && domain == AF_UNIX;
 }
 
 static int is_pipe_like(int fd) {
   struct stat st;
   if (fstat(fd, &st) != 0) return 0;
   if (S_ISFIFO(st.st_mode)) return 1;
-  if (S_ISSOCK(st.st_mode)) {
-    int domain = 0;
-    socklen_t len = sizeof(domain);
-    if (getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &len) == 0 && domain == AF_UNIX) return 1;
-  }
-  return 0;
+  return is_unix_sock(fd);
 }
 
 ssize_t recv(int fd, void *buf, size_t len, int flags) {
@@ -54,6 +81,15 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
   }
   if (fail_recv) {
     errno = ENOMEM;
+    return -1;
+  }
+  if (recv_one_chunk && fd >= 0 && fd < MAX_FD && is_unix_sock(fd)) {
+    if (recv_count[fd]++ == 0) {
+      size_t n = len < CHUNK_LEN ? len : CHUNK_LEN;
+      memcpy(buf, CHUNK, n);
+      return (ssize_t)n;
+    }
+    errno = EAGAIN;
     return -1;
   }
   return real_recv(fd, buf, len, flags);
@@ -74,14 +110,33 @@ long syscall(long number, ...) {
     real_syscall = (long (*)(long, long, long, long, long, long, long))dlsym(RTLD_NEXT, "syscall");
     init_modes();
   }
-  if (number == SYS_epoll_ctl && fail_epoll) {
+  if (number == SYS_epoll_ctl) {
     int op = (int)b;
-    if ((op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) && is_pipe_like((int)c)) {
-      errno = ENOMEM;
-      return -1;
+    int target = (int)c;
+    if (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) {
+      if (fail_epoll && is_pipe_like(target)) {
+        errno = ENOMEM;
+        return -1;
+      }
+      if (fail_epoll_after && target >= 0 && target < MAX_FD && is_unix_sock(target)) {
+        if (epoll_count[target]++ >= 1) {
+          errno = ENOMEM;
+          return -1;
+        }
+      }
     }
   }
   return real_syscall(number, a, b, c, d, e, f);
+}
+
+// Reset the per-fd counters on close so a recycled fd number starts fresh.
+int close(int fd) {
+  if (!real_close) real_close = (int (*)(int))dlsym(RTLD_NEXT, "close");
+  if (fd >= 0 && fd < MAX_FD) {
+    recv_count[fd] = 0;
+    epoll_count[fd] = 0;
+  }
+  return real_close(fd);
 }
 `;
 
@@ -101,6 +156,21 @@ const r = await $\`head -c 64 /dev/zero\`.nothrow();
 console.log(JSON.stringify({ exitCode: r.exitCode }));
 `;
 
+// For SHELL_RECV_ONE_CHUNK + SHELL_FAIL_EPOLL_AFTER: the eager read gets one
+// chunk, then an EAGAIN whose poll re-registration fails. That error closes the
+// stream (PipeReader::detach sets process = None), and the reader then still
+// delivers the drained chunk and retries the poll, signalling the already
+// detached Cmd a second time. The child just has to stay alive long enough for
+// the (faked) EAGAIN to be plausible; the shell kills it once the Cmd finishes.
+//
+// .quiet() keeps the CapturedWriter dead so the second signal comes straight
+// from the retried register_poll's on_reader_error.
+const QUIET_CHUNK_FIXTURE = /* js */ `
+import { $ } from "bun";
+const r = await $\`sleep 5\`.quiet().nothrow();
+console.log(JSON.stringify({ exitCode: r.exitCode }));
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -110,6 +180,7 @@ beforeAll(async () => {
     "shim.c": SHIM_C,
     "stdout-only.js": STDOUT_ONLY_FIXTURE,
     "both-pipes.js": BOTH_PIPES_FIXTURE,
+    "quiet-chunk.js": QUIET_CHUNK_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -131,18 +202,23 @@ afterAll(() => {
 // The shell surfaces the failed syscall's errno as the command's exit code.
 const ENOMEM = 12;
 
-async function expectShellFault(script: string, mode: "SHELL_FAIL_RECV" | "SHELL_FAIL_EPOLL") {
+const MODES = ["SHELL_FAIL_RECV", "SHELL_FAIL_EPOLL", "SHELL_FAIL_EPOLL_AFTER", "SHELL_RECV_ONE_CHUNK"] as const;
+
+async function expectShellFault(script: string, modes: (typeof MODES)[number][]) {
   const existing = bunEnv.LD_PRELOAD;
+  const env: Record<string, string | undefined> = {
+    ...bunEnv,
+    LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+  };
+  for (const m of MODES) env[m] = undefined;
+  for (const m of modes) env[m] = "1";
   await using proc = Bun.spawn({
-    cmd: [bunExe(), script],
+    // If the fixture does crash, skip the debug build's slow symbolized
+    // backtrace so the failure surfaces as the panic message, not a test
+    // timeout. The fixture ignores the extra argv entry.
+    cmd: [bunExe(), script, "--debug-crash-handler-use-trace-string"],
     cwd: String(dir),
-    env: {
-      ...bunEnv,
-      LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
-      SHELL_FAIL_RECV: undefined,
-      SHELL_FAIL_EPOLL: undefined,
-      [mode]: "1",
-    },
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -165,27 +241,39 @@ async function expectShellFault(script: string, mode: "SHELL_FAIL_RECV" | "SHELL
 test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives a synchronous stdout pipe read error during spawn",
   async () => {
-    await expectShellFault("stdout-only.js", "SHELL_FAIL_RECV");
+    await expectShellFault("stdout-only.js", ["SHELL_FAIL_RECV"]);
   },
 );
 
 test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives synchronous stdout and stderr pipe read errors during spawn",
   async () => {
-    await expectShellFault("both-pipes.js", "SHELL_FAIL_RECV");
+    await expectShellFault("both-pipes.js", ["SHELL_FAIL_RECV"]);
   },
 );
 
 test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives a synchronous epoll_ctl failure registering the stdout pipe",
   async () => {
-    await expectShellFault("stdout-only.js", "SHELL_FAIL_EPOLL");
+    await expectShellFault("stdout-only.js", ["SHELL_FAIL_EPOLL"]);
   },
 );
 
 test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives synchronous epoll_ctl failures registering both pipes",
   async () => {
-    await expectShellFault("both-pipes.js", "SHELL_FAIL_EPOLL");
+    await expectShellFault("both-pipes.js", ["SHELL_FAIL_EPOLL"]);
+  },
+);
+
+// Regression: the re-registration failing AFTER the eager read made progress
+// closes the stream and detaches the PipeReader (process = None), and the
+// reader then still delivers the drained chunk and retries the poll, so the
+// already detached reader reaches try_signal_done_to_cmd a second time.
+// Panicked with "assertion failed: process.is_some()".
+test.concurrent.skipIf(!isLinux || !cc)(
+  "shell survives a poll re-registration failure after the eager read drained a chunk",
+  async () => {
+    await expectShellFault("quiet-chunk.js", ["SHELL_FAIL_EPOLL_AFTER", "SHELL_RECV_ONE_CHUNK"]);
   },
 );

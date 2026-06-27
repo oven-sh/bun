@@ -402,6 +402,14 @@ describe("CookieMap percent-decoding with non-ASCII values", () => {
     expect(map.get("mix")).toBe("🍪 cookie");
   });
 
+  test("malformed percent escapes decode the same with and without non-ASCII characters", () => {
+    // Both branches route through the same decoder, so an invalid escape must
+    // produce the same result whether or not the value also has non-ASCII characters.
+    const ascii = new Bun.CookieMap("a=%ZZ").get("a")!;
+    expect(new Bun.CookieMap("a=é%ZZ").get("a")).toBe("é" + ascii);
+    expect(new Bun.CookieMap("a=%ZZé").get("a")).toBe(ascii + "é");
+  });
+
   test("percent-encoded UTF-8 still decodes via the fast path when the value is ASCII", () => {
     const map = new Bun.CookieMap("k=%C3%A9");
     expect(map.get("k")).toBe("é");
@@ -419,9 +427,10 @@ describe("CookieMap percent-decoding with non-ASCII values", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe('["é","A"]');
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is included so its contents surface in the diff if the child
+    // crashes, without asserting it is empty (ASAN/debug builds emit warnings).
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: '["é","A"]', stderr, exitCode: 0 });
   });
 });
 

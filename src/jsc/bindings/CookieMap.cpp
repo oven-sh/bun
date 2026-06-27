@@ -12,27 +12,25 @@
 #include <wtf/HashSet.h>
 namespace WebCore {
 
-// decodeURIComponentSIMD requires ASCII input. For values that mix non-ASCII
-// characters with percent escapes, decode over the UTF-8 representation so
-// the original characters round-trip instead of being treated as Latin-1.
+// decodeURIComponentSIMD requires ASCII input. Percent-encode the non-ASCII
+// bytes of the value's UTF-8 form first so both paths share the same decoder
+// and non-ASCII characters round-trip instead of being misread as Latin-1.
 static String percentDecodeUTF8CookieValue(StringView value)
 {
     Bun::UTF8View utf8View(value);
     auto bytes = utf8View.bytes();
-    Vector<uint8_t, 256> decoded;
-    decoded.reserveInitialCapacity(bytes.size());
-    size_t i = 0;
-    while (i < bytes.size()) {
-        uint8_t byte = bytes[i];
-        if (byte == '%' && i + 2 < bytes.size() && isASCIIHexDigit(bytes[i + 1]) && isASCIIHexDigit(bytes[i + 2])) {
-            decoded.append(static_cast<uint8_t>((toASCIIHexValue(bytes[i + 1]) << 4) | toASCIIHexValue(bytes[i + 2])));
-            i += 3;
+    Vector<uint8_t, 256> ascii;
+    ascii.reserveInitialCapacity(bytes.size());
+    for (uint8_t byte : bytes) {
+        if (isASCII(byte)) {
+            ascii.append(byte);
         } else {
-            decoded.append(byte);
-            i += 1;
+            ascii.append('%');
+            ascii.append(upperNibbleToASCIIHexDigit(byte));
+            ascii.append(lowerNibbleToASCIIHexDigit(byte));
         }
     }
-    return String::fromUTF8ReplacingInvalidSequences(decoded.span());
+    return Bun::decodeURIComponentSIMD(ascii.span());
 }
 
 template<typename Res>

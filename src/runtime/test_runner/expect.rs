@@ -1104,10 +1104,9 @@ impl Expect {
             let line = core::ffi::c_ulong::from(srcloc.line);
             let col = core::ffi::c_ulong::from(srcloc.column);
 
-            // Two recordings for the same call site must agree. Detecting the
-            // conflict here fails the test itself; `write_inline_snapshots` only
-            // runs after the whole file, where it can no longer be attributed to
-            // a test and every reporter has already counted it as passing.
+            // Detect a value conflict at record time so the test itself fails;
+            // `write_inline_snapshots` runs after the whole file, too late to
+            // attribute the failure to a test or correct the reporter counts.
             if let Some(conflicting_value) =
                 runner
                     .snapshots

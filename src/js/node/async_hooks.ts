@@ -74,6 +74,16 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
   return $putInternalField($asyncContext, 0, contextValue);
 }
 
+// Scan only key slots in the [key, value, key, value, ...] context array.
+// A plain indexOf could match a value slot when an AsyncLocalStorage
+// instance is itself stored as another store's value.
+function indexOfKey(context: any[], key: AsyncLocalStorage): number {
+  for (var i = 0, len = context.length; i < len; i += 2) {
+    if (context[i] === key) return i;
+  }
+  return -1;
+}
+
 class AsyncLocalStorage {
   constructor() {
     setAsyncHooksEnabled(true);
@@ -148,9 +158,8 @@ class AsyncLocalStorage {
     } else {
       // it's safe to mutate context now that it was cloned
       context = context!.slice();
-      i = context.indexOf(this);
+      i = indexOfKey(context, this);
       if (i > -1) {
-        $assert(i % 2 === 0);
         hasPrevious = true;
         previous_value = context[i + 1];
         context[i + 1] = store_value;
@@ -175,9 +184,8 @@ class AsyncLocalStorage {
         set(undefined);
       } else if (context2) {
         context2 = context2.slice();
-        var j = context2.indexOf(this);
+        var j = indexOfKey(context2, this);
         if (j > -1) {
-          $assert(j % 2 === 0);
           if (hasPrevious) {
             context2[j + 1] = previous_value;
           } else {

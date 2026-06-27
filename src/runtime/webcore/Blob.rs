@@ -6057,7 +6057,8 @@ pub fn on_file_stream_resolve_request_stream(
     }
     // SAFETY: `this.sink` is the +1 ref held until Drop runs below.
     let written = unsafe { (*this.sink).written.get() } as f64;
-    this.promise.resolve(global_this, JSValue::js_number(written))?;
+    this.promise
+        .resolve(global_this, JSValue::js_number(written))?;
     Ok(JSValue::UNDEFINED)
 }
 

@@ -162,6 +162,8 @@ import.meta.hot.dispose(() => {
 | `dispose()` | Register a callback that runs just before this module is replaced. The callback receives `data`.        |
 | `accept()`  | No-op. Under `bun --hot` every module is re-evaluated on each change, so all modules implicitly accept. |
 
+Dispose callbacks run synchronously. Unlike the bundler's dev server, `bun --hot` does not await a Promise returned from a dispose callback before starting the next reload, so perform cleanup with synchronous APIs (such as `clearInterval`, `clearTimeout`, `worker.terminate()`, or `server.stop(true)`) rather than awaiting.
+
 The remaining Vite HMR methods (`decline`, `on`, `off`, `prune`, `invalidate`, `send`) exist as no-ops for compatibility with code written for Vite or Bun's bundler dev server.
 
 When not running under `--hot`, `import.meta.hot` is `undefined`, and direct calls like `import.meta.hot.dispose(cb)` are compiled away so that the same source runs either way. Guard with `if (import.meta.hot) { ... }` if you need the distinction at runtime.

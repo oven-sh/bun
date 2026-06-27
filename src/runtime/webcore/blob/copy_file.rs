@@ -327,8 +327,7 @@ impl<'a> CopyFile<'a> {
         }
 
         if self.offset == 0 {
-            if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, len as i64)
-            {
+            if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, len as i64) {
                 self.system_error = Some(err.to_system_error());
                 return Err(bun_core::errno_to_zig_err(err.errno as i32));
             }

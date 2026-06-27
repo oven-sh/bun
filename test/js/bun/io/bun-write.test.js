@@ -640,20 +640,17 @@ const IS_UV_FS_COPYFILE_DISABLED =
       },
     );
 
-    it.skipIf(isWindows)(
-      "Bun.write(path, Bun.file(path).slice(0, n)) truncates the file to n bytes",
-      async () => {
-        using dir = tempDir("bun-write-self-slice-head", {
-          "f.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-        });
-        const p = join(String(dir), "f.txt");
-        const written = await Bun.write(p, Bun.file(p).slice(0, 8));
-        expect({ written, content: fs.readFileSync(p, "utf8") }).toEqual({
-          written: 8,
-          content: "ABCDEFGH",
-        });
-      },
-    );
+    it.skipIf(isWindows)("Bun.write(path, Bun.file(path).slice(0, n)) truncates the file to n bytes", async () => {
+      using dir = tempDir("bun-write-self-slice-head", {
+        "f.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      });
+      const p = join(String(dir), "f.txt");
+      const written = await Bun.write(p, Bun.file(p).slice(0, 8));
+      expect({ written, content: fs.readFileSync(p, "utf8") }).toEqual({
+        written: 8,
+        content: "ABCDEFGH",
+      });
+    });
 
     it.skipIf(isWindows)(
       "Bun.write(path, Bun.file(path).slice(a, b)) works for windows larger than one read chunk",

@@ -4515,6 +4515,15 @@ fn write_file_with_empty_source_to_destination(
 
     match &destination_store.data {
         store::Data::File(file) => {
+            // Writing zero bytes to a caller-supplied fd is a no-op. Truncating
+            // here would wipe data already written to a redirected stdout/stderr
+            // and fails outright on pipes/char devices.
+            if matches!(file.pathlike, PathOrFileDescriptor::Fd(_)) {
+                return Ok(JSPromise::resolved_promise_value(
+                    ctx,
+                    JSValue::js_number(0.0),
+                ));
+            }
             // TODO: make this async
             // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
             // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
@@ -4532,15 +4541,22 @@ fn write_file_with_empty_source_to_destination(
 
             if let bun_sys::Result::Err(ref mut err) = result {
                 let errno = err.get_errno();
-                let mut was_eperm = false;
                 'err: {
                     let mut current = errno;
                     loop {
                         match current {
+                            // truncate(2) on a non-regular file (char device, FIFO,
+                            // socket) returns EINVAL. Writing zero bytes there is a
+                            // no-op, so resolve 0 to match the non-empty-source path.
+                            bun_sys::E::EINVAL => {
+                                return Ok(JSPromise::resolved_promise_value(
+                                    ctx,
+                                    JSValue::js_number(0.0),
+                                ));
+                            }
                             // truncate might return EPERM when the parent directory doesn't exist
                             // #6336
                             bun_sys::E::EPERM => {
-                                was_eperm = true;
                                 err.errno = bun_sys::E::ENOENT as _;
                                 current = bun_sys::E::ENOENT;
                                 continue;
@@ -4549,22 +4565,11 @@ fn write_file_with_empty_source_to_destination(
                                 if options.mkdirp_if_not_exists == Some(false) {
                                     break 'err;
                                 }
-                                let dirpath: &[u8] = match &file.pathlike {
-                                    PathOrFileDescriptor::Path(path) => {
-                                        match bun_core::dirname(path.slice()) {
-                                            Some(d) => d,
-                                            None => break 'err,
-                                        }
-                                    }
-                                    PathOrFileDescriptor::Fd(_) => {
-                                        // NOTE: if this is an fd, it means the file
-                                        // exists, so we shouldn't try to mkdir it
-                                        if was_eperm {
-                                            err.errno = bun_sys::E::EPERM as _;
-                                        }
-                                        break 'err;
-                                    }
-                                };
+                                let dirpath: &[u8] =
+                                    match bun_core::dirname(file.pathlike.path().slice()) {
+                                        Some(d) => d,
+                                        None => break 'err,
+                                    };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
                                         path: node::PathLike::String(
@@ -5453,11 +5458,11 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
     // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
-    let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
-    let written = core::cell::Cell::new(0usize);
-
     // we only truncate if it's a path
     // if it's a file descriptor, we assume they want manual control over that behavior
+    let truncate = core::cell::Cell::new(NEEDS_OPEN);
+    let written = core::cell::Cell::new(0usize);
+
     scopeguard::defer! {
         if truncate.get() {
             let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).expect("int cast"));
@@ -5537,7 +5542,9 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     // TODO: on windows this is always synchronous
 
-    let truncate = NEEDS_OPEN || bytes.is_empty();
+    // we only truncate if it's a path
+    // if it's a file descriptor, we assume they want manual control over that behavior
+    let truncate = NEEDS_OPEN;
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 

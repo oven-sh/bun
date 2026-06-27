@@ -326,6 +326,55 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
   });
 
+  describe("empty source", () => {
+    const emptySources = () => ["", new Uint8Array(0), new Blob([]), new Response(""), []];
+    const emptySourceExprs = [`""`, `new Uint8Array(0)`, `new Blob([])`, `new Response("")`, `[]`];
+
+    it.skipIf(isWindows)("to /dev/null resolves 0", async () => {
+      const results = [];
+      for (const src of emptySources()) {
+        results.push(await Bun.write(Bun.file("/dev/null"), src));
+      }
+      expect(results).toEqual([0, 0, 0, 0, 0]);
+    });
+
+    it("to a user-provided fd does not truncate", async () => {
+      using dir = tempDir("bun-write-empty-fd", { "out.txt": "" });
+      const p = path.join(String(dir), "out.txt");
+      const results = [];
+      for (const src of emptySources()) {
+        fs.writeFileSync(p, "EXISTING");
+        const fd = fs.openSync(p, "r+");
+        try {
+          results.push({ ret: await Bun.write(Bun.file(fd), src), contents: fs.readFileSync(p, "utf8") });
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
+      expect(results).toEqual(emptySourceExprs.map(() => ({ ret: 0, contents: "EXISTING" })));
+    });
+
+    it("to a regular-file path still empties the file", async () => {
+      using dir = tempDir("bun-write-empty-truncate", { "out.txt": "EXISTING" });
+      const p = path.join(String(dir), "out.txt");
+      for (const src of emptySources()) {
+        fs.writeFileSync(p, "EXISTING");
+        expect(await Bun.write(p, src)).toBe(0);
+        expect(fs.readFileSync(p, "utf8")).toBe("");
+      }
+    });
+
+    it("to a new path still creates an empty file", async () => {
+      using dir = tempDir("bun-write-empty-create", {});
+      let n = 0;
+      for (const src of emptySources()) {
+        const p = path.join(String(dir), `out-${n++}.txt`);
+        expect(await Bun.write(p, src)).toBe(0);
+        expect(fs.readFileSync(p, "utf8")).toBe("");
+      }
+    });
+  });
+
   // These tests pass by not throwing:
   it("Bun.write(Bun.stdout, Bun.file(path))", async () => {
     await Bun.write(Bun.stdout, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
@@ -594,4 +643,52 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
     expect(f.name).toBe(filePath);
   });
+});
+
+it("Bun.write(Bun.stdout, <empty source>) does not truncate the destination", async () => {
+  const emptySourceExprs = [`""`, `new Uint8Array(0)`, `new Blob([])`, `new Response("")`, `[]`];
+  const script = `
+    const fs = require("fs");
+    for (const src of [${emptySourceExprs.join(", ")}]) {
+      fs.writeSync(1, "BEFORE ");
+      const r = await Bun.write(Bun.stdout, src);
+      fs.writeSync(2, "ret=" + r + "\\n");
+      fs.writeSync(1, "AFTER\\n");
+    }
+  `;
+  const expectedStdout = "BEFORE AFTER\n".repeat(emptySourceExprs.length);
+  const expectedStderr = "ret=0\n".repeat(emptySourceExprs.length);
+
+  using dir = tempDir("bun-write-empty-stdout", {});
+  const out = path.join(String(dir), "out.txt");
+  {
+    // stdout redirected to a regular file: must not ftruncate it
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: Bun.file(out),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ out: fs.readFileSync(out, "utf8"), stderr, exitCode }).toEqual({
+      out: expectedStdout,
+      stderr: expectedStderr,
+      exitCode: 0,
+    });
+  }
+  {
+    // stdout is a pipe: must not reject with EINVAL
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expectedStdout,
+      stderr: expectedStderr,
+      exitCode: 0,
+    });
+  }
 });

@@ -1,6 +1,7 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
+#include "JSValueInWrappedObject.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/StrongInlines.h>
 
@@ -33,6 +34,15 @@ AsyncContextFrame* AsyncContextFrame::create(JSGlobalObject* global, JSValue cal
 JSC::Structure* AsyncContextFrame::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info());
+}
+
+void AsyncContextFrame::captureCurrentContext(JSGlobalObject* globalObject, WebCore::JSValueInWrappedObject& slot)
+{
+    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    // If there is no async context, do not snapshot it.
+    if (context.isUndefined())
+        return;
+    slot.setWeakly(context);
 }
 
 void AsyncContextFrame::captureCurrentContext(JSGlobalObject* globalObject, JSC::Strong<JSC::Unknown>& slot)

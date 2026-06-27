@@ -372,7 +372,7 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     // Listeners observe the async context that was active when this port was
     // created. entanglePorts() above stays outside: Node deserializes a
     // message's transferred ports before restoring the receiver's context.
-    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.get());
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
     dispatchEvent(event.event);
 }
 

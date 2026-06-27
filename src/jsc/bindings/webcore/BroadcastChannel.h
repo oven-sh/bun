@@ -39,8 +39,8 @@
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
+#include "JSValueInWrappedObject.h"
 #include "ScriptExecutionContext.h"
-#include <JavaScriptCore/Strong.h>
 #include <wtf/Forward.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 
@@ -80,6 +80,8 @@ public:
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
 
+    const JSValueInWrappedObject& creationAsyncContext() const { return m_creationAsyncContext; }
+
 private:
     friend class BunBroadcastChannelRegistry;
 
@@ -104,8 +106,8 @@ private:
     const ScriptExecutionContextIdentifier m_contextId;
 
     // The async context active when the channel was created, restored around
-    // dispatchMessage(). See AsyncContextFrame::captureCurrentContext.
-    JSC::Strong<JSC::Unknown> m_creationAsyncContext;
+    // dispatchMessage(). Visited by JSBroadcastChannel::visitChildrenImpl.
+    JSValueInWrappedObject m_creationAsyncContext;
 
     std::atomic<uint64_t> m_state { 0 };
 

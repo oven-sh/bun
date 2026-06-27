@@ -96,7 +96,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     }
     // Listeners observe the async context that was active when this channel
     // was created.
-    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.get());
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
     dispatchEvent(event.event);
 }
 

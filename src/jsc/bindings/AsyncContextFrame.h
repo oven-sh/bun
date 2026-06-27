@@ -6,6 +6,10 @@
 #include <JavaScriptCore/Strong.h>
 #include <wtf/Noncopyable.h>
 
+namespace WebCore {
+class JSValueInWrappedObject;
+}
+
 class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -20,14 +24,18 @@ public:
     static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
 
     // Snapshots the currently-active async context (the value AsyncLocalStorage
-    // is running with) into `slot`, for AsyncContextFrameScope to restore later.
-    // No-op when there is none, so `slot` never allocates a GC handle for it.
+    // is running with) into `slot`, for AsyncContextFrameScope to restore
+    // around a later asynchronous event dispatch. No-op when there is none.
     //
-    // `slot` must be a Strong: the value has to stay alive for as long as the
-    // owner can still dispatch, and the owner's JS wrapper is not a reliable
-    // root for that (a MessageChannel's ports have no wrapper until .port1 is
-    // first read, and an AbortSignal.any() timeout source's wrapper can be
-    // collected while its timer is still pending).
+    // Prefer the JSValueInWrappedObject overload and visit `slot` from the
+    // owner's JS wrapper. The snapshot can reference that wrapper (the user's
+    // store may hold the resource), so rooting it with a JSC::Strong on an
+    // object whose wrapper holds a Ref back to it forms an uncollectable
+    // native-to-GC cycle. Only use the Strong overload when a GC-independent
+    // release is guaranteed to run: AbortSignal.timeout() needs it (its abort
+    // is observed through a dependent AbortSignal.any() signal's wrapper, not
+    // its own) and its timer heap guarantees cancelTimer() drops the handle.
+    static void captureCurrentContext(JSC::JSGlobalObject* globalObject, WebCore::JSValueInWrappedObject& slot);
     static void captureCurrentContext(JSC::JSGlobalObject* globalObject, JSC::Strong<JSC::Unknown>& slot);
 
     // The following is JSC::call but

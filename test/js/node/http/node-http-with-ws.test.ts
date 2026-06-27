@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as options } from "harness";
+import http from "http";
 import https from "https";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer } from "ws";
@@ -57,6 +59,50 @@ test.concurrent("WebSocket upgrade should unref poll_ref from response", async (
   expect(stderr).not.toContain("BUG_DETECTED");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+test.concurrent("RST on a ws-upgraded connection emits 'error' ECONNRESET then 'close' on the socket", async () => {
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  const server = http.createServer();
+  const wss = new WebSocketServer({ server });
+  wss.on("connection", ws => ws.on("error", () => {}));
+  server.on("connection", socket => {
+    events.push("connection");
+    socket.on("end", () => events.push("socket-end"));
+    socket.on("error", (e: any) => events.push("socket-error " + e.code));
+    socket.on("close", () => {
+      events.push("socket-close");
+      closed.resolve();
+    });
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await new Promise<void>(resolve => server.once("listening", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    const client = net.connect(port, "127.0.0.1");
+    client.setNoDelay(true);
+    client.on("error", () => {});
+    client.on("connect", () => {
+      client.write(
+        `GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n` +
+          "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+    });
+    let buf = "";
+    client.on("data", chunk => {
+      buf += chunk.toString("latin1");
+      // Reset once the 101 handshake is complete so the server-side close is
+      // driven by a recv() error, not a FIN.
+      if (buf.includes("\r\n\r\n")) client.resetAndDestroy();
+    });
+    await closed.promise;
+    expect(events).toEqual(["connection", "socket-error ECONNRESET", "socket-close"]);
+  } finally {
+    wss.close();
+    server.close();
+  }
 });
 
 test.concurrent("should not crash when closing sockets after upgrade", async () => {

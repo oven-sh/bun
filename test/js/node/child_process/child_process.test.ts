@@ -58,6 +58,70 @@ describe("ChildProcess.spawn()", () => {
     });
     expect(result).toBe(true);
   });
+
+  it("kill() on a running process returns true and sets .killed", async () => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+    await new Promise((resolve, reject) => {
+      child.on("spawn", resolve);
+      child.on("error", reject);
+    });
+    try {
+      expect(child.killed).toBe(false);
+      expect(child.kill(0)).toBe(true);
+      expect(child.kill()).toBe(true);
+      expect(child.killed).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+    }
+    await new Promise(resolve => child.on("close", resolve));
+  });
+
+  it("kill() after the process has exited returns false and does not set .killed", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { stdio: "ignore", env: bunEnv });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    child.on("error", reject);
+    child.on("close", () => resolve());
+    await promise;
+
+    expect({
+      exitCode: child.exitCode,
+      "kill()": child.kill(),
+      "kill(0)": child.kill(0),
+      "kill('SIGTERM')": child.kill("SIGTERM"),
+      killed: child.killed,
+    }).toEqual({
+      exitCode: 0,
+      "kill()": false,
+      "kill(0)": false,
+      "kill('SIGTERM')": false,
+      killed: false,
+    });
+  });
+
+  it("kill() after the process was killed returns false but .killed stays true", async () => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+    await new Promise((resolve, reject) => {
+      child.on("spawn", resolve);
+      child.on("error", reject);
+    });
+    expect(child.kill()).toBe(true);
+    expect(child.killed).toBe(true);
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    child.on("error", reject);
+    child.on("close", () => resolve());
+    await promise;
+
+    expect({
+      "kill()": child.kill(),
+      "kill(0)": child.kill(0),
+      killed: child.killed,
+    }).toEqual({
+      "kill()": false,
+      "kill(0)": false,
+      killed: true,
+    });
+  });
 });
 
 describe("spawn()", () => {

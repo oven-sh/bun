@@ -1552,9 +1552,11 @@ class ChildProcess extends EventEmitter {
 
     const handle = this.#handle;
     if (handle) {
+      // Bun.spawn's `killed` is true once the process has exited or been
+      // terminated by a signal. Node treats kill() on a dead process as
+      // ESRCH: return false and leave `.killed` untouched.
       if (handle.killed) {
-        this.killed = true;
-        return true;
+        return false;
       }
 
       try {

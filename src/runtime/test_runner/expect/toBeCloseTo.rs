@@ -45,24 +45,19 @@ impl Expect {
             return Err(global.throw_invalid_argument_type("expect", "received", "number"));
         }
 
-        let mut expected = expected_.as_number();
-        let mut received = received_.as_number();
-
-        if expected == f64::NEG_INFINITY {
-            expected = -expected;
-        }
-
-        if received == f64::NEG_INFINITY {
-            received = -received;
-        }
-
-        if expected == f64::INFINITY && received == f64::INFINITY {
-            return Ok(JSValue::UNDEFINED);
-        }
+        let expected = expected_.as_number();
+        let received = received_.as_number();
 
         let expected_diff = 10.0_f64.powf(-precision) / 2.0;
         let actual_diff = (received - expected).abs();
-        let mut pass = actual_diff < expected_diff;
+        // Infinity - Infinity and (-Infinity) - (-Infinity) are NaN, so the
+        // difference comparison would never pass. Match jest: two infinities
+        // of the same sign are "close"; opposite signs (or one finite) are not.
+        let mut pass = if received.is_infinite() && expected.is_infinite() {
+            received == expected
+        } else {
+            actual_diff < expected_diff
+        };
 
         let not = this.flags.get().not();
         if not {

@@ -3528,6 +3528,80 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // Jest's subsetEquality treats Date/Error/Set/Map on the expected side as
+    // leaf values compared with equals(), not recursed into by key.
+    test("Date/Error/Set/Map leaf values are compared, not subset-matched", () => {
+      expect({ d: new Date(5) }).toMatchObject({ d: new Date(5) });
+      expect({ d: new Date(5) }).not.toMatchObject({ d: new Date(6) });
+      expect({ a: { d: new Date(5) } }).toMatchObject({ a: { d: new Date(5) } });
+      expect({ a: { d: new Date(5) } }).not.toMatchObject({ a: { d: new Date(6) } });
+      expect({ a: [new Date(5)] }).toMatchObject({ a: [new Date(5)] });
+      expect({ a: [new Date(5)] }).not.toMatchObject({ a: [new Date(6)] });
+      expect({ d: { x: 1 } }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: new Date(5) }).not.toMatchObject({ d: { x: 1 } });
+
+      expect({ e: new Error("x") }).toMatchObject({ e: new Error("x") });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: new Error("y") });
+      expect({ e: new TypeError("x") }).not.toMatchObject({ e: new Error("y") });
+
+      expect({ s: new Set([1, 2]) }).toMatchObject({ s: new Set([1, 2]) });
+      expect({ s: new Set([1, 2]) }).not.toMatchObject({ s: new Set([1, 3]) });
+      expect({ s: new Set([1, 2, 3]) }).not.toMatchObject({ s: new Set([1, 2]) });
+
+      expect({ m: new Map([[1, 2]]) }).toMatchObject({ m: new Map([[1, 2]]) });
+      expect({ m: new Map([[1, 2]]) }).not.toMatchObject({ m: new Map([[1, 3]]) });
+
+      expect(new Date(5)).toMatchObject(new Date(5));
+      expect(new Date(5)).not.toMatchObject(new Date(6));
+      expect(new Set([1])).toMatchObject(new Set([1]));
+      expect(new Set([1])).not.toMatchObject(new Set([2]));
+    });
+
+    if (isBun) {
+      test("Bun.deepMatch Date/Error/Set/Map leaf values", () => {
+        expect(Bun.deepMatch({ d: new Date(5) }, { d: new Date(5) })).toBe(true);
+        expect(Bun.deepMatch({ d: new Date(5) }, { d: new Date(6) })).toBe(false);
+        expect(Bun.deepMatch({ e: new Error("x") }, { e: new Error("x") })).toBe(true);
+        expect(Bun.deepMatch({ e: new Error("x") }, { e: new Error("y") })).toBe(false);
+        expect(Bun.deepMatch({ s: new Set([1, 2]) }, { s: new Set([1, 2]) })).toBe(true);
+        expect(Bun.deepMatch({ s: new Set([1, 2]) }, { s: new Set([1, 3]) })).toBe(false);
+        expect(Bun.deepMatch({ m: new Map([[1, 2]]) }, { m: new Map([[1, 2]]) })).toBe(true);
+        expect(Bun.deepMatch({ m: new Map([[1, 2]]) }, { m: new Map([[1, 3]]) })).toBe(false);
+      });
+    }
+  });
+
+  describe("toBeCloseTo()", () => {
+    it.each([
+      [0, 0],
+      [0, 0.001],
+      [1.23, 1.229],
+      [1.23, 1.226],
+      [1.23, 1.225],
+      [1.23, 1.234],
+      [Infinity, Infinity],
+      [-Infinity, -Infinity],
+    ])("expect(%p).toBeCloseTo(%p)", (a, b) => {
+      expect(a).toBeCloseTo(b);
+      expect(b).toBeCloseTo(a);
+      expect(() => expect(a).not.toBeCloseTo(b)).toThrow();
+      expect(() => expect(b).not.toBeCloseTo(a)).toThrow();
+    });
+
+    it.each([
+      [Infinity, -Infinity],
+      [-Infinity, Infinity],
+      [Infinity, 1.23],
+      [-Infinity, -1.23],
+      [0, 0.01],
+      [1, 1.23],
+    ])("expect(%p).not.toBeCloseTo(%p)", (a, b) => {
+      expect(a).not.toBeCloseTo(b);
+      expect(b).not.toBeCloseTo(a);
+      expect(() => expect(a).toBeCloseTo(b)).toThrow();
+      expect(() => expect(b).toBeCloseTo(a)).toThrow();
+    });
   });
 
   describe("toMatch()", () => {

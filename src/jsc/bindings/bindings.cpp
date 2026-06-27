@@ -1630,6 +1630,23 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
+    // Jest's subsetEquality only recurses into plain key-bearing objects on the
+    // subset side. Date, Error, Set and Map are compared with deep equals; two
+    // unequal Dates have no enumerable own properties and would otherwise
+    // vacuously match.
+    switch (subsetObj->type()) {
+    case JSDateType:
+    case ErrorInstanceType:
+    case JSSetType:
+    case JSMapType: {
+        Vector<std::pair<JSValue, JSValue>, 16> stack;
+        MarkedArgumentBuffer args;
+        RELEASE_AND_RETURN(throwScope, (Bun__deepEquals<false, enableAsymmetricMatchers>(globalObject, objValue, subsetValue, args, stack, throwScope, true)));
+    }
+    default:
+        break;
+    }
+
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);

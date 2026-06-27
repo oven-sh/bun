@@ -267,10 +267,9 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
 });
 
-// X9.62 hybrid point encoding (leading byte 0x06/0x07). BoringSSL rejects the
-// form; the runtime translates to and from the equivalent uncompressed form.
-// Fixed private keys keep the tests deterministic; the hybrid/uncompressed
-// encodings and the shared secret below were produced by Node.js 26.
+// X9.62 hybrid point encoding (leading byte 0x06/0x07), which BoringSSL
+// rejects; the runtime translates it to and from the uncompressed form. Fixed
+// private keys; the encodings and shared secret below come from Node.js 26.
 const hybridAPrivate = "0102030405060708091011121314151617181920212223242526272829303132";
 const hybridBPrivate = "a1a2a3a4a5a6a7a8a9b0b1b2b3b4b5b6b7b8b9c0c1c2c3c4c5c6c7c8c9d0d1d2";
 const hybridBPublic =

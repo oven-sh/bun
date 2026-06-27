@@ -1879,12 +1879,9 @@ describe("rsa-pss keys", () => {
   });
 
   test("extracts the rsa-pss key from an X.509 certificate", () => {
-    // Generated with OpenSSL 3:
-    //   openssl genpkey -algorithm rsa-pss -pkeyopt rsa_keygen_bits:2048 \
-    //     -pkeyopt rsa_pss_keygen_md:sha256 -pkeyopt rsa_pss_keygen_mgf1_md:sha256 \
-    //     -pkeyopt rsa_pss_keygen_saltlen:32 -out key.pem
-    //   openssl req -new -x509 -key key.pem -sha256 -sigopt rsa_padding_mode:pss \
-    //     -days 36500 -subj "/CN=bun-rsa-pss-test" -out cert.pem
+    // An id-RSASSA-PSS (sha256/sha256/32) key and self-signed certificate made
+    // with OpenSSL 3's `genpkey -algorithm rsa-pss` + `req -new -x509 -sigopt
+    // rsa_padding_mode:pss`. The exact commands are in the PR description.
     const keyPem = `-----BEGIN PRIVATE KEY-----
 MIIE8QIBADBBBgkqhkiG9w0BAQowNKAPMA0GCWCGSAFlAwQCAQUAoRwwGgYJKoZI
 hvcNAQEIMA0GCWCGSAFlAwQCAQUAogMCASAEggSnMIIEowIBAAKCAQEAxvrPNPGA

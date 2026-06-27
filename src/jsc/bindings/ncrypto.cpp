@@ -56,9 +56,8 @@ std::span<const EVP_PKEY_ALG* const> rsaPssAlgorithms()
 }
 
 // Retries a SubjectPublicKeyInfo parse the default algorithm list rejected,
-// allowing id-RSASSA-PSS. On success the error queue is cleared (callers
-// treat a non-empty queue as failure); on failure the default parser's
-// error stays oldest so ERR_peek_error still reports the original cause.
+// allowing id-RSASSA-PSS. Clears the error queue on success (callers treat a
+// non-empty queue as failure); on failure the default parser's stays oldest.
 EVP_PKEY* parseRsaPssSubjectPublicKeyInfo(const unsigned char* data, size_t len)
 {
     auto algs = rsaPssAlgorithms();
@@ -2659,10 +2658,9 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
             PasswordCallback,
             config.passphrase.has_value() ? &passphrase : nullptr);
         if (key == nullptr) {
-            // BoringSSL rejects id-RSASSA-PSS keys; an unencrypted
-            // "PRIVATE KEY" block carrying one can be retried with the
-            // explicit algorithm list. Encrypted blocks never match here,
-            // so a bad-passphrase failure stays oldest for keyOrError.
+            // BoringSSL rejects id-RSASSA-PSS keys; retry an unencrypted
+            // "PRIVATE KEY" block with the explicit algorithm list. Encrypted
+            // blocks never match, so a bad-passphrase error stays oldest.
             auto retryBio = BIOPointer::New(buffer);
             unsigned char* der = nullptr;
             long derLen = 0; // NOLINT(runtime/int)

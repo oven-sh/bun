@@ -1910,8 +1910,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let joined = work_item_logical_path(&subdir_entry_name);
         let entry_start: u32 =
             u32::try_from(joined.len() - strings::basename(joined).len()).unwrap();
-        self.workbuf
-            .push(WorkItem::new_symlink(subdir_entry_name, active, entry_start));
+        self.workbuf.push(WorkItem::new_symlink(
+            subdir_entry_name,
+            active,
+            entry_start,
+        ));
         Ok(())
     }
 

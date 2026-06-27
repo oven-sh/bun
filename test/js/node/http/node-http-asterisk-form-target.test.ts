@@ -3,12 +3,8 @@ import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
 
-// RFC 9112 3.2.4: the asterisk-form request-target ("*") identifies the
-// server as a whole and is sent by `OPTIONS * HTTP/1.1`. The request-line
-// parser only accepted targets beginning with "/", so asterisk-form requests
-// were answered with 400 Bad Request before ever reaching the handler. Node
-// (llhttp) delivers them with `req.url === "*"`, for any method, so Bun does
-// the same.
+// RFC 9112 3.2.4: the asterisk-form request-target (`OPTIONS * HTTP/1.1`).
+// Node (llhttp) delivers it verbatim as `req.url === "*"` for any method.
 
 async function writeAndCollect(port: number, requestLine: string) {
   const client = net.connect(port);
@@ -60,8 +56,7 @@ describe("node:http server", () => {
 });
 
 describe("Bun.serve", () => {
-  // Bun.serve shares the same request-line parser, so it was rejecting
-  // asterisk-form targets too.
+  // Bun.serve shares the same request-line parser as node:http.
   test("delivers `OPTIONS * HTTP/1.1` to fetch()", async () => {
     const { promise: handled, resolve } = Promise.withResolvers<string>();
     await using server = Bun.serve({

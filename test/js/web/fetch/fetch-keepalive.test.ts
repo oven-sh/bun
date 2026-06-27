@@ -169,3 +169,140 @@ test("PUT with a ReadableStream body is not retried on keep-alive disconnect", a
     exitCode: 0,
   });
 });
+
+// A server may send its final response (401, 413, ...) while a chunked
+// ReadableStream request body is still uploading. That connection is then
+// mid-message: the terminating 0\r\n\r\n was never written, so the server is
+// still parsing it as the request body. It must be closed, never pooled --
+// a pooled reuse writes the NEXT fetch's request line and credential headers
+// (Authorization, Cookie) into the PREVIOUS request's body. Subprocess so the
+// poisoned pool can't leak into other tests.
+test("an early response to a streaming POST closes the socket instead of pooling it mid-chunked-body", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      const connections = [];
+      const server = net.createServer(sock => {
+        const rec = { bytes: [], responded: false };
+        connections.push(rec);
+        sock.on("error", () => {});
+        sock.on("data", d => {
+          rec.bytes.push(d);
+          if (!rec.responded) {
+            rec.responded = true;
+            // Final response long before the chunked upload is done.
+            sock.write("HTTP/1.1 401 Unauthorized\\r\\nContent-Length: 0\\r\\n\\r\\n");
+          } else {
+            // A second burst on an already-answered connection means the next
+            // request was written into the previous request's body. Reply with
+            // a marker status so the poisoned follow-up fetch observes it
+            // instead of hanging.
+            sock.write("HTTP/1.1 299 Poisoned\\r\\nContent-Length: 0\\r\\n\\r\\n");
+          }
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await new Promise(r => server.on("listening", r));
+      const url = "http://127.0.0.1:" + server.address().port + "/";
+
+      // One chunk, then stall: the chunked message never gets its terminator.
+      let stall;
+      const res1 = await fetch(url, {
+        method: "POST",
+        duplex: "half",
+        body: new ReadableStream({
+          pull(c) {
+            if (!stall) {
+              c.enqueue(new TextEncoder().encode("AAAA"));
+              stall = new Promise(() => {});
+            }
+            return stall;
+          },
+        }),
+      });
+      const res2 = await fetch(url, { headers: { Authorization: "Bearer SECRET" } });
+      const conn0 = Buffer.concat(connections[0].bytes).toString("latin1");
+      console.log(JSON.stringify({
+        status1: res1.status,
+        status2: res2.status,
+        connections: connections.length,
+        authLeakedIntoFirstBody: conn0.includes("Authorization: Bearer SECRET"),
+      }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    // Without the fix the 401'd connection is pooled: the second fetch is
+    // written onto it (connections === 1), its request line and Authorization
+    // header land inside request 1's chunked body on the wire, and it
+    // resolves with the server's second-burst reply (299) instead of 401.
+    result: { status1: 401, status2: 401, connections: 2, authLeakedIntoFirstBody: false },
+    exitCode: 0,
+  });
+});
+
+// Negative contract for the gate above: a streamed POST whose chunked body
+// completed (terminator written) before the response arrived must still hand
+// its connection back to the keep-alive pool.
+test("a completed streaming POST keeps its connection in the keep-alive pool", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      let connections = 0;
+      const server = net.createServer(sock => {
+        connections++;
+        sock.on("error", () => {});
+        let buf = "";
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          // One response per fully-received chunked message (terminator seen).
+          while (buf.includes("0\\r\\n\\r\\n")) {
+            buf = buf.slice(buf.indexOf("0\\r\\n\\r\\n") + 5);
+            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+          }
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await new Promise(r => server.on("listening", r));
+      const url = "http://127.0.0.1:" + server.address().port + "/";
+
+      const results = [];
+      for (let i = 0; i < 8; i++) {
+        const body = new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("hello"));
+            c.close();
+          },
+        });
+        const res = await fetch(url, { method: "POST", duplex: "half", body });
+        results.push(res.status, await res.text());
+      }
+      console.log(JSON.stringify({ results, connections }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { results: Array(8).fill([200, "ok"]).flat(), connections: 1 },
+    exitCode: 0,
+  });
+});

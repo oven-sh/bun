@@ -2934,6 +2934,12 @@ impl<'a> HTTPClient<'a> {
         let was_empty = buffer.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
+            //
+            // An earlier flush already drained the terminating 0\r\n\r\n, so
+            // the request message is complete. Mark the stage Done for the
+            // keep-alive / redirect pooling gates, matching the
+            // `ended && !has_backpressure` exit below.
+            self.state.request_stage = RequestStage::Done;
             stream_buffer.release();
             self.request_stream_detach();
             if upgrade_state == HTTPUpgradeState::Upgraded {
@@ -3973,14 +3979,21 @@ impl<'a> HTTPClient<'a> {
             // wire, which the server then mis-parses. The redirect path
             // (do_redirect) already gates on request_stage == Done for exactly
             // this reason; mirror that gate here for the non-redirect
-            // completion path. `request_stage` alone is insufficient because
-            // a fully-sent small request parks at `.body` (see on_writable),
-            // so for byte-buffer bodies check the unsent slice instead.
-            // Stream/Sendfile are left as-is (they don't track an
-            // unsent slice here).
+            // completion path. `request_stage` alone is insufficient for
+            // byte-buffer bodies because a fully-sent small request parks at
+            // `.body` (see on_writable), so check the unsent slice instead.
+            //
+            // For a Stream the socket carries an incomplete chunked message
+            // (no terminating 0\r\n\r\n), so a pooled reuse writes the next
+            // request's line and credential headers INTO that body (RFC 9112
+            // section 9.3: the client must close instead). Both of
+            // write_to_stream's stream-complete exits set request_stage =
+            // Done, so Done is the reliable signal for Stream and Sendfile.
             let request_side_drained = match &self.state.original_request_body {
                 HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
-                _ => true,
+                HTTPRequestBody::Stream(_) | HTTPRequestBody::Sendfile(_) => {
+                    self.state.request_stage == RequestStage::Done
+                }
             };
 
             // The uSockets paused bit survives `state.reset()`; never hand a

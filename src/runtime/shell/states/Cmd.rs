@@ -27,11 +27,6 @@ pub struct Cmd {
     pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
     pub exit_code: Option<ExitCode>,
-    /// There is no spawn arena to free (argv is heap-allocated as
-    /// `Vec<Vec<u8>>`), but the flag is kept to preserve
-    /// `bufferedOutputClose`'s control-flow split (post-spawn vs pre-spawn
-    /// completion).
-    pub spawn_arena_freed: bool,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -221,7 +216,6 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
-            spawn_arena_freed: false,
         }))
     }
 
@@ -581,12 +575,13 @@ impl Cmd {
         // with the correct `child` once `spawn_async` writes through
         // `out_subproc`. `interp` is left null until `spawn_async` and the
         // `did_exit_immediately` handling have returned: a synchronous
-        // `Cmd::on_exit` reached via the process exit handler would otherwise
-        // drive the trampoline (`Yield::run(&*interp)`) while this frame
-        // still holds `&Interpreter`, tearing the Cmd down (and freeing
+        // `Cmd::on_exit` (process exit handler) or `Cmd::buffered_output_close`
+        // (an eager `read_all` on a pipe erroring inside the spawn) would
+        // otherwise drive the trampoline (`Yield::run(&*interp)`) while this
+        // frame still holds `&Interpreter`, tearing the Cmd down (and freeing
         // `child`) underneath the live `subproc` borrow. With `interp` null,
-        // `on_exit` records `exit_code`/`state = Done` and returns; we resume
-        // via the Yield we hand back below.
+        // both record `exit_code`/`state = Done` and return; we resume via
+        // the Yield we hand back below.
         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let buffered_closed = BufferedIoClosed::from_stdio(&spawn_args.stdio);
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
@@ -660,9 +655,7 @@ impl Cmd {
         // pointer into `*child_out` (== `sub.child`); valid until `Cmd::deinit`
         // reclaims the box. Single-threaded.
         let subproc = unsafe { &mut *child };
-        // Ordering: `subproc.ref()` precedes `spawn_arena_freed = true`.
         subproc.r#ref();
-        interp.as_cmd_mut(this).spawn_arena_freed = true;
         drop(arena);
 
         if did_exit_immediately {
@@ -912,8 +905,7 @@ impl Cmd {
             // subprocess box was returned. Nothing to tear down.
             Exec::Subproc(_) => {}
         }
-        // Argv/env are heap-owned `Vec`s; there is no spawn arena to free (see
-        // `spawn_arena_freed`).
+        // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
         // `Pipeline::child_done` before this runs) — never freed here.
         me.base.end_scope();
@@ -965,18 +957,18 @@ impl Cmd {
             // `*mut Interpreter` it already holds, landing in `Cmd::next` →
             // `CmdState::Done` → `interp.child_done(...)`.
             self.state = CmdState::Done;
-            let this_id = match &self.exec {
-                Exec::Subproc(sub) => sub.this_id,
+            let (interp, this_id) = match &self.exec {
+                Exec::Subproc(sub) => (sub.interp, sub.this_id),
                 // Only the subprocess path calls this; builtin output goes
                 // through `Builtin::done` → `on_exec_done`.
                 _ => return Yield::suspended(),
             };
-            // The `!spawn_arena_freed` arm
-            // (`ShellAsyncSubprocessDone::enqueue`) is unreachable here in
-            // practice — `initSubproc` sets `spawn_arena_freed = true` before
-            // any pipe can close. Kept as the same `Yield::Next` since the
-            // task body (`runFromMainThread`) is identical.
-            let _ = self.spawn_arena_freed;
+            // Same gate as `on_exit`: `exec.interp` stays null until the spawn
+            // returns, so a Yield run here would reach `Cmd::deinit` and free the
+            // `ShellSubprocess` still on the spawn frame. `transition_to_exec` resumes.
+            if interp.is_null() {
+                return Yield::suspended();
+            }
             return Yield::Next(this_id);
         }
         Yield::suspended()

@@ -1657,7 +1657,9 @@ pub(super) extern "C" fn napi_create_date(
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
-    let mut args = [JSValue::js_number(time).as_object_ref()];
+    // The addon controls every bit of `time`. Purify before boxing: the Date
+    // constructor receives this JSValue before any timeClip runs.
+    let mut args = [JSValue::js_number(JSValue::purify_nan(time)).as_object_ref()];
     result.set(
         env,
         // SAFETY: `args` is a stack array of one valid JSValueRef; FFI constructs a Date.

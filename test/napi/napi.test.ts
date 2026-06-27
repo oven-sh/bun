@@ -961,7 +961,8 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
         "test_is_arraybuffer",
         "[new ArrayBuffer(8), new SharedArrayBuffer(8), new Uint8Array(8)]",
       );
-      expect(output.split("\n")).toEqual([
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/)).toEqual([
         "napi_is_arraybuffer=true napi_get_arraybuffer_info=0",
         "napi_is_arraybuffer=false napi_get_arraybuffer_info=0",
         "napi_is_arraybuffer=false napi_get_arraybuffer_info=1",

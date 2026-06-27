@@ -96,6 +96,11 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 // if any but not all are set this value is a double precision number.
 #define NumberTag 0xfffe000000000000ll
 
+// The canonical quiet NaN (PureNaN.h). This is the only NaN that is safe to
+// NaN-box: any other payload can collide with the tag ranges above and decode
+// as a cell pointer, an immediate, or an Int32 instead of a double.
+#define PureNaN   0x7ff8000000000000ll
+
 typedef  void* JSCell;
 
 typedef union EncodedJSValue {
@@ -252,6 +257,11 @@ static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
    EncodedJSValue res;
    res.asDouble = val;
+   // Mirrors JSC's purifyNaN(): a NaN payload taken from native memory would
+   // otherwise be NaN-boxed as-is and decode as a forged JSValue.
+   if (val != val) {
+     res.asInt64 = PureNaN;
+   }
    res.asInt64 += DoubleEncodeOffset;
    return res;
 }
@@ -291,6 +301,13 @@ static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
 
 
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) {
+  // Numbers that fit in an int32 are int32-tagged, not double-encoded
+  // (see JSVALUE_TO_INT64). Subtracting DoubleEncodeOffset from an
+  // int32-tagged value yields an impure NaN, not the number.
+  if (JSVALUE_IS_INT32(val)) {
+    return (double)JSVALUE_TO_INT32(val);
+  }
+
   val.asInt64 -= DoubleEncodeOffset;
   return val.asDouble;
 }

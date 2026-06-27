@@ -244,6 +244,87 @@ describe("ES Decorators", () => {
     });
   });
 
+  describe("non-ASCII string-literal keys", () => {
+    // Supra-BMP code points are stored as UTF-16 in the AST; the lowering must
+    // not reinterpret those bytes as UTF-8 when it builds `this[key]`.
+    const key = "\u{20BB7}\u{91BB6}";
+
+    test("Bun.Transpiler output preserves the key", () => {
+      const t = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true });
+      const out = t.transformSync(`class A{@(() => {})\n"\\u{20BB7}\\u{91BB6}"\n}`);
+      // The key appears twice in the lowered output (constructor assignment and
+      // __decorateElement call) and must be the same string both times, either
+      // as literal UTF-8 or as \uXXXX escapes of the correct surrogate pair.
+      const normalized = out.replace(/\\uD842\\uDFB7\\uDA06\\uDFB6/gi, key);
+      expect(normalized.split(key).length - 1).toBe(2);
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(out)).not.toThrow();
+    });
+
+    test("decorated instance field with supra-BMP key is assigned correctly", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) {
+          console.log(ctx.kind, JSON.stringify(ctx.name));
+          return (init) => init * 2;
+        }
+        class Foo {
+          @dec "\\u{20BB7}\\u{91BB6}" = 21;
+        }
+        const f = new Foo();
+        console.log(f[${JSON.stringify(key)}]);
+        console.log(Object.getOwnPropertyNames(f).map(n => JSON.stringify(n)).join(","));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`field ${JSON.stringify(key)}\n42\n${JSON.stringify(key)}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated static field with supra-BMP key is assigned correctly", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return (init) => init + 1; }
+        class Foo {
+          @dec static "\\u{20BB7}\\u{91BB6}" = 9;
+        }
+        console.log(Foo[${JSON.stringify(key)}]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated accessor with supra-BMP key works", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(target, ctx) {
+          console.log(ctx.kind, JSON.stringify(ctx.name));
+          return target;
+        }
+        class Foo {
+          @dec accessor "\\u{20BB7}\\u{91BB6}" = 7;
+        }
+        const f = new Foo();
+        console.log(f[${JSON.stringify(key)}]);
+        f[${JSON.stringify(key)}] = 99;
+        console.log(f[${JSON.stringify(key)}]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`accessor ${JSON.stringify(key)}\n7\n99\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("undecorated accessor with supra-BMP key in a decorated class works", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(cls, ctx) { return cls; }
+        @dec class Foo {
+          accessor "\\u{20BB7}\\u{91BB6}" = 3;
+        }
+        const f = new Foo();
+        console.log(f[${JSON.stringify(key)}]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("decorator ordering", () => {
     test("decorators on different elements evaluate in source order", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`

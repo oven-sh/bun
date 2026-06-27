@@ -212,6 +212,10 @@ unsafe extern "C" {
     pub fn simdutf__count_utf16be(buf: *const u16, length: usize) -> usize;
     pub fn simdutf__count_utf8(buf: *const u8, length: usize) -> usize;
     pub(crate) fn simdutf__utf8_length_from_utf16le(input: *const u16, length: usize) -> usize;
+    pub(crate) fn simdutf__utf8_length_from_utf16le_with_replacement(
+        input: *const u16,
+        length: usize,
+    ) -> usize;
     pub fn simdutf__utf8_length_from_utf16be(input: *const u16, length: usize) -> usize;
     pub(crate) fn simdutf__utf32_length_from_utf16le(input: *const u16, length: usize) -> usize;
     pub fn simdutf__utf32_length_from_utf16be(input: *const u16, length: usize) -> usize;
@@ -604,6 +608,18 @@ pub mod length {
                 pub fn le(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
                     unsafe { simdutf__utf8_length_from_utf16le(input.as_ptr(), input.len()) }
+                }
+                /// Like [`le`], but charges 3 bytes (U+FFFD) per unpaired
+                /// surrogate instead of assuming valid UTF-16. This is the
+                /// exact byte count produced by the replacement encoder.
+                pub fn le_with_replacement(input: &[u16]) -> usize {
+                    // SAFETY: input is a valid slice; FFI reads exactly len u16s.
+                    unsafe {
+                        simdutf__utf8_length_from_utf16le_with_replacement(
+                            input.as_ptr(),
+                            input.len(),
+                        )
+                    }
                 }
                 pub fn be(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.

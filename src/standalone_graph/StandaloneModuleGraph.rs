@@ -990,8 +990,8 @@ pub(crate) fn to_bytes(
 
         // Windows: store the key with `/`. The template printer emits native
         // `\` into `dest_path`, but `find_assume_standalone_path` normalizes
-        // lookups to `/`, so a `\` key would miss (ENOENT). Zig normalized this
-        // in place in `Chunk.zig`; the Rust port only normalizes a scratch copy.
+        // lookups to `/`, so a `\` key would miss (ENOENT). `src/bundler/Chunk.rs`
+        // only normalizes a scratch copy, so we re-normalize here.
         #[cfg(windows)]
         let mut dest_path_buf = PathBuffer::uninit();
         #[cfg(windows)]

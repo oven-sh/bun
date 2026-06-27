@@ -1182,7 +1182,7 @@ impl Handlers {
 }
 
 pub use JSH2FrameParser::get_constructor as H2FrameParserConstructor;
-/// snake_case alias for the codegen'd `$zig(h2_frame_parser.zig, H2FrameParserConstructor)`
+/// snake_case alias for the codegen'd `$rust(h2_frame_parser.rs, H2FrameParserConstructor)`
 /// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
 pub use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
 
@@ -2925,8 +2925,8 @@ impl H2FrameParser {
         // (UnsafeCell-backed), so the `*mut` cast is signature-only.
         let _keepalive = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
 
-        self.uncork();
-        let mut written = match self.native_socket.get() {
+        let mut written = self.uncork();
+        written += match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
                 self._generic_flush(socket.get())
             }
@@ -3043,33 +3043,41 @@ impl H2FrameParser {
         self.write_buffer.get().len_u32() > 0 || self.has_nonnative_backpressure.get()
     }
 
-    fn uncork(&self) {
-        if let Some(corked_ptr) = CORKED_H2.with(|c| c.get()) {
-            // SAFETY: CORKED_H2 holds a ref()'d *mut H2FrameParser, valid until the matching
-            // deref() below. R-2: deref as shared (`&*const`) — every method below takes `&self`.
-            let corked: &H2FrameParser = unsafe { &*corked_ptr.cast_const() };
-            corked.unregister_auto_flush();
-            bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
-
-            CORKED_H2.with(|c| c.set(None));
-
-            // _write can re-enter JS (JS-stream-backed sockets, h2-over-h2 tunnels),
-            // so no thread-local borrow may be held across it: move the corked bytes
-            // into a taken scratch Vec first.
-            let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
-            data.clear();
-            corked.drain_cork_into(&mut data);
-            if !data.is_empty() {
-                let _ = corked._write(&data);
-                data.clear();
-            }
-            BATCH_BUFFER.with_borrow_mut(|b| {
-                if b.capacity() == 0 {
-                    *b = data;
-                }
-            });
-            corked.deref();
+    fn uncork(&self) -> usize {
+        let Some(corked_ptr) = CORKED_H2.with(|c| c.get()) else {
+            return 0;
+        };
+        if !std::ptr::eq(corked_ptr, self.as_ctx_ptr()) {
+            // Another parser owns the cork slot; its own auto_flush /
+            // on_native_writable will drain it. Draining it here writes to a
+            // foreign fd from inside self's writable callback and tears down
+            // the other parser's auto-flush registration. cork()'s
+            // force-uncork already handles slot handover when a new owner
+            // takes it.
+            return 0;
         }
+        self.unregister_auto_flush();
+        bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
+        CORKED_H2.with(|c| c.set(None));
+
+        // _write can re-enter JS (JS-stream-backed sockets, h2-over-h2 tunnels),
+        // so no thread-local borrow may be held across it: move the corked bytes
+        // into a taken scratch Vec first.
+        let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
+        data.clear();
+        self.drain_cork_into(&mut data);
+        let n = data.len();
+        if n != 0 {
+            let _ = self._write(&data);
+            data.clear();
+        }
+        BATCH_BUFFER.with_borrow_mut(|b| {
+            if b.capacity() == 0 {
+                *b = data;
+            }
+        });
+        self.deref();
+        n
     }
 
     fn register_auto_flush(&self) {
@@ -8983,7 +8991,18 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_native_writable(&self) {
-        let _ = self.flush();
+        // flush() ends in flush_stream_queue() → write() → cork(), leaving the
+        // newly-serialized frames in CORK_BUFFER (not on the wire). Returning
+        // here would let loop.c see last_write_failed==0 and disarm WRITABLE,
+        // stranding those bytes until an auto_flush task that may not be
+        // re-registered. Loop flush() until either we hit real socket
+        // backpressure (last_write_failed is then set) or no progress is made.
+        loop {
+            let wrote = self.flush();
+            if self.has_backpressure() || wrote == 0 {
+                break;
+            }
+        }
     }
 
     pub(crate) fn on_native_close(&self) {

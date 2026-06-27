@@ -4047,6 +4047,7 @@ void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     auto pkey = key.toPropertyKey(arg1);
     RETURN_IF_EXCEPTION(scope, );
     object->putDirectMayBeIndex(arg1, pkey, value);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)

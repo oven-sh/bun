@@ -21,7 +21,6 @@
  *   - bindgenv2 emits Generated<Type>.h per type (list-outputs skips .h)
  *   - generate-node-errors.ts emits ErrorCode.d.ts (not declared)
  *   - bundle-modules.ts emits eval/ subdir, BunBuiltinNames+extras.h, etc.
- *   - cppbind.ts emits cpp.source-links
  *
  * It WORKS because:
  *   1. The declared .cpp outputs guarantee the step runs before compile
@@ -45,17 +44,6 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 
-/**
- * Codegen outputs that land in `src/` instead of `codegenDir`. The zig
- * compiler refuses to import files outside its source tree, so these two
- * generated `.zig` files live in `src/jsc/bindings/` (gitignored).
- *
- * Consumers of `sources.zig` (the `src/**\/*.zig` glob) must filter these
- * out — they're OUTPUTS of codegen, not inputs.
- *
- * Paths are relative to repo root. This list is the single source of truth;
- * `globAllSources()` does NOT hardcode these.
- */
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
 interface Ctx {
@@ -127,7 +115,7 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   // ship with the build host's platform baked in.
   //
   // restat = 1 because most scripts use writeIfNotChanged(). Scripts that
-  // don't (generate-jssink, ci_info) always write → restat is a no-op for
+  // don't (generate-jssink) always write → restat is a no-op for
   // them, no harm.
   const env = hostWin
     ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `
@@ -205,10 +193,10 @@ export interface CodegenOutputs {
   /** All codegen outputs — use for phony target `codegen`. */
   all: string[];
 
-  /** Outputs that zig `@embedFile`s or imports. */
+  /** Outputs the cargo step depends on (generated .rs that gets `include!`d). */
   rustInputs: string[];
 
-  /** Outputs that zig needs to exist but doesn't embed (debug bake runtime). */
+  /** Outputs the cargo step needs to exist but doesn't embed (debug bake runtime). */
   rustOrderOnly: string[];
 
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
@@ -239,7 +227,6 @@ export interface CodegenOutputs {
 
   /** The bindgenv2 .cpp outputs (compiled separately from handwritten C++). */
   bindgenV2Cpp: string[];
-
 
   /**
    * Stamp output from `bun install` at repo root.
@@ -575,10 +562,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.h"),
   ];
 
-  const outputs = [
-    resolve(cfg.codegenDir, "ErrorCode+List.h"),
-    resolve(cfg.codegenDir, "ErrorCode+Data.h"),
-  ];
+  const outputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
 
   n.build({
     outputs,
@@ -587,7 +571,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "ErrorCode.{h}",
+      desc: "ErrorCode+*.h",
       args: shJoin(cfg, ["run", script, cfg.codegenDir]),
     },
   });
@@ -622,7 +606,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "ZigGeneratedClasses.{zig,cpp,h}",
+      desc: "ZigGeneratedClasses.{cpp,h,rs}",
       args: shJoin(cfg, ["run", script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
     },
   });
@@ -666,8 +650,8 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(output);
   // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
-  // must wait on it — `rustInputs` is the implicit-dep list both zig and the
-  // cargo edge consume.
+  // must wait on it — `rustInputs` is the implicit-dep list the
+  // cargo edge consumes.
   o.rustInputs.push(output);
 }
 
@@ -711,7 +695,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "cpp.{zig,rs} (cppbind)",
+      desc: "cpp.rs (cppbind)",
       // cppbind.ts takes: <srcdir> <codegendir> <cxx-sources>. No `run` —
       // direct script invocation (`${BUN_EXECUTABLE} ${script} ...`).
       args: shJoin(cfg, [script, resolve(cfg.cwd, "src"), cfg.codegenDir, cxxSourcesFile]),
@@ -846,12 +830,11 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   assert(allOutputs.length > 0, "bindgenv2 list-outputs returned no files");
 
   const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
-  const nonZig = allOutputs.filter(p => !p.endsWith(".zig"));
-  // .zig outputs are legacy artifacts from the Zig era — skip them.
-  assert(nonZig.length > 0, "bindgenv2 produced only .zig outputs");
+  const other = allOutputs.filter(p => !p.endsWith(".cpp"));
+  assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
 
   n.build({
-    outputs: nonZig,
+    outputs: allOutputs,
     rule: "codegen",
     inputs: [script, ...sources.bindgenV2, ...sources.bindgenV2Internal],
     orderOnlyInputs: [dirStamp],
@@ -868,7 +851,7 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
     },
   });
 
-  o.all.push(...nonZig);
+  o.all.push(...allOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
 }
 
@@ -887,14 +870,13 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: ".bind.ts → GeneratedBindings.{cpp,zig}",
+      desc: ".bind.ts → GeneratedBindings.cpp",
       args: shJoin(cfg, ["run", script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
     },
   });
 
   o.all.push(cppOut);
   o.cppSources.push(cppOut);
-
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {

@@ -207,7 +207,22 @@ impl BinaryExpressionVisitor {
                 // "(0, this.fn)" => "this.fn"
                 // "(0, this.fn)()" => "(0, this.fn)()"
                 if p.options.features.minify_syntax {
-                    if let Some(simplified_left) = SideEffects::simplify_unused_expr(p, e_.left) {
+                    // If e_.left is itself a comma, its .left was already simplified
+                    // by the previous unwind step; only simplify its .right to avoid
+                    // re-walking/reallocating the whole chain (O(n^2) arena blowup).
+                    let simplified_left = match e_.left.data {
+                        ExprData::EBinary(mut inner) if inner.op == Op::Code::BinComma => {
+                            match SideEffects::simplify_unused_expr(p, inner.right) {
+                                None => Some(inner.left),
+                                Some(simplified_right) => {
+                                    inner.right = simplified_right;
+                                    Some(e_.left)
+                                }
+                            }
+                        }
+                        _ => SideEffects::simplify_unused_expr(p, e_.left),
+                    };
+                    if let Some(simplified_left) = simplified_left {
                         if simplified_left.is_empty() {
                             return e_.right;
                         }

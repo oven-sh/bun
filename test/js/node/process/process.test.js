@@ -808,6 +808,62 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
+  it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
+    // Pins the observable behaviour: order is preserved, late .catch()
+    // suppresses delivery, and a rejection raised from inside the handler is
+    // also delivered.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const N = 1000;
+          const seen = [];
+          let nestedSeen = false;
+          process.on("unhandledRejection", reason => {
+            if (reason === "nested") { nestedSeen = true; return; }
+            seen.push(reason);
+            if (reason === 0) Promise.reject("nested");
+          });
+          for (let i = 0; i < N; i++) Promise.reject(i);
+          // This one is handled before the checkpoint runs — must NOT be delivered.
+          Promise.reject("handled").catch(() => {});
+          await new Promise(r => setImmediate(r));
+          await new Promise(r => setImmediate(r));
+          if (seen.length !== N) throw new Error("count " + seen.length);
+          for (let i = 0; i < N; i++) if (seen[i] !== i) throw new Error("order at " + i + " got " + seen[i]);
+          if (seen.includes("handled")) throw new Error("handled promise was delivered");
+          if (!nestedSeen) throw new Error("rejection from inside handler was dropped");
+
+          // A handler that .catch()es a *later* still-pending rejection must
+          // suppress both 'unhandledRejection' AND 'rejectionHandled' for it.
+          let spuriousRejectionHandled = 0;
+          let lateUnhandled = false;
+          process.on("rejectionHandled", () => spuriousRejectionHandled++);
+          let pLate;
+          process.removeAllListeners("unhandledRejection");
+          process.on("unhandledRejection", reason => {
+            if (reason === "early") pLate.catch(() => {});
+            if (reason === "late") lateUnhandled = true;
+          });
+          Promise.reject("early");
+          pLate = Promise.reject("late");
+          await new Promise(r => setImmediate(r));
+          await new Promise(r => setImmediate(r));
+          if (lateUnhandled) throw new Error("late promise got unhandledRejection");
+          if (spuriousRejectionHandled !== 0)
+            throw new Error("spurious rejectionHandled fired " + spuriousRejectionHandled + "x");
+          console.log("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

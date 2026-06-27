@@ -2476,8 +2476,6 @@ pub mod __gated_printer {
         }
 
         pub fn print_clause_alias(&mut self, alias: &[u8]) {
-            debug_assert!(!alias.is_empty());
-
             if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
                 self.print_identifier(alias);

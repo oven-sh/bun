@@ -15,7 +15,7 @@ const root = path.resolve(import.meta.dir, "..", "..");
 
 // Patterns that indicate stale port-era comments. Each was driven to zero
 // occurrences in src/**/*.rs; any reappearance is almost certainly copied
-// from a .zig reference file or an old draft.
+// from an old draft.
 const banned: { pattern: RegExp; reason: string }[] = [
   {
     pattern: /\bblocked_on\b/i,

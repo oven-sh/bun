@@ -1324,18 +1324,8 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     use bun_libdeflate_sys::libdeflate;
     libdeflate::load();
 
-    let compressor_ptr = libdeflate::Compressor::alloc(i32::from(level));
-    if compressor_ptr.is_null() {
-        return Err(CompressError::GzipInitFailed);
-    }
-    // defer compressor.deinit();
-    let _guard = scopeguard::guard(compressor_ptr, |p| {
-        // SAFETY: `p` is the non-null pointer returned by `Compressor::alloc` above;
-        // this is the matching free, run once when `_guard` drops on scope exit.
-        unsafe { libdeflate::Compressor::destroy(p) }
-    });
-    // SAFETY: alloc returned non-null; freed by `_guard` on scope exit.
-    let compressor: &mut libdeflate::Compressor = unsafe { &mut *compressor_ptr };
+    let mut compressor =
+        libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 

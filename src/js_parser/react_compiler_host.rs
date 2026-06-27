@@ -91,6 +91,35 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         ref_
     }
 
+    fn new_import_item(&mut self, name: &[u8]) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name = p.arena.alloc_slice_copy(name);
+        let ref_ = p
+            .new_symbol(js_ast::symbol::Kind::Import, name)
+            .expect("oom");
+        VecExt::append(&mut p.module_scope_mut().generated, ref_);
+        p.is_import_item.insert(ref_, ());
+        ref_
+    }
+
+    fn runtime_sentinel(&mut self, early: bool) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name: &'static [u8] = if early {
+            b"__EARLY_RETURN_SENTINEL"
+        } else {
+            b"__MEMO_CACHE_SENTINEL"
+        };
+        p.runtime_identifier_ref(name)
+    }
+
+    fn global_ref(&mut self, name: &[u8]) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name = p.arena.alloc_slice_copy(name);
+        // current_scope is the component's FunctionBody here; find_symbol walks
+        // up to module scope.
+        p.find_symbol(bun_ast::Loc::EMPTY, name).expect("oom").r#ref
+    }
+
     fn record_usage(&mut self, ref_: js_ast::Ref) {
         self.p.record_usage(ref_);
     }

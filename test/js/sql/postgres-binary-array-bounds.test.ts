@@ -1,57 +1,35 @@
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // A malicious or buggy Postgres server can send a binary-format int4[]/float4[]
 // DataRow whose header `len` field exceeds the actual column byte length.
 // The binary array parser must validate `len` against the column's byte length
 // before iterating; otherwise slice() reads and writes past the read buffer.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import net from "net";
+import {
+  listeningServer,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
-function pkt(type: string, body: Buffer): Buffer {
-  const header = Buffer.alloc(5);
-  header.write(type, 0);
-  header.writeInt32BE(body.length + 4, 1);
-  return Buffer.concat([header, body]);
-}
-
-function int16(n: number): Buffer {
-  const b = Buffer.alloc(2);
-  b.writeInt16BE(n, 0);
-  return b;
-}
-
-function int32(n: number): Buffer {
+// Big-endian Int32 encoder for assembling the hostile *column payload* (binary
+// array bytes inside a DataRow) — these are not wire frames; the frames
+// themselves come from ./wire-frames.
+const i32 = (n: number): Buffer => {
   const b = Buffer.alloc(4);
   b.writeInt32BE(n, 0);
   return b;
-}
+};
 
-function cstr(s: string): Buffer {
-  return Buffer.concat([Buffer.from(s), Buffer.from([0])]);
-}
-
-function rowDescription(cols: { name: string; oid: number; format: number }[]): Buffer {
-  const fields = Buffer.concat(
-    cols.map(c =>
-      Buffer.concat([
-        cstr(c.name),
-        int32(0), // table oid
-        int16(0), // column attr number
-        int32(c.oid), // type oid
-        int16(-1), // type size
-        int32(-1), // type modifier
-        int16(c.format), // format: 0=text, 1=binary
-      ]),
-    ),
-  );
-  return pkt("T", Buffer.concat([int16(cols.length), fields]));
-}
-
-function dataRowRaw(cols: Buffer[]): Buffer {
-  const body = Buffer.concat(cols.map(c => Buffer.concat([int32(c.length), c])));
-  return pkt("D", Buffer.concat([int16(cols.length), body]));
-}
-
-// Binary int4[] header: ndim, flags, elemtype, [len, lbound] per dim, then elements.
+// Binary int4[]/float4[] column payload header — PostgreSQL array_send():
+// Int32 ndim, Int32 flags, Int32 elemtype, then per dim: Int32 len, Int32 lbound.
 function binaryArrayHeader(opts: {
   ndim: number;
   flags: number;
@@ -59,26 +37,16 @@ function binaryArrayHeader(opts: {
   len: number;
   lbound: number;
 }): Buffer {
-  return Buffer.concat([
-    int32(opts.ndim),
-    int32(opts.flags),
-    int32(opts.elemtype),
-    int32(opts.len),
-    int32(opts.lbound),
-  ]);
+  return Buffer.concat([i32(opts.ndim), i32(opts.flags), i32(opts.elemtype), i32(opts.len), i32(opts.lbound)]);
 }
 
-const authenticationOk = pkt("R", int32(0));
-const readyForQuery = pkt("Z", Buffer.from("I"));
-const commandComplete = (tag: string) => pkt("C", cstr(tag));
-
 async function runMockQuery(columnBytes: Buffer, typeOid: number): Promise<unknown> {
-  const server = net.createServer(socket => {
+  const { port, server } = await listeningServer(socket => {
     let startup = true;
     socket.on("data", data => {
       if (startup) {
         startup = false;
-        socket.write(Buffer.concat([authenticationOk, readyForQuery]));
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
         return;
       }
       if (data[0] !== 0x51 /* 'Q' */) return;
@@ -88,18 +56,15 @@ async function runMockQuery(columnBytes: Buffer, typeOid: number): Promise<unkno
       // tripping the debug-only @alignCast in init() first.
       socket.write(
         Buffer.concat([
-          rowDescription([{ name: "arr", oid: typeOid, format: 1 /* binary */ }]),
-          dataRowRaw([columnBytes]),
-          commandComplete("SELECT 1"),
-          readyForQuery,
+          pgRowDescription([{ name: "arr", typeOid, format: 1 /* binary */ }]),
+          pgDataRow([columnBytes]),
+          pgCommandComplete("SELECT 1"),
+          pgReadyForQuery(),
         ]),
       );
     });
     socket.on("error", () => {});
   });
-
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
-  const port = (server.address() as net.AddressInfo).port;
 
   const sql = new SQL({
     url: `postgres://u@127.0.0.1:${port}/db`,
@@ -134,8 +99,8 @@ const malformed: { name: string; oid: number; col: Buffer }[] = [
     oid: INT4_ARRAY,
     col: Buffer.concat([
       binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 65536, lbound: 1 }),
-      int32(4),
-      int32(42),
+      i32(4),
+      i32(42),
     ]),
   },
   {
@@ -147,7 +112,7 @@ const malformed: { name: string; oid: number; col: Buffer }[] = [
     // Only 16 bytes: ndim, flags, elemtype, len — missing lbound.
     name: "int4[] with ndim=1 but truncated header",
     oid: INT4_ARRAY,
-    col: Buffer.concat([int32(1), int32(0), int32(INT4), int32(1)]),
+    col: Buffer.concat([i32(1), i32(0), i32(INT4), i32(1)]),
   },
   {
     name: "int4[] with len = INT32_MAX",
@@ -175,12 +140,12 @@ test.each(malformed)("binary $name is rejected", async ({ oid, col }) => {
 test("well-formed binary int4[] still parses", async () => {
   const col = Buffer.concat([
     binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 3, lbound: 1 }),
-    int32(4),
-    int32(1),
-    int32(4),
-    int32(2),
-    int32(4),
-    int32(3),
+    i32(4),
+    i32(1),
+    i32(4),
+    i32(2),
+    i32(4),
+    i32(3),
   ]);
   const result: any = await runMockQuery(col, INT4_ARRAY);
   expect(result[0].arr).toEqual(new Int32Array([1, 2, 3]));

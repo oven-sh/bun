@@ -280,6 +280,7 @@ pub struct PendingValue {
     pub on_readable_stream_available:
         Option<fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
     pub on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
+    pub on_stream_drained: Option<fn(ctx: Option<*mut c_void>)>,
     pub size_hint: blob::SizeType,
 
     pub deinit: bool,
@@ -309,6 +310,7 @@ impl Default for PendingValue {
             on_start_streaming: None,
             on_readable_stream_available: None,
             on_stream_cancelled: None,
+            on_stream_drained: None,
             size_hint: 0,
             deinit: false,
             action: Action::None,
@@ -628,7 +630,10 @@ impl ValueError {
     ) -> streams::result::StreamError {
         match self {
             ValueError::AbortReason(reason) => streams::result::StreamError::AbortReason(*reason),
-            _ => streams::result::StreamError::JSValue(self.to_js(global_object)),
+            _ => streams::result::StreamError::JSValue(jsc::strong::Optional::create(
+                self.to_js(global_object),
+                global_object,
+            )),
         }
     }
 
@@ -874,10 +879,14 @@ impl Value {
                     },
                 );
 
-                if let Some(on_cancelled) = locked.on_stream_cancelled {
-                    if let Some(task) = locked.task {
+                if let Some(task) = locked.task {
+                    if let Some(on_cancelled) = locked.on_stream_cancelled {
                         reader.cancel_handler.set(Some(on_cancelled));
                         reader.cancel_ctx.set(Some(task));
+                    }
+                    if let Some(on_drained) = locked.on_stream_drained {
+                        reader.drain_handler.set(Some(on_drained));
+                        reader.drain_ctx.set(Some(task));
                     }
                 }
 
@@ -1556,6 +1565,17 @@ impl Value {
         let Value::Locked(locked) = self else {
             unreachable!()
         };
+
+        if let Some(task) = locked.task {
+            if let Some(on_cancelled) = locked.on_stream_cancelled {
+                reader.cancel_handler.set(Some(on_cancelled));
+                reader.cancel_ctx.set(Some(task));
+            }
+            if let Some(on_drained) = locked.on_stream_drained {
+                reader.drain_handler.set(Some(on_drained));
+                reader.drain_ctx.set(Some(task));
+            }
+        }
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(
@@ -2307,29 +2327,14 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
-    fn on_stream_pipe(&mut self, stream: streams::Result) {
-        let stream_ = stream;
-        let stream_needs_deinit = matches!(
-            stream_,
-            streams::Result::Owned(_) | streams::Result::OwnedAndDone(_)
-        );
-
-        let chunk = stream_.slice();
+    fn on_stream_pipe(&mut self, stream: &streams::Result) {
+        let chunk = stream.slice();
         bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", chunk.len());
         let _ = self.stream_buffer.write(chunk);
-        if stream_.is_done() {
+        if stream.is_done() {
             let bytes = self.stream_buffer.list.as_slice();
             bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe done {}", bytes.len());
             (self.on_finished_buffering)(self.ctx, bytes, None, true);
-        }
-
-        if stream_needs_deinit {
-            match stream_ {
-                streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                    drop(owned);
-                }
-                _ => unreachable!(),
-            }
         }
     }
 
@@ -2489,6 +2494,13 @@ impl<'a> ValueBufferer<'a> {
         };
 
         if locked.on_receive_value.is_some() || locked.task.is_some() {
+            // ValueBufferer wants the whole body; tell the producer to never
+            // pause for JS backpressure before the stream is materialised.
+            if let (Some(on_start_buffering), Some(task)) =
+                (locked.on_start_buffering.take(), locked.task)
+            {
+                on_start_buffering(task);
+            }
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             let readable = value
                 .to_readable_stream(self.global)
@@ -2531,7 +2543,7 @@ impl<'a> ValueBufferer<'a> {
 // `webcore::Wrap<T>` requires `T: PipeHandler`.
 impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
     fn on_pipe(&mut self, stream: streams::Result) {
-        self.on_stream_pipe(stream)
+        self.on_stream_pipe(&stream)
     }
 }
 

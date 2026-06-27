@@ -711,17 +711,19 @@ impl ErrorCode {
     pub const FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode(326);
     /// `ERR_DIR_CONCURRENT_OPERATION` (instanceof Error)
     pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(327);
+    /// `ERR_INVALID_BUFFER_SIZE` (instanceof RangeError)
+    pub const INVALID_BUFFER_SIZE: ErrorCode = ErrorCode(328);
     /// `ERR_WORKER_MESSAGING_ERRORED` (instanceof Error)
-    pub const WORKER_MESSAGING_ERRORED: ErrorCode = ErrorCode(328);
+    pub const WORKER_MESSAGING_ERRORED: ErrorCode = ErrorCode(329);
     /// `ERR_WORKER_MESSAGING_FAILED` (instanceof Error)
-    pub const WORKER_MESSAGING_FAILED: ErrorCode = ErrorCode(329);
+    pub const WORKER_MESSAGING_FAILED: ErrorCode = ErrorCode(330);
     /// `ERR_WORKER_MESSAGING_SAME_THREAD` (instanceof Error)
-    pub const WORKER_MESSAGING_SAME_THREAD: ErrorCode = ErrorCode(330);
+    pub const WORKER_MESSAGING_SAME_THREAD: ErrorCode = ErrorCode(331);
     /// `ERR_WORKER_MESSAGING_TIMEOUT` (instanceof Error)
-    pub const WORKER_MESSAGING_TIMEOUT: ErrorCode = ErrorCode(331);
+    pub const WORKER_MESSAGING_TIMEOUT: ErrorCode = ErrorCode(332);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 332;
+    pub const COUNT: u16 = 333;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -869,6 +871,7 @@ impl ErrorCode {
     pub const ERR_INVALID_ARG_TYPE: ErrorCode = ErrorCode::INVALID_ARG_TYPE;
     pub const ERR_INVALID_ARG_VALUE: ErrorCode = ErrorCode::INVALID_ARG_VALUE;
     pub const ERR_INVALID_ASYNC_ID: ErrorCode = ErrorCode::INVALID_ASYNC_ID;
+    pub const ERR_INVALID_BUFFER_SIZE: ErrorCode = ErrorCode::INVALID_BUFFER_SIZE;
     pub const ERR_INVALID_CHAR: ErrorCode = ErrorCode::INVALID_CHAR;
     pub const ERR_INVALID_CURSOR_POS: ErrorCode = ErrorCode::INVALID_CURSOR_POS;
     pub const ERR_INVALID_FD_TYPE: ErrorCode = ErrorCode::INVALID_FD_TYPE;
@@ -1441,6 +1444,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_FS_CP_EEXIST",
     "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
     "ERR_DIR_CONCURRENT_OPERATION",
+    "ERR_INVALID_BUFFER_SIZE",
     "ERR_WORKER_MESSAGING_ERRORED",
     "ERR_WORKER_MESSAGING_FAILED",
     "ERR_WORKER_MESSAGING_SAME_THREAD",

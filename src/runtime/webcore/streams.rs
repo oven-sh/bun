@@ -319,48 +319,29 @@ pub enum StreamResult {
 }
 
 impl StreamResult {
-    // Intentionally not Drop — Result is bitwise-copied in the to_js() shutdown path, so
-    // ownership is contextual and a Drop impl would double-free.
-    // Named `release` (not `deinit`) per PORTING.md — `pub fn deinit` is forbidden as a public API.
     pub fn release(&mut self) {
         match self {
-            StreamResult::Owned(owned) => owned.clear_and_free(),
-            StreamResult::OwnedAndDone(owned_and_done) => owned_and_done.clear_and_free(),
-            StreamResult::Err(err) => {
-                if let StreamError::JSValue(v) = err {
-                    v.unprotect();
-                }
+            StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) => {
+                owned.clear_and_free()
             }
+            StreamResult::Err(StreamError::JSValue(s)) => s.deinit(),
             _ => {}
         }
     }
 }
 
-#[derive(Clone)]
 pub enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),
-    // TODO: use an explicit jsc.Strong.Optional here.
-    JSValue(JSValue),
-    WeakJSValue(JSValue),
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum WasStrong {
-    Strong,
-    Weak,
+    JSValue(jsc::strong::Optional),
 }
 
 impl StreamError {
-    pub fn to_js_weak(&self, global_object: &JSGlobalObject) -> (JSValue, WasStrong) {
+    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         match self {
-            StreamError::Error(err) => (err.to_js(global_object), WasStrong::Weak),
-            StreamError::JSValue(v) => (*v, WasStrong::Strong),
-            StreamError::WeakJSValue(v) => (*v, WasStrong::Weak),
-            StreamError::AbortReason(reason) => {
-                let value = reason.to_js(global_object);
-                (value, WasStrong::Weak)
-            }
+            StreamError::Error(err) => err.to_js(global_object),
+            StreamError::JSValue(v) => v.get().unwrap_or(JSValue::UNDEFINED),
+            StreamError::AbortReason(reason) => reason.to_js(global_object),
         }
     }
 }
@@ -817,14 +798,8 @@ impl StreamResult {
 
         match result {
             StreamResult::Err(err) => {
-                let value = 'brk: {
-                    let (js_err, was_strong) = err.to_js_weak(global_this);
-                    js_err.ensure_still_alive();
-                    if was_strong == WasStrong::Strong {
-                        js_err.unprotect();
-                    }
-                    break 'brk js_err;
-                };
+                let value = err.to_js(global_this);
+                value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut`
                 // deref. Fresh temp `&mut` is the sole borrow across this
@@ -909,10 +884,7 @@ impl StreamResult {
                 Ok(promise_js)
             }
             StreamResult::Err(err) => {
-                let (js_err, was_strong) = err.to_js_weak(global_this);
-                if was_strong == WasStrong::Strong {
-                    js_err.unprotect();
-                }
+                let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
                 Ok(JSPromise::rejected_promise(global_this, js_err).to_js())
             }
@@ -1095,6 +1067,17 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub has_backpressure: bool,
     pub end_len: usize,
     pub aborted: bool,
+    /// This sink fully ended the uWS response (`res.end()` / a completed
+    /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
+    /// point, so the owning `RequestContext` is never told if the peer closes
+    /// afterwards and its `resp` must not be dereferenced again: by the time
+    /// the parked stream-resolution microtask runs, uSockets may already have
+    /// freed the socket (`us_internal_free_closed_sockets`) or recycled it
+    /// onto the next keep-alive request. `handle_resolve_stream` /
+    /// `handle_reject_stream` consult this instead of reading the response's
+    /// state. HTTP/1 only; see `end_already_responded_stream` for why
+    /// `Http3Response::markDone()` makes the H3 `resp` still safe to use.
+    pub ended_response: bool,
 
     pub on_first_write: Option<fn(Option<*mut c_void>)>,
     pub ctx: Option<*mut c_void>,
@@ -1121,6 +1104,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             has_backpressure: false,
             end_len: 0,
             aborted: false,
+            ended_response: false,
             on_first_write: None,
             ctx: None,
             auto_flusher: AutoFlusher::default(),
@@ -1494,6 +1478,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
                 }
+                // `send_readable` drained the parked `try_end`, so uWS has
+                // `markDone()`d the response and dropped its `onAborted`.
+                self.ended_response = true;
                 self.signal.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards
                 self.finalize();
@@ -1859,6 +1846,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         }
 
+        // Both branches above fully ended the response through uWS, which
+        // `markDone()`s it and drops its `onAborted`.
+        self.ended_response = true;
         self.mark_done();
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
         self.signal.close(None);
@@ -1871,18 +1861,36 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         Sink::init(self)
     }
 
-    pub fn abort(&mut self) {
+    /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
+    /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
+    /// sink. A `&mut self` argument protector must not be live across that free.
+    ///
+    /// # Safety
+    /// `this` must point at the live sink owned by the `RequestContext`.
+    pub unsafe fn abort(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
-        self.done = true;
-        self.res = None;
-        self.unregister_auto_flusher();
+        // SAFETY: caller contract — `this` is live, and every borrow formed here
+        // ends before the signal close below, which may free `*this`.
+        let sink = unsafe { &mut *this };
+        sink.done = true;
+        sink.res = None;
+        sink.unregister_auto_flusher();
 
-        self.aborted = true;
+        sink.aborted = true;
 
-        self.signal.close(None);
+        // Only JsTerminated escapes flush_promise; there is no JS caller to
+        // surface it to from a socket-close callback, so teardown continues.
+        let _ = sink.flush_promise();
+        sink.finalize();
 
-        let _ = self.flush_promise(); // TODO: properly propagate exception upwards
-        self.finalize();
+        // Close the signal last and through a stack copy: the close fires the JS
+        // onClose callback, and the teardown it can re-enter frees this sink, so
+        // no reference into the allocation may be live across the call.
+        let mut signal = Signal {
+            ptr: sink.signal.ptr,
+            vtable: sink.signal.vtable,
+        };
+        signal.close(None);
     }
 
     fn unregister_auto_flusher(&mut self) {
@@ -2507,7 +2515,7 @@ impl BufferAction {
         err: &StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js_weak(global).0))
+        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
     }
 
     pub fn resolve(

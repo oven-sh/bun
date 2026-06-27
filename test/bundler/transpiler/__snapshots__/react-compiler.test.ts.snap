@@ -5,21 +5,18 @@ exports[`bundler react-compiler/SimpleComponent 1`] = `
 import { jsxDEV } from "react/jsx-dev-runtime";
 import { c as _c } from "react/compiler-runtime";
 function Hello(t0) {
-  const $ = _c(2);
-  const { name } = t0;
+  let $ = _c(2);
+  let { name } = t0;
   let t1;
-  if ($[0] !== name) {
+  if ($[0] !== name)
     t1 = /* @__PURE__ */ jsxDEV("div", {
       children: [
         "Hello ",
         name
       ]
-    }, undefined, true, undefined, this);
-    $[0] = name;
-    $[1] = t1;
-  } else {
+    }, undefined, true, undefined, this), $[0] = name, $[1] = t1;
+  else
     t1 = $[1];
-  }
   return t1;
 }
 export {
@@ -34,31 +31,24 @@ import { useState } from "react";
 import { jsxDEV } from "react/jsx-dev-runtime";
 import { c as _c } from "react/compiler-runtime";
 function Counter(t0) {
-  const $ = _c(5);
-  const { step } = t0;
-  const [count, setCount] = useState(0);
-  const doubled = count * 2;
+  let $ = _c(5);
+  let { step } = t0;
+  let [count, setCount] = useState(0);
+  let doubled = count * 2;
   let t1;
-  if ($[0] !== step) {
-    t1 = () => setCount((c) => c + step);
-    $[0] = step;
-    $[1] = t1;
-  } else {
+  if ($[0] !== step)
+    t1 = () => setCount((c) => c + step), $[0] = step, $[1] = t1;
+  else
     t1 = $[1];
-  }
-  const onClick = t1;
+  let onClick = t1;
   let t2;
-  if ($[2] !== doubled || $[3] !== onClick) {
+  if ($[2] !== doubled || $[3] !== onClick)
     t2 = /* @__PURE__ */ jsxDEV("button", {
       onClick,
       children: doubled
-    }, undefined, false, undefined, this);
-    $[2] = doubled;
-    $[3] = onClick;
-    $[4] = t2;
-  } else {
+    }, undefined, false, undefined, this), $[2] = doubled, $[3] = onClick, $[4] = t2;
+  else
     t2 = $[4];
-  }
   return t2;
 }
 export {
@@ -72,39 +62,25 @@ exports[`bundler react-compiler/ObjectPatternRestInProps 1`] = `
 import { jsxDEV } from "react/jsx-dev-runtime";
 import { c as _c } from "react/compiler-runtime";
 function Comp(t0) {
-  const $ = _c(8);
-  let a;
-  let b;
-  let rest;
-  if ($[0] !== t0) {
+  let $ = _c(8);
+  let a, b, rest;
+  if ($[0] !== t0)
     ({
       a,
       b,
       ...rest
-    } = t0);
-    $[0] = t0;
-    $[1] = a;
-    $[2] = b;
-    $[3] = rest;
-  } else {
-    a = $[1];
-    b = $[2];
-    rest = $[3];
-  }
+    } = t0), $[0] = t0, $[1] = a, $[2] = b, $[3] = rest;
+  else
+    a = $[1], b = $[2], rest = $[3];
   let t1;
-  if ($[4] !== a || $[5] !== b || $[6] !== rest) {
+  if ($[4] !== a || $[5] !== b || $[6] !== rest)
     t1 = /* @__PURE__ */ jsxDEV("div", {
       "data-a": a,
       "data-b": b,
       ...rest
-    }, undefined, false, undefined, this);
-    $[4] = a;
-    $[5] = b;
-    $[6] = rest;
-    $[7] = t1;
-  } else {
+    }, undefined, false, undefined, this), $[4] = a, $[5] = b, $[6] = rest, $[7] = t1;
+  else
     t1 = $[7];
-  }
   return t1;
 }
 export {
@@ -169,23 +145,19 @@ var Ctx = import_react.createContext(0);
 var sub = () => () => {};
 var get = () => 1;
 function Comp() {
-  const $ = $c(3);
-  const v = import_react.useSyncExternalStore(sub, get);
-  const c = import_react.useContext(Ctx);
+  let $ = $c(3);
+  let v = import_react.useSyncExternalStore(sub, get);
+  let c = import_react.useContext(Ctx);
   let t0;
-  if ($[0] !== c || $[1] !== v) {
+  if ($[0] !== c || $[1] !== v)
     t0 = /* @__PURE__ */ $jsxDEV("div", {
       children: [
         v,
         c
       ]
-    }, undefined, true, undefined, this);
-    $[0] = c;
-    $[1] = v;
-    $[2] = t0;
-  } else {
+    }, undefined, true, undefined, this), $[0] = c, $[1] = v, $[2] = t0;
+  else
     t0 = $[2];
-  }
   return t0;
 }
 export {
@@ -200,33 +172,26 @@ import { useState } from "react";
 import { jsxDEV } from "react/jsx-dev-runtime";
 import { c as _c } from "react/compiler-runtime";
 function Comp(t0) {
-  const $ = _c(6);
-  const { onDone } = t0;
-  const [x] = useState(0);
+  let $ = _c(6);
+  let { onDone } = t0;
+  let [x] = useState(0);
   let onSubmit;
   if ($[0] !== onDone || $[1] !== x) {
     onSubmit = async function onSubmit() {
       done(1);
     };
-    const done = (n) => onDone(n + x);
-    $[0] = onDone;
-    $[1] = x;
-    $[2] = onSubmit;
-  } else {
+    let done = (n) => onDone(n + x);
+    $[0] = onDone, $[1] = x, $[2] = onSubmit;
+  } else
     onSubmit = $[2];
-  }
   let t1;
-  if ($[3] !== onSubmit || $[4] !== x) {
+  if ($[3] !== onSubmit || $[4] !== x)
     t1 = /* @__PURE__ */ jsxDEV("button", {
       onClick: onSubmit,
       children: x
-    }, undefined, false, undefined, this);
-    $[3] = onSubmit;
-    $[4] = x;
-    $[5] = t1;
-  } else {
+    }, undefined, false, undefined, this), $[3] = onSubmit, $[4] = x, $[5] = t1;
+  else
     t1 = $[5];
-  }
   return t1;
 }
 export {
@@ -236,29 +201,25 @@ export {
 `;
 
 exports[`bundler react-compiler/SelfRefConstArrow 1`] = `
-"// entry.tsx
+"var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
+
+// entry.tsx
 import { useState, useLayoutEffect } from "react";
 import { c as _c } from "react/compiler-runtime";
 function useTick() {
-  const $ = _c(2);
-  const [n, setN] = useState(0);
-  let t0;
-  let t1;
-  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
+  let $ = _c(2);
+  let [n, setN] = useState(0);
+  let t0, t1;
+  if ($[0] === __MEMO_CACHE_SENTINEL)
     t0 = () => {
-      const tick = () => {
+      let tick = () => {
         setN(1);
         setTimeout(tick, 10);
       };
       setTimeout(tick, 10);
-    };
-    t1 = [];
-    $[0] = t0;
-    $[1] = t1;
-  } else {
-    t0 = $[0];
-    t1 = $[1];
-  }
+    }, t1 = [], $[0] = t0, $[1] = t1;
+  else
+    t0 = $[0], t1 = $[1];
   useLayoutEffect(t0, t1);
   return n;
 }
@@ -278,6 +239,144 @@ function helper(name) {
 }
 export {
   helper
+};
+"
+`;
+
+exports[`bundler react-compiler/DynamicImportInRender 1`] = `
+"var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined")
+    return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
+// entry.jsx
+import { use } from "react";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Comp() {
+  let $ = _c(3);
+  let t0;
+  if ($[0] === __MEMO_CACHE_SENTINEL)
+    t0 = import("./mod"), $[0] = t0;
+  else
+    t0 = $[0];
+  let M = use(t0);
+  let t1;
+  if ($[1] !== M.x)
+    t1 = /* @__PURE__ */ jsxDEV("div", {
+      children: M.x
+    }, undefined, false, undefined, this), $[1] = M.x, $[2] = t1;
+  else
+    t1 = $[2];
+  return t1;
+}
+export {
+  Comp
+};
+"
+`;
+
+exports[`bundler react-compiler/DynamicImportInEffectClosure 1`] = `
+"var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined")
+    return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
+// entry.jsx
+import { useEffect } from "react";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function _temp(m) {
+  return m.init();
+}
+function _temp2() {
+  import("./mod").then(_temp);
+}
+function Comp(t0) {
+  let $ = _c(3);
+  let { x } = t0;
+  let t1;
+  if ($[0] === __MEMO_CACHE_SENTINEL)
+    t1 = [], $[0] = t1;
+  else
+    t1 = $[0];
+  useEffect(_temp2, t1);
+  let t2;
+  if ($[1] !== x)
+    t2 = /* @__PURE__ */ jsxDEV("div", {
+      children: x
+    }, undefined, false, undefined, this), $[1] = x, $[2] = t2;
+  else
+    t2 = $[2];
+  return t2;
+}
+export {
+  Comp
+};
+"
+`;
+
+exports[`bundler react-compiler/KeyedFragmentAsArrayPushArg 1`] = `
+"// entry.jsx
+import { Fragment } from "react";
+import { jsxDEV, Fragment as Fragment2 } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Comp(t0) {
+  let $ = _c(2);
+  let { keys } = t0;
+  let t1;
+  if ($[0] !== keys) {
+    let parts = [];
+    for (const k of keys)
+      parts.push(/* @__PURE__ */ jsxDEV(Fragment, {
+        children: /* @__PURE__ */ jsxDEV("span", {
+          children: k
+        }, undefined, false, undefined, this)
+      }, k, false, undefined, this));
+    t1 = /* @__PURE__ */ jsxDEV(Fragment2, {
+      children: parts
+    }, undefined, false, undefined, this);
+    $[0] = keys, $[1] = t1;
+  } else
+    t1 = $[1];
+  return t1;
+}
+export {
+  Comp
+};
+"
+`;
+
+exports[`bundler react-compiler/ZeroArgGlobalCallMatchesBabel 1`] = `
+"var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
+
+// entry.jsx
+import { globalFn } from "./mod";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Comp() {
+  let $ = _c(1);
+  let t0;
+  if ($[0] === __MEMO_CACHE_SENTINEL) {
+    let x = globalFn();
+    t0 = /* @__PURE__ */ jsxDEV("div", {
+      children: x
+    }, undefined, false, undefined, this);
+    $[0] = t0;
+  } else
+    t0 = $[0];
+  return t0;
+}
+export {
+  Comp
 };
 "
 `;

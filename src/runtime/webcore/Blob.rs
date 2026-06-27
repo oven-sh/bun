@@ -1649,9 +1649,6 @@ impl BlobExt for Blob {
 
         assignment_result.ensure_still_alive();
 
-        // assert that it was updated
-        debug_assert!(!signal.get().is_dead());
-
         if let Some(err) = assignment_result.to_error() {
             // SAFETY: release our +1 ref on the sink.
             unsafe { webcore::FileSink::deref(file_sink) };

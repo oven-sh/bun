@@ -107,6 +107,11 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
         return;
     }
 
+    if (hmacParameters.length && !hmacParameters.length.value()) {
+        exceptionCallback(DataError, ""_s);
+        return;
+    }
+
     RefPtr<CryptoKeyHMAC> result;
     switch (format) {
     case CryptoKeyFormat::Raw:

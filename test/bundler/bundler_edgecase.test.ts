@@ -296,9 +296,7 @@ describe("bundler", () => {
       // Server chunk: not inlined (runtime read).
       expect(api.captureFile("out/entry.js")).toEqual(["process.env.NODE_ENV"]);
       // Browser chunk: inlined (no process in the browser).
-      const browserChunk = readdirSync(api.join("out")).find(
-        (f: string) => f.endsWith(".js") && f !== "entry.js",
-      );
+      const browserChunk = readdirSync(api.join("out")).find((f: string) => f.endsWith(".js") && f !== "entry.js");
       expect(browserChunk).toBeDefined();
       expect(api.captureFile(join("out", browserChunk!))).toEqual(['"development"']);
     },

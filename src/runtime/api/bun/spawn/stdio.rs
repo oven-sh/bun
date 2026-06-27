@@ -635,7 +635,8 @@ impl Stdio {
             )));
         }
 
-        // Instead of writing an empty blob, lets just make it /dev/null
+        // Nothing to write: treat an empty blob the same as "ignore"
+        // (/dev/null at fds 0-2, left closed at extra slots).
         if blob.fast_size() == 0 {
             *self = Stdio::Ignore;
             return Ok(());

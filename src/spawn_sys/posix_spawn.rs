@@ -564,7 +564,13 @@ pub mod posix_spawn {
             for action in &act.actions {
                 match action.kind {
                     bun_spawn::FileActionType::Close => {
-                        posix_actions.close(Fd::from_native(action.fds[0]))?;
+                        // Darwin's posix_spawn fails the whole spawn with EBADF
+                        // if an addclose fd is not open. A fd the parent does
+                        // not have open is already absent from the child.
+                        let fd = Fd::from_native(action.fds[0]);
+                        if sys::fcntl(fd, system::F_GETFD, 0).is_ok() {
+                            posix_actions.close(fd)?;
+                        }
                     }
                     bun_spawn::FileActionType::Dup2 => {
                         posix_actions.dup2(

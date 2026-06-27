@@ -905,10 +905,9 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ignore => {
-                // For fd >= 3, "ignore" leaves the fd closed in the child
-                // (unlike fd 0-2 where POSIX requires a valid fd, so those
-                // get /dev/null). Explicitly close in case an earlier action
-                // or the close-range floor would otherwise leave it open.
+                // Node leaves "ignore" at an extra slot closed in the child;
+                // only fds 0-2 need a /dev/null placeholder. Close explicitly:
+                // the post-exec close-range floor only covers higher fds.
                 actions.close(fileno)?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }

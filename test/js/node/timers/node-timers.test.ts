@@ -267,3 +267,27 @@ process.on("exit", () => console.log(JSON.stringify(order)));
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: '["immediate","fs"]', exitCode: 0 });
 });
+
+// Same ordering one level down: an immediate that queues another immediate and
+// then starts async I/O. The nested immediate runs first (the startup GC must
+// not sit between the check phase and the next task drain).
+it("setImmediate queued inside the first immediate runs before async I/O started after it", async () => {
+  using dir = tempDir("immediate-nested-before-io", {
+    "index.js": `const order = [];
+setImmediate(() => {
+  setImmediate(() => order.push("immediate"));
+  require("fs").promises.readFile(__filename).then(() => order.push("fs"));
+});
+process.on("exit", () => console.log(JSON.stringify(order)));
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: '["immediate","fs"]', exitCode: 0 });
+});

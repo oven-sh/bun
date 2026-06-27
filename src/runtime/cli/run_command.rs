@@ -1541,12 +1541,6 @@ impl Run {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // One non-blocking loop turn before the GC below: Node runs the check
-        // phase right after the main module, so immediates the script queued must
-        // not wait behind a collection that async work can complete during.
-        // SAFETY: `vm` is the live per-thread VM.
-        unsafe { crate::jsc_hooks::auto_tick_startup(vm) };
-
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
@@ -1554,6 +1548,11 @@ impl Run {
             // per-heap collect, so this is a no-op unless the arena type
             // changes. Semantically a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
+            // One non-blocking loop turn (check, poll, timers) between the GC and
+            // the drain below: immediates the entry point queued must run before
+            // async work that completed during the collection gets delivered.
+            // SAFETY: `vm` is the live per-thread VM.
+            unsafe { crate::jsc_hooks::auto_tick_startup(vm) };
             vm.tick();
         }
 

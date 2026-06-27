@@ -2193,15 +2193,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // An explicit HEAD handler route must stay the HEAD handler for its
             // path: uWS keeps the last registration for a method and path, and
             // static routes register after user routes.
-            let path_has_user_head_route = self.user_routes.iter().any(|route| {
-                match &route.route.method {
-                    server_config::RouteMethod::Specific(method) => {
-                        *method == http_method::Method::HEAD
-                            && route.route.path.as_bytes() == &*entry.path
-                    }
-                    server_config::RouteMethod::Any => false,
-                }
-            });
+            let path_has_user_head_route =
+                self.user_routes
+                    .iter()
+                    .any(|route| match &route.route.method {
+                        server_config::RouteMethod::Specific(method) => {
+                            *method == http_method::Method::HEAD
+                                && route.route.path.as_bytes() == &*entry.path
+                        }
+                        server_config::RouteMethod::Any => false,
+                    });
 
             // Each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
             // `app`/`h3_app` are the live uWS app handles owned by `self`.

@@ -524,7 +524,10 @@ impl Group {
 
     #[inline]
     pub fn eql(&self, rhs: &Group) -> bool {
-        self.head.eql(&rhs.head)
+        // The literal `*` resolves differently from structurally identical
+        // ranges like `>=0.0.0` (it prefers the `latest` dist-tag), so
+        // star-ness is part of query equality.
+        self.is_star_literal() == rhs.is_star_literal() && self.head.eql(&rhs.head)
     }
 
     pub fn to_version(&self) -> Version {

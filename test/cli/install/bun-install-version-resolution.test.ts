@@ -292,4 +292,53 @@ describe.concurrent("bun install version resolution", () => {
     expect(second.exitCode).toBe(0);
     expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfile);
   });
+
+  // `*` and `>=0.0.0` parse to the same comparators but resolve differently
+  // when latest is a prerelease, so changing one to the other in package.json
+  // has to re-resolve instead of keeping the locked version.
+  test("changing between star and an equivalent range re-resolves", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+        if (name !== "star-relock") return new Response("not found", { status: 404 });
+        return Response.json({
+          name,
+          "dist-tags": { latest: "2.0.0-beta.1" },
+          versions: Object.fromEntries(
+            ["1.0.0", "2.0.0-beta.1"].map(version => [
+              version,
+              { name, version, dist: { tarball: `${server.url.origin}/star-relock-${version}.tgz` } },
+            ]),
+          ),
+        });
+      },
+    });
+
+    const packageJson = (range: string) =>
+      JSON.stringify({ name: "test-pkg", version: "1.0.0", dependencies: { "star-relock": range } });
+
+    using dir = tempDir("version-resolution-star-relock", {
+      "package.json": packageJson("*"),
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url.origin}/"\nsaveTextLockfile = true\n`,
+    });
+
+    async function install() {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+      return await file(join(String(dir), "bun.lock")).text();
+    }
+
+    expect(await install()).toContain("star-relock@2.0.0-beta.1");
+
+    await Bun.write(join(String(dir), "package.json"), packageJson(">=0.0.0"));
+    expect(await install()).toContain("star-relock@1.0.0");
+  });
 });

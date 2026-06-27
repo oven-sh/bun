@@ -1000,16 +1000,15 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     m_state = CLOSING;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        // Snapshot the backlog before the connection (and its send buffer) is
-        // torn down: per spec bufferedAmount must not reset to 0 on close.
-        m_bufferedAmount = clampToUnsigned(Bun__WebSocketClient__getBufferedAmount(this->m_connectedWebSocket.client));
+        // No eager bufferedAmount snapshot (unlike terminate()): close() keeps
+        // the kind set for deferred close, so bufferedAmount() reads the live
+        // buffer and didClose() applies the native client's final snapshot.
         ZigString reasonZigStr = Zig::toZigString(reason);
         Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonZigStr);
         updateHasPendingActivity();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        m_bufferedAmount = clampToUnsigned(Bun__WebSocketClientTLS__getBufferedAmount(this->m_connectedWebSocket.clientSSL));
         ZigString reasonZigStr = Zig::toZigString(reason);
         Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonZigStr);
         updateHasPendingActivity();
@@ -1623,10 +1622,9 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
 
     bool wasClean = m_state == CLOSING && !unhandledBufferedAmount && code != 0; // WebSocketChannel::CloseEventCodeAbnormalClosure;
     m_state = CLOSED;
-    // Don't reset the backlog: the unsent bytes at close time were snapshotted
-    // (by close()/terminate() into m_bufferedAmount, or passed here via
-    // bufferedAmountSnapshot for the peer-initiated close handshake). The spec
-    // requires bufferedAmount not to drop to 0 once closed, so keep the largest.
+    // Don't reset the backlog: the native client captures the unsent bytes
+    // before teardown and passes them via bufferedAmountSnapshot. Per spec
+    // bufferedAmount must not drop to 0 once closed, so keep the largest.
     unsigned snapshot = clampToUnsigned(bufferedAmountSnapshot);
     if (unhandledBufferedAmount > m_bufferedAmount)
         m_bufferedAmount = unhandledBufferedAmount;

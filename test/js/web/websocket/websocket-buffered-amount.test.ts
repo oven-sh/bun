@@ -11,7 +11,14 @@ const WS_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 // drive a specific close path, e.g. writing a frame or destroying the socket.
 function nonDrainingServer(afterUpgrade?: (sock: net.Socket) => void): Promise<{ port: number; close: () => void }> {
   return new Promise((resolve, reject) => {
+    // Track live sockets so close() can destroy them. server.close() only stops
+    // accepting; after the deferred-close refactor a backlogged ws.close() waits
+    // for the socket to die, so leaving the paused peer alive pins the client's
+    // multi-MB send buffer for the rest of the run.
+    const sockets = new Set<net.Socket>();
     const server = net.createServer(sock => {
+      sockets.add(sock);
+      sock.on("close", () => sockets.delete(sock));
       let buf = "";
       let upgraded = false;
       sock.on("data", d => {
@@ -38,7 +45,13 @@ function nonDrainingServer(afterUpgrade?: (sock: net.Socket) => void): Promise<{
     server.on("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close() });
+      resolve({
+        port: address.port,
+        close: () => {
+          for (const s of sockets) s.destroy();
+          server.close();
+        },
+      });
     });
   });
 }
@@ -60,6 +73,50 @@ function maskedServerFrame(): Buffer {
 function serverCloseFrame(): Buffer {
   // FIN + opcode 0x8 (close), unmasked, 2-byte payload = status code 1000.
   return Buffer.from([0x88, 0x02, 0x03, 0xe8]);
+}
+
+// Raw TCP server that completes the handshake and then keeps reading (drains)
+// everything the client sends, so a backlog queued before close() transmits to
+// the peer and the graceful close completes once the send buffer empties.
+function drainingServer(): Promise<{ port: number; close: () => void }> {
+  return new Promise((resolve, reject) => {
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer(sock => {
+      sockets.add(sock);
+      sock.on("close", () => sockets.delete(sock));
+      let buf = "";
+      let upgraded = false;
+      sock.on("data", d => {
+        if (upgraded) return; // after upgrade, stay in flowing mode and discard
+        buf += d.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const key = /sec-websocket-key:\s*(.+)\r\n/i.exec(buf)?.[1]?.trim() ?? "";
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + WS_MAGIC)
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        upgraded = true; // do not pause: keep draining the client's frames
+      });
+      sock.on("error", () => {});
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as net.AddressInfo;
+      resolve({
+        port: address.port,
+        close: () => {
+          for (const s of sockets) s.destroy();
+          server.close();
+        },
+      });
+    });
+  });
 }
 
 describe("WebSocket.bufferedAmount (client)", () => {
@@ -162,6 +219,39 @@ describe("WebSocket.bufferedAmount (client)", () => {
       for (let i = 1; i < samples.length; i++) {
         expect(samples[i] - samples[i - 1]).toBeGreaterThanOrEqual(blobBytes);
       }
+    } finally {
+      close();
+    }
+  });
+
+  // Counterpart to the retention tests: when the peer reads, a backlog queued
+  // before close() transmits and the close event must report the drained total,
+  // not a stale close-time snapshot (which would wrongly count transmitted bytes
+  // as still buffered). The ~MiB backlog builds during the synchronous send loop
+  // (the event loop cannot drain mid-loop) and the reading peer empties it after.
+  test("drains toward 0 after a graceful close once a reading peer empties the backlog", async () => {
+    const { port, close } = await drainingServer();
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      ws.onerror = () => reject(new Error("unexpected error event"));
+      let maxBuffered = 0;
+      ws.onopen = () => {
+        const chunk = Buffer.alloc(64 * 1024, 0x7e).toString();
+        for (let i = 0; i < 500; i++) {
+          ws.send(chunk);
+          if (ws.bufferedAmount > maxBuffered) maxBuffered = ws.bufferedAmount;
+        }
+        ws.close();
+      };
+      ws.onclose = () => resolve(ws.bufferedAmount);
+      const onClose = await promise;
+
+      // A large backlog existed at close() time.
+      expect(maxBuffered).toBeGreaterThan(64 * 1024);
+      // By the close event the peer has read it, so bufferedAmount reflects the
+      // transmitted bytes rather than the close-time high-water mark.
+      expect(onClose).toBeLessThan(maxBuffered / 2);
     } finally {
       close();
     }

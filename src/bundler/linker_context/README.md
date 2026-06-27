@@ -626,7 +626,7 @@ _CommonJS Wrapper Handling_ (`wrap = .cjs`):
 
 ```javascript
 // Generated wrapper structure:
-var require_moduleName = __commonJS((exports, module) => {
+var require_moduleName = __commonJS(function (exports, module) {
   // Original module code here with isolated scope
   exports.foo = 123;
 });

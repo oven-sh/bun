@@ -367,6 +367,10 @@ describe("TextDecoder BOM across {stream: true} chunks", () => {
       ],
       "\uFEFFA",
     ],
+    // Same, with both in ONE chunk: only the first may be stripped.
+    ["utf-8", [[0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf, 0x41]], "\uFEFFA"],
+    ["utf-16le", [[0xff, 0xfe, 0xff, 0xfe, 0x42, 0x00]], "\uFEFFB"],
+    ["utf-16be", [[0xfe, 0xff, 0xfe, 0xff, 0x00, 0x42]], "\uFEFFB"],
     ["utf-8", [[0x41], [0xef, 0xbb, 0xbf, 0x42]], "A\uFEFFB"],
     [
       "utf-16le",

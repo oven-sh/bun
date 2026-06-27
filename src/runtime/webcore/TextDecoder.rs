@@ -421,10 +421,25 @@ impl TextDecoder {
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
                 let big_endian = matches!(enc, EncodingLabel::Utf16Be);
-                let (mut decoded, saw_error) = if big_endian {
-                    self.decode_utf16::<true, FLUSH>(buffer_slice)?
+
+                // When the stream's BOM is whole at the start of this chunk,
+                // strip it from the INPUT: dropping it from the decoded output
+                // below would be an O(n) `Vec::remove(0)`.
+                let bom: &[u8; 2] = if big_endian { b"\xfe\xff" } else { b"\xff\xfe" };
+                let pre_stripped = !self.ignore_bom
+                    && !self.bom_seen.get()
+                    && self.lead_byte.get().is_none()
+                    && buffer_slice.starts_with(bom);
+                let input = if pre_stripped {
+                    &buffer_slice[2..]
                 } else {
-                    self.decode_utf16::<false, FLUSH>(buffer_slice)?
+                    buffer_slice
+                };
+
+                let (mut decoded, saw_error) = if big_endian {
+                    self.decode_utf16::<true, FLUSH>(input)?
+                } else {
+                    self.decode_utf16::<false, FLUSH>(input)?
                 };
 
                 if saw_error && self.fatal {
@@ -443,9 +458,13 @@ impl TextDecoder {
                 }
 
                 // https://encoding.spec.whatwg.org/#concept-td-serialize: only the
-                // stream's FIRST code unit is dropped as a BOM. Runs on code units
-                // (`lead_byte` may hold half the BOM) and only AFTER the fatal throw.
-                if !self.ignore_bom && !self.bom_seen.get() && !decoded.is_empty() {
+                // stream's FIRST code unit is dropped as a BOM. `bom_seen` is only
+                // committed here, after the fatal early return, which never reaches it.
+                if pre_stripped {
+                    self.bom_seen.set(true);
+                } else if !self.ignore_bom && !self.bom_seen.get() && !decoded.is_empty() {
+                    // The BOM was split across chunks (half of it in `lead_byte`),
+                    // so it is only recognizable as the first decoded code unit.
                     self.bom_seen.set(true);
                     if decoded[0] == 0xFEFF {
                         decoded.remove(0);

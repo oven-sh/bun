@@ -85,6 +85,43 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
         .sort((a, b) => a - b),
     ).toEqual(Array.from({ length: 32 }, (_, i) => i));
   });
+
+  // https://github.com/oven-sh/bun/issues/30569
+  it("send() returns false once the IPC write queue backs up", async () => {
+    // Child acknowledges, then busy-loops so the parent end of the IPC pipe
+    // is never drained. Parent floods ~64 KiB messages; send() must flip to
+    // false once queued bytes exceed the 128 KiB threshold instead of
+    // buffering without bound.
+    const { promise: ready, resolve } = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.send("ready"); const end = Date.now() + 120000; while (Date.now() < end) {}`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      serialization: mode,
+      ipc: () => resolve(),
+    });
+    await ready;
+    const payload = { s: Buffer.alloc(65536, "z").toString() };
+    let trueCount = 0;
+    let falseCount = 0;
+    for (let i = 0; i < 500; i++) {
+      if (child.send(payload) === false) {
+        falseCount++;
+        break;
+      }
+      trueCount++;
+    }
+    child.kill("SIGKILL");
+    expect({ falseCount, total: trueCount + falseCount }).toEqual({
+      falseCount: 1,
+      total: trueCount + 1,
+    });
+    expect(trueCount).toBeLessThan(500);
+  });
 });
 
 describe("ipc mode advanced", () => {

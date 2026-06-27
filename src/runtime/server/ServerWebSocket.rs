@@ -160,7 +160,7 @@ pub mod js {
 /// `ArrayBuffer` view must pass `buffer.slice().len()`, not the typed-array
 /// element count. `suffix` is `"bytes"` or `"bytes string"`.
 #[inline]
-fn send_status_to_js(
+pub(super) fn send_status_to_js(
     status: SendStatus,
     len: usize,
     op: &'static str,
@@ -266,8 +266,7 @@ impl ServerWebSocket {
 
     /// Route a publish through either the per-socket uWS handle (when
     /// `!publish_to_self && !closed`) or the app-wide broadcast, then map the
-    /// bool result to the JS number contract: success → `len & 0x7FFF_FFFF`,
-    /// failure → `0`.
+    /// aggregated `SendStatus` to the JS number contract shared with `send()`.
     #[inline]
     fn do_publish(
         &self,
@@ -279,16 +278,12 @@ impl ServerWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> JSValue {
-        let result = if !publish_to_self && !self.is_closed() {
+        let status = if !publish_to_self && !self.is_closed() {
             self.websocket().publish(topic, buffer, opcode, compress)
         } else {
             AnyWebSocket::publish_with_options(ssl, app, topic, buffer, opcode, compress)
         };
-        JSValue::js_number(if result {
-            (buffer.len() as u32 & 0x7FFF_FFFF) as f64
-        } else {
-            0.0
-        })
+        send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
 
     /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical

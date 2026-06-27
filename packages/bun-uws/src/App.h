@@ -207,27 +207,46 @@ public:
         return std::move(*this);
     }
 
+    using PublishStatus = typename WebSocket<SSL, true, int>::SendStatus;
+
     /* Publishes a message to all websocket contexts - conceptually as if publishing to the one single
      * TopicTree of this app (technically there are many TopicTrees, however the concept is that one
      * app has one conceptual Topic tree) */
-    bool publish(std::string_view topic, std::string_view message, unsigned char opCode, bool compress = false) {
+    PublishStatus publish(std::string_view topic, std::string_view message, unsigned char opCode, bool compress = false) {
         return this->publish(topic, message, (OpCode)opCode, compress);
     }
 
     /* Publishes a message to all websocket contexts - conceptually as if publishing to the one single
      * TopicTree of this app (technically there are many TopicTrees, however the concept is that one
-     * app has one conceptual Topic tree) */
-    bool publish(std::string_view topic, std::string_view message, OpCode opCode, bool compress = false) {
+     * app has one conceptual Topic tree). Returns the aggregated SendStatus across all subscribers:
+     * DROPPED if the topic has no subscribers or any subscriber is over its backpressure limit,
+     * BACKPRESSURE if any subscriber has buffered data, otherwise SUCCESS. */
+    PublishStatus publish(std::string_view topic, std::string_view message, OpCode opCode, bool compress = false) {
         /* Anything big bypasses corking efforts */
         if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
-            return topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [](Subscriber *s, TopicTreeBigMessage &message) {
+            PublishStatus worst = PublishStatus::SUCCESS;
+            bool had = topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [&worst](Subscriber *s, TopicTreeBigMessage &message) {
                 auto *ws = (WebSocket<SSL, true, int> *) s->user;
 
                 /* Send will drain if needed */
-                ws->send(message.message, (OpCode)message.opCode, message.compress);
+                worst = WebSocket<SSL, true, int>::worseStatus(worst, (PublishStatus) ws->send(message.message, (OpCode)message.opCode, message.compress));
             });
+            return had ? worst : PublishStatus::DROPPED;
         } else {
-            return topicTree->publish(nullptr, topic, {std::string(message), opCode, compress});
+            Topic *t = topicTree->lookupTopic(topic);
+            if (!t) {
+                return PublishStatus::DROPPED;
+            }
+            topicTree->publish(nullptr, topic, {std::string(message), opCode, compress});
+            /* publish() may have synchronously drained a subscriber; check backpressure after. */
+            PublishStatus worst = PublishStatus::SUCCESS;
+            bool hasReceivers = false;
+            for (Subscriber *s : *t) {
+                hasReceivers = true;
+                auto *ws = (WebSocket<SSL, true, int> *) s->user;
+                worst = WebSocket<SSL, true, int>::worseStatus(worst, (PublishStatus) ws->sendStatus());
+            }
+            return hasReceivers ? worst : PublishStatus::DROPPED;
         }
     }
 

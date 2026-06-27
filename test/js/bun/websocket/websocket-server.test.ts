@@ -1,8 +1,8 @@
-import type { Server, Subprocess, WebSocketHandler } from "bun";
+import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
-import { isIP } from "node:net";
+import net, { isIP } from "node:net";
 import path from "node:path";
 
 const strings = [
@@ -1207,4 +1207,166 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
     stderr: "",
   });
   expect(exitCode).toBe(0);
+});
+
+// publish() fans out to N subscribers; it must report backpressure/drops the
+// same way ws.send() does for a single socket. Previously it always returned
+// the payload length as long as the topic had any subscriber, even when every
+// subscriber was over backpressureLimit and the data was being discarded.
+describe("publish() return value reflects subscriber backpressure", () => {
+  // One paused raw-TCP subscriber; the server-side handle is captured so the
+  // test can compare publish() to send() on the same socket.
+  async function withSlowSubscriber(
+    run: (ctx: { server: Server; slow: ServerWebSocket<string>; sender: ServerWebSocket<string> }) => void,
+  ) {
+    const sockets: Record<string, ServerWebSocket<string>> = {};
+    const opened = { slow: Promise.withResolvers<void>(), sender: Promise.withResolvers<void>() };
+    await using server = serve<string, {}>({
+      port: 0,
+      websocket: {
+        backpressureLimit: 64 * 1024,
+        idleTimeout: 0,
+        open(ws) {
+          sockets[ws.data] = ws;
+          ws.subscribe("t");
+          opened[ws.data]?.resolve();
+        },
+        message() {},
+        close(ws) {
+          delete sockets[ws.data];
+        },
+      },
+      fetch(req, server) {
+        if (server.upgrade(req, { data: new URL(req.url).pathname.slice(1) })) return;
+        return new Response("no upgrade", { status: 400 });
+      },
+    });
+
+    // "sender": ws.publish() excludes the sender, so we need a second socket
+    // distinct from the slow subscriber to exercise the per-socket path.
+    const sender = new WebSocket(`ws://127.0.0.1:${server.port}/sender`);
+    sender.binaryType = "arraybuffer";
+    sender.onmessage = () => {};
+    {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      sender.onopen = () => resolve();
+      sender.onerror = e => reject(e);
+      await promise;
+    }
+
+    // "slow": raw RFC6455 client that handshakes then pauses its read side so
+    // the server accumulates backpressure for it.
+    const handshake = Promise.withResolvers<void>();
+    const slow = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
+      slow.write(
+        "GET /slow HTTP/1.1\r\n" +
+          "Host: x\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Version: 13\r\n\r\n",
+      );
+    });
+    slow.once("data", (d: Buffer) => {
+      if (d.toString().includes(" 101 ")) {
+        slow.pause();
+        handshake.resolve();
+      } else {
+        handshake.reject(new Error("upgrade failed: " + d.toString()));
+      }
+    });
+    slow.on("error", handshake.reject);
+    try {
+      await handshake.promise;
+      await opened.slow.promise;
+      await opened.sender.promise;
+      run({ server, slow: sockets.slow, sender: sockets.sender });
+    } finally {
+      sender.close();
+      slow.destroy();
+      server.stop(true);
+    }
+  }
+
+  function histogram(results: number[]) {
+    let positive = 0;
+    let dropped = 0;
+    let backpressure = 0;
+    let other = 0;
+    for (const r of results) {
+      if (r > 0) positive++;
+      else if (r === 0) dropped++;
+      else if (r === -1) backpressure++;
+      else other++;
+    }
+    return { positive, dropped, backpressure, other };
+  }
+
+  it("returns 0 when the topic has no subscribers", async () => {
+    await withSlowSubscriber(({ server, sender }) => {
+      expect(server.publish("no-such-topic", "x")).toBe(0);
+      expect(sender.publish("no-such-topic", "x")).toBe(0);
+    });
+  });
+
+  for (const [label, size] of [
+    ["batched (<16KB)", 8000],
+    ["direct (>=16KB)", 20000],
+  ] as const) {
+    it(`server.publish() ${label} reports dropped / backpressure`, async () => {
+      await withSlowSubscriber(({ server, slow }) => {
+        const payload = Buffer.alloc(size, "x").toString();
+        // Enough iterations to blow well past backpressureLimit regardless of
+        // how much the kernel accepts before blocking.
+        const N = 1000;
+        const results: number[] = [];
+        for (let i = 0; i < N; i++) results.push(server.publish("t", payload));
+        const h = histogram(results);
+        // ws.send() on the same over-limit socket agrees the data is dropped;
+        // publish() must have reported the same for the majority of calls.
+        expect({ sendProbe: slow.send("probe"), histogram: h }).toEqual({
+          sendProbe: 0,
+          histogram: { ...h, other: 0 },
+        });
+        expect(h.dropped).toBeGreaterThan(0);
+        // Every call returned one of the documented values.
+        expect(h.positive + h.backpressure + h.dropped).toBe(N);
+      });
+    });
+
+    it(`ws.publish() ${label} reports dropped / backpressure`, async () => {
+      await withSlowSubscriber(({ slow, sender }) => {
+        const payload = Buffer.alloc(size, "x").toString();
+        const N = 1000;
+        const results: number[] = [];
+        for (let i = 0; i < N; i++) results.push(sender.publish("t", payload));
+        const h = histogram(results);
+        expect({ sendProbe: slow.send("probe"), histogram: h }).toEqual({
+          sendProbe: 0,
+          histogram: { ...h, other: 0 },
+        });
+        expect(h.dropped).toBeGreaterThan(0);
+        expect(h.positive + h.backpressure + h.dropped).toBe(N);
+      });
+    });
+  }
+
+  it("ws.publishText() and ws.publishBinary() report dropped", async () => {
+    await withSlowSubscriber(({ slow, sender }) => {
+      const text = Buffer.alloc(8000, "x").toString();
+      const bin = Buffer.alloc(8000, 0x61);
+      let sawDroppedText = false;
+      let sawDroppedBinary = false;
+      for (let i = 0; i < 1000; i++) {
+        if (sender.publishText("t", text) === 0) sawDroppedText = true;
+        if (sender.publishBinary("t", bin) === 0) sawDroppedBinary = true;
+        if (sawDroppedText && sawDroppedBinary) break;
+      }
+      expect({ sawDroppedText, sawDroppedBinary, sendProbe: slow.send("probe") }).toEqual({
+        sawDroppedText: true,
+        sawDroppedBinary: true,
+        sendProbe: 0,
+      });
+    });
+  });
 });

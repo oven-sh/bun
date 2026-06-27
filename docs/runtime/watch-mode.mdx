@@ -142,12 +142,17 @@ Bun.serve({
 When running under `bun --hot`, `import.meta.hot` is defined and provides a subset of the [Vite HMR API](https://vite.dev/guide/api-hmr):
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
-// import.meta.hot.data is persisted across reloads for the same module
-const interval = (import.meta.hot.data.interval ??= setInterval(tick, 1000));
+// `data` is persisted across reloads for the same module, so state can be
+// carried between generations.
+import.meta.hot.data.reloads ??= 0;
+console.log(`reloaded ${import.meta.hot.data.reloads++} times`);
 
-import.meta.hot.dispose(data => {
-  // Called immediately before the module is re-evaluated on the next save.
-  // Use this to clean up timers, listeners, workers, etc.
+const interval = setInterval(() => console.log("tick"), 1000);
+
+import.meta.hot.dispose(() => {
+  // Runs right before this module is re-evaluated on the next save.
+  // Clean up timers, listeners, workers, sockets, etc. here.
+  clearInterval(interval);
 });
 ```
 

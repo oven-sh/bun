@@ -639,8 +639,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotNoop, (JSC::JSGlobalObject*, JSC::
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_hot, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto* globalObject = defaultGlobalObject(jsGlobalObject);
-    // Only expose import.meta.hot under `bun --hot` (HOT_RELOAD_HOT == 1).
-    if (Bun__VirtualMachine__hotReloadMode(globalObject->bunVM()) != 1)
+    if (!Bun__VirtualMachine__isHotReloadMode(globalObject->bunVM()))
         return JSValue::encode(jsUndefined());
 
     ImportMetaObject* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue));

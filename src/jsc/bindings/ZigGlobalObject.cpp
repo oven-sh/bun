@@ -3400,11 +3400,13 @@ void GlobalObject::runImportMetaHotDisposeCallbacks(JSC::VM& vm)
     auto* list = m_importMetaHotDisposeList.get();
     if (!list)
         return;
-    // Detach before invoking so callbacks registering new dispose handlers
-    // (for the next generation) don't run in this pass or get cleared.
-    m_importMetaHotDisposeList.clear();
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // Snapshot the entries into a rooted buffer before invoking anything,
+    // then drop the global reference so callbacks registering new dispose
+    // handlers (for the next generation) don't run in this pass.
+    JSC::MarkedArgumentBuffer entries;
     unsigned length = list->getArrayLength();
     for (unsigned i = 0; i < length; i++) {
         JSValue entryVal = list->getIndex(this, i);
@@ -3412,7 +3414,16 @@ void GlobalObject::runImportMetaHotDisposeCallbacks(JSC::VM& vm)
             scope.clearException();
             continue;
         }
-        auto* entry = dynamicDowncast<JSC::JSArray>(entryVal);
+        entries.append(entryVal);
+    }
+    if (entries.hasOverflowed()) [[unlikely]] {
+        m_importMetaHotDisposeList.clear();
+        return;
+    }
+    m_importMetaHotDisposeList.clear();
+
+    for (unsigned i = 0; i < entries.size(); i++) {
+        auto* entry = dynamicDowncast<JSC::JSArray>(entries.at(i));
         if (!entry)
             continue;
         JSValue callback = entry->getIndex(this, 0);

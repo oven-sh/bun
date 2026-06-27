@@ -659,6 +659,82 @@ for (const { body, fn } of bodyTypes) {
         });
       });
     });
+
+    // Per Fetch, the header list is fixed at construction: the body-derived
+    // Content-Type (multipart boundary, urlencoded, blob type) must be the
+    // same whether the body or the headers is read first.
+    describe("content-type survives reading the body before the headers", () => {
+      const cases: Array<[string, () => BodyInit, RegExp]> = [
+        [
+          "FormData",
+          () => {
+            const f = new FormData();
+            f.append("n", "V");
+            return f;
+          },
+          /^multipart\/form-data; boundary=/,
+        ],
+        ["URLSearchParams", () => new URLSearchParams({ a: "b" }), /^application\/x-www-form-urlencoded/],
+        ["Blob with type", () => new Blob(["x"], { type: "application/json" }), /^application\/json/],
+      ];
+
+      for (const [label, makeBody, pattern] of cases) {
+        for (const consume of ["arrayBuffer", "bytes", "text", "blob"] as const) {
+          test(`${label} via .${consume}()`, async () => {
+            const obj = fn(makeBody());
+            const payload = await obj[consume]();
+            const ct = obj.headers.get("content-type");
+            expect(ct).toMatch(pattern);
+            if (label === "FormData") {
+              const boundary = ct!.slice("multipart/form-data; boundary=".length);
+              expect(boundary.length).toBeGreaterThan(0);
+              const text =
+                typeof payload === "string"
+                  ? payload
+                  : payload instanceof Blob
+                    ? await payload.text()
+                    : new TextDecoder().decode(payload as ArrayBuffer | Uint8Array);
+              // The boundary in the header must match the one used in the body.
+              expect(text).toContain("--" + boundary);
+            }
+          });
+        }
+
+        // json()/formData() may reject (the body is not valid for them);
+        // the header must be intact regardless of how the call settled.
+        for (const consume of ["json", "formData"] as const) {
+          test(`${label} via .${consume}()`, async () => {
+            const obj = fn(makeBody());
+            await obj[consume]().catch(() => {});
+            expect(obj.headers.get("content-type")).toMatch(pattern);
+          });
+        }
+
+        test(`${label} via draining .body`, async () => {
+          const obj = fn(makeBody());
+          for await (const _ of obj.body!) {
+          }
+          expect(obj.headers.get("content-type")).toMatch(pattern);
+        });
+
+        test(`${label} matches headers-first order`, async () => {
+          const a = fn(makeBody());
+          const ctBefore = a.headers.get("content-type");
+          await a.arrayBuffer();
+          expect(a.headers.get("content-type")).toBe(ctBefore);
+
+          const b = fn(makeBody());
+          await b.arrayBuffer();
+          expect(b.headers.get("content-type")).toMatch(pattern);
+        });
+
+        test(`${label} explicit Content-Type header is not overridden`, async () => {
+          const obj = fn(makeBody(), { "content-type": "text/plain" });
+          await obj.arrayBuffer();
+          expect(obj.headers.get("content-type")).toBe("text/plain");
+        });
+      }
+    });
   });
 }
 

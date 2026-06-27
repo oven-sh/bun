@@ -268,6 +268,11 @@ impl BodyMixin for Response {
         })
     }
     #[inline]
+    fn materialize_headers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+        self.get_or_create_headers(global_object)?;
+        Ok(())
+    }
+    #[inline]
     fn get_form_data_encoding(
         &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {

@@ -475,9 +475,9 @@ impl Route {
             config.minify.syntax = true;
         }
 
-        // Match the HMR dev server (bake::add_import_meta_defines) so
-        // `import.meta.env.*` folds to constants instead of reaching the
-        // browser as a runtime property access that throws.
+        // Mirrors `bake::add_import_meta_defines` (the HMR dev server's key
+        // list; keep the two in sync) so `import.meta.env.*` folds to constants
+        // instead of reaching the browser as a property access that throws.
         let (dev_bool, prod_bool, mode_str): (&[u8], &[u8], &[u8]) = if is_development {
             (b"true", b"false", b"\"development\"")
         } else {

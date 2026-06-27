@@ -915,8 +915,9 @@ describe("production headers and import.meta.env", () => {
       "index.html": /*html*/ `<!DOCTYPE html>
 <html><head><link rel="stylesheet" href="./app.css">
 <script type="module" src="./app.ts"></script></head>
-<body><h1>hi</h1></body></html>`,
+<body><h1>hi</h1><img src="./logo.svg"></body></html>`,
       "app.css": /*css*/ `body { color: red; }`,
+      "logo.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>`,
       "app.ts": /*js*/ `
         globalThis.result = {
           MODE: import.meta.env.MODE,
@@ -934,9 +935,11 @@ describe("production headers and import.meta.env", () => {
         const htmlETag = htmlRes.headers.get("etag");
         const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
         const cssPath = html.match(/href="([^"]+\\.css)"/)[1];
+        const svgPath = html.match(/src="([^"]+\\.svg)"/)[1];
         const jsRes = await fetch(new URL(jsPath, base));
         const js = await jsRes.text();
         const cssRes = await fetch(new URL(cssPath, base));
+        const svgRes = await fetch(new URL(svgPath, base));
         const mapRes = await fetch(new URL(jsPath + ".map", base));
         const conditional = await fetch(base, { headers: { "If-None-Match": htmlETag ?? "missing" } });
         // Evaluate the bundle as a browser module would (no import.meta.env in scope).
@@ -954,6 +957,9 @@ describe("production headers and import.meta.env", () => {
           jsCacheControl: jsRes.headers.get("cache-control"),
           cssETag: cssRes.headers.get("etag"),
           cssCacheControl: cssRes.headers.get("cache-control"),
+          svgPath,
+          svgETag: svgRes.headers.get("etag"),
+          svgCacheControl: svgRes.headers.get("cache-control"),
           mapStatus: mapRes.status,
           mapETag: mapRes.headers.get("etag"),
           mapCacheControl: mapRes.headers.get("cache-control"),
@@ -984,6 +990,9 @@ describe("production headers and import.meta.env", () => {
       jsCacheControl: string | null;
       cssETag: string | null;
       cssCacheControl: string | null;
+      svgPath: string;
+      svgETag: string | null;
+      svgCacheControl: string | null;
       mapStatus: number;
       mapETag: string | null;
       mapCacheControl: string | null;
@@ -999,10 +1008,14 @@ describe("production headers and import.meta.env", () => {
     expect(out.evalError).toBeNull();
     expect(out.result).toEqual({ MODE: "production", DEV: false, PROD: true, SSR: false });
 
+    // Copied-file assets must be served at a content-hashed path.
+    expect(out.svgPath).toMatch(/^\/logo-[a-z0-9]+\.svg$/);
+
     // ETags must be RFC 9110 quoted strings, content-derived (not all zeros).
     expect(out.htmlETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.cssETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.svgETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.mapStatus).toBe(200);
     expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.mapETag).not.toBe('"0000000000000000"');
@@ -1013,11 +1026,13 @@ describe("production headers and import.meta.env", () => {
       html: out.htmlCacheControl,
       js: out.jsCacheControl,
       css: out.cssCacheControl,
+      svg: out.svgCacheControl,
       map: out.mapCacheControl,
     }).toEqual({
       html: "no-cache",
       js: "public, max-age=31536000, immutable",
       css: "public, max-age=31536000, immutable",
+      svg: "public, max-age=31536000, immutable",
       map: "public, max-age=31536000, immutable",
     });
 

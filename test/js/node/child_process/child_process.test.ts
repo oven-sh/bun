@@ -355,16 +355,16 @@ describe("spawnSync()", () => {
     expect(isValidSemver(stdout.trim())).toBe(true);
   });
 
-  it.if(!isWindows)("detached: true starts the child in a new process group", () => {
-    const pgidOf = (detached: boolean) =>
-      spawnSync("sh", ["-c", "ps -o pgid= -p $$"], { detached, encoding: "utf8" }).stdout.trim();
-    const parentPgid = spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], {
-      encoding: "utf8",
-    }).stdout.trim();
+  it.if(isLinux)("detached: true starts the child in a new process group", () => {
+    // /proc/self/stat field 5 is pgrp; parse after the last ')' since comm may contain spaces.
+    const pgrp = (stat: string) => stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2];
+    const childPgid = (detached: boolean) =>
+      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" }).stdout);
+    const parentPgid = pgrp(fs.readFileSync("/proc/self/stat", "utf8"));
 
     expect(parentPgid).toMatch(/^\d+$/);
-    expect(pgidOf(false)).toBe(parentPgid);
-    const detachedPgid = pgidOf(true);
+    expect(childPgid(false)).toBe(parentPgid);
+    const detachedPgid = childPgid(true);
     expect(detachedPgid).toMatch(/^\d+$/);
     expect(detachedPgid).not.toBe(parentPgid);
   });

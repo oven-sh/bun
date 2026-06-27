@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tls } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -71,4 +71,102 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
   // connection, which cannot have the same client port.
   const plain = await get();
   expect(plain).not.toBe(overrideA);
+});
+
+// An idempotent request (PUT) on a reused keep-alive connection that the peer
+// resets is transparently retried, but a ReadableStream body is consumed as it
+// is uploaded and cannot be replayed: the already written chunks are gone, so a
+// retry silently sends a truncated body, and flushing the still-draining stream
+// onto the retry's not-yet-opened socket put body bytes ahead of the headers
+// and panicked with "range start index N out of range for slice of length M"
+// in send_initial_request_payload. Runs in a subprocess: the panic aborts the
+// whole process.
+test("PUT with a ReadableStream body is not retried on keep-alive disconnect", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const CRLF = String.fromCharCode(13, 10);
+      let warmRequests = 0;
+      let streamRequests = 0;
+
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) { socket.data = { buffer: "" }; },
+          data(socket, data) {
+            socket.data.buffer += data.toString("latin1");
+            if (!socket.data.buffer.includes(CRLF)) return;
+            if (socket.data.buffer.startsWith("PUT /warm")) {
+              // Wait for the full 4-byte body before replying keep-alive.
+              const i = socket.data.buffer.indexOf(CRLF + CRLF);
+              if (i < 0 || socket.data.buffer.length < i + 4 + 4) return;
+              warmRequests++;
+              socket.data.buffer = "";
+              socket.write("HTTP/1.1 200 OK" + CRLF + "Content-Length: 2" + CRLF + "Connection: keep-alive" + CRLF + CRLF + "ok");
+              return;
+            }
+            if (socket.data.buffer.startsWith("PUT /stream")) {
+              streamRequests++;
+              socket.data.buffer = "";
+              // Reset the connection mid-upload.
+              socket.terminate();
+            }
+          },
+          close() {},
+          error() {},
+          drain() {},
+        },
+      });
+
+      const base = "http://127.0.0.1:" + server.port;
+      const chunk = new Uint8Array(1024);
+      const streamBody = () => {
+        let pending = 32;
+        return new ReadableStream({
+          pull(c) {
+            if (pending-- <= 0) return c.close();
+            c.enqueue(chunk);
+          },
+        });
+      };
+
+      const errors = [];
+      for (let i = 0; i < 4; i++) {
+        // Park a keep-alive connection so the stream PUT reuses it.
+        await (await fetch(base + "/warm", { method: "PUT", body: "warm" })).text();
+        try {
+          await fetch(base + "/stream", { method: "PUT", body: streamBody(), duplex: "half" });
+          errors.push(null);
+        } catch (e) {
+          errors.push(e && (e.code || e.name));
+        }
+      }
+
+      server.stop();
+      console.log(JSON.stringify({ warmRequests, streamRequests, errors }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // If the subprocess crashed there is no JSON; surface the raw output instead.
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    // Without the fix every attempt is retried on a fresh connection, so the
+    // server sees each PUT /stream twice (streamRequests === 8).
+    result: {
+      warmRequests: 4,
+      streamRequests: 4,
+      errors: ["ECONNRESET", "ECONNRESET", "ECONNRESET", "ECONNRESET"],
+    },
+    exitCode: 0,
+  });
 });

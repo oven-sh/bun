@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 async function testFailureSkip(failurePoints: string[]): Promise<string[]> {

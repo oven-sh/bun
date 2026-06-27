@@ -4513,14 +4513,15 @@ pub fn replace_invalid_utf8<'a>(code: &'a [u8], arena: &'a Bump) -> &'a [u8] {
     }
     // Cold: malformed input only. Each maximal ill-formed subpart becomes one
     // U+FFFD (the substitution browsers apply when decoding a stylesheet).
-    let mut out: Vec<u8> = Vec::with_capacity(code.len() + REPLACEMENT_CHAR_UTF8.len());
+    let mut out =
+        bun_alloc::ArenaVec::with_capacity_in(code.len() + REPLACEMENT_CHAR_UTF8.len(), arena);
     for chunk in code.utf8_chunks() {
         out.extend_from_slice(chunk.valid().as_bytes());
         if !chunk.invalid().is_empty() {
             out.extend_from_slice(REPLACEMENT_CHAR_UTF8);
         }
     }
-    arena.alloc_slice_copy(&out)
+    out.leak()
 }
 
 impl<'a> Tokenizer<'a> {

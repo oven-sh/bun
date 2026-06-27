@@ -817,7 +817,7 @@ pub(crate) fn run_scripts_with_filter(
             for part in &ctx.passthrough {
                 copy_script.push(b' ');
                 if crate::shell::needs_escape_utf8_ascii_latin1(part) {
-                    crate::shell::escape_8bit::<true>(part, &mut copy_script)?;
+                    crate::shell::escape_8bit::<true, false>(part, &mut copy_script)?;
                 } else {
                     copy_script.extend_from_slice(part);
                 }

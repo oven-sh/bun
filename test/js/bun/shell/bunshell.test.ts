@@ -155,6 +155,30 @@ describe("bunshell", () => {
     escapeTest("lmao=✔", '"lmao=✔"');
     escapeTest("元気かい、兄弟", "元気かい、兄弟");
     escapeTest("d元気かい、兄弟", "d元気かい、兄弟");
+    // Strings made only of U+0000-U+00FF code points use JSC's 8-bit (Latin-1)
+    // storage; quoting must re-encode those code units to UTF-8, not copy the
+    // raw bytes, or every one of them becomes U+FFFD.
+    escapeTest("é");
+    escapeTest("é;", '"é;"');
+    escapeTest("ü;id", '"ü;id"');
+    escapeTest("café && ok", '"café && ok"');
+    escapeTest("\u0080;\u00ff", '"\u0080;\u00ff"');
+
+    test("latin-1 values survive $.escape + {raw:} round trip", async () => {
+      for (const value of ["é;", "ü;id", "café && ok", "\u0080;\u00ff"]) {
+        const escaped = $.escape(value);
+        expect(escaped).not.toInclude("\uFFFD");
+        const { stdout } = await $`echo ${{ raw: escaped }}`;
+        expect(stdout.toString()).toEqual(`${value}\n`);
+      }
+    });
+
+    test("$.escape of an empty string is an empty shell word", async () => {
+      expect($.escape("")).toBe('""');
+      // `{ raw: $.escape(v) }` must contribute exactly one argv entry, even for "".
+      const { stdout } = await $`echo a ${{ raw: $.escape("") }} b`;
+      expect(stdout.toString()).toEqual("a  b\n");
+    });
 
     test("quotes values containing a tab, carriage return, or question mark", async () => {
       expect($.escape("a\tb")).toEqual('"a\tb"');

@@ -818,7 +818,12 @@ test("rejects corrupted cachedData instead of crashing", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "script ok\ncompileFunction ok\nmodule ok\n", exitCode: 0 });
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "script ok\ncompileFunction ok\nmodule ok\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 describe("codeGeneration options", () => {

@@ -862,6 +862,58 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  // Node's default unhandled-rejection mode is `throw`: with no
+  // `unhandledRejection` listener, the rejection is raised as an uncaught
+  // exception with origin "unhandledRejection". A `uncaughtException` listener
+  // then handles it and the process keeps running.
+  it("routes an unhandled rejection through the uncaughtException machinery", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.on("uncaughtExceptionMonitor", (err, origin) => console.log("monitor", err.message, origin));
+        process.on("uncaughtException", (err, origin) => console.log("uncaught", err.message, origin));
+        process.on("exit", code => console.log("exit", code));
+        Promise.reject(new Error("rej"));
+        setTimeout(() => console.log("timer"), 1);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({
+      stdout: "monitor rej unhandledRejection\nuncaught rej unhandledRejection\ntimer\nexit 0\n",
+      exitCode: 0,
+    });
+  });
+
+  it("a truly unhandled rejection reports the error once and emits exit with 1", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.on("exit", code => console.log("exit", code, process.exitCode));
+        Promise.reject(new Error("rej"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The fatal path must print the error exactly once (it used to be
+    // reported twice under --unhandled-rejections=throw).
+    expect({ stdout, reports: stderr.match(/error: rej/g), exitCode }).toEqual({
+      stdout: "exit 1 1\n",
+      reports: ["error: rej"],
+      exitCode: 1,
+    });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",
@@ -939,6 +991,54 @@ describe("process.exitCode", () => {
     );
   });
 
+  // Node stores process.exitCode in an int32 slot, so the getter and the
+  // "beforeExit"/"exit" event arguments keep the raw value; only the final
+  // exit(2) masks to 0-255.
+  it("setter negative", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exitCode = -1;
+      console.log("get", process.exitCode);
+    `,
+      "get -1\nbeforeExit -1 -1\nexit -1 -1\n",
+      255,
+    );
+  });
+
+  it("setter above 255", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exitCode = 300;
+      console.log("get", process.exitCode);
+    `,
+      "get 300\nbeforeExit 300 300\nexit 300 300\n",
+      44,
+    );
+  });
+
+  it("setter resets on null and undefined", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+
+      process.exitCode = 5;
+      process.exitCode = null;
+      console.log("after null", process.exitCode);
+      process.exitCode = 7;
+      process.exitCode = undefined;
+      console.log("after undefined", process.exitCode);
+    `,
+      "after null undefined\nafter undefined undefined\nexit 0 undefined\n",
+      0,
+    );
+  });
+
   it("exit", async () => {
     await runInlineFixture(
       `
@@ -962,6 +1062,74 @@ describe("process.exitCode", () => {
     `,
       "exit 3 3\n",
       3,
+    );
+  });
+
+  it("exit above 255 keeps the raw value for the event", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+
+      process.exit(300);
+    `,
+      "exit 300 300\n",
+      44,
+    );
+  });
+
+  // process.exit() without an argument must not touch process.exitCode,
+  // while an explicit nullish argument resets it back to unset.
+  it("exit with no argument keeps the assigned code", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+
+      process.exitCode = 5;
+      process.exit();
+    `,
+      "exit 5 5\n",
+      5,
+    );
+  });
+
+  it("exit with undefined resets the assigned code", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+
+      process.exitCode = 5;
+      process.exit(undefined);
+    `,
+      "exit 0 undefined\n",
+      0,
+    );
+  });
+
+  it("exit with null resets the assigned code", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+
+      process.exitCode = 5;
+      process.exit(null);
+    `,
+      "exit 0 undefined\n",
+      0,
+    );
+  });
+
+  // Node re-reads process.exitCode after the "exit" listeners run, so a
+  // listener can override the code passed to process.exit().
+  it("an exit listener can override the code passed to process.exit", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => { console.log("exit1", code); process.exitCode = 9; });
+      process.on("exit", (code) => { console.log("exit2", code); });
+
+      process.exit(2);
+    `,
+      "exit1 2\nexit2 2\n",
+      9,
     );
   });
 

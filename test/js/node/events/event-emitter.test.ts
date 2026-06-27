@@ -1,5 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -774,6 +775,105 @@ describe("EventEmitter captureRejections", () => {
     await sleep(5);
 
     expect(handled).toEqual(null);
+  });
+
+  test("it captures a plain thenable returned by a listener", async () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const err = new Error("kaboom");
+    const seen: Error[] = [];
+    const thenGets: number[] = [];
+
+    myEmitter.on("error", e => seen.push(e));
+    myEmitter.on("action", () => {
+      const obj = {};
+      Object.defineProperty(obj, "then", {
+        get: () => {
+          thenGets.push(1);
+          return (_res: unknown, rej: (e: Error) => void) => rej(err);
+        },
+      });
+      return obj;
+    });
+
+    myEmitter.emit("action");
+
+    // Promises/A+ allows exactly one `then` lookup, done synchronously by emit.
+    expect(thenGets).toEqual([1]);
+    // The rejection is delivered to "error" one tick later.
+    await new Promise<void>(resolve => process.nextTick(resolve));
+    expect(seen).toEqual([err]);
+  });
+
+  test("a throwing `then` getter is routed to the error event", () => {
+    const myEmitter = new EventEmitter({ captureRejections: true });
+    const err = new Error("kaboom");
+    const seen: Error[] = [];
+
+    myEmitter.on("error", e => seen.push(e));
+    myEmitter.on("action", () => {
+      const obj = {};
+      Object.defineProperty(obj, "then", {
+        get: () => {
+          throw err;
+        },
+      });
+      return obj;
+    });
+
+    myEmitter.emit("action");
+
+    expect(seen).toEqual([err]);
+  });
+
+  // `EventEmitter.captureRejections = true` is process-global, so both cases
+  // run in a subprocess.
+  test("the global setting applies to instances whose constructor never ran", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { EventEmitter } = require("node:events");
+        const { inherits } = require("node:util");
+        function NoConstructor() {}
+        inherits(NoConstructor, EventEmitter);
+        EventEmitter.captureRejections = true;
+        const ee = new NoConstructor();
+        ee.on("action", async () => { throw new Error("kaboom"); });
+        ee.on("error", e => console.log("error", e.message));
+        process.on("unhandledRejection", e => console.log("unhandledRejection", e.message));
+        ee.emit("action");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "error kaboom\n", exitCode: 0 });
+  });
+
+  test("the global setting does not retroactively apply to an existing default emitter", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { EventEmitter } = require("node:events");
+        const ee = new EventEmitter();
+        ee.on("action", async () => { throw new Error("kaboom"); });
+        ee.on("error", e => console.log("error", e.message));
+        EventEmitter.captureRejections = true;
+        process.on("unhandledRejection", e => console.log("unhandledRejection", e.message));
+        ee.emit("action");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "unhandledRejection kaboom\n", exitCode: 0 });
   });
 });
 

@@ -135,10 +135,22 @@ function emitError(emitter, args) {
 }
 
 function addCatch(emitter, promise, type, args) {
-  promise.then(undefined, function (err) {
-    // The callback is called with nextTick to avoid a follow-up rejection from this promise.
-    process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
-  });
+  if (!emitter[kCapture]) {
+    return;
+  }
+  // The listener may return any thenable, not only a real Promise, and the
+  // `then` getter (or the call itself) may throw; route that to "error".
+  try {
+    const then = promise.then;
+    if (typeof then === "function") {
+      then.$call(promise, undefined, function (err) {
+        // The callback is called with nextTick to avoid a follow-up rejection from this promise.
+        process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
+      });
+    }
+  } catch (err) {
+    emitter.emit("error", err);
+  }
 }
 
 function emitUnhandledRejectionOrErr(emitter, err, type, args) {
@@ -229,7 +241,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
+    if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
   }
@@ -823,6 +835,9 @@ Object.defineProperties(EventEmitter, {
       validateBoolean(value, "EventEmitter.captureRejections");
 
       EventEmitterPrototype[kCapture] = value;
+      // Instances whose EventEmitter constructor never ran (util.inherits)
+      // dispatch through the prototype's emit; keep it in sync.
+      EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;
     },
     enumerable: true,
   },

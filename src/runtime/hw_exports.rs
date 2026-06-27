@@ -305,7 +305,7 @@ pub fn on_resolve_entry_point_result(
         );
     }
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
+    bun_core::Global::exit(global.bun_vm().as_mut().exit_handler.os_exit_code());
 }
 
 // HOST_EXPORT(Bun__onRejectEntryPointResult)
@@ -328,7 +328,7 @@ pub fn on_reject_entry_point_result(
         );
     }
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
+    bun_core::Global::exit(global.bun_vm().as_mut().exit_handler.os_exit_code());
 }
 
 // ─── bindgenv2 dispatch shims (`bindgen_*_dispatch*`) ────────────────────────

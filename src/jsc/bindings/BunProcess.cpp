@@ -159,8 +159,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
-extern "C" uint8_t Bun__getExitCode(void*);
-extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
+extern "C" int32_t Bun__getExitCode(void*);
+extern "C" void Bun__setExitCode(void*, int32_t);
 extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
@@ -820,7 +820,7 @@ extern "C" double Bun__readOriginTimerStart(void*);
 extern "C" void Bun__VirtualMachine__exitDuringUncaughtException(void*);
 
 // https://github.com/nodejs/node/blob/1936160c31afc9780e4365de033789f39b7cbc0c/src/api/hooks.cc#L49
-extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, int32_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
         return;
@@ -839,14 +839,14 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
-extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, int32_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
         return;
     }
 
     auto* process = globalObject->processObject();
-    if (exitCode > 0)
+    if (exitCode != 0)
         process->m_isExitCodeObservable = true;
     dispatchExitInternal(globalObject, process, exitCode);
 }
@@ -865,13 +865,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto process = zigGlobal->processObject();
 
-    auto code = callFrame->argument(0);
+    // Node only assigns process.exitCode when an argument was passed, so a
+    // bare process.exit() keeps any previously assigned code.
+    if (callFrame->argumentCount() > 0) {
+        setProcessExitCodeInner(globalObject, process, callFrame->uncheckedArgument(0));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
 
-    setProcessExitCodeInner(globalObject, process, code);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
 
+    // An "exit" listener may reassign process.exitCode; Node re-reads it here.
     auto exitCode = Bun__getExitCode(bunVM(zigGlobal));
-    Process__dispatchOnExit(zigGlobal, exitCode);
 
     // process.reallyExit(exitCode);
     auto reallyExitVal = process->get(globalObject, Identifier::fromString(vm, "reallyExit"_s));
@@ -2014,23 +2018,30 @@ JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalOb
 bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code)
 {
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
+    void* ptr = process->globalObject()->bunVM();
 
-    if (!code.isUndefinedOrNull()) {
-        if (code.isString() && !code.getString(lexicalGlobalObject).isEmpty()) {
-            auto num = code.toNumber(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            if (!std::isnan(num)) {
-                code = jsNumber(num);
-            }
-        }
-        ssize_t exitCodeInt;
-        Bun::V::validateInteger(throwScope, lexicalGlobalObject, code, "code"_s, jsUndefined(), jsUndefined(), &exitCodeInt);
-        RETURN_IF_EXCEPTION(throwScope, false);
-
-        process->m_isExitCodeObservable = true;
-        void* ptr = process->globalObject()->bunVM();
-        Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt % 256));
+    if (code.isUndefinedOrNull()) {
+        // Node resets process.exitCode back to unset on a nullish assignment.
+        process->m_isExitCodeObservable = false;
+        Bun__setExitCode(ptr, 0);
+        return true;
     }
+
+    if (code.isString() && !code.getString(lexicalGlobalObject).isEmpty()) {
+        auto num = code.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!std::isnan(num)) {
+            code = jsNumber(num);
+        }
+    }
+    ssize_t exitCodeInt;
+    Bun::V::validateInteger(throwScope, lexicalGlobalObject, code, "code"_s, jsUndefined(), jsUndefined(), &exitCodeInt);
+    RETURN_IF_EXCEPTION(throwScope, false);
+
+    process->m_isExitCodeObservable = true;
+    // Node stores process.exitCode in an int32 slot; only the final exit(2)
+    // masks to 0-255, so the getter and the "exit" event keep the raw value.
+    Bun__setExitCode(ptr, static_cast<int32_t>(exitCodeInt));
     return true;
 }
 JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))

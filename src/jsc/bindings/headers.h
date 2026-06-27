@@ -662,7 +662,9 @@ ZIG_DECL size_t Bun__WebSocketClientTLS__memoryCost(WebSocketClientTLS* arg0);
 
 #ifdef __cplusplus
 
-ZIG_DECL /*[[noreturn]]*/ void Bun__Process__exit(JSC::JSGlobalObject* arg0, int32_t arg1); // TODO(@190n) figure out why with a real [[noreturn]] annotation this trips ASan before calling the function
+// `[[noreturn]]` is deliberately left as a comment: the real attribute trips
+// ASan before the function is even called (@190n).
+ZIG_DECL /*[[noreturn]]*/ void Bun__Process__exit(JSC::JSGlobalObject* arg0, int32_t arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__createArgv(JSC::JSGlobalObject* arg0);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__createArgv0(JSC::JSGlobalObject* arg0);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getCwd(JSC::JSGlobalObject* arg0);

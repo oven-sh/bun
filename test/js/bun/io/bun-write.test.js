@@ -302,6 +302,102 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
+  describe("Bun.write(path, new Response(readableStream))", () => {
+    it("JS ReadableStream (start/close)", async () => {
+      using dir = tempDir("bun-write-response-rs-start", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello-js-stream"));
+          c.close();
+        },
+      });
+      const n = await Bun.write(dest, new Response(rs));
+      expect(await Bun.file(dest).text()).toBe("hello-js-stream");
+      expect(n).toBe(15);
+      await gcTick();
+    });
+
+    it("JS ReadableStream (pull, multiple chunks)", async () => {
+      using dir = tempDir("bun-write-response-rs-pull", {});
+      const dest = path.join(String(dir), "out.txt");
+      const chunks = ["one-", "two-", "three"];
+      let i = 0;
+      const rs = new ReadableStream({
+        pull(c) {
+          if (i < chunks.length) {
+            c.enqueue(new TextEncoder().encode(chunks[i++]));
+          } else {
+            c.close();
+          }
+        },
+      });
+      const n = await Bun.write(dest, new Response(rs));
+      expect(await Bun.file(dest).text()).toBe("one-two-three");
+      expect(n).toBe(13);
+      await gcTick();
+    });
+
+    it("Bun.file().stream() wrapped in Response", async () => {
+      using dir = tempDir("bun-write-response-file-stream", {
+        "src.txt": "hello-file-stream",
+      });
+      const src = path.join(String(dir), "src.txt");
+      const dest = path.join(String(dir), "out.txt");
+      const n = await Bun.write(dest, new Response(Bun.file(src).stream()));
+      expect(await Bun.file(dest).text()).toBe("hello-file-stream");
+      expect(n).toBe(17);
+      await gcTick();
+    });
+
+    it("Request with ReadableStream body", async () => {
+      using dir = tempDir("bun-write-request-rs", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello-request"));
+          c.close();
+        },
+      });
+      const req = new Request("http://example.com", { method: "POST", body: rs });
+      const n = await Bun.write(dest, req);
+      expect(await Bun.file(dest).text()).toBe("hello-request");
+      expect(n).toBe(13);
+      await gcTick();
+    });
+
+    it("rejects when the stream errors", async () => {
+      using dir = tempDir("bun-write-response-rs-error", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        pull(c) {
+          c.error(new Error("boom"));
+        },
+      });
+      let caught;
+      await Bun.write(dest, new Response(rs)).then(
+        () => {},
+        e => (caught = e),
+      );
+      expect(caught).toBeInstanceOf(Error);
+      expect(caught.message).toBe("boom");
+    });
+
+    it("marks the Response body as used", async () => {
+      using dir = tempDir("bun-write-response-rs-used", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello"));
+          c.close();
+        },
+      });
+      const resp = new Response(rs);
+      await Bun.write(dest, resp);
+      expect(resp.bodyUsed).toBe(true);
+    });
+  });
+
   it("Bun.write('output.html', '')", async () => {
     using tmpbase = tempDir("bun-write-output-html", {});
     await Bun.write(tmpbase + "output.html", "lalalala");

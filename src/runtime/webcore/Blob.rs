@@ -1704,21 +1704,25 @@ impl BlobExt for Blob {
                         return Ok(promise_value);
                     }
                     jsc::js_promise::Status::Fulfilled => {
+                        // SAFETY: file_sink is a live +1 *mut FileSink.
+                        let written = unsafe { (*file_sink).written.get() } as f64;
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
-                            JSValue::js_number(0.0),
+                            JSValue::js_number(written),
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
+                        let err = promise.result(global_this.vm());
+                        promise.set_handled(global_this.vm());
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this);
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
-                            promise.result(global_this.vm()),
+                            err,
                         ));
                     }
                 }
@@ -1734,12 +1738,14 @@ impl BlobExt for Blob {
                 );
             }
         }
+        // SAFETY: file_sink is a live +1 *mut FileSink.
+        let written = unsafe { (*file_sink).written.get() } as f64;
         // SAFETY: release our +1 ref on the sink.
         unsafe { webcore::FileSink::deref(file_sink) };
 
         Ok(JSPromise::resolved_promise_value(
             global_this,
-            JSValue::js_number(0.0),
+            JSValue::js_number(written),
         ))
     }
 
@@ -5273,6 +5279,35 @@ pub fn write_file_internal(
                                 "ReadableStream has already been used"
                             )));
                         }
+
+                        // A Locked body with a ReadableStream (e.g. `new Response(rs)`)
+                        // has no native driver to fire on_receive_value below, so the
+                        // promise would never settle. Pump the stream into the file instead.
+                        let readable_opt = get_stream(global_this).or_else(|| {
+                            // SAFETY: re-borrow the Locked body value.
+                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                                return None;
+                            };
+                            locked.readable.get(global_this)
+                        });
+                        if let Some(readable) = readable_opt {
+                            if readable.is_disturbed(global_this) {
+                                destination_blob.detach();
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "ReadableStream has already been used"
+                                )));
+                            }
+                            let result = destination_blob.pipe_readable_stream_to_blob(
+                                global_this,
+                                readable,
+                                options.extra_options,
+                            );
+                            // SAFETY: re-borrow after pipe; the stream itself is now
+                            // rooted by the FileStreamWrapper / sink.
+                            unsafe { *body_value = BodyValue::Used };
+                            return result.map(ControlFlow::Break);
+                        }
+
                         let task =
                             bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                                 global_this: bun_ptr::BackRef::new(global_this),
@@ -6020,7 +6055,9 @@ pub fn on_file_stream_resolve_request_stream(
     if let Some(stream) = strong.get(global_this) {
         stream.done(global_this);
     }
-    this.promise.resolve(global_this, JSValue::js_number(0.0))?;
+    // SAFETY: `this.sink` is the +1 ref held until Drop runs below.
+    let written = unsafe { (*this.sink).written.get() } as f64;
+    this.promise.resolve(global_this, JSValue::js_number(written))?;
     Ok(JSValue::UNDEFINED)
 }
 

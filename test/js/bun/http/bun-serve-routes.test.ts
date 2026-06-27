@@ -108,6 +108,86 @@ describe("HTTP methods", () => {
   });
 });
 
+describe("implicit HEAD for per-method route objects", () => {
+  // HEAD must return the same representation as GET without the body
+  // (RFC 9110 section 9.3.2).
+  test("HEAD is served by the GET handler when no HEAD handler is declared", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/m": { GET: () => new Response("hello-get") },
+        "/*": () => new Response("from-catch-all"),
+      },
+    });
+
+    const get = await fetch(new URL("/m", server.url));
+    expect(await get.text()).toBe("hello-get");
+    expect(get.status).toBe(200);
+
+    const head = await fetch(new URL("/m", server.url), { method: "HEAD" });
+    expect(await head.text()).toBe("");
+    expect(head.headers.get("content-length")).toBe("9");
+    expect(head.status).toBe(200);
+
+    // Other methods still fall through to the next matching route.
+    const post = await fetch(new URL("/m", server.url), { method: "POST" });
+    expect(await post.text()).toBe("from-catch-all");
+  });
+
+  test("HEAD does not 404 when there is no later route to fall through to", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/only-get": { GET: () => new Response("ok") } },
+    });
+
+    const res = await fetch(new URL("/only-get", server.url), { method: "HEAD" });
+    expect(await res.text()).toBe("");
+    expect(res.headers.get("content-length")).toBe("2");
+    expect(res.status).toBe(200);
+  });
+
+  test("the GET handler observes the real request method", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/echo": { GET: req => new Response("body", { headers: { "x-seen-method": req.method } }) },
+      },
+    });
+
+    const res = await fetch(new URL("/echo", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-seen-method")).toBe("HEAD");
+    expect(res.headers.get("content-length")).toBe("4");
+    expect(await res.text()).toBe("");
+    expect(res.status).toBe(200);
+  });
+
+  test("an explicit HEAD handler takes precedence over the GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/explicit": {
+          GET: () => new Response("get-body"),
+          HEAD: () => new Response(null, { headers: { "x-explicit-head": "1" } }),
+        },
+      },
+    });
+
+    const res = await fetch(new URL("/explicit", server.url), { method: "HEAD" });
+    expect(res.headers.get("x-explicit-head")).toBe("1");
+    expect(res.status).toBe(200);
+  });
+
+  test("HEAD is not derived for route objects without a GET handler", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/post-only": { POST: () => new Response("p") } },
+    });
+
+    const res = await fetch(new URL("/post-only", server.url), { method: "HEAD" });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("static responses", () => {
   let server: Server;
 

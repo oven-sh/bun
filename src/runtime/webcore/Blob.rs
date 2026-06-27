@@ -245,6 +245,8 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
+        mkdirp_if_not_exists: bool,
+        mode: Option<bun_sys::Mode>,
     ) -> JsResult<JSValue>;
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_slice_from(
@@ -1428,6 +1430,8 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
+        mkdirp_if_not_exists: bool,
+        mode: Option<bun_sys::Mode>,
     ) -> JsResult<JSValue> {
         let Some(store) = self.store.get().clone() else {
             return Ok(
@@ -1508,17 +1512,28 @@ impl BlobExt for Blob {
                 } else {
                     let mut file_path = bun_paths::PathBuffer::uninit();
                     let path = pathlike.path().slice_z(&mut file_path);
-                    match bun_sys::open(
-                        path,
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
-                        WRITE_PERMISSIONS,
-                    ) {
-                        bun_sys::Result::Ok(result) => result,
-                        bun_sys::Result::Err(err) => {
-                            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                                global_this,
-                                err.with_path(path).to_js(global_this),
-                            ));
+                    // `Bun.write` has replace semantics: truncate when opening by path.
+                    let open_flags = bun_sys::O::WRONLY
+                        | bun_sys::O::CREAT
+                        | bun_sys::O::NONBLOCK
+                        | bun_sys::O::TRUNC;
+                    let mut mkdirp_pending = mkdirp_if_not_exists;
+                    loop {
+                        match bun_sys::open(path, open_flags, mode.unwrap_or(WRITE_PERMISSIONS)) {
+                            bun_sys::Result::Ok(result) => break result,
+                            bun_sys::Result::Err(err) => {
+                                if mkdirp_pending
+                                    && err.get_errno() == bun_sys::E::ENOENT
+                                    && mkdirp_parent_of(path.as_bytes())
+                                {
+                                    mkdirp_pending = false;
+                                    continue;
+                                }
+                                return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                    global_this,
+                                    err.with_path(path).to_js(global_this),
+                                ));
+                            }
                         }
                     }
                 };
@@ -1595,45 +1610,60 @@ impl BlobExt for Blob {
 
             #[cfg(not(windows))]
             {
-                let sink = webcore::FileSink::init(
-                    Fd::INVALID,
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .as_mut()
-                            .event_loop()
-                            .cast::<()>(),
-                    ),
-                );
-
-                let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike
-                {
-                    PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
-                    PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
-                        bun_core::ZigStringSlice::init_dupe(p.slice()).expect("oom"),
-                    ),
-                };
-                // input_path drops at scope exit.
-
-                let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
-                    input_path,
-                    chunk_size: 0,
-                    ..Default::default()
-                });
-
-                // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
-                if let bun_sys::Result::Err(err) = unsafe { (*sink).start(&stream_start) } {
-                    // SAFETY: release the +1 strong ref taken by `init` on the error path.
-                    unsafe { webcore::FileSink::deref(sink) };
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err.to_js(global_this),
+                let pathlike = &store.data.as_file().pathlike;
+                // `Bun.write` has replace semantics: truncate when opening by path.
+                // A destination fd (`Bun.file(fd)`, stdout/stderr) is never truncated.
+                let is_path = matches!(pathlike, PathOrFileDescriptor::Path(_));
+                let mut mkdirp_pending = mkdirp_if_not_exists && is_path;
+                loop {
+                    let sink = webcore::FileSink::init(
+                        Fd::INVALID,
+                        jsc::EventLoopHandle::init(
+                            self.global_this()
+                                .expect("Blob.global_this set at construction")
+                                .bun_vm()
+                                .as_mut()
+                                .event_loop()
+                                .cast::<()>(),
                         ),
                     );
+
+                    let input_path: webcore::PathOrFileDescriptor = match pathlike {
+                        PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
+                        PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
+                            bun_core::ZigStringSlice::init_dupe(p.slice()).expect("oom"),
+                        ),
+                    };
+                    // input_path drops at scope exit.
+
+                    let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
+                        input_path,
+                        chunk_size: 0,
+                        truncate: is_path,
+                        mode: mode.unwrap_or(WRITE_PERMISSIONS),
+                        ..Default::default()
+                    });
+
+                    // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
+                    if let bun_sys::Result::Err(err) = unsafe { (*sink).start(&stream_start) } {
+                        // SAFETY: release the +1 strong ref taken by `init` on the error path.
+                        unsafe { webcore::FileSink::deref(sink) };
+                        if mkdirp_pending
+                            && err.get_errno() == bun_sys::E::ENOENT
+                            && mkdirp_parent_of(pathlike.path().slice())
+                        {
+                            mkdirp_pending = false;
+                            continue;
+                        }
+                        return Ok(
+                            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                global_this,
+                                err.to_js(global_this),
+                            ),
+                        );
+                    }
+                    break 'brk_sink sink;
                 }
-                break 'brk_sink sink;
             }
         };
 
@@ -4470,6 +4500,27 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
     Retry::No
 }
 
+/// Create the parent directory chain of `dest_path` (for `createPath`). Used as
+/// the ENOENT retry in `pipe_readable_stream_to_blob`, which opens the
+/// destination through `FileSink` rather than the `FileOpener` tasks
+/// (`WriteFile`, `CopyFile`) that use [`mkdir_if_not_exists`].
+fn mkdirp_parent_of(dest_path: &[u8]) -> bool {
+    let Some(dirname) = bun_core::dirname(dest_path) else {
+        return false;
+    };
+    let mut node_fs = node::fs::NodeFS::default();
+    node_fs
+        .mkdir_recursive(&node::fs::args::Mkdir {
+            path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                dirname, false,
+            )),
+            recursive: true,
+            always_return_none: true,
+            ..Default::default()
+        })
+        .is_ok()
+}
+
 /// `bun_sys::Error` only
 /// exposes `with_path(&[u8])`, so route through the
 /// `PathOrFileDescriptor`'s slice when it's a path and leave the error
@@ -4844,6 +4895,8 @@ pub fn write_file_with_source_destination(
                 ctx,
                 stream,
                 options.extra_options,
+                options.mkdirp_if_not_exists.unwrap_or(true),
+                options.mode,
             );
         } else {
             return Ok(
@@ -5297,14 +5350,24 @@ pub fn write_file_internal(
                                     "ReadableStream has already been used"
                                 )));
                             }
+                            let readable_value = readable.value;
                             let result = destination_blob.pipe_readable_stream_to_blob(
                                 global_this,
                                 readable,
                                 options.extra_options,
+                                options.mkdirp_if_not_exists.unwrap_or(true),
+                                options.mode,
                             );
-                            // SAFETY: re-borrow after pipe; the stream itself is now
-                            // rooted by the FileStreamWrapper / sink.
-                            unsafe { *body_value = BodyValue::Used };
+                            // Only a pipe that took a reader consumed the body. Early
+                            // rejections (open failure) leave the stream untouched.
+                            if webcore::readable_stream::is_disturbed_value(
+                                readable_value,
+                                global_this,
+                            ) {
+                                // SAFETY: re-borrow `body_value` (a live JS-heap Body);
+                                // the `readable` borrow ended above.
+                                unsafe { *body_value = BodyValue::Used };
+                            }
                             return result.map(ControlFlow::Break);
                         }
 

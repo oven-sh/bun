@@ -191,6 +191,9 @@ bun_io::impl_streaming_writer_parent! {
 pub struct Options {
     pub chunk_size: webcore::BlobSizeType,
     pub input_path: PathOrFileDescriptor,
+    /// Truncate the destination on open. Defaults to `false`:
+    /// `Bun.file(path).writer()` has always overwritten in place. Replace-style
+    /// writers (`Blob::pipe_readable_stream_to_blob`, i.e. `Bun.write`) opt in.
     pub truncate: bool,
     pub close: bool,
     pub mode: bun_sys::Mode,
@@ -201,7 +204,7 @@ impl Default for Options {
         Self {
             chunk_size: 1024,
             input_path: PathOrFileDescriptor::Fd(Fd::INVALID),
-            truncate: true,
+            truncate: false,
             close: false,
             mode: 0o664,
         }
@@ -210,8 +213,11 @@ impl Default for Options {
 
 impl Options {
     pub fn flags(&self) -> i32 {
-        let _ = self;
-        bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY
+        bun_sys::O::NONBLOCK
+            | bun_sys::O::CLOEXEC
+            | bun_sys::O::CREAT
+            | bun_sys::O::WRONLY
+            | if self.truncate { bun_sys::O::TRUNC } else { 0 }
     }
 }
 

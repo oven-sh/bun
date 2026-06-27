@@ -396,6 +396,68 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await Bun.write(dest, resp);
       expect(resp.bodyUsed).toBe(true);
     });
+
+    it("truncates a longer pre-existing destination", async () => {
+      using dir = tempDir("bun-write-response-rs-trunc", {
+        "out.txt": Buffer.alloc(64, "X").toString(),
+      });
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello"));
+          c.close();
+        },
+      });
+      expect(await Bun.write(dest, new Response(rs))).toBe(5);
+      expect(await Bun.file(dest).text()).toBe("hello");
+    });
+
+    it("creates missing parent directories by default", async () => {
+      using dir = tempDir("bun-write-response-rs-mkdirp", {});
+      const dest = path.join(String(dir), "a", "b", "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("nested"));
+          c.close();
+        },
+      });
+      expect(await Bun.write(dest, new Response(rs))).toBe(6);
+      expect(await Bun.file(dest).text()).toBe("nested");
+    });
+
+    it("with { createPath: false }, rejects and leaves the body unused", async () => {
+      using dir = tempDir("bun-write-response-rs-noent", {});
+      const dest = path.join(String(dir), "missing", "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("keep"));
+          c.close();
+        },
+      });
+      const resp = new Response(rs);
+      let caught;
+      await Bun.write(dest, resp, { createPath: false }).then(
+        () => {},
+        e => (caught = e),
+      );
+      expect(caught?.code).toBe("ENOENT");
+      // The open failed before the stream was read, so the body is still intact.
+      expect(resp.bodyUsed).toBe(false);
+      expect(await resp.text()).toBe("keep");
+    });
+
+    it.skipIf(isWindows)("honours { mode }", async () => {
+      using dir = tempDir("bun-write-response-rs-mode", {});
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("m"));
+          c.close();
+        },
+      });
+      await Bun.write(dest, new Response(rs), { mode: 0o600 });
+      expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
+    });
   });
 
   it("Bun.write('output.html', '')", async () => {

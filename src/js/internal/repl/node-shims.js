@@ -182,12 +182,16 @@ function getOrInitializeCascadedLoader() {
 // ---- internal/modules/helpers ----------------------------------------------
 
 function makeRequireFunction(_mod) {
-  // `mod` is a CJS Module instance whose `paths` were initialized by the
-  // REPL. Resolution is anchored to a synthetic file in the REPL's cwd so
-  // relative requires behave like Node's REPL.
-  const filename = path.join(process.cwd(), "<repl>");
-  const requireFn = Module.createRequire(filename);
-  return requireFn;
+  // Anchor relative requires to the REPL's cwd. process.cwd() throws when the
+  // working directory has been deleted; same fallback as fixReplRequire
+  // (internal/repl/utils.js).
+  let cwd;
+  try {
+    cwd = process.cwd();
+  } catch {
+    cwd = path.dirname(process.execPath);
+  }
+  return Module.createRequire(path.join(cwd, "<repl>"));
 }
 
 let builtinLibs;
@@ -205,7 +209,10 @@ function getBuiltinLibs() {
 }
 
 function addBuiltinLibsToObject(object, _dummy) {
-  // Make built-in modules available directly (loaded lazily).
+  // Make built-in modules available directly (loaded lazily). Builtin
+  // specifiers don't need a cwd-anchored referrer, so anchor to execPath
+  // (avoids ENOENT from process.cwd() in a deleted working directory).
+  const builtinRequire = Module.createRequire(process.execPath);
   getBuiltinLibs().forEach(name => {
     if (Object.getOwnPropertyDescriptor(object, name)) {
       return;
@@ -221,7 +228,7 @@ function addBuiltinLibsToObject(object, _dummy) {
     Object.defineProperty(object, name, {
       __proto__: null,
       get: () => {
-        const lib = require("node:module").createRequire(path.join(process.cwd(), "<repl>"))(name);
+        const lib = builtinRequire(name);
 
         try {
           // Override the current getter/setter pair with the lib itself.

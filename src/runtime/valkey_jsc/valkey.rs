@@ -1065,27 +1065,40 @@ impl ValkeyClient {
                 }
             };
         }
-        // Check if this is a subscription push message that might not need a promise pair
+        // RESP3 push frames (`>`) are out-of-band server->client data and are
+        // never the reply to an in-flight command. The server may emit them on
+        // any connection at any time (e.g. client-side-caching `invalidate`),
+        // so they must never pop the in-flight promise queue. The only push
+        // kinds that pair with a pending command are `subscribe`/`unsubscribe`
+        // acks, which correspond one-to-one with SUBSCRIBE/UNSUBSCRIBE.
         let mut should_consume_promise_pair = true;
         let mut pair_maybe: Option<command::PromisePair> = None;
 
-        // For subscription clients, check if this is a push message that doesn't need a promise pair
-        if self.parent().is_subscriber() {
-            if let RESPValue::Push(push) = value {
-                if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                    match msg_type {
-                        protocol::SubscriptionPushMessage::Message => {
-                            // Message pushes never need promise pairs
-                            should_consume_promise_pair = false;
-                        }
-                        protocol::SubscriptionPushMessage::Subscribe
-                        | protocol::SubscriptionPushMessage::Unsubscribe => {
-                            // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                            if self.in_flight.readable_length() == 0 {
-                                should_consume_promise_pair = false;
-                            }
-                        }
+        if let RESPValue::Push(push) = value {
+            match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
+                Some(protocol::SubscriptionPushMessage::Message) => {
+                    // Message pushes never need promise pairs
+                    should_consume_promise_pair = false;
+                }
+                Some(
+                    protocol::SubscriptionPushMessage::Subscribe
+                    | protocol::SubscriptionPushMessage::Unsubscribe,
+                ) => {
+                    // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
+                    if self.in_flight.readable_length() == 0 {
+                        should_consume_promise_pair = false;
                     }
+                }
+                None => {
+                    // Non-subscription push (invalidate, tracking, etc.). There
+                    // is no user-facing push handler yet, so drop it. Consuming
+                    // a promise pair here would permanently desync every later
+                    // command's reply by one slot.
+                    debug!(
+                        "Ignoring out-of-band RESP3 push: {}",
+                        bstr::BStr::new(&push.kind)
+                    );
+                    return Ok(());
                 }
             }
         }
@@ -1112,19 +1125,12 @@ impl ValkeyClient {
                     self.fail(err, RedisError::InvalidResponse)?;
                     return Ok(());
                 }
-                RESPValue::Push(push) => {
-                    if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {
-                        if self.handle_subscribe_response(value, pair_maybe.as_mut())?
-                            == SubscribeHandled::Handled
-                        {
-                            return Ok(());
-                        }
-                    } else {
-                        bun_core::hint::cold();
-                        self.fail(
-                            b"Unexpected push message kind without promise",
-                            RedisError::InvalidResponseType,
-                        )?;
+                RESPValue::Push(_) => {
+                    // Non-subscription push kinds already returned above, so
+                    // this is a message/subscribe/unsubscribe push.
+                    if self.handle_subscribe_response(value, pair_maybe.as_mut())?
+                        == SubscribeHandled::Handled
+                    {
                         return Ok(());
                     }
                 }

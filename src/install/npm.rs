@@ -1822,8 +1822,16 @@ impl PackageManifest {
         if group.is_star_literal() {
             let latest =
                 self.find_by_dist_tag_with_filter(b"latest", minimum_release_age_ms, exclusions);
-            if !matches!(latest, FindVersionResult::Err(FindVersionError::NotFound)) {
+            if latest.found().is_some() {
                 return latest;
+            }
+            // Every version in the `latest` channel is age-filtered: remember
+            // the newest one and fall through, so an old enough version from
+            // the other list can still match (and the scans can report it).
+            if latest.latest_is_filtered() {
+                if let Some(tag) = self.find_by_dist_tag(b"latest") {
+                    newest_filtered = Some(tag.version);
+                }
             }
         }
 
@@ -1849,6 +1857,7 @@ impl PackageManifest {
             &mut newest_filtered,
         );
 
+        let mut best = from_releases;
         if group.flags.is_set(Semver::query::Flags::PRE) {
             if let Some(from_prereleases) = self.search_version_list(
                 self.pkg.prereleases.keys.get(&self.versions),
@@ -1862,7 +1871,7 @@ impl PackageManifest {
                 // with a prerelease comparator can be satisfied by a
                 // prerelease that is higher than every satisfying release.
                 let prerelease_is_higher = match (
-                    from_releases.as_ref().and_then(|r| r.found()),
+                    best.as_ref().and_then(|r| r.found()),
                     from_prereleases.found(),
                 ) {
                     (Some(release), Some(prerelease)) => {
@@ -1876,12 +1885,26 @@ impl PackageManifest {
                     _ => true,
                 };
                 if prerelease_is_higher {
-                    return from_prereleases;
+                    best = Some(from_prereleases);
                 }
             }
         }
 
-        if let Some(result) = from_releases {
+        if let Some(result) = best {
+            // A newer satisfying version was skipped by the age filter in the
+            // other list (or was the `latest` dist-tag): report it.
+            if let (Some(found), Some(newer)) = (result.found(), newest_filtered) {
+                if found
+                    .version
+                    .order(newer, &self.string_buf, &self.string_buf)
+                    == core::cmp::Ordering::Less
+                {
+                    return FindVersionResult::FoundWithFilter {
+                        result: found,
+                        newest_filtered,
+                    };
+                }
+            }
             return result;
         }
 

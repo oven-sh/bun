@@ -187,6 +187,28 @@ describe.concurrent("bun install version resolution", () => {
     expect(resolved["aged-pre"]).toBe("1.0.0-beta.1");
   });
 
+  // When every version in the latest dist-tag's prerelease channel is too
+  // recent, `*` still falls back to an old enough stable release.
+  test("star range with minimumReleaseAge falls back to a stable when the latest channel is too recent", async () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const { resolved, stderr } = await resolve(
+      {
+        "aged-mixed": {
+          versions: ["1.0.0", "2.0.0-beta.1"],
+          latest: "2.0.0-beta.1",
+          time: {
+            "1.0.0": new Date(Date.now() - 365 * DAY_MS).toISOString(),
+            "2.0.0-beta.1": new Date(Date.now() - 60 * 1000).toISOString(),
+          },
+        },
+      },
+      { "aged-mixed": "*" },
+      2 * 24 * 60 * 60,
+    );
+    expect(stderr).not.toContain("minimum-release-age");
+    expect(resolved["aged-mixed"]).toBe("1.0.0");
+  });
+
   // npm prefers a satisfying `latest` dist-tag over higher satisfying
   // versions, for stable ranges and prerelease ranges alike.
   test("a satisfying latest dist-tag is preferred over higher versions", async () => {

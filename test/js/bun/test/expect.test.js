@@ -3602,6 +3602,18 @@ describe("expect()", () => {
       expect(() => expect(a).toBeCloseTo(b)).toThrow();
       expect(() => expect(b).toBeCloseTo(a)).toThrow();
     });
+
+    test(".not failure on same-sign Infinity has no NaN in the message", () => {
+      let err;
+      try {
+        expect(Infinity).not.toBeCloseTo(Infinity);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeDefined();
+      expect(String(err.message)).not.toContain("NaN");
+      expect(String(err.message)).toContain("Expected: not ");
+    });
   });
 
   describe("toMatch()", () => {

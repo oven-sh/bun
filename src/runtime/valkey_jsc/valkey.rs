@@ -674,6 +674,24 @@ impl ValkeyClient {
             delay_ms, self.retry_attempts, self.max_retries
         );
 
+        // Reject every command written on the closed connection that never
+        // received a reply; otherwise the new connection's replies would be
+        // matched to these stale promise pairs. The offline queue (commands
+        // never written) is left in place to be replayed after reconnect.
+        let mut in_flight =
+            core::mem::replace(&mut self.in_flight, command::promise_pair::Queue::init());
+        if in_flight.readable_length() > 0 {
+            let global_this = self.global_object();
+            let err = valkey_error_to_js(
+                &global_this,
+                b"Connection closed",
+                RedisError::ConnectionClosed,
+            );
+            while let Some(mut pair) = in_flight.read_item() {
+                let _ = pair.reject_command(&global_this, err);
+            }
+        }
+
         self.flags.is_reconnecting = true;
         self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;

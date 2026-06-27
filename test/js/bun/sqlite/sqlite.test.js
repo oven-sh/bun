@@ -1923,10 +1923,9 @@ it("decodes declared types leniently and accepts single-character declared types
 });
 
 describe("string parameters are encoded as well-formed UTF-8", () => {
-  // A lone surrogate must be replaced with U+FFFD, exactly like TextEncoder,
-  // node:sqlite, and better-sqlite3. The bind path must never hand raw UTF-16
-  // to SQLite: its decoder pairs a lone high surrogate with whatever code unit
-  // follows (consuming it) and stores trailing ones as ill-formed 3-byte runs.
+  // A lone surrogate must become U+FFFD, exactly like TextEncoder. SQLite's own
+  // UTF-16 decoder instead pairs a lone high surrogate with the following code
+  // unit (consuming it) and stores trailing ones as ill-formed 3-byte sequences.
   const cases = [
     ["lone high surrogate followed by a non-surrogate", "a\uD800b"],
     ["trailing lone high surrogate", "a\uD800"],
@@ -2034,6 +2033,34 @@ describe("prepared statements refresh cached column names after a schema change"
       b.run("ALTER TABLE t ADD COLUMN c TEXT DEFAULT 'x'");
     }
     expect(q.get()).toEqual({ a: 1, c: "x" });
+  });
+
+  it("schema change made by another process", async () => {
+    // https://github.com/oven-sh/bun/issues/1332
+    const file = tmpbase + `sqlite-xproc-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+    using db = new Database(file, { create: true });
+    db.run("PRAGMA journal_mode = wal");
+    db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+    db.run("INSERT INTO foo (greeting) VALUES (?)", ["Welcome to bun!"]);
+    const q = db.query("SELECT * FROM foo");
+    expect(q.get()).toEqual({ id: 1, greeting: "Welcome to bun!" });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Database } = require("bun:sqlite");` +
+          `const d = new Database(${JSON.stringify(file)});` +
+          `d.run("ALTER TABLE foo RENAME COLUMN greeting TO greeting2");` +
+          `d.close();`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    expect(q.get()).toEqual({ id: 1, greeting2: "Welcome to bun!" });
   });
 });
 

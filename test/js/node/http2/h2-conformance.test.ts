@@ -422,7 +422,7 @@ describe("frame size limit (checklist §4.2)", () => {
   });
 });
 
-describe("header block decoding errors (RFC 9113 §4.3)", () => {
+describe.concurrent("header block decoding errors (RFC 9113 §4.3)", () => {
   // The stream is rejected before the 'stream' event ever fires, so no user code can have
   // attached an 'error' listener to it. The error must stay at the connection level
   // (GOAWAY COMPRESSION_ERROR) instead of being raised as an uncaught exception that kills

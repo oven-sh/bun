@@ -706,6 +706,61 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
+/// `--cwd` / `--prefix` can appear after the script name for `bun run` (npm-style).
+/// `stop_after_positional_at` leaves them in `remaining()` instead of `option()`.
+fn cwd_prefix_in_remaining<'a>(
+    remaining: &'a [&'static [u8]],
+) -> (Option<&'a [u8]>, Option<&'a [u8]>, Vec<usize>) {
+    let mut cwd = None;
+    let mut prefix = None;
+    let mut skip = Vec::new();
+    let mut i = 0;
+    while i < remaining.len() {
+        let arg = remaining[i];
+        let slot: &mut Option<&[u8]> = if arg == b"--cwd" {
+            &mut cwd
+        } else if arg == b"--prefix" {
+            &mut prefix
+        } else if arg.len() > b"--cwd".len() + 1
+            && strings::has_prefix_comptime(arg, b"--cwd")
+            && arg[b"--cwd".len()] == b'='
+        {
+            if cwd.is_none() {
+                cwd = Some(&arg[b"--cwd".len() + 1..]);
+            }
+            skip.push(i);
+            i += 1;
+            continue;
+        } else if arg.len() > b"--prefix".len() + 1
+            && strings::has_prefix_comptime(arg, b"--prefix")
+            && arg[b"--prefix".len()] == b'='
+        {
+            if prefix.is_none() {
+                prefix = Some(&arg[b"--prefix".len() + 1..]);
+            }
+            skip.push(i);
+            i += 1;
+            continue;
+        } else {
+            i += 1;
+            continue;
+        };
+
+        if i + 1 < remaining.len() && !remaining[i + 1].starts_with(b"-") {
+            if slot.is_none() {
+                *slot = Some(remaining[i + 1]);
+            }
+            skip.push(i);
+            skip.push(i + 1);
+            i += 2;
+        } else {
+            skip.push(i);
+            i += 1;
+        }
+    }
+    (cwd, prefix, skip)
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -758,7 +813,21 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     // ── --cwd / --prefix ─────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
-    let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd").or(args.option(b"--prefix")) {
+    let (remaining_cwd, remaining_prefix, passthrough_skip) =
+        if matches!(
+            cmd,
+            CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::RunAsNodeCommand
+        ) {
+            cwd_prefix_in_remaining(args.remaining())
+        } else {
+            (None, None, Vec::new())
+        };
+    let cwd_arg = args
+        .option(b"--cwd")
+        .or(args.option(b"--prefix"))
+        .or(remaining_cwd)
+        .or(remaining_prefix);
+    let cwd: Box<[u8]> = if let Some(cwd_arg) = cwd_arg {
         let mut outbuf = PathBuffer::uninit();
         let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
         let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);
@@ -902,7 +971,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         ctx.runtime_options.preserve_symlinks_main = true;
     }
 
-    ctx.passthrough = slice_to_owned(args.remaining());
+    ctx.passthrough = args
+        .remaining()
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !passthrough_skip.contains(i))
+        .map(|(_, s)| Box::<[u8]>::from(*s))
+        .collect();
 
     if matches!(
         cmd,

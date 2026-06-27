@@ -235,7 +235,14 @@ function verifyArchiveExports(nm: string, prefix: string, exportPrefix: string):
       const trimmed = line.trim();
       if (trimmed.length === 0 || trimmed.endsWith(":")) continue;
       const name = trimmed.split(/\s+/).pop()!.replace(/@.*$/, "");
-      if (!name.startsWith(exportPrefix)) offenders.add(name);
+      // Mach-O prefixes every C symbol with `_` (so the API is
+      // `_ghostty_*` there) and defines reserved `__mh_*` header
+      // symbols; ELF uses the bare name. A leaked libc symbol is caught
+      // either way: neither `memcpy` nor `_memcpy` matches any of these.
+      if (name.startsWith(exportPrefix)) continue;
+      if (name.startsWith(`_${exportPrefix}`)) continue;
+      if (name.startsWith("__mh_")) continue;
+      offenders.add(name);
     }
     if (offenders.size > 0) {
       const list = [...offenders].sort();

@@ -25,7 +25,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { delimiter, join, resolve } from "node:path";
 import { downloadWithRetry } from "./download.ts";
@@ -203,9 +203,62 @@ async function prefetchZigPackage(zig: string, globalCache: string, url: string,
   }
 }
 
+/**
+ * Fail the build if any archive `zig build` installed exports a symbol that
+ * does not start with `exportPrefix`.
+ *
+ * A Zig static library that bundles compiler_rt defines `memcpy`, `memset`,
+ * `memmove`, `memcmp`, and most of libm as weak globals. An executable that
+ * links the archive ahead of libc (every ordinary link line) extracts those
+ * members and silently replaces the libc implementations for the whole
+ * binary; with `-Doptimize=ReleaseSmall` that made every `memcpy` in bun
+ * about 4x slower. The dep's patch disables the bundling; this check makes
+ * the property "this archive only exports its C API" hold from then on.
+ */
+function verifyArchiveExports(nm: string, prefix: string, exportPrefix: string): void {
+  const libDir = resolve(prefix, "lib");
+  const archives = readdirSync(libDir).filter(f => f.endsWith(".a") || f.endsWith(".lib"));
+  assert(archives.length > 0, `zig-build-cli: no archives found under ${libDir} to verify`);
+  for (const archive of archives) {
+    const path = resolve(libDir, archive);
+    const out = spawnSync(nm, ["--defined-only", "--extern-only", path], { encoding: "utf8" });
+    if (out.error || out.status !== 0) {
+      throw new BuildError(`Failed to run ${nm} on ${path}`, {
+        cause: out.error,
+        hint: out.stderr?.toString(),
+      });
+    }
+    const offenders = new Set<string>();
+    for (const line of out.stdout.split("\n")) {
+      // llvm-nm archive output: `member.o:` headers, blank lines, and
+      // `<addr> <type> <name>` symbol lines. Keep the defined names.
+      const trimmed = line.trim();
+      if (trimmed.length === 0 || trimmed.endsWith(":")) continue;
+      const name = trimmed.split(/\s+/).pop()!.replace(/@.*$/, "");
+      if (!name.startsWith(exportPrefix)) offenders.add(name);
+    }
+    if (offenders.size > 0) {
+      const list = [...offenders].sort();
+      const shown = list.slice(0, 12).join(", ");
+      throw new BuildError(
+        `${archive} exports ${list.length} symbol(s) outside its public API (${exportPrefix}*): ${shown}${list.length > 12 ? ", ..." : ""}`,
+        {
+          hint:
+            `A Zig static library must not export anything but its C API. In particular, Zig's bundled\n` +
+            `compiler_rt defines libc/libm symbols (memcpy, memset, exp, ...) that would silently replace\n` +
+            `the libc implementations for every consumer of the archive. Keep bundle_compiler_rt and\n` +
+            `bundle_ubsan_rt disabled in the dep's patch (see patches/ghostty-vt/lib-vt-only.patch).`,
+        },
+      );
+    }
+  }
+}
+
 async function main(): Promise<void> {
   let prefix = "";
   let cacheDir = "";
+  let nm = "";
+  let exportPrefix = "";
   const packages: Array<{ url: string; hash: string }> = [];
   const zigArgs: string[] = [];
 
@@ -216,6 +269,10 @@ async function main(): Promise<void> {
       prefix = argv[++i] ?? "";
     } else if (a === "--cache") {
       cacheDir = argv[++i] ?? "";
+    } else if (a === "--nm") {
+      nm = argv[++i] ?? "";
+    } else if (a === "--expect-export-prefix") {
+      exportPrefix = argv[++i] ?? "";
     } else if (a === "--package") {
       const url = argv[++i];
       const hash = argv[++i];
@@ -229,6 +286,10 @@ async function main(): Promise<void> {
     }
   }
   assert(prefix.length > 0 && cacheDir.length > 0, "zig-build-cli: --prefix and --cache are required");
+  assert(
+    (exportPrefix.length === 0) === (nm.length === 0),
+    "zig-build-cli: --expect-export-prefix and --nm must be passed together",
+  );
 
   const zig = await resolveZig(cacheDir);
 
@@ -258,6 +319,10 @@ async function main(): Promise<void> {
     throw new BuildError(`zig build exited with ${result.status}`, {
       hint: `command: ${zig} build ${zigArgs.join(" ")} --prefix ${prefix}`,
     });
+  }
+
+  if (exportPrefix.length > 0) {
+    verifyArchiveExports(nm, prefix, exportPrefix);
   }
 }
 

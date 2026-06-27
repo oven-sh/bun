@@ -369,6 +369,16 @@ export interface NestedZigBuild {
    * names this field.
    */
   packages: Array<{ url: string; hash: string }>;
+  /**
+   * When set, the build fails if a produced archive exports any symbol
+   * that does not start with this prefix (checked with the toolchain's
+   * `nm`). A Zig static library that bundles compiler_rt exports `memcpy`,
+   * `memset`, and most of libm as weak globals, and an executable linking
+   * the archive ahead of libc extracts them and silently replaces the libc
+   * implementations for its whole binary. Declaring the dep's public C API
+   * prefix makes that class of symbol leak a build error instead.
+   */
+  exportPrefix?: string;
 }
 
 /**
@@ -673,7 +683,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // $env is stream.ts `--env=K=V` args (ninja has no native env support);
   // same mechanism as dep_cargo.
   n.rule("dep_zig_build", {
-    command: `${stream} --cwd=$srcdir $env ${cfg.jsRuntime} ${q(zigBuildCliPath)} --prefix $prefix --cache $cache $packages -- $args`,
+    command: `${stream} --cwd=$srcdir $env ${cfg.jsRuntime} ${q(zigBuildCliPath)} --prefix $prefix --cache $cache $verify $packages -- $args`,
     description: "zig $name",
     restat: true,
     pool: "dep",
@@ -1456,6 +1466,19 @@ function emitNestedZig(
   const env: Record<string, string> = {};
   if (cfg.androidNdk !== undefined) env.ANDROID_NDK_HOME = cfg.androidNdk;
 
+  // The exported-symbol check runs with the `nm` that sits next to the
+  // configured `ar` (`llvm-nm` for an LLVM toolchain, binutils `nm`
+  // otherwise); both accept the same flags for this use.
+  let verify = "";
+  if (spec.exportPrefix !== undefined) {
+    const nm = cfg.ar.replace(/ar((?:-\d+)?(?:\.exe)?)$/, "nm$1");
+    assert(
+      nm !== cfg.ar && existsSync(nm),
+      `nested-zig dep "${name}" declares exportPrefix, but no \`nm\` was found next to \`ar\` (${cfg.ar})`,
+    );
+    verify = `--nm ${quote(nm, hostWin)} --expect-export-prefix ${quote(spec.exportPrefix, hostWin)}`;
+  }
+
   const implicitInputs = [sourceStamp, zigBuildCliPath, ...fetchDepStamps];
   if (alwaysBuild) implicitInputs.push(n.always());
 
@@ -1469,6 +1492,7 @@ function emitNestedZig(
       srcdir: srcDir,
       prefix: buildDir,
       cache: cfg.cacheDir,
+      verify,
       packages: spec.packages.map(p => `--package ${quote(p.url, hostWin)} ${p.hash}`).join(" "),
       args: quoteArgs(args, hostWin),
       env: Object.entries(env)

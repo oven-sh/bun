@@ -114,6 +114,11 @@ export const mydep: Dependency = {
 - **`nested-zig`**: Runs `zig build` via `../zig-build-cli.ts`, which finds
   (or downloads) a pinned Zig toolchain and pre-fetches the dep's Zig
   packages through our downloader. See `NestedZigBuild` in `../source.ts`.
+  Always set `exportPrefix` to the dep's C-API prefix: a Zig static library
+  that bundles compiler_rt exports `memcpy`, `memset`, and most of libm as
+  weak globals, and an executable linking that archive ahead of libc picks
+  them up and silently replaces the libc implementations for the whole
+  binary. The check turns any such symbol leak into a build error.
   Currently just ghostty-vt.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 

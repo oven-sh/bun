@@ -34,8 +34,11 @@ export const ghosttyVt: Dependency = {
   // app's build graph, which lazily fetches ~30 packages (GTK, fonts,
   // renderers) the VT library never uses. The patch returns right after
   // installing the VT static lib + headers (shrinking the dependency set to
-  // the two packages below) and splits the lib into one section per symbol
-  // so bun's --gc-sections link can drop the unused parts of the C API.
+  // the two packages below), splits the lib into one section per symbol so
+  // bun's --gc-sections link can drop the unused parts of the C API, and,
+  // critically, stops bundling Zig's compiler_rt, which exports `memcpy`,
+  // `memset`, and most of libm and would otherwise replace the libc
+  // versions in the whole bun binary (see `exportPrefix` below).
   patches: ["patches/ghostty-vt/lib-vt-only.patch"],
 
   build: () => ({
@@ -49,13 +52,19 @@ export const ghosttyVt: Dependency = {
       "-Dapp-runtime=none",
       "-Demit-xcframework=false",
       // A release mode always, even for debug bun builds: a Debug Zig
-      // library bundles Zig's UBSan runtime, which collides with the
-      // `__ubsan_*` symbols clang provides in bun's ASAN profiles.
+      // library emits UBSan checks, and the patch deliberately does not
+      // bundle Zig's ubsan runtime (nothing else defines those handlers).
       // ReleaseSmall over ReleaseFast: the pane renderer runs at human
       // output rates, and Small halves this library's contribution to
       // the linked bun binary (~0.6 MB vs ~1.2 MB after --gc-sections).
       "-Doptimize=ReleaseSmall",
     ],
+    // libghostty-vt must export nothing but its C API. Zig's bundled
+    // compiler_rt defines `memcpy`, `memset`, `memmove`, and most of libm
+    // as weak globals; linked into bun ahead of libc, those replaced the
+    // glibc implementations for the entire binary (a ~4x slower `memcpy`).
+    // The patch disables the bundling; this check keeps it that way.
+    exportPrefix: "ghostty_",
     packages: [
       {
         // jacobsandlund/uucode — Unicode tables (grapheme/width data).

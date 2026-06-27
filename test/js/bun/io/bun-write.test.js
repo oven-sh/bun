@@ -596,7 +596,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 });
 
-describe.skipIf(isWindows)("Bun.write mode option", () => {
+describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
   const modeOf = p => fs.statSync(p).mode & 0o777;
   const large = Buffer.alloc(512 * 1024, "a").toString();
 
@@ -657,7 +657,7 @@ describe.skipIf(isWindows)("Bun.write mode option", () => {
     using dir = tempDir("bun-write-mode", {});
     const dest = join(String(dir), "out.txt");
     const baseline = join(String(dir), "baseline.txt");
-    fs.writeFileSync(baseline, "x");
+    await Bun.write(baseline, "x");
     await Bun.write(dest, "hello");
     expect(modeOf(dest)).toBe(modeOf(baseline));
   });

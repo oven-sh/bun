@@ -951,6 +951,22 @@ mod windows_impl {
             // SAFETY: `this` is live.
             unsafe { (*this).fd = i32::try_from(rc.int()).expect("int cast") };
 
+            // open()'s mode is only applied on creation; fchmod so an explicit
+            // `mode` is authoritative for existing files too (see CopyFileWindows).
+            // SAFETY: `this` is live.
+            if let Some(mode) = unsafe { (*this).mode } {
+                // SAFETY: `this` is live; `fd` was just opened above.
+                if let sys::Result::Err(err) = sys::fchmod(Fd::from_uv(unsafe { (*this).fd }), mode)
+                {
+                    // SAFETY: `this` is live; `throw` consumes it.
+                    match unsafe { Self::throw(this, err) } {
+                        WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
+                        WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                    }
+                    return;
+                }
+            }
+
             // the loop must be copied
             // SAFETY: `this` is live; on `Err`, `*this` has been freed and is not accessed again.
             if let Err(e) = unsafe { Self::do_write_loop(this, (*this).loop_()) } {

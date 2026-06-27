@@ -549,6 +549,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub temp_refs_to_declare: List<'a, TempRef>,
     pub temp_ref_count: i32,
 
+    // Module-scoped counter for auto-accessor WeakMap storage names, so each
+    // `accessor foo` gets its own binding; sharing `_foo` across a base and
+    // derived class double-adds to one WeakMap during decorator lowering.
+    pub accessor_storage_counter: usize,
+
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
@@ -9172,6 +9177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            accessor_storage_counter: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

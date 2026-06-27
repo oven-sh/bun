@@ -1062,4 +1062,189 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("auto-accessor in subclass", () => {
+    test("subclass can override auto-accessor of same name (issue #29837)", async () => {
+      // Each class's `accessor name = ...` desugars to its own private
+      // storage slot per TC39 Decorators proposal. Reusing one WeakMap
+      // for the base AND derived class causes super()'s __privateAdd
+      // to populate the map and the subclass's own __privateAdd to
+      // throw "Cannot add the same private member more than once".
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor name = "A";
+        }
+        class B extends A {
+          accessor name = "B";
+          logName() {
+            console.log(this.name);
+            console.log(super.name);
+          }
+        }
+        new B().logName();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("multiple auto-accessors with same name across classes", async () => {
+      // Exercises several same-named accessors to confirm each class
+      // gets its own WeakMap binding regardless of property order.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class X {
+          accessor a = 1;
+          accessor b = 2;
+        }
+        class Y extends X {
+          accessor a = 10;
+          accessor b = 20;
+          check() {
+            return [this.a, this.b, super.a, super.b];
+          }
+        }
+        console.log(JSON.stringify(new Y().check()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[10,20,1,2]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated auto-accessor in subclass with same name", async () => {
+      // Same collision happens on the decorated path — verify the
+      // decorator runs once per class and the values stay distinct.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function tag(target, ctx) {
+          return target;
+        }
+        class A {
+          @tag accessor name = "A";
+        }
+        class B extends A {
+          @tag accessor name = "B";
+          both() {
+            return this.name + "/" + super.name;
+          }
+        }
+        console.log(new B().both());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B/A\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("auto-accessor with string key that is not a valid identifier", async () => {
+      // A non-identifier key like "foo-bar" can't be embedded (would be
+      // unparseable), so it falls back to the synthetic storage name.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor "foo-bar" = "hi";
+        }
+        const a = new A();
+        console.log(a["foo-bar"]);
+        a["foo-bar"] = "bye";
+        console.log(a["foo-bar"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("hi\nbye\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("auto-accessor with non-ASCII string key", async () => {
+      // Non-ASCII quoted keys are stored as UTF-16 in E.String. `isIdentifier`
+      // alone would accept "café" (é is ID_Continue) and the format string
+      // would then splice raw UTF-16 bytes into the symbol name, producing
+      // invalid JS with embedded NULs. The additional `isUTF8()` guard
+      // routes these to the safe fallback.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor "café" = "yes";
+        }
+        const a = new A();
+        console.log(a["café"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("yes\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated private auto-accessor in subclass with same name", async () => {
+      // Same collision as the public case, on the `is_private && k == 4`
+      // branch of the decorated lowering path. Each class's `accessor #x`
+      // must get its own WeakMap binding.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function tag(target, ctx) {
+          return target;
+        }
+        class A {
+          @tag accessor #x = "A";
+          getA() { return this.#x; }
+        }
+        class B extends A {
+          @tag accessor #x = "B";
+          getB() { return this.#x; }
+        }
+        const b = new B();
+        console.log(b.getA(), b.getB());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("A B\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("digit-suffixed key does not collide with later counter value", async () => {
+      // `accessor x1` and `accessor x` must not map to the same storage name
+      // even when the counter digits line up. Needs >=11 accessors to trigger.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A { accessor x1 = "A"; }
+        class F1 { accessor a = 0; accessor b = 0; accessor c = 0; }
+        class F2 { accessor a = 0; accessor b = 0; accessor c = 0; }
+        class F3 { accessor a = 0; accessor b = 0; accessor c = 0; }
+        class K extends A {
+          accessor x = "K";
+          log() { console.log(this.x, super.x1); }
+        }
+        new K().log();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("K A\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor storage does not collide with a same-named digit-suffixed private field", async () => {
+      // Counter-first storage names (`_0_x`) can't equal a non-accessor private
+      // binding (`_x_0`): identifiers can't start with a digit, so the two
+      // namespaces are disjoint.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(t, c) { return t; }
+        class A {
+          @dec accessor #x = 1;
+          #x_0 = 2;
+          read() { return [this.#x, this.#x_0]; }
+        }
+        console.log(JSON.stringify(new A().read()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[1,2]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("fallback storage does not collide with an #accessor_storage private field", async () => {
+      // A non-identifier-keyed accessor uses the synthetic fallback, which is
+      // also counter-first (`_0_accessor_storage`), so it can't equal a field
+      // lowered to `_accessor_storage_0`.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(t, c) { return t; }
+        class A {
+          @dec accessor "foo-bar" = 1;
+          #accessor_storage_0 = 2;
+          read() { return [this["foo-bar"], this.#accessor_storage_0]; }
+        }
+        console.log(JSON.stringify(new A().read()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[1,2]\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

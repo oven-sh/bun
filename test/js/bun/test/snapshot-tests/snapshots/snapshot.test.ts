@@ -317,27 +317,35 @@ for (const inlineSnapshot of [false, true]) {
         );
       });
 
-      test("grow file for new snapshot", async () => {
-        const t4 = new SnapshotTester(inlineSnapshot);
-        await t4.update(/*js*/ `
+      // This is the only test in the file not registered through
+      // SnapshotTester.test, so it needs the same debug-aware timeout. When
+      // it times out, its in-flight toMatchSnapshot() lands on whichever test
+      // runs next, silently appending a bogus entry to this file's snapshot.
+      test(
+        "grow file for new snapshot",
+        async () => {
+          const t4 = new SnapshotTester(inlineSnapshot);
+          await t4.update(/*js*/ `
               test("abc", () => { expect("hello").toMatchSnapshot() });
             `);
-        await t4.update(
-          /*js*/ `
+          await t4.update(
+            /*js*/ `
                 test("abc", () => { expect("hello").toMatchSnapshot() });
                 test("def", () => { expect("goodbye").toMatchSnapshot() });
               `,
-          { shouldNotError: true, shouldGrow: true },
-        );
-        await t4.update(/*js*/ `
+            { shouldNotError: true, shouldGrow: true },
+          );
+          await t4.update(/*js*/ `
               test("abc", () => { expect("hello").toMatchSnapshot() });
               test("def", () => { expect("hello").toMatchSnapshot() });
             `);
-        await t4.update(/*js*/ `
+          await t4.update(/*js*/ `
               test("abc", () => { expect("goodbye").toMatchSnapshot() });
               test("def", () => { expect("hello").toMatchSnapshot() });
             `);
-      });
+        },
+        isDebug ? 100_000 : 5_000,
+      );
 
       const t2 = new SnapshotTester(inlineSnapshot);
       t2.test("backtick in test name", `test("\`", () => {expect("abc").toMatchSnapshot();})`);

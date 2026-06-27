@@ -882,7 +882,22 @@ describe("bun test", () => {
       });
       expect(stderr).toContain(`%`);
     });
-    test.todo("check formatting for %p", () => {});
+    test("check formatting for %p", () => {
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each([[{ foo: "bar" }], [[1, 2]], ["str"], [1.5]])("pretty: %p", () => {});
+        `,
+      });
+      // %p must inspect its argument onto a single line; a multi-line test
+      // name breaks the console layout and JUnit consumers.
+      expect(stderr).toContain('pretty: { foo: "bar" }');
+      expect(stderr).toContain("pretty: [ 1, 2 ]");
+      expect(stderr).toContain('pretty: "str"');
+      expect(stderr).toContain("pretty: 1.5");
+    });
 
     describe("$variable syntax", () => {
       test("should replace $variables with object properties in test names", () => {

@@ -29,7 +29,6 @@
 
 #include "BunClientData.h"
 #include "EventNames.h"
-#include "JSMessagePort.h"
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"
 #include "MessageWithMessagePorts.h"
@@ -65,20 +64,6 @@ MessagePort::~MessagePort()
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps
-    // Transferring this port through itself throws before serialization has any side
-    // effects. Transferring the entangled peer is allowed but dooms the channel.
-    bool doomed = false;
-    auto& vm = state.vm();
-    for (auto& transferable : options.transfer) {
-        auto* port = JSMessagePort::toWrapped(vm, transferable.get());
-        if (!port || port->pipe() != m_pipe.ptr())
-            continue;
-        if (port == this)
-            return Exception { DataCloneError, "The transfer list contains the source port"_s };
-        doomed = true;
-    }
-
     Vector<RefPtr<MessagePort>> ports;
     auto messageData = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (messageData.hasException())
@@ -89,17 +74,16 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     Vector<TransferredMessagePort> transferredPorts;
     if (!ports.isEmpty()) {
+        // A port may not be posted through itself or its own entangled peer.
+        for (auto& port : ports) {
+            if (port->pipe() == m_pipe.ptr())
+                return Exception { DataCloneError };
+        }
         auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
         if (disentangled.hasException())
             return disentangled.releaseException();
         transferredPorts = disentangled.releaseReturnValue();
     }
-
-    // The target port was in the transfer list: it is already disentangled, and
-    // dropping transferredPorts closes its side of the pipe, so the communication
-    // channel is lost and the message is never delivered.
-    if (doomed)
-        return {};
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
     return {};

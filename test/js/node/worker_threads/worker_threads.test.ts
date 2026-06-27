@@ -544,10 +544,7 @@ test("a FileHandle referenced twice in workerData deserializes to one instance",
   expect(message).toEqual({ same: true, closed: true });
 });
 
-test("an invalid transferList entry throws before anything is detached", () => {
-  // The whole transferList is validated before workerData is serialized: an entry
-  // that is not an object must throw instead of being silently skipped while the
-  // remaining entries get detached.
+test("an invalid transferList entry throws before anything is detached", async () => {
   const buf = new ArrayBuffer(8);
   let worker: Worker | undefined;
   try {
@@ -556,7 +553,7 @@ test("an invalid transferList entry throws before anything is detached", () => {
     }).toThrow(TypeError);
     expect(buf.byteLength).toBe(8);
   } finally {
-    worker?.terminate();
+    await worker?.terminate();
   }
 });
 

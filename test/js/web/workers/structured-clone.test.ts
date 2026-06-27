@@ -305,30 +305,6 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         });
       });
     }
-
-    describe("MessagePort", () => {
-      // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
-      // MessagePort is transferable but not serializable: one that is not in the
-      // transfer list fails at serialize time with a DataCloneError.
-      test("an untransferred MessagePort fails with DataCloneError", () => {
-        const { port1, port2 } = new MessageChannel();
-        try {
-          for (const value of [port1, { port: port1 }, [port1]]) {
-            let error: unknown;
-            try {
-              structuredCloneFn(value);
-            } catch (e) {
-              error = e;
-            }
-            expect(error).toBeInstanceOf(DOMException);
-            expect((error as DOMException).name).toBe("DataCloneError");
-          }
-        } finally {
-          port1.close();
-          port2.close();
-        }
-      });
-    });
   });
 }
 

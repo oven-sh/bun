@@ -1,7 +1,11 @@
 import { file } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+// `bun install` spawns are slow under the debug/ASAN build; use the same
+// timeout the other install test files use.
+setDefaultTimeout(1000 * 60 * 5);
 
 // Checks that `bun install` picks the same version npm does for npm ranges.
 // Every expectation in this file was verified against npm 11 (and
@@ -9,9 +13,9 @@ import { join } from "path";
 // registry. The registry only has to serve packuments because resolution runs
 // with `--lockfile-only`, so tarballs are never requested.
 
-type Packages = Record<string, { versions: string[]; latest?: string }>;
+type Packages = Record<string, { versions: string[]; latest?: string; time?: Record<string, string> }>;
 
-async function resolve(packages: Packages, dependencies: Record<string, string>) {
+async function resolve(packages: Packages, dependencies: Record<string, string>, minimumReleaseAgeSeconds?: number) {
   await using server = Bun.serve({
     port: 0,
     fetch(req) {
@@ -27,13 +31,16 @@ async function resolve(packages: Packages, dependencies: Record<string, string>)
             { name, version, dist: { tarball: `${server.url.origin}/${name}-${version}.tgz` } },
           ]),
         ),
+        ...(pkg.time ? { time: pkg.time } : {}),
       });
     },
   });
 
   using dir = tempDir("version-resolution", {
     "package.json": JSON.stringify({ name: "test-pkg", version: "1.0.0", dependencies }),
-    "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url.origin}/"\nsaveTextLockfile = true\n`,
+    "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url.origin}/"\nsaveTextLockfile = true\n${
+      minimumReleaseAgeSeconds !== undefined ? `minimumReleaseAge = ${minimumReleaseAgeSeconds}\n` : ""
+    }`,
   });
 
   await using proc = Bun.spawn({
@@ -44,32 +51,29 @@ async function resolve(packages: Packages, dependencies: Record<string, string>)
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
-  let resolved: Record<string, string> = {};
-  if (exitCode === 0) {
-    const lockfile = await file(join(String(dir), "bun.lock")).text();
-    const lock = JSON.parse(lockfile.replace(/,(\s*[\]}])/g, "$1"));
-    resolved = Object.fromEntries(
-      Object.entries(lock.packages as Record<string, string[]>).map(([name, entry]) => [
-        name,
-        entry[0].slice(name.length + 1),
-      ]),
-    );
-  }
-  return { resolved, stdout, stderr, exitCode };
+  const lockfile = await file(join(String(dir), "bun.lock")).text();
+  const lock = JSON.parse(lockfile.replace(/,(\s*[\]}])/g, "$1"));
+  const resolved: Record<string, string> = Object.fromEntries(
+    Object.entries(lock.packages as Record<string, string[]>).map(([name, entry]) => [
+      name,
+      entry[0].slice(name.length + 1),
+    ]),
+  );
+  return { resolved, stdout, stderr };
 }
 
 describe.concurrent("bun install version resolution", () => {
   // A satisfying prerelease that is higher than the best satisfying stable
   // release must win. npm: 1.2.0-alpha.1
   test("prerelease above the best matching stable is chosen", async () => {
-    const { resolved, stderr, exitCode } = await resolve(
+    const { resolved, stderr } = await resolve(
       { "pre-above-stable": { versions: ["1.1.1", "1.2.0-alpha.1", "2.0.0"], latest: "2.0.0" } },
       { "pre-above-stable": "<1.2.0-alpha.2" },
     );
-    expect(resolved["pre-above-stable"]).toBe("1.2.0-alpha.1");
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
+    expect(resolved["pre-above-stable"]).toBe("1.2.0-alpha.1");
   });
 
   // npm: 2.0.0-rc.1 (1.2.0 and 2.0.0-rc.1 both satisfy, the prerelease is higher)
@@ -121,13 +125,12 @@ describe.concurrent("bun install version resolution", () => {
   // npm resolves `*` to the `latest` dist-tag. A package with only
   // prereleases must install instead of failing with "No version matching".
   test("star range on a package with only prereleases resolves to the latest dist-tag", async () => {
-    const { resolved, stderr, exitCode } = await resolve(
+    const { resolved, stderr } = await resolve(
       { "only-pre": { versions: ["1.0.0-beta.1", "1.0.0-beta.2"], latest: "1.0.0-beta.2" } },
       { "only-pre": "*" },
     );
     expect(stderr).not.toContain("No version matching");
     expect(resolved["only-pre"]).toBe("1.0.0-beta.2");
-    expect(exitCode).toBe(0);
   });
 
   // npm: 2.0.0-beta.1. For `*` the latest dist-tag wins even when it is a
@@ -146,6 +149,29 @@ describe.concurrent("bun install version resolution", () => {
       { "star-stable": "*" },
     );
     expect(resolved["star-stable"]).toBe("2.0.0");
+  });
+
+  // With minimumReleaseAge, `*` keeps the dist-tag fallback: a too recent
+  // latest falls back to an older version from the same list, including
+  // prereleases on a prerelease-only package.
+  test("star range with minimumReleaseAge falls back to an older prerelease", async () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const { resolved, stderr } = await resolve(
+      {
+        "aged-pre": {
+          versions: ["1.0.0-beta.1", "1.0.0-beta.2"],
+          latest: "1.0.0-beta.2",
+          time: {
+            "1.0.0-beta.1": new Date(Date.now() - 10 * DAY_MS).toISOString(),
+            "1.0.0-beta.2": new Date(Date.now() - 60 * 1000).toISOString(),
+          },
+        },
+      },
+      { "aged-pre": "*" },
+      2 * 24 * 60 * 60,
+    );
+    expect(stderr).not.toContain("No version matching");
+    expect(resolved["aged-pre"]).toBe("1.0.0-beta.1");
   });
 
   // npm prefers a satisfying `latest` dist-tag over higher satisfying

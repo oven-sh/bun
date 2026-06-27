@@ -1816,12 +1816,23 @@ impl PackageManifest {
             return FindVersionResult::Err(FindVersionError::NotFound);
         }
 
+        // `*` resolves to the `latest` dist-tag like npm does, so give it the
+        // dist-tag age filter: when `latest` is too recent it falls back to an
+        // older version from the same list (release or prerelease), which the
+        // range scans below cannot do for a range without a prerelease
+        // comparator.
+        if group.is_star() {
+            let latest =
+                self.find_by_dist_tag_with_filter(b"latest", minimum_release_age_ms, exclusions);
+            if !matches!(latest, FindVersionResult::Err(FindVersionError::NotFound)) {
+                return latest;
+            }
+        }
+
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             // npm prefers the `latest` dist-tag over every other satisfying
-            // version whenever it satisfies the range, and accepts it
-            // unconditionally for `*` (which a prerelease-only package never
-            // satisfies otherwise).
-            if group.is_star() || group.satisfies(result.version, group_buf, &self.string_buf) {
+            // version whenever it satisfies the range.
+            if group.satisfies(result.version, group_buf, &self.string_buf) {
                 if Self::is_package_version_too_recent(result.package, min_age_ms) {
                     newest_filtered = Some(result.version);
                 }

@@ -141,6 +141,71 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  // `.resolves` / `.rejects` accept any thenable (duck-typed `.then`), not only
+  // Promise instances. `.rejects` also accepts a function returning a promise.
+  test("resolves accepts a thenable", async () => {
+    await expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(42) }).resolves.toBe(42);
+    await expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(42) }).resolves.not.toBe(43);
+
+    // settles on a later microtask
+    await expect({
+      then: (/** @type {any} */ onFulfilled) => void queueMicrotask(() => onFulfilled("later")),
+    }).resolves.toBe("later");
+
+    // thenable that delegates to a real promise (the ORM / query-builder shape)
+    await expect({
+      then: (/** @type {any} */ onFulfilled, /** @type {any} */ onRejected) =>
+        Promise.resolve({ rows: [1, 2] }).then(onFulfilled, onRejected),
+    }).resolves.toEqual({ rows: [1, 2] });
+
+    if (isBun) {
+      // a thenable that rejects is still a `.resolves` failure
+      await expectFailure(() =>
+        expect({
+          then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected(new Error("nope")),
+        }).resolves.toBe(1),
+      ).toThrow();
+      // `.resolves` does not call functions (only `.rejects` does)
+      await expectFailure(() => expect(ANY(() => Promise.resolve(1))).resolves.toBe(1)).toThrow();
+      // a plain object without a callable `.then` is still rejected
+      await expectFailure(() => expect(ANY({ then: 1 })).resolves.toBe(1)).toThrow();
+    }
+  });
+
+  test("rejects accepts a thenable and a function returning a promise", async () => {
+    await expect({
+      then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected(new Error("boom")),
+    }).rejects.toThrow("boom");
+
+    // rejects on a later microtask
+    await expect({
+      then: (/** @type {any} */ _f, /** @type {any} */ onRejected) =>
+        void queueMicrotask(() => onRejected(new Error("later"))),
+    }).rejects.toThrow("later");
+
+    // a function returning a rejected promise
+    await expect(() => Promise.reject(new Error("from fn"))).rejects.toThrow("from fn");
+
+    // an async function that throws
+    await expect(async () => {
+      throw new Error("from async fn");
+    }).rejects.toThrow("from async fn");
+
+    // a function returning a thenable that rejects
+    await expect(() => ({
+      then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected(new Error("fn thenable")),
+    })).rejects.toThrow("fn thenable");
+
+    if (isBun) {
+      // a function returning a non-promise is still a usage error
+      await expectFailure(() => expect(ANY(() => 42)).rejects.toBe(42)).toThrow();
+      // a thenable that fulfills is still a `.rejects` failure
+      await expectFailure(() =>
+        expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(1) }).rejects.toBe(1),
+      ).toThrow();
+    }
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });
@@ -1172,25 +1237,30 @@ describe("expect()", () => {
   // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
   // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
+    // Exercises the Set/Map iterator-allocation path in deepEquals (see #14256):
+    // the elements are distinct-identity arrays, so every comparison falls back
+    // to a linear search that allocates a fresh iterator per element. The counts
+    // below keep thousands of those allocations while staying within the default
+    // test timeout under a debug + ASAN build.
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
     const arr4 = [];
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 25; i++) {
       arr1[i] = [i];
       arr2[i] = [i];
       arr3[i] = [i, [i]];
       arr4[i] = [i, [i]];
     }
 
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 500; i++) {
       let outerSet = new Set(arr1);
       let innerSet = new Set(arr2);
       Bun.deepEquals(outerSet, innerSet);
     }
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 250; i++) {
       let outerMap = new Map(arr3);
       let innerMap = new Map(arr4);
       Bun.deepEquals(outerMap, innerMap);

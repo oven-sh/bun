@@ -401,7 +401,29 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = value.as_any_promise() {
+                // Jest's `.rejects` accepts a function returning a promise or thenable;
+                // call it first. `value` stays the original received for error messages.
+                let received = if resolution == Promise::Rejects && value.is_callable() {
+                    value.call(global_this, JSValue::UNDEFINED, &[])?
+                } else {
+                    value
+                };
+                // Jest accepts any thenable, not only Promise instances. Wrap one in a
+                // real promise via the spec resolve algorithm so it can be awaited below.
+                // `awaited` stays on the stack to root the promise across `wait_for_promise`.
+                let awaited = if received.as_any_promise().is_none()
+                    && received.is_object()
+                    && received
+                        .get(global_this, b"then")?
+                        .is_some_and(|then| then.is_callable())
+                {
+                    let wrapper = js_promise::JSPromise::create(global_this);
+                    wrapper.resolve(global_this, received)?;
+                    wrapper.to_js()
+                } else {
+                    received
+                };
+                if let Some(promise) = awaited.as_any_promise() {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
@@ -460,6 +482,10 @@ impl Expect {
                 } else {
                     if !silent {
                         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+                        let expected = match resolution {
+                            Promise::Rejects => "Expected promise or a function returning a promise",
+                            _ => "Expected promise",
+                        };
                         return Err(Self::throw_pretty_matcher_error(
                             global_this,
                             custom_label,
@@ -467,7 +493,7 @@ impl Expect {
                             matcher_params,
                             flags,
                             format_args!(
-                                "Expected promise<r>\nReceived: <red>{}<r>\n",
+                                "{expected}<r>\nReceived: <red>{}<r>\n",
                                 value.to_fmt(&mut formatter),
                             ),
                         ));

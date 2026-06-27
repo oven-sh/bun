@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 
 // When res.strictContentLength is set and the first end()/write() call
 // detects a mismatch, Node throws before any bytes reach the wire. Bun was

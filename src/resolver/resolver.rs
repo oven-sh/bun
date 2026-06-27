@@ -1572,13 +1572,11 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
+    ) -> crate::CrateResult<Result> {
         let global_cache = self.opts.global_cache;
         match self.resolve_and_auto_install(source_dir, import_path, kind, global_cache) {
             ResultUnion::Success(result) => Ok(result),
-            ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                Err(bun_core::err!("ModuleNotFound"))
-            }
+            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
         }
     }
@@ -1590,7 +1588,7 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
-    ) -> core::result::Result<Result, bun_core::Error> {
+    ) -> crate::CrateResult<Result> {
         // SAFETY: PORT — matches `resolve_with_framework` below; `import_path`
         // is caller-interned and outlives the returned Result.
         let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };

@@ -281,7 +281,9 @@ private:
         /* For whatever reason, if we already have emitted close event, do not emit it again */
         WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(s));
         if (webSocketData->socketData && webSocketData->onSocketClosed) {
-            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s, code);
+            /* code here is the WebSocket close-reason length (see forceClose),
+             * not a recv errno; the node:http shim expects 0 for non-error. */
+            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s, 0);
         }
         if (!webSocketData->isShuttingDown) {
             /* Emit close event */

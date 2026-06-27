@@ -824,24 +824,30 @@ it("getCipher().version separates the pre-1.2 ECC suites (TLSv1.0) from the SSLv
   }
 });
 
+// Node's getEphemeralKeyInfo() always returns the same three own keys on a
+// client, with undefined values when no ephemeral key applies (verified on
+// node v26.3.0: Object.keys(...) === ["type","name","size"] for TLS 1.3 and
+// for a static-RSA exchange). toStrictEqual pins that exact key set.
+const NO_EPHEMERAL_KEY = { type: undefined, name: undefined, size: undefined };
+
 it("getEphemeralKeyInfo() reports the negotiated TLS 1.2 ECDHE group, matching Node", async () => {
   // Node reports OBJ_nid2sn + EVP_PKEY_bits of the peer's ephemeral key.
   // BoringSSL prefers X25519 on both sides of a TLS <= 1.2 key exchange.
   await withTlsPair({ maxVersion: "TLSv1.2" }, (client, serverSide) => {
     expect(client.getProtocol()).toBe("TLSv1.2");
-    expect(client.getEphemeralKeyInfo()).toEqual({ type: "ECDH", name: "X25519", size: 253 });
+    expect(client.getEphemeralKeyInfo()).toStrictEqual({ type: "ECDH", name: "X25519", size: 253 });
     // Node reports null on the server side of the connection.
     expect(serverSide.getEphemeralKeyInfo()).toBeNull();
   });
-  // A static-RSA key exchange has no ephemeral key: {}.
+  // A static-RSA key exchange has no ephemeral key.
   await withTlsPair({ maxVersion: "TLSv1.2", ciphers: "AES128-SHA" }, client => {
-    expect(client.getEphemeralKeyInfo()).toEqual({});
+    expect(client.getEphemeralKeyInfo()).toStrictEqual(NO_EPHEMERAL_KEY);
   });
-  // Node reports {} on TLS 1.3 (its SSL_get_peer_tmp_key only surfaces the
-  // <= 1.2 ServerKeyExchange key); match it.
+  // Node reports no key on TLS 1.3: its SSL_get_peer_tmp_key only surfaces
+  // the <= 1.2 ServerKeyExchange key.
   await withTlsPair({ minVersion: "TLSv1.3" }, client => {
     expect(client.getProtocol()).toBe("TLSv1.3");
-    expect(client.getEphemeralKeyInfo()).toEqual({});
+    expect(client.getEphemeralKeyInfo()).toStrictEqual(NO_EPHEMERAL_KEY);
   });
 });
 
@@ -957,5 +963,9 @@ it("an exception from a user checkServerIdentity escapes as an uncaught exceptio
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "UNCAUGHT csi-boom", exitCode: 42 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "UNCAUGHT csi-boom",
+    stderr: "",
+    exitCode: 42,
+  });
 });

@@ -731,6 +731,141 @@ it("db.query()", () => {
   db.close();
 });
 
+describe("Statement.iterate() busy guard", () => {
+  const busy = "This statement is busy executing a query";
+
+  function makeDb() {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    for (let i = 0; i < 3; i++) db.exec(`INSERT INTO t VALUES (${i})`);
+    return db;
+  }
+
+  it("using the same statement inside its own iterate() loop throws instead of restarting the cursor", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const seen = [];
+    let throws = 0;
+    for (const row of s.iterate()) {
+      seen.push(row.a);
+      expect(() => s.get()).toThrow(TypeError);
+      expect(() => s.get()).toThrow(busy);
+      throws++;
+    }
+
+    // The rejected get() calls did not disturb the iteration.
+    expect(seen).toEqual([0, 1, 2]);
+    expect(throws).toBe(3);
+    db.close();
+  });
+
+  it("every operation that touches the cursor throws while the statement is being iterated", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const _row of s.iterate()) {
+      expect(() => s.get()).toThrow(busy);
+      expect(() => s.all()).toThrow(busy);
+      expect(() => s.values()).toThrow(busy);
+      expect(() => s.raw()).toThrow(busy);
+      expect(() => s.run()).toThrow(busy);
+      expect(() => s.columnTypes).toThrow(busy);
+      expect(() => s.iterate().next()).toThrow(busy);
+      // Operations that do not touch the cursor stay usable.
+      expect(s.toString()).toBe("SELECT a FROM t ORDER BY a");
+      expect(s.columnNames).toEqual(["a"]);
+      break;
+    }
+
+    // Once the loop exits, the statement is fully usable again.
+    expect(s.all()).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("a second iterate() on the same statement throws instead of interleaving rows", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const a = s.iterate()[Symbol.iterator]();
+    expect(a.next().value).toEqual({ a: 0 });
+
+    const b = s.iterate()[Symbol.iterator]();
+    expect(() => b.next()).toThrow(busy);
+
+    // The rejected iterator did not disturb the live one.
+    expect(a.next().value).toEqual({ a: 1 });
+    expect(a.next().value).toEqual({ a: 2 });
+    expect(a.next().done).toBe(true);
+    db.close();
+  });
+
+  it("breaking out of iterate() resets the cursor for the next iteration", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const row of s.iterate()) {
+      expect(row).toEqual({ a: 0 });
+      break;
+    }
+
+    // A leaked cursor would resume at the second row here.
+    expect(Array.from(s.iterate())).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("an exception thrown from the loop body releases the statement", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    expect(() => {
+      for (const _row of s.iterate()) {
+        throw new Error("boom");
+      }
+    }).toThrow("boom");
+
+    // A leaked cursor would resume at the second row here.
+    expect(Array.from(s.iterate())).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    expect(s.all()).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("a separately prepared statement for the same SQL is independent", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+    const other = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const pairs = [];
+    for (const row of s.iterate()) {
+      pairs.push([row.a, other.get().a]);
+    }
+
+    expect(pairs).toEqual([
+      [0, 0],
+      [1, 0],
+      [2, 0],
+    ]);
+    db.close();
+  });
+
+  it("iterate() with bound parameters enforces the same guard and releases on break", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t WHERE a >= $min ORDER BY a");
+
+    const seen = [];
+    for (const row of s.iterate({ $min: 1 })) {
+      seen.push(row.a);
+      expect(() => s.get({ $min: 0 })).toThrow(busy);
+      break;
+    }
+    expect(seen).toEqual([1]);
+
+    expect(s.all({ $min: 0 })).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    expect(Array.from(s.iterate({ $min: 0 }))).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+});
+
 it("db.run()", () => {
   const db = Database.open(":memory:");
 

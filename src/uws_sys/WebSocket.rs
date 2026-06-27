@@ -357,7 +357,13 @@ impl AnyWebSocket {
     //     return uws_ws_iterate_topics(ssl_flag, self.raw(), callback, user_data);
     // }
 
-    pub fn publish(self, topic: &[u8], message: &[u8], opcode: Opcode, compress: bool) -> SendStatus {
+    pub fn publish(
+        self,
+        topic: &[u8],
+        message: &[u8],
+        opcode: Opcode,
+        compress: bool,
+    ) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe {

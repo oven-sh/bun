@@ -499,6 +499,57 @@ describe("header block decoding errors (RFC 9113 §4.3)", () => {
       exitCode: 0,
     });
   });
+
+  // Same guard, second hand-off point: a pushStream() whose PUSH_PROMISE headers fail native
+  // validation destroys the not-yet-delivered pushed stream with the validation error. Only the
+  // pushStream callback reports it; emitting 'error' on that stream was an uncaught exception.
+  test("a pushStream() validation error is reported through the callback, not as an uncaught 'error'", async () => {
+    const fixture = String.raw`
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.pushStream({ ":path": "/p", "bad header": "x" }, err => {
+          console.log("pushStream callback", err ? err.code : null);
+          stream.respond({ ":status": 200 });
+          stream.end("main");
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", err => {
+          console.error(err);
+          process.exit(3);
+        });
+        client.on("stream", pushed => pushed.on("error", () => {}));
+        const req = client.request({ ":path": "/" });
+        req.setEncoding("utf8");
+        let body = "";
+        req.on("data", c => (body += c));
+        req.on("error", err => {
+          console.error(err);
+          process.exit(4);
+        });
+        req.on("end", () => {
+          console.log("response", body);
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "pushStream callback ERR_INVALID_HTTP_TOKEN\nresponse main\n",
+      stderr: expect.not.stringContaining("ERR_INVALID_HTTP_TOKEN"),
+      exitCode: 0,
+    });
+  });
 });
 
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`

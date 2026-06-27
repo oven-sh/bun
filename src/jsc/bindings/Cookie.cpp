@@ -5,6 +5,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/WallTime.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <JavaScriptCore/DateConversion.h>
 #include <JavaScriptCore/DateInstance.h>
 #include "HTTPParsers.h"
 namespace WebCore {
@@ -267,11 +268,11 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
     // Add expires if present
     if (hasExpiry()) {
         builder.append("; Expires="_s);
-        // In a real implementation, this would convert the timestamp to a proper date string
-        // For now, just use a numeric timestamp
+        // RFC 6265 wants an IMF-fixdate ("Thu, 01 Jan 1970 00:00:00 GMT"). Reuse the
+        // Date.prototype.toUTCString() formatter, which emits exactly that.
         WTF::GregorianDateTime dateTime;
         vm.dateCache.msToGregorianDateTime(m_expires, WTF::TimeType::UTCTime, dateTime);
-        builder.append(WTF::makeRFC2822DateString(dateTime.weekDay(), dateTime.monthDay(), dateTime.month(), dateTime.year(), dateTime.hour(), dateTime.minute(), dateTime.second(), dateTime.utcOffsetInMinute()));
+        builder.append(JSC::formatDateTime(dateTime, JSC::DateTimeFormat::DateAndTime, /* asUTCVariant */ true, vm.dateCache));
     }
 
     // Add Max-Age if present

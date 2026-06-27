@@ -198,7 +198,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
-        "name=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
       ]
     `);
   });

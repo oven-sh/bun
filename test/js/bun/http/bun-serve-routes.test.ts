@@ -193,6 +193,26 @@ describe("implicit HEAD for per-method route objects", () => {
     expect(res.status).toBe(200);
   });
 
+  test("an explicit HEAD handler takes precedence over a static GET Response", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/static-get": {
+          GET: new Response("get-static"),
+          HEAD: () => new Response(null, { headers: { "x-callable-head": "1" } }),
+        },
+      },
+    });
+
+    const head = await fetch(new URL("/static-get", server.url), { method: "HEAD" });
+    expect(head.headers.get("x-callable-head")).toBe("1");
+    expect(head.status).toBe(200);
+
+    const get = await fetch(new URL("/static-get", server.url));
+    expect(await get.text()).toBe("get-static");
+    expect(get.status).toBe(200);
+  });
+
   test("a static Response for another method does not capture HEAD away from GET", async () => {
     await using server = Bun.serve({
       port: 0,

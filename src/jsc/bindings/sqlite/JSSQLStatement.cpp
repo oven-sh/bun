@@ -2655,8 +2655,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     CHECK_THIS
     CHECK_PREPARED
 
-    int count = sqlite3_column_count(castedThis->stmt);
-
     // We need to reset and step the statement to get fresh types,
     // but only do this for read-only statements to avoid side effects
     bool isReadOnly = sqlite3_stmt_readonly(castedThis->stmt) != 0;
@@ -2678,6 +2676,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
 
     // Step once to get to the first row (safe for read-only statements)
     int stepStatus = sqlite3_step(castedThis->stmt);
+
+    // Read the column count after the step: sqlite3_step() transparently
+    // re-prepares an expired statement, which can change the result shape.
+    int count = sqlite3_column_count(castedThis->stmt);
 
     // If we got a row, get types from it
     if (stepStatus == SQLITE_ROW) {

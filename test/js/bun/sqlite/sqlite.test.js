@@ -2062,6 +2062,25 @@ describe("prepared statements refresh cached column names after a schema change"
 
     expect(q.get()).toEqual({ id: 1, greeting2: "Welcome to bun!" });
   });
+
+  it("columnTypes reflects the new result shape after a schema change", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT)");
+    db.run("INSERT INTO t VALUES (1)");
+    const q = db.query("SELECT * FROM t");
+    expect(q.columnTypes).toEqual(["INTEGER"]);
+
+    // More columns: the array must grow, not stay truncated at the old count.
+    db.run("ALTER TABLE t ADD COLUMN b TEXT DEFAULT 'x'");
+    expect(q.columnTypes).toEqual(["INTEGER", "TEXT"]);
+
+    // Fewer columns: the array must shrink, not be padded with spurious "NULL"
+    // entries read from out-of-range column indexes.
+    db.run("DROP TABLE t");
+    db.run("CREATE TABLE t (z TEXT)");
+    db.run("INSERT INTO t VALUES ('y')");
+    expect(q.columnTypes).toEqual(["TEXT"]);
+  });
 });
 
 // The process-global SQLite database registry is shared by every Worker

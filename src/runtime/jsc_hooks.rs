@@ -1238,7 +1238,7 @@ fn body_mixin_get_blob(
 ///
 /// # Safety
 /// `global` is the live VM global.
-unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
+unsafe fn process_exit(global: *mut JSGlobalObject, code: i32) {
     // SAFETY: per fn contract — `global` is the live VM global. The deref is
     // performed once here in the hook shim so the user-facing `process::exit`
     // can take a safe `&JSGlobalObject`.

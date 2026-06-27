@@ -3312,10 +3312,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    uint8_t exitCode = 0;
+    // The raw int32 code is carried through the worker exit path so the
+    // parent's worker.on("exit", code) sees it; the main thread masks at exit(2).
+    int32_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
-        exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
+        exitCode = arg0.toInt32(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 

@@ -1715,7 +1715,7 @@ pub struct RuntimeHooks {
     /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
-    pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
+    pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: i32),
     /// `node_cluster_binding.handleInternalMessageChild(global, data)`.
     pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
     /// `node_cluster_binding.child_singleton.deinit()`.

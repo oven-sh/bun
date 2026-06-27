@@ -7,7 +7,7 @@ import { basename, join, resolve } from "path";
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
 /**
- * Helper function to run inline fixture code and return stdout and exit code
+ * Helper function to run inline fixture code and return stdout, stderr, and exit code
  */
 async function runInlineFixture(script, expectedStdout = null, expectedCode = 0) {
   using dir = tempDir("process-test", {
@@ -21,14 +21,14 @@ async function runInlineFixture(script, expectedStdout = null, expectedCode = 0)
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   if (expectedStdout !== null) {
     expect(stdout).toBe(expectedStdout);
   }
   expect(exitCode).toBe(expectedCode);
 
-  return { stdout, exitCode };
+  return { stdout, stderr, exitCode };
 }
 
 it("process", () => {
@@ -865,7 +865,7 @@ describe.concurrent(() => {
   // Node's default unhandled-rejection mode is `throw`: with no
   // `unhandledRejection` listener, the rejection is raised as an uncaught
   // exception with origin "unhandledRejection". A `uncaughtException` listener
-  // then handles it and the process keeps running.
+  // then handles it, the event loop keeps running, and the process exits 0.
   it("routes an unhandled rejection through the uncaughtException machinery", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -876,16 +876,17 @@ describe.concurrent(() => {
         process.on("uncaughtException", (err, origin) => console.log("uncaught", err.message, origin));
         process.on("exit", code => console.log("exit", code));
         Promise.reject(new Error("rej"));
-        setTimeout(() => console.log("timer"), 1);
+        setImmediate(() => console.log("immediate"));
         `,
       ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({
-      stdout: "monitor rej unhandledRejection\nuncaught rej unhandledRejection\ntimer\nexit 0\n",
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "monitor rej unhandledRejection\nuncaught rej unhandledRejection\nimmediate\nexit 0\n",
+      stderr: "",
       exitCode: 0,
     });
   });
@@ -1022,6 +1023,20 @@ describe("process.exitCode", () => {
     );
   });
 
+  // Node's int32 slot wraps at the int32 boundary (2**31 becomes -2**31).
+  it("setter wraps at the int32 boundary like Node", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+
+      process.exitCode = 2 ** 31;
+      console.log("get", process.exitCode);
+    `,
+      "get -2147483648\nexit -2147483648 -2147483648\n",
+      0,
+    );
+  });
+
   it("setter resets on null and undefined", async () => {
     await runInlineFixture(
       `
@@ -1132,6 +1147,21 @@ describe("process.exitCode", () => {
       9,
     );
   });
+
+  // A worker thread has no OS exit status, so Node hands the raw int32 code
+  // to the parent's worker.on("exit"). Both spellings must agree.
+  for (const body of ["process.exit(300)", "process.exitCode = 300"]) {
+    it(`a worker's out-of-range exit code reaches the parent unmasked (${body})`, async () => {
+      await runInlineFixture(
+        `
+        const { Worker } = require("node:worker_threads");
+        new Worker(${JSON.stringify(body)}, { eval: true }).on("exit", (code) => console.log("exit", code));
+      `,
+        "exit 300\n",
+        0,
+      );
+    });
+  }
 
   it("property access on undefined", async () => {
     await runInlineFixture(

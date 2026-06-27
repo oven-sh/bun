@@ -1215,6 +1215,13 @@ impl JSValkeyClient {
             return;
         }
 
+        // A reconnect timer armed before an explicit connect() can fire while
+        // that connection is still in flight; connect() would then overwrite
+        // `client.socket` and orphan a live socket. Reconnect only from Disconnected.
+        if self.client.get().status != valkey::Status::Disconnected {
+            return;
+        }
+
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             return;
@@ -1564,6 +1571,10 @@ impl JSValkeyClient {
     }
 
     fn connect(&self) -> Result<(), crate::Error> {
+        // Every caller must close or detach the previous socket first:
+        // overwriting `client.socket` below would orphan a live socket whose
+        // callbacks keep driving this client (see `reconnect()`).
+        debug_assert!(self.client.get().socket.is_closed());
         self.client_mut().flags.needs_to_open_socket = false;
 
         self.ref_();

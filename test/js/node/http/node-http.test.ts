@@ -2997,8 +2997,8 @@ describe("'connection' socket emits disconnect events", () => {
     const requestServed = Promise.withResolvers<void>();
     const server = createServer((req, res) => {
       req.resume();
-      res.end("ok");
       res.on("finish", requestServed.resolve);
+      res.end("ok");
     });
     server.on("connection", s => {
       ev.push("connection");

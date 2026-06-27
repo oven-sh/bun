@@ -1162,11 +1162,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       process.nextTick(emitCloseNT, message);
     }
 
-    // Surface the disconnect on the Duplex itself. libus close codes 0/1/2
-    // cover clean FIN and self-initiated close; anything above is a recv
-    // errno (RST). `destroyed` guards the onServerRequestEvent path; `ended`
-    // guards CONNECT/upgrade tunnels whose readable side was already EOF'd
-    // via onSocketData(last=true) before this ran.
+    // Surface the disconnect on the Duplex itself. libus close codes >2
+    // are recv errnos (RST); 0/1/2 cover clean FIN and self-initiated close.
+    // `ended` preserves tunnels already EOF'd by onSocketData(last=true).
     if (!this.destroyed) {
       const ended = this._readableState?.ended;
       if (code > 2 && !ended) {

@@ -64,9 +64,13 @@ test.concurrent("WebSocket upgrade should unref poll_ref from response", async (
 test.concurrent("RST on a ws-upgraded connection emits 'error' ECONNRESET then 'close' on the socket", async () => {
   const events: string[] = [];
   const closed = Promise.withResolvers<void>();
+  const upgraded = Promise.withResolvers<void>();
   const server = http.createServer();
   const wss = new WebSocketServer({ server });
-  wss.on("connection", ws => ws.on("error", () => {}));
+  wss.on("connection", ws => {
+    ws.on("error", () => {});
+    upgraded.resolve();
+  });
   server.on("connection", socket => {
     events.push("connection");
     socket.on("end", () => events.push("socket-end"));
@@ -91,12 +95,17 @@ test.concurrent("RST on a ws-upgraded connection emits 'error' ECONNRESET then '
       );
     });
     let buf = "";
+    const handshake = Promise.withResolvers<void>();
     client.on("data", chunk => {
       buf += chunk.toString("latin1");
-      // Reset once the 101 handshake is complete so the server-side close is
-      // driven by a recv() error, not a FIN.
-      if (buf.includes("\r\n\r\n")) client.resetAndDestroy();
+      if (buf.includes("\r\n\r\n")) handshake.resolve();
     });
+    await handshake.promise;
+    expect(buf.slice(0, "HTTP/1.1 101".length)).toBe("HTTP/1.1 101");
+    // The ws server has adopted the socket: the RST below exercises the
+    // WebSocketContext onClose path, not the plain HTTP one.
+    await upgraded.promise;
+    client.resetAndDestroy();
     await closed.promise;
     expect(events).toEqual(["connection", "socket-error ECONNRESET", "socket-close"]);
   } finally {

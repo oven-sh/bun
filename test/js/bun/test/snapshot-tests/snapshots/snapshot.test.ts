@@ -619,18 +619,26 @@ Date)
     );
   });
   it("should error trying to update the same line twice", async () => {
-    await tester.testError(
-      {
-        msg: "error: Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value",
-      },
-      /*js*/ `
-        function oops(a) {expect(a).toMatchInlineSnapshot()}
-        test("whoops", () => {
-          oops(1);
-          oops(2);
-        });
-      `,
-    );
+    const code = /*js*/ `
+      function oops(a) {expect(a).toMatchInlineSnapshot()}
+      test("whoops", () => {
+        oops(1);
+        oops(2);
+      });
+    `;
+    const thefile = tester.tmpfile(code);
+    const junit = tester.tmpdir + "/" + thefile + ".junit.xml";
+    const res = await tester.spawn(["--reporter=junit", "--reporter-outfile=" + junit], thefile);
+    const err = res.stderr.toString();
+    expect(err).toInclude("Multiple inline snapshots on the same line must all have the same value");
+    // The conflict has to fail the test itself so the reporters, the JUnit
+    // output, and the exit code all agree.
+    expect(err).toInclude("(fail) whoops");
+    expect(err).toInclude("0 pass");
+    expect(err).toInclude("1 fail");
+    expect(readFileSync(junit, "utf-8")).toInclude('failures="1"');
+    expect(tester.readfile(thefile)).toEqual(code);
+    expect(res.exitCode).toBe(1);
 
     // fun trick:
     // function oops(a) {expect(a).toMatchInlineSnapshot('1')}

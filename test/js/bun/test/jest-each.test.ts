@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const NUMBERS = [
   [1, 1, 2],
@@ -56,4 +57,34 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
+});
+
+// %s and %i with a non-integer number were left as the literal specifier, and
+// %p / $var produced multi-line test names, which corrupts the JUnit output.
+test("title specifiers substitute every number and stay on one line", async () => {
+  using dir = tempDir("jest-each-titles", {
+    "titles.test.ts": `
+      import { test } from "bun:test";
+      test.each([[1.5]])("s=%s", () => {});
+      test.each([[1.5]])("i=%i", () => {});
+      test.each([[1.5]])("d=%d", () => {});
+      test.each([[1.5]])("f=%f", () => {});
+      test.each([[{ a: 1 }]])("p=%p", () => {});
+      test.each([[{ a: 1 }]])("sobj=%s", () => {});
+      test.each([{ a: { b: 2 } }])("var=$a", () => {});
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "titles.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  for (const title of ["s=1.5", "i=1", "d=1.5", "f=1.5", "p={ a: 1 }", "sobj={ a: 1 }", "var={ b: 2 }"]) {
+    expect(stderr).toInclude(`(pass) ${title}`);
+  }
+  expect(stderr).toInclude("7 pass");
+  expect(exitCode).toBe(0);
 });

@@ -817,6 +817,7 @@ pub(crate) fn step_group(
 ) -> JsResult<StepResult> {
     let _g = group_begin!();
     let buntest = buntest_strong.get();
+    let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;
 
     loop {
@@ -866,6 +867,26 @@ pub(crate) fn step_group(
             group_log::log(format_args!(
                 "stepGroup: all sequences failed, skipping to failure_skip_to group",
             ));
+            // A failed beforeAll jumps past its tests. Those still have to
+            // reach the reporter as skipped, or they vanish from the console,
+            // the JUnit report, and the summary counts.
+            for skipped_group in (this.group_index + 1)..failure_skip_to {
+                let (sequence_start, sequence_end) = {
+                    let group = &this.groups[skipped_group];
+                    (group.sequence_start, group.sequence_end)
+                };
+                for sequence_index in sequence_start..sequence_end {
+                    let sequence = &mut this.sequences[sequence_index];
+                    if sequence.test_entry.is_none() || sequence.result != Result::Pending {
+                        continue;
+                    }
+                    sequence.result = match sequence.entry_mode() {
+                        ScopeMode::Todo => Result::Todo,
+                        _ => Result::Skip,
+                    };
+                    Execution::on_sequence_completed(buntest_ptr, sequence);
+                }
+            }
             this.group_index = failure_skip_to;
         } else {
             group_log::log(format_args!("stepGroup: not all sequences failed, advancing to next group"));

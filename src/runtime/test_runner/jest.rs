@@ -584,6 +584,15 @@ fn consume_arg(
     Ok(())
 }
 
+/// Inspect `value` onto `out` on a single line. Test titles must stay on one
+/// line; a multi-line name corrupts the console layout and JUnit output.
+fn write_inspected(global_this: &JSGlobalObject, value: JSValue, out: &mut Vec<u8>) {
+    let mut formatter = crate::test_runner::expect::make_formatter(global_this);
+    formatter.single_line = true;
+    // formatter cleanup handled by Drop.
+    write!(out, "{}", value.to_fmt(&mut formatter)).unwrap();
+}
+
 /// Generate test label by positionally injecting parameters with printf formatting
 pub(crate) fn format_label(
     global_this: &JSGlobalObject,
@@ -638,9 +647,7 @@ pub(crate) fn format_label(
                         let owned_slice = value.to_slice_or_null(global_this)?;
                         list.extend_from_slice(owned_slice.slice());
                     } else {
-                        let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                        // formatter cleanup handled by Drop.
-                        write!(&mut list, "{}", value.to_fmt(&mut formatter)).unwrap();
+                        write_inspected(global_this, value, &mut list);
                     }
                     idx = var_end;
                     continue;
@@ -662,26 +669,48 @@ pub(crate) fn format_label(
 
             match label[idx + 1] {
                 b's' => {
-                    consume_arg(
-                        global_this,
-                        !current_arg.is_empty() && current_arg.js_type().is_string(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%s",
-                    )?;
+                    // util.format's `%s` (what jest-each delegates to) never
+                    // leaves the literal specifier: strings pass through
+                    // verbatim, everything else goes through the inspector.
+                    if !current_arg.is_empty() && current_arg.js_type().is_string() {
+                        consume_arg(
+                            global_this,
+                            true,
+                            &mut idx,
+                            &mut args_idx,
+                            &mut list,
+                            current_arg,
+                            b"%s",
+                        )?;
+                    } else {
+                        write_inspected(global_this, current_arg, &mut list);
+                        idx += 1;
+                        args_idx += 1;
+                    }
                 }
                 b'i' => {
-                    consume_arg(
-                        global_this,
-                        current_arg.is_any_int(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%i",
-                    )?;
+                    // util.format's `%i` is parseInt, so a non-integral number
+                    // truncates instead of leaving the literal specifier.
+                    if current_arg.is_number() && !current_arg.is_any_int() {
+                        let number = current_arg.as_number();
+                        if number.is_finite() {
+                            write!(&mut list, "{}", number.trunc()).unwrap();
+                        } else {
+                            list.extend_from_slice(b"NaN");
+                        }
+                        idx += 1;
+                        args_idx += 1;
+                    } else {
+                        consume_arg(
+                            global_this,
+                            current_arg.is_any_int(),
+                            &mut idx,
+                            &mut args_idx,
+                            &mut list,
+                            current_arg,
+                            b"%i",
+                        )?;
+                    }
                 }
                 b'd' => {
                     consume_arg(
@@ -716,9 +745,7 @@ pub(crate) fn format_label(
                     args_idx += 1;
                 }
                 b'p' => {
-                    let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                    let value_fmt = current_arg.to_fmt(&mut formatter);
-                    write!(&mut list, "{}", value_fmt).unwrap();
+                    write_inspected(global_this, current_arg, &mut list);
                     idx += 1;
                     args_idx += 1;
                 }

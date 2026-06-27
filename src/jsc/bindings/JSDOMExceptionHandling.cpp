@@ -122,9 +122,10 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
     // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
     String errorMessage;
-    if (auto* error = dynamicDowncast<JSDOMException>(exception))
-        errorMessage = makeString(error->wrapped().name(), ": "_s, error->wrapped().message());
-    else if (auto* error = dynamicDowncast<ErrorInstance>(exception))
+    if (auto* error = dynamicDowncast<JSDOMException>(exception)) {
+        auto& impl = error->wrapped();
+        errorMessage = impl.message().isEmpty() ? impl.name() : makeString(impl.name(), ": "_s, impl.message());
+    } else if (auto* error = dynamicDowncast<ErrorInstance>(exception))
         errorMessage = error->sanitizedToString(&lexicalGlobalObject);
     else
         errorMessage = exception.toWTFString(&lexicalGlobalObject);

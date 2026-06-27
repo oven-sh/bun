@@ -198,16 +198,16 @@ test("worker.disconnect() with a net.Server exits instead of hanging", async () 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
   // Two workers each: listening + disconnecting; primary logs two worker exits + final line.
   const listening = [...stdout.matchAll(/\[worker \d+\] listening/g)].length;
   const disconnecting = [...stdout.matchAll(/\[worker \d+\] disconnecting/g)].length;
   const workerExited = [...stdout.matchAll(/\[master\] worker \d+ exited/g)].length;
-  expect({ listening, disconnecting, workerExited }).toEqual({
+  expect({ listening, disconnecting, workerExited, stderr, exitCode }).toEqual({
     listening: 2,
     disconnecting: 2,
     workerExited: 2,
+    stderr: "",
+    exitCode: 0,
   });
   expect(stdout).toContain("[master] all workers exited");
-  expect(exitCode).toBe(0);
 });

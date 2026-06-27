@@ -1268,10 +1268,9 @@ describe("response framing", () => {
     });
   });
 
-  // A Response body on a null-body status never reaches the wire: RFC 9112 6.3
-  // terminates a 204/304 at the blank line after the header fields regardless
-  // of what follows, so stray body bytes desync keep-alive. The fetch-handler
-  // path already drops the body in `render`; the static `routes:` path must too.
+  // RFC 9112 6.3 terminates a 1xx/204/304 at the blank line after the header
+  // fields, so a stray Response body desyncs keep-alive. `render` already drops
+  // it on the `fetch` path; the static `routes:` path must too.
   describe.each(["routes", "fetch"] as const)("%s: a Response body on a null-body status is dropped", kind => {
     const cases: [status: number, method: string, contentLength: string | null][] = [
       [101, "GET", null],

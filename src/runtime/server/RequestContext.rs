@@ -2442,11 +2442,9 @@ where
         // SAFETY: BACKREF
         let global_this = server.global_this();
 
-        // A body, when present, decides the framing: GET puts its byte count
-        // on the wire and strips any handler-supplied Content-Length /
-        // Transfer-Encoding, so HEAD must report the same (RFC 9110 §9.3.2).
-        // Only a bodiless Response leaves those headers as the sole
-        // description of what a GET would have sent (issue #15355).
+        // GET strips the handler's Content-Length / Transfer-Encoding and frames
+        // from the body, so HEAD must too (RFC 9110 §9.3.2). Only a bodiless
+        // Response leaves those headers as what GET would have sent (#15355).
         let body_decides_framing = {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();

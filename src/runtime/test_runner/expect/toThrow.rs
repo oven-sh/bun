@@ -10,6 +10,59 @@ use super::ExpectAny;
 use super::expect_any_js;
 use super::get_signature;
 
+// Jest treats falsy causes (`undefined`, `null`, `0`, `false`, `""`) as absent.
+fn get_truthy_cause(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
+    if !value.is_object() {
+        return Ok(None);
+    }
+    Ok(value.get(global, "cause")?.filter(|v| v.to_boolean()))
+}
+
+fn get_object_message(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
+    if !value.is_object() {
+        return Ok(None);
+    }
+    value.fast_get(global, bun_jsc::BuiltinName::Message)
+}
+
+// Jest 30 compares `cause` in addition to `message` for `toThrow(errorInstance)`.
+// Error-like causes (objects with a `message`) are compared by message, then the
+// walk descends into their own causes; anything else is compared by deep equality.
+fn error_causes_equal(
+    expected: JSValue,
+    received: JSValue,
+    global: &JSGlobalObject,
+) -> JsResult<bool> {
+    let mut expected = expected;
+    let mut received = received;
+    // Bounded so a self-referential cause chain (`err.cause === err`) terminates.
+    // A chain that matches at every level through the cap is treated as equal,
+    // which is what Jest's cycle-detecting serializer produces for that shape.
+    for _ in 0..1000 {
+        let expected_cause = get_truthy_cause(expected, global)?;
+        let received_cause = get_truthy_cause(received, global)?;
+        match (expected_cause, received_cause) {
+            (None, None) => return Ok(true),
+            (Some(_), None) | (None, Some(_)) => return Ok(false),
+            (Some(ec), Some(rc)) => {
+                if let (Some(em), Some(rm)) = (
+                    get_object_message(ec, global)?,
+                    get_object_message(rc, global)?,
+                ) {
+                    if !em.is_same_value(rm, global)? {
+                        return Ok(false);
+                    }
+                    expected = ec;
+                    received = rc;
+                    continue;
+                }
+                return ec.jest_deep_equals(rc, global);
+            }
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn to_throw(
     this: &Expect,
     global: &JSGlobalObject,
@@ -181,6 +234,24 @@ pub(crate) fn to_throw(
                 return Ok(JSValue::UNDEFINED);
             }
 
+            // A matching message with a mismatched cause is not a match.
+            if !error_causes_equal(expected_value, result, global)? {
+                return Ok(JSValue::UNDEFINED);
+            }
+
+            if let Some(expected_cause) = get_truthy_cause(expected_value, global)? {
+                let mut formatter2 = super::make_formatter(global);
+                return this.throw(
+                    global,
+                    signature,
+                    format_args!(
+                        "\n\nExpected message: not <green>{}<r>\nExpected cause: not <green>{}<r>\n",
+                        expected_message.to_fmt(&mut formatter),
+                        expected_cause.to_fmt(&mut formatter2),
+                    ),
+                );
+            }
+
             return this.throw(
                 global,
                 signature,
@@ -341,10 +412,14 @@ pub(crate) fn to_throw(
         if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
-            if let Some(received_message) = received_message_opt {
-                if received_message.is_same_value(expected_message, global)? {
-                    return Ok(JSValue::UNDEFINED);
-                }
+            let message_matches = if let Some(received_message) = received_message_opt {
+                received_message.is_same_value(expected_message, global)?
+            } else {
+                false
+            };
+
+            if message_matches && error_causes_equal(expected_value, result, global)? {
+                return Ok(JSValue::UNDEFINED);
             }
 
             // error: message from received error does not match expected error message.
@@ -352,6 +427,25 @@ pub(crate) fn to_throw(
             let mut formatter2 = super::make_formatter(global);
 
             if let Some(received_message) = received_message_opt {
+                if message_matches {
+                    let expected_cause =
+                        get_truthy_cause(expected_value, global)?.unwrap_or(JSValue::UNDEFINED);
+                    let received_cause =
+                        get_truthy_cause(result, global)?.unwrap_or(JSValue::UNDEFINED);
+                    let mut formatter3 = super::make_formatter(global);
+                    let mut formatter4 = super::make_formatter(global);
+                    return this.throw(
+                        global,
+                        signature,
+                        format_args!(
+                            "\n\nExpected message: <green>{}<r>\nReceived message: <red>{}<r>\n\nExpected cause: <green>{}<r>\nReceived cause: <red>{}<r>\n",
+                            expected_message.to_fmt(&mut formatter),
+                            received_message.to_fmt(&mut formatter2),
+                            expected_cause.to_fmt(&mut formatter3),
+                            received_cause.to_fmt(&mut formatter4),
+                        ),
+                    );
+                }
                 return this.throw(
                     global,
                     signature,

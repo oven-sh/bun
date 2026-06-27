@@ -414,6 +414,21 @@ describe("crypto.KeyObjects", () => {
       expect(jwt).toEqual(info.jwk);
     });
 
+    test(`${keyType} createPrivateKey from jwk with mismatched x should throw`, () => {
+      const xBytes = Buffer.from(info.jwk.x, "base64url");
+      const wrongX = Buffer.alloc(xBytes.length).toString("base64url");
+      expect(() => createPrivateKey({ key: { ...info.jwk, x: wrongX }, format: "jwk" })).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK" }),
+      );
+    });
+
+    test(`${keyType} createPrivateKey from jwk with wrong-length x should throw`, () => {
+      const wrongX = Buffer.alloc(8).toString("base64url");
+      expect(() => createPrivateKey({ key: { ...info.jwk, x: wrongX }, format: "jwk" })).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_INVALID_JWK" }),
+      );
+    });
+
     [
       ["public", info.public],
       ["private", info.private],

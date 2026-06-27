@@ -4797,11 +4797,23 @@ pub fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
+            // `blob.size` doubles as a cached stat (via `resolve_size`);
+            // only an explicit `.slice()` length should bound the copy, so
+            // treat a size equal to the store's cached stat as "whole file".
+            let source_offset = source_blob.offset.get();
+            let source_size = source_blob.size.get();
+            let source_len = if source_size == MAX_SIZE
+                || (source_offset == 0 && source_size == source_store.data.as_file().max_size)
+            {
+                MAX_SIZE
+            } else {
+                source_size
+            };
             let mut file_copier = copy_file::CopyFile::create(
                 destination_store,
                 source_store,
-                source_blob.offset.get(),
-                source_blob.size.get(),
+                source_offset,
+                source_len,
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,

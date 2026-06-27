@@ -786,6 +786,24 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(written).toBe(11);
     });
 
+    it.skipIf(isWindows)(
+      "a cached stat size on an unsliced source BunFile does not cap the write",
+      async () => {
+        using dir = tempDir("bun-write-stale-src-stat", {});
+        const a = join(String(dir), "a.txt");
+        const b = join(String(dir), "b.txt");
+        const f = Bun.file(a);
+        fs.writeFileSync(a, "0123456789");
+        await f.exists();
+        fs.writeFileSync(a, "0123456789ABCDEFGHIJ");
+        const written = await Bun.write(b, f);
+        expect({ written, content: fs.readFileSync(b, "utf8") }).toEqual({
+          written: 20,
+          content: "0123456789ABCDEFGHIJ",
+        });
+      },
+    );
+
     // https://github.com/oven-sh/bun/issues/22456
     it.skipIf(isWindows)("reusing a BunFile as a destination does not cap the write at its previous size", async () => {
       using dir = tempDir("bun-write-reused-dest", {});

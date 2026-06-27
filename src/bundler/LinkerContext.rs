@@ -1295,8 +1295,7 @@ fn write_sources_for(
     // 1) the intermediate input.
     let rel_path_storage;
     let pretty: &[u8] = if outer_path.is_file() {
-        rel_path_storage =
-            LinkerContext::source_map_relative_path(chunk_abs_dir, outer_path.text)?;
+        rel_path_storage = LinkerContext::source_map_relative_path(chunk_abs_dir, outer_path.text)?;
         &rel_path_storage
     } else {
         outer_path.pretty

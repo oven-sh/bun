@@ -12,7 +12,7 @@ import { join } from "path";
 // stays fast and deterministic: bun-build-api.test.ts carries a ~160s
 // repeated-build stress test whose runtime sits close to its timeout under
 // load, which is unrelated to this feature.
-describe("Bun.build chains inline input sourcemaps", () => {
+describe.concurrent("Bun.build chains inline input sourcemaps", () => {
   // Build a tiny intermediate `.js` that carries an inline base64 sourcemap
   // pointing at a fake "authored" source, then bundle an entry that imports
   // it. The output map's `sources[]` should include the authored source,

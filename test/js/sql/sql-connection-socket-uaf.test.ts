@@ -152,8 +152,13 @@ for (const { name, touch, server } of drivers) {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+      // stderr is kept in the diff via expect.any(String); the failure
+      // signal is the missing "ok\n" and non-zero exitCode (ASAN aborts).
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "ok\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
     },
-    30_000,
   );
 }

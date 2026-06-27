@@ -2886,10 +2886,9 @@ impl<'a> HTTPClient<'a> {
 
     pub fn write_to_stream<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>, data: &[u8]) {
         bun_core::scoped_log!(fetch, "flushStream");
-        // Never write body bytes before the request headers: drain_queued_writes
-        // can reach this via the not-yet-opened socket start_() registers in the
-        // abort tracker, and request_sent_len still indexes the header buffer.
-        // The data stays buffered; on_writable's Body/ProxyBody arm re-flushes.
+        // Never write body bytes before the request headers: drain_queued_writes can
+        // reach this via the not-yet-opened socket start_() puts in the abort tracker,
+        // and request_sent_len still indexes headers. on_writable's Body arm re-flushes.
         if !matches!(
             self.state.request_stage,
             RequestStage::Body | RequestStage::ProxyBody

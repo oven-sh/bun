@@ -945,6 +945,7 @@ describe("explicit dotfile segments match without dot:true", () => {
   const files = {
     ".dotdir/inner.txt": "x",
     ".dotdir/.hidden.txt": "x",
+    ".dotdir/foo/.dotdir/inner.txt": "x",
     ".env": "x",
     "sub/.dotdir/inner.txt": "x",
     "sub/visible.txt": "x",
@@ -957,6 +958,9 @@ describe("explicit dotfile segments match without dot:true", () => {
     [".*/inner.txt", [".dotdir/inner.txt"]],
     [".env", [".env"]],
     [".*", [".env"]],
+    // `**` may advance to an explicit `.dotdir` segment but must not itself
+    // recurse through a hidden dir: `.dotdir/foo/.dotdir/inner.txt` must not
+    // match since the only decomposition needs `**` to consume `.dotdir/foo`.
     ["**/.dotdir/inner.txt", [".dotdir/inner.txt", "sub/.dotdir/inner.txt"]],
     ["sub/.dotdir/*.txt", ["sub/.dotdir/inner.txt"]],
   ])("pattern %j finds explicitly-named dotfiles", (pattern, expected) => {

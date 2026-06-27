@@ -1765,6 +1765,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut child = self.make_set();
         let comps = &self.pattern_components;
         let len: u32 = u32::try_from(comps.len()).expect("int cast");
+        let hidden = !self.dot && Self::starts_with_dot(entry_name);
         let mut it = active.iterator::<true, true>();
         while let Some(i) = it.next() {
             let idx: u32 = u32::try_from(i).expect("int cast");
@@ -1786,8 +1787,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             ) {
                 child.set(self.normalize_idx(idx + bump) as usize);
                 // At `**/X` boundaries, keep the outer `**` alive unless
-                // idx+2 is itself `**` (whose recursion already covers it).
-                if bump == 2 && comps[(idx + 2) as usize].syntax_hint != SyntaxHint::Double {
+                // idx+2 is itself `**` (whose recursion already covers it)
+                // or the entry is hidden (a `**` must not traverse dotdirs).
+                if bump == 2
+                    && !hidden
+                    && comps[(idx + 2) as usize].syntax_hint != SyntaxHint::Double
+                {
                     child.set(idx as usize);
                 }
             }

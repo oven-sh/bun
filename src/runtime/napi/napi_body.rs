@@ -191,10 +191,7 @@ unsafe extern "C" {
     pub(super) fn NapiHandleScope__open(env: *mut NapiEnv, escapable: bool)
     -> *mut NapiHandleScope;
     pub(super) fn NapiHandleScope__close(env: *mut NapiEnv, current: *mut NapiHandleScope);
-    fn NapiHandleScope__openAddonScope(
-        env: *mut NapiEnv,
-        escapable: bool,
-    ) -> *mut NapiHandleScope;
+    fn NapiHandleScope__openAddonScope(env: *mut NapiEnv, escapable: bool) -> *mut NapiHandleScope;
     fn NapiHandleScope__closeAddonScope(env: *mut NapiEnv, current: *mut NapiHandleScope) -> bool;
     fn NapiHandleScope__append(env: *mut NapiEnv, value: usize);
     fn NapiHandleScope__escape(handle_scope: *mut NapiHandleScope, value: usize) -> bool;

@@ -362,10 +362,6 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
 
-    // Listeners (and any MessagePort entangled out of this message) observe
-    // the async context that was active when this port was created.
-    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
-
     auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
     if (scope.exception()) [[unlikely]] {
         RELEASE_ASSERT(vm->hasPendingTerminationException());
@@ -373,6 +369,10 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     }
 
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
+    // Listeners observe the async context that was active when this port was
+    // created. entanglePorts() above stays outside: Node deserializes a
+    // message's transferred ports before restoring the receiver's context.
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
     dispatchEvent(event.event);
 }
 

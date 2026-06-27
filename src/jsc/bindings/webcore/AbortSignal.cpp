@@ -158,6 +158,9 @@ void AbortSignal::cancelTimer()
     if (auto timeout = std::exchange(m_timeout, nullptr)) {
         AbortSignal__Timeout__deinit(timeout);
     }
+    // The timer can never fire past this point, so release the snapshot taken
+    // in timeout(); signalAbort() has already copied it into its restore scope.
+    m_timeoutAsyncContext.clear();
 }
 
 void AbortSignal::markAborted(JSC::JSValue reason)

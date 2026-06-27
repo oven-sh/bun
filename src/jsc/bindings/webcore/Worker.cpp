@@ -363,6 +363,9 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         return;
     }
     bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
+        // Listeners observe the async context that was active at new Worker().
+        // drainInbox's entanglePorts() stays outside: Node deserializes a
+        // message's transferred ports before restoring the receiver's context.
         AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
         dispatchEvent(event);
     });

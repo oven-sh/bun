@@ -8597,12 +8597,9 @@ describe("outdated", () => {
   });
 
   test("shows in-range update when installed version is ahead of `latest` dist-tag", async () => {
-    // prereleases-1 publishes 1.0.0-future.{0,1,4,5,7} with the `latest`
-    // dist-tag pointing at 1.0.0-future.4. Lock 1.0.0-future.5 (a version
-    // newer than `latest`), then widen the range so that 1.0.0-future.7
-    // becomes an available in-range update. Previously `bun outdated` hid
-    // this row because `current >= latest`, even though `bun update` would
-    // move to 1.0.0-future.7.
+    // prereleases-1 publishes 1.0.0-future.{0,1,4,5,7} with `latest` at
+    // 1.0.0-future.4. Lock 1.0.0-future.5 (newer than `latest`), then widen
+    // the range so 1.0.0-future.7 is an available in-range update.
     await write(
       packageJson,
       JSON.stringify({
@@ -8641,9 +8638,8 @@ describe("outdated", () => {
   });
 
   test("shows in-range update when `latest` dist-tag points at an older stable line", async () => {
-    // prereleases-2 publishes 0.5.0 as `latest` and a 1.0.0-next.* line.
-    // Installing any 1.0.0-next.* means `current > latest` and the row was
-    // previously hidden even though a newer in-range prerelease exists.
+    // prereleases-2 publishes 0.5.0 as `latest` and a 1.0.0-next.* line, so
+    // installing any 1.0.0-next.* puts `current > latest`.
     await write(
       packageJson,
       JSON.stringify({

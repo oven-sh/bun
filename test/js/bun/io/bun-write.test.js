@@ -701,6 +701,32 @@ const IS_UV_FS_COPYFILE_DISABLED =
       },
     );
 
+    it.skipIf(isWindows)(
+      "Bun.write(dest, Bun.file(src).slice(a, b)) honours the slice on the read/write fallback path",
+      async () => {
+        using dir = tempDir("bun-write-file-slice-fallback", {
+          "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        });
+        const src = join(String(dir), "src.txt");
+        const dst = join(String(dir), "dst.txt");
+        const script = `
+          const fs = require("fs");
+          const written = await Bun.write(${JSON.stringify(dst)}, Bun.file(${JSON.stringify(src)}).slice(10, 20));
+          console.log(JSON.stringify({ written, content: fs.readFileSync(${JSON.stringify(dst)}, "utf8") }));
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ written: 10, content: "KLMNOPQRST" });
+        expect(exitCode).toBe(0);
+      },
+    );
+
     // https://github.com/oven-sh/bun/issues/22456
     it.skipIf(isWindows)("reusing a BunFile as a destination does not cap the write at its previous size", async () => {
       using dir = tempDir("bun-write-reused-dest", {});

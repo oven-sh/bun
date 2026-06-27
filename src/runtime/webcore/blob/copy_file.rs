@@ -372,7 +372,8 @@ impl<'a> CopyFile<'a> {
 
         self.read_off += self.offset;
 
-        let mut remain: usize = self.max_length as usize;
+        let max_length = self.max_length;
+        let mut remain: usize = max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
         if unknown_size {
             // sometimes stat lies
@@ -411,6 +412,9 @@ impl<'a> CopyFile<'a> {
                     return Err(bun_core::errno_to_zig_err(err.errno as i32));
                 }
                 bun_sys::Result::Ok(()) => {
+                    if !unknown_size {
+                        total_written = total_written.min(max_length as u64);
+                    }
                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                     let _ = unsafe {
                         libc::ftruncate(
@@ -486,6 +490,9 @@ impl<'a> CopyFile<'a> {
                             return Err(bun_core::errno_to_zig_err(err.errno as i32));
                         }
                         bun_sys::Result::Ok(()) => {
+                            if !unknown_size {
+                                total_written = total_written.min(max_length as u64);
+                            }
                             // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                             let _ = unsafe {
                                 libc::ftruncate(
@@ -543,6 +550,9 @@ impl<'a> CopyFile<'a> {
                                 return Err(bun_core::errno_to_zig_err(err.errno as i32));
                             }
                             bun_sys::Result::Ok(()) => {
+                                if !unknown_size {
+                                    total_written = total_written.min(max_length as u64);
+                                }
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                                 let _ = unsafe {
                                     libc::ftruncate(

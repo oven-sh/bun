@@ -625,6 +625,21 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
+    it.skipIf(isWindows)("Bun.write to the same inode via a hardlink honours source slices", async () => {
+      using dir = tempDir("bun-write-self-copy-hardlink-slice", {
+        "a.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      });
+      const a = join(String(dir), "a.txt");
+      const b = join(String(dir), "b.txt");
+      fs.linkSync(a, b);
+      const written = await Bun.write(b, Bun.file(a).slice(10, 20));
+      expect({ written, a: fs.readFileSync(a, "utf8"), b: fs.readFileSync(b, "utf8") }).toEqual({
+        written: 10,
+        a: "KLMNOPQRST",
+        b: "KLMNOPQRST",
+      });
+    });
+
     it.skipIf(isWindows)(
       "Bun.write(path, Bun.file(path).slice(a, b)) replaces the file with its own slice",
       async () => {

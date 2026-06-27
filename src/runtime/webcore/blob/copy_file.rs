@@ -929,14 +929,22 @@ impl<'a> CopyFile<'a> {
                     bun_sys::Result::Ok(dest_stat) => {
                         stat.st_dev == dest_stat.st_dev && stat.st_ino == dest_stat.st_ino
                     }
-                    bun_sys::Result::Err(_) => false,
+                    bun_sys::Result::Err(err) => {
+                        self.system_error = Some(err.to_system_error());
+                        self.do_close();
+                        return;
+                    }
                 };
                 if same_file {
                     let _ = self.do_copy_same_file(&stat);
                     self.do_close();
                     return;
                 }
-                let _ = bun_sys::ftruncate(self.destination_fd, 0);
+                if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, 0) {
+                    self.system_error = Some(err.to_system_error());
+                    self.do_close();
+                    return;
+                }
             }
 
             if stat.st_size != 0 {
@@ -1029,10 +1037,9 @@ impl<'a> CopyFile<'a> {
                 } else {
                     0
                 };
-                // fcopyfile copies from the start of the source regardless
-                // of its position and reads to EOF, so it can't honour a
-                // slice; use a bounded read/write loop for that case so no
-                // extra bytes reach a non-truncatable destination.
+                // fcopyfile ignores the source offset and reads to EOF;
+                // use a bounded loop for slices so non-truncatable
+                // destinations never receive extra bytes.
                 let is_sliced = self.offset > 0 || (stat_size > 0 && self.max_length < stat_size);
                 if is_sliced {
                     match self.do_copy_bounded(self.max_length as u64) {

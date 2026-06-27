@@ -619,6 +619,8 @@ describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
     test(`sets permissions on existing file for ${label}`, async () => {
       using dir = tempDir("bun-write-mode", { "out.txt": "old" });
       const dest = join(String(dir), "out.txt");
+      // The seed file's mode depends on the umask; pin it so the precondition holds.
+      fs.chmodSync(dest, 0o644);
       expect(modeOf(dest)).not.toBe(0o600);
       await Bun.write(dest, data, { mode: 0o600 });
       expect(modeOf(dest)).toBe(0o600);

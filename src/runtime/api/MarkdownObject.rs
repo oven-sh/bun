@@ -1,7 +1,10 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use bun_core::StackCheck;
-use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
+use bun_jsc::{
+    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
+    RangeErrorOptions,
+};
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
@@ -29,6 +32,33 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
         bun_jsc::JsError::Thrown => ParserError::JSError,
         bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
         bun_jsc::JsError::Terminated => ParserError::JSTerminated,
+    }
+}
+
+/// Throw the JS exception for a `ParserError` returned by `bun_md`.
+/// `input_len` is the byte length of the rendered input, reported back by the
+/// `InputTooLarge` range error.
+#[cold]
+fn parser_err_to_js(
+    global_this: &JSGlobalObject,
+    err: ParserError,
+    input_len: usize,
+) -> bun_jsc::JsError {
+    match err {
+        // A renderer callback threw (or the VM is terminating); the exception
+        // is already pending on the VM.
+        ParserError::JSError => bun_jsc::JsError::Thrown,
+        ParserError::JSTerminated => bun_jsc::JsError::Terminated,
+        ParserError::OutOfMemory => global_this.throw_out_of_memory(),
+        ParserError::StackOverflow => global_this.throw_stack_overflow(),
+        ParserError::InputTooLarge => global_this.throw_range_error(
+            input_len as i64,
+            RangeErrorOptions {
+                max: md::types::OFF::MAX as i64,
+                field_name: b"input.byteLength",
+                ..Default::default()
+            },
+        ),
     }
 }
 
@@ -135,9 +165,7 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             // path is unreachable but handle it safely.
             return Err(global_this.throw_out_of_memory());
         }
-        Err(ParserError::OutOfMemory) => return Err(global_this.throw_out_of_memory()),
-        Err(ParserError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
-        Err(_) => return Err(global_this.throw_out_of_memory()),
+        Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
     create_utf8_for_js(global_this, &result)
@@ -170,7 +198,7 @@ pub(crate) fn render_to_html(
 
     let result = match md::render_to_html_with_options(input, options) {
         Ok(r) => r,
-        Err(_) => return Err(global_this.throw_out_of_memory()),
+        Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
     create_utf8_for_js(global_this, &result)
@@ -287,12 +315,7 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     // Run parser with the JS callback renderer
     if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
-        return match err {
-            ParserError::JSError => Err(bun_jsc::JsError::Thrown),
-            ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
-            ParserError::OutOfMemory => Err(global_this.throw_out_of_memory()),
-            ParserError::StackOverflow => Err(global_this.throw_stack_overflow()),
-        };
+        return Err(parser_err_to_js(global_this, err, input.len()));
     }
 
     // Return accumulated result
@@ -392,12 +415,7 @@ fn render_ast(
     })?;
 
     if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {
-        return match err {
-            ParserError::JSError => Err(bun_jsc::JsError::Thrown),
-            ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
-            ParserError::OutOfMemory => Err(global_this.throw_out_of_memory()),
-            ParserError::StackOverflow => Err(global_this.throw_stack_overflow()),
-        };
+        return Err(parser_err_to_js(global_this, err, input.len()));
     }
 
     Ok(renderer.get_result())

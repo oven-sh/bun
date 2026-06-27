@@ -435,7 +435,7 @@ fn match_brace(
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
 ) -> bool {
-    let mut brace_depth: i16 = 0;
+    let mut brace_depth: i32 = 0;
     let mut in_brackets = false;
 
     let open_brace_index = state.glob_index;
@@ -548,21 +548,24 @@ fn match_brace_branch(
 
 fn skip_branch(state: &mut State, glob: &[u8]) {
     let mut in_brackets = false;
-    let end_brace_depth = state.brace_depth - 1;
+    // `state.brace_depth` only counts groups entered via `match_brace_branch`,
+    // so nesting merely scanned over while skipping is tracked locally, not in state.
+    let mut nested: u32 = 0;
     while (state.glob_index as usize) < glob.len() {
         match glob[state.glob_index as usize] {
             b'{' => {
                 if !in_brackets {
-                    state.brace_depth += 1;
+                    nested += 1;
                 }
             }
             b'}' => {
                 if !in_brackets {
-                    state.brace_depth -= 1;
-                    if state.brace_depth == end_brace_depth {
+                    if nested == 0 {
+                        state.brace_depth -= 1;
                         state.glob_index += 1;
                         return;
                     }
+                    nested -= 1;
                 }
             }
             b'[' => {

@@ -51,9 +51,7 @@ beforeAll(async () => {
       for (const t of types) {
         for (const rr of zone[t]) {
           // TXT RDATA: each character-string is length-prefixed.
-          const rdata = Buffer.concat(
-            rr.map(s => Buffer.concat([Buffer.from([s.length]), Buffer.from(s, "ascii")])),
-          );
+          const rdata = Buffer.concat(rr.map(s => Buffer.concat([Buffer.from([s.length]), Buffer.from(s, "ascii")])));
           const rrHeader = Buffer.alloc(12);
           rrHeader.writeUInt16BE(0xc00c, 0); // NAME: pointer back to the qname at offset 12
           rrHeader.writeUInt16BE(TYPE[t], 2);
@@ -127,9 +125,7 @@ describe("an empty NOERROR answer (NODATA)", () => {
 
   test("resolve4 reports ENODATA (callback)", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
-    resolver.resolve4("onlytxt.bun.test", err =>
-      err ? resolve(err.code) : reject(new Error("expected an error")),
-    );
+    resolver.resolve4("onlytxt.bun.test", err => (err ? resolve(err.code) : reject(new Error("expected an error"))));
     expect(await promise).toBe("ENODATA");
   });
 

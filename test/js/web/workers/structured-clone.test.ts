@@ -1,7 +1,9 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv } from "harness";
+import { bunEnv, tls } from "harness";
 import { bunExe } from "js/bun/shell/test_builder";
+import { X509Certificate } from "node:crypto";
+import { BlockList } from "node:net";
 import { join } from "path";
 function jscSerializeRoundtrip(value: any) {
   const serialized = serialize(value);
@@ -267,6 +269,25 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(buffer, { transfer: [buffer] });
           }).toThrow(DOMException);
         });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+        // Serializing (not transferring) a detached ArrayBuffer must throw a
+        // "DataCloneError" DOMException, not a TypeError.
+        test("Serializing a detached ArrayBuffer throws DataCloneError", () => {
+          const buffer = new ArrayBuffer(8);
+          structuredCloneFn(buffer, { transfer: [buffer] }); // detach it
+          expect(buffer.byteLength).toBe(0);
+          for (const value of [buffer, { buffer }, [buffer], new Map([["k", buffer]])]) {
+            let error: unknown;
+            try {
+              structuredCloneFn(value);
+            } catch (e) {
+              error = e;
+            }
+            expect(error).toBeInstanceOf(DOMException);
+            expect((error as DOMException).name).toBe("DataCloneError");
+            expect((error as DOMException).code).toBe(DOMException.DATA_CLONE_ERR);
+          }
+        });
         test("Transferring a non-transferable platform object fails", () => {
           const blob = new Blob();
           expect(() => {
@@ -399,3 +420,98 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     });
   }
 });
+
+// A repeated object is serialized as an ObjectReferenceTag holding an index into the
+// serializer's object pool. The deserializer must rebuild that pool entry-for-entry:
+// any value it appends that the serializer did not record (BigInt primitives,
+// CryptoKey, X509Certificate) shifts every later back-reference, and the index byte
+// width depends on the pool size, so a big enough mismatch desyncs the whole stream.
+for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSerializeRoundtripCrossProcess]) {
+  describe(`${structuredCloneFn.name}: object pool back-references`, () => {
+    test.each([
+      ["heap BigInt", 1n],
+      ["zero BigInt", 0n],
+      ["200-bit BigInt", 2n ** 200n],
+      ["BigInt object", Object(7n)],
+    ])("a duplicated object after a %s keeps its identity", (_name, bigint) => {
+      const o = { x: 1 };
+      const c = structuredCloneFn([bigint, o, o]);
+      expect(c[1]).toEqual({ x: 1 });
+      expect(c[2]).toBe(c[1]);
+    });
+
+    test("a circular reference after a BigInt resolves to itself", () => {
+      const s: any = {};
+      s.self = s;
+      const d = structuredCloneFn([1n, s]);
+      expect(d[1].self).toBe(d[1]);
+    });
+
+    // https://github.com/oven-sh/bun/issues/16547
+    test("a TypedArray and DataView sharing an ArrayBuffer, after a BigInt", () => {
+      const bf = new ArrayBuffer(128);
+      const typed = new Int32Array(bf);
+      typed[0] = 0x1234;
+      const dataview = new DataView(bf);
+      const c = structuredCloneFn({ bigint: 123456789n, bf, typed, dataview });
+      expect(c.bigint).toBe(123456789n);
+      expect(c.typed).toBeInstanceOf(Int32Array);
+      expect(c.typed[0]).toBe(0x1234);
+      expect(c.typed.length).toBe(32);
+      expect(c.typed.buffer).toBe(c.bf);
+      expect(c.dataview.buffer).toBe(c.bf);
+    });
+
+    test("a duplicated BigInt object keeps its identity", () => {
+      const b = Object(5n);
+      const c = structuredCloneFn([b, b]);
+      expect(c[0].valueOf()).toBe(5n);
+      expect(c[1]).toBe(c[0]);
+    });
+
+    // Serializing a non-storable Bun cloneable (BlockList) for storage writes an
+    // empty-object placeholder; the serializer must still record it in its pool.
+    test("a duplicated object after a net.BlockList keeps its identity", () => {
+      const o = { x: 1 };
+      const c = structuredCloneFn([new BlockList(), o, o]);
+      expect(c[1]).toEqual({ x: 1 });
+      expect(c[2]).toBe(c[1]);
+    });
+
+    test("a back-reference past 255 interleaved BigInts", () => {
+      const o = { marker: "hello" };
+      const input: unknown[] = [o];
+      for (let i = 0; i < 300; i++) input.push((1n << 64n) + BigInt(i));
+      input.push(o);
+      const c = structuredCloneFn(input);
+      expect(c[300]).toBe((1n << 64n) + 299n);
+      expect(c[301]).toEqual({ marker: "hello" });
+      expect(c[301]).toBe(c[0]);
+    });
+  });
+}
+
+// CryptoKey and X509Certificate are the platform objects the deserializer appends to
+// m_gcBuffer for GC protection without the serializer having recorded them.
+for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSerializeRoundtripCrossProcess]) {
+  describe(`${structuredCloneFn.name}: object pool back-references after platform objects`, () => {
+    test("a duplicated object after a CryptoKey keeps its identity", async () => {
+      const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 128 }, true, ["encrypt", "decrypt"]);
+      const o = { x: 1 };
+      const c = structuredCloneFn([key, o, o]);
+      expect(c[0]).toBeInstanceOf(CryptoKey);
+      expect(c[1]).toEqual({ x: 1 });
+      expect(c[2]).toBe(c[1]);
+    });
+
+    test("a duplicated object after an X509Certificate keeps its identity", () => {
+      const cert = new X509Certificate(tls.cert);
+      const o = { x: 1 };
+      const c = structuredCloneFn([cert, o, o]);
+      expect(c[0]).toBeInstanceOf(X509Certificate);
+      expect(c[0].subject).toBe(cert.subject);
+      expect(c[1]).toEqual({ x: 1 });
+      expect(c[2]).toBe(c[1]);
+    });
+  });
+}

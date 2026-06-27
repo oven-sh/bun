@@ -142,6 +142,22 @@ describe("Web Crypto", () => {
         zero: { error: "DataError" },
       });
     });
+
+    // An unsupported format must reject with NotSupportedError before the
+    // length member is even considered.
+    it.each(["pkcs8", "spki"] as const)("rejects the %s format with NotSupportedError regardless of length", async format => {
+      const data = new Uint8Array(20);
+      const algo = { name: "HMAC", hash: "SHA-256" } as const;
+      expect({
+        absent: await outcome(crypto.subtle.importKey(format, data, algo, true, ["sign"])),
+        zero: await outcome(crypto.subtle.importKey(format, data, { ...algo, length: 0 }, true, ["sign"])),
+        one: await outcome(crypto.subtle.importKey(format, data, { ...algo, length: 1 }, true, ["sign"])),
+      }).toEqual({
+        absent: { error: "NotSupportedError" },
+        zero: { error: "NotSupportedError" },
+        one: { error: "NotSupportedError" },
+      });
+    });
   });
 
   describe("unwrapKey JWK error handling", () => {

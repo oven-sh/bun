@@ -4008,7 +4008,7 @@ where
                         .request_weakref
                         .get()
                         .and_then(|req| Body::BodyMixin::get_fetch_headers(req));
-                    let _ = Body::Value::resolve(&mut old, body, global_this, headers); // TODO: properly propagate exception upwards
+                    let _ = Body::Value::resolve(&mut old, body, global_this, headers);
                 }
                 return;
             }

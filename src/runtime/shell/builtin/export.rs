@@ -53,7 +53,8 @@ impl Export {
             .iter()
             .map(|(k, v)| (*k, *v))
             .collect();
-        entries.sort_by(|a, b| a.0.slice().cmp(b.0.slice()));
+        // Keys come from a hash map, so they are unique and stability is moot.
+        entries.sort_unstable_by(|a, b| a.0.slice().cmp(b.0.slice()));
 
         let mut buf = Vec::new();
         for (k, v) in &entries {

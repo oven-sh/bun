@@ -437,6 +437,13 @@ public:
                     return;
                 }
             }
+            /* A server's SHORT_MESSAGE_HEADER includes the 4-byte masking key, but the mask
+             * bit is already visible once the 2-byte base header is in: an unmasked frame
+             * must be refused now, not spilled until enough of a masked header arrives. */
+            if (isServer && length >= 2 && !isMasked(src)) {
+                Impl::forceClose(wState, user, ERR_INVALID_MASKING);
+                return;
+            }
             if (length) {
                 memcpy(wState->state.spill, src, length);
                 wState->state.spillLength = length & 0xf;

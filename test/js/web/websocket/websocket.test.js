@@ -1102,7 +1102,11 @@ describe.concurrent("WebSocket close() argument validation", () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     ws.onopen = () => resolve();
     ws.onerror = () => reject(new Error("WebSocket failed to connect"));
+    ws.onclose = () => reject(new Error("WebSocket closed before open"));
     await promise;
+    // The tests install their own close handlers (and close the socket).
+    ws.onerror = null;
+    ws.onclose = null;
     return ws;
   }
 

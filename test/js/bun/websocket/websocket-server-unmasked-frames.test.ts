@@ -42,10 +42,17 @@ describe.concurrent("unmasked client frames", () => {
 
     const socket = net.connect(server.port, "127.0.0.1");
     const closed = Promise.withResolvers<string>();
-    socket.on("close", () => closed.resolve("socket-closed-by-server"));
-    socket.on("error", () => closed.resolve("socket-closed-by-server"));
-
     const upgraded = Promise.withResolvers<void>();
+    socket.on("close", () => {
+      closed.resolve("socket-closed-by-server");
+      // No-op once the 101 already resolved it; fails the handshake fast otherwise.
+      upgraded.reject(new Error("socket closed before the 101 response"));
+    });
+    socket.on("error", (error: Error) => {
+      closed.resolve("socket-closed-by-server");
+      upgraded.reject(error);
+    });
+
     let buffered = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
@@ -104,8 +111,18 @@ describe.concurrent("unmasked client frames", () => {
 
   it("an unmasked close frame fails the connection instead of completing the handshake", async () => {
     using raw = await connectRaw();
-    // 4 extra bytes so the (server-role) parser has a full 6-byte header to look at.
+    // Trailing bytes so the parser sees a full server-role header in one read.
     raw.socket.write(Buffer.concat([unmaskedFrame(0x8, Buffer.alloc(0)), Buffer.alloc(4)]));
+    expect(await raw.serverClose).toEqual({ code: 1006, reason: "Received an incorrectly masked frame" });
+  });
+
+  // The mask bit is in the 2-byte base header. The server must not sit on a
+  // lone unmasked frame waiting for the 4 masking-key bytes that never come.
+  it("a lone 2-byte unmasked frame is rejected without waiting for more bytes", async () => {
+    using raw = await connectRaw();
+    raw.socket.write(unmaskedFrame(0x1, Buffer.alloc(0)));
+    expect(await raw.closed).toBe("socket-closed-by-server");
+    expect(raw.received).toEqual([]);
     expect(await raw.serverClose).toEqual({ code: 1006, reason: "Received an incorrectly masked frame" });
   });
 
@@ -113,6 +130,17 @@ describe.concurrent("unmasked client frames", () => {
   it("a masked text frame from the same raw client is delivered", async () => {
     using raw = await connectRaw();
     raw.socket.write(maskedFrame(0x1, Buffer.from("hi")));
+    expect(await raw.firstMessage).toBe('message:"hi"');
+    expect(raw.received).toEqual(["hi"]);
+  });
+
+  // Control: a masked frame whose 2-byte base header arrives on its own must
+  // be buffered (not rejected) until the masking key and payload follow.
+  it("a masked text frame split after the base header is still delivered", async () => {
+    using raw = await connectRaw();
+    const frame = maskedFrame(0x1, Buffer.from("hi"));
+    await new Promise<void>(resolve => raw.socket.write(frame.subarray(0, 2), () => resolve()));
+    raw.socket.write(frame.subarray(2));
     expect(await raw.firstMessage).toBe('message:"hi"');
     expect(raw.received).toEqual(["hi"]);
   });

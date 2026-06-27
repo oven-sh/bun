@@ -2109,8 +2109,12 @@ where
                 stream_log!("returned a promise");
                 this.drain_microtasks();
 
-                match promise.status() {
-                    jsc::js_promise::Status::Pending => {
+                // `MarkHandled` matters for the Rejected arm: the promise
+                // settled before any reaction was attached, so without the
+                // flag the VM would report it as an unhandled rejection even
+                // though handle_reject_stream consumes it here.
+                match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                    jsc::PromiseResult::Pending => {
                         stream_log!("promise still Pending");
                         if !this.flags.has_written_status() {
                             response_stream.sink.on_first_write = None;
@@ -2144,7 +2148,7 @@ where
                         ); // TODO: properly propagate exception upwards
                         // the response_stream should be GC'd
                     }
-                    jsc::js_promise::Status::Fulfilled => {
+                    jsc::PromiseResult::Fulfilled(_) => {
                         stream_log!("promise Fulfilled");
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
@@ -2154,15 +2158,25 @@ where
                         stream.done(global_this);
                         readable_ref.deinit();
                     }
-                    jsc::js_promise::Status::Rejected => {
+                    jsc::PromiseResult::Rejected(err) => {
                         stream_log!("promise Rejected");
+                        // Consuming the rejection here is what keeps it out of
+                        // the unhandledRejection reporter, so surface it here.
+                        // DEBUG_MODE already reports it in handle_reject_stream.
+                        if !DEBUG_MODE
+                            && let Some(server) = this.server
+                            && !err.is_empty_or_undefined_or_null()
+                        {
+                            // SAFETY: BACKREF; see drain_microtasks() re: the
+                            // const→mut cast.
+                            unsafe {
+                                (*std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut())
+                                    .run_error_handler(err, None);
+                            }
+                        }
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        Self::handle_reject_stream(
-                            this,
-                            global_this,
-                            promise.result(global_this.vm()),
-                        );
+                        Self::handle_reject_stream(this, global_this, err);
                         stream.cancel(global_this);
                         readable_ref.deinit();
                     }
@@ -2960,6 +2974,16 @@ where
         if !HTTP3 && ended_response {
             req.end_already_responded_stream();
             return;
+        }
+        // Body bytes were already written: close without the terminating chunk
+        // (RFC 9112 section 7) so the client sees an incomplete message, not a
+        // truncated body that looks like a complete, successful response.
+        if let Some(resp) = req.resp {
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                req.force_close();
+                return;
+            }
         }
         req.end_stream(req.should_close_connection());
     }

@@ -1000,6 +1000,29 @@ pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> 
     unsafe { (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
+/// Remove every abort-tracker entry whose stored socket is `socket`.
+///
+/// Backstop for the per-client `unregister_abort_tracker()` calls: when
+/// `Handler::on_close` fires on a socket whose ext has already been retagged
+/// to `DeadSocket`/`PooledSocket`, the client/session dispatch is skipped and
+/// any stale entry would survive into `us_internal_free_closed_sockets`,
+/// leaving `drain_queued_shutdowns` to dereference freed memory on a later
+/// abort. O(n) over live abortable requests; no-op on a `Detached` socket.
+pub(crate) fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
+    if socket.is_detached() {
+        return;
+    }
+    let tracker = abort_tracker();
+    let mut i = 0usize;
+    while i < tracker.count() {
+        if *tracker.values()[i].socket() == socket {
+            let _ = tracker.swap_remove_at(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 /// Returns the hostname to use for TLS SNI and certificate verification.
 /// Priority: tls_props.server_name > client.hostname > client.url.hostname
 /// The Host header value (client.hostname) may contain a port suffix which
@@ -2934,6 +2957,12 @@ impl<'a> HTTPClient<'a> {
         let was_empty = buffer.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
+            //
+            // An earlier flush already drained the terminating 0\r\n\r\n, so
+            // the request message is complete. Mark the stage Done for the
+            // keep-alive / redirect pooling gates, matching the
+            // `ended && !has_backpressure` exit below.
+            self.state.request_stage = RequestStage::Done;
             stream_buffer.release();
             self.request_stream_detach();
             if upgrade_state == HTTPUpgradeState::Upgraded {
@@ -3973,14 +4002,21 @@ impl<'a> HTTPClient<'a> {
             // wire, which the server then mis-parses. The redirect path
             // (do_redirect) already gates on request_stage == Done for exactly
             // this reason; mirror that gate here for the non-redirect
-            // completion path. `request_stage` alone is insufficient because
-            // a fully-sent small request parks at `.body` (see on_writable),
-            // so for byte-buffer bodies check the unsent slice instead.
-            // Stream/Sendfile are left as-is (they don't track an
-            // unsent slice here).
+            // completion path. `request_stage` alone is insufficient for
+            // byte-buffer bodies because a fully-sent small request parks at
+            // `.body` (see on_writable), so check the unsent slice instead.
+            //
+            // For a Stream the socket carries an incomplete chunked message
+            // (no terminating 0\r\n\r\n), so a pooled reuse writes the next
+            // request's line and credential headers INTO that body (RFC 9112
+            // section 9.3: the client must close instead). Both of
+            // write_to_stream's stream-complete exits set request_stage =
+            // Done, so Done is the reliable signal for Stream and Sendfile.
             let request_side_drained = match &self.state.original_request_body {
                 HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
-                _ => true,
+                HTTPRequestBody::Stream(_) | HTTPRequestBody::Sendfile(_) => {
+                    self.state.request_stage == RequestStage::Done
+                }
             };
 
             // The uSockets paused bit survives `state.reset()`; never hand a

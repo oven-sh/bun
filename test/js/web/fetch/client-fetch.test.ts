@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import { createHash, randomFillSync } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import net from "node:net";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 
@@ -499,4 +500,119 @@ test("fetching with Request object - issue #1527", async () => {
   } finally {
     server.closeAllConnections();
   }
+});
+
+// RFC 9112 section 7.1: a zero-size chunk ("0\r\n\r\n") is the chunked-body
+// terminator. A ReadableStream request body that yields an empty chunk (an
+// empty read, a flush, encode("")) must not be framed as one: that ends the
+// message there, silently truncating the upload and parking the rest of the
+// user's bytes at request-line position on the reused keep-alive connection.
+// Node emits no frame for an empty chunk; the expected wire below matches it.
+test.each([
+  [["AAAA", "", "BBBB"], "4\r\nAAAA\r\n4\r\nBBBB\r\n0\r\n\r\n"],
+  [["", "AAAA"], "4\r\nAAAA\r\n0\r\n\r\n"],
+])("an empty request body chunk %j is not framed as the chunked terminator", async (chunks, expectedWireBody) => {
+  // The last non-empty chunk marks the end of the upload: respond only once
+  // it and the real terminator have both arrived, so the full wire is captured.
+  const lastData = chunks.filter(Boolean).at(-1)!;
+  let recorded = Buffer.alloc(0);
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        recorded = Buffer.concat([recorded, d]);
+        const raw = recorded.toString("latin1");
+        if (raw.endsWith("0\r\n\r\n") && raw.includes(lastData)) {
+          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const encoder = new TextEncoder();
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    duplex: "half",
+    body: new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }),
+  });
+  expect(await res.text()).toBe("ok");
+
+  const raw = recorded.toString("latin1");
+  const headers = raw.slice(0, raw.indexOf("\r\n\r\n"));
+  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  expect({ transferEncoding: /^transfer-encoding: (.*)$/im.exec(headers)?.[1], body }).toEqual({
+    transferEncoding: "chunked",
+    body: expectedWireBody,
+  });
+});
+
+// The same empty-chunk hazard on the other framing path: with an explicit
+// Content-Length the body is sent raw, so an empty enqueue buffers nothing,
+// but it still reported backpressure -- pausing the request body stream to
+// wait for a drain event that can never arrive. The upload hung forever.
+test("an empty request body chunk does not stall a stream body sent with an explicit Content-Length", async () => {
+  let recorded = Buffer.alloc(0);
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        recorded = Buffer.concat([recorded, d]);
+        if (recorded.toString("latin1").endsWith("AAAABBBB")) {
+          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const encoder = new TextEncoder();
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    duplex: "half",
+    headers: { "content-length": "8" },
+    body: new ReadableStream({
+      start(controller) {
+        for (const chunk of ["AAAA", "", "BBBB"]) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }),
+  });
+  expect(await res.text()).toBe("ok");
+  const raw = recorded.toString("latin1");
+  expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("AAAABBBB");
+});
+
+// RFC 9112 section 5.2: an obs-fold continuation line in a response must be
+// joined into the preceding field value with SP, or the message rejected.
+// Accepting it while silently discarding the continuation is neither: it
+// corrupts the value ("Set-Cookie: sid=1;" CRLF " Secure; HttpOnly" used to
+// surface as "sid=1;") and, for a folded Transfer-Encoding / Content-Length,
+// changes the framing this client applies to the body. Node's fetch rejects
+// such responses; so does Bun now.
+test("a response with an obs-fold header continuation is rejected, not silently truncated", async () => {
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("data", () => {
+        sock.end("HTTP/1.1 200 OK\r\nSet-Cookie: sid=1;\r\n Secure; HttpOnly\r\nContent-Length: 2\r\n\r\nok");
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const outcome = await fetch(`http://127.0.0.1:${port}/`).then(
+    // On a regression this records the truncated Set-Cookie the bug produced.
+    r => ({ rejected: false as const, setCookie: r.headers.get("set-cookie") }),
+    e => ({ rejected: true as const, code: e.code }),
+  );
+  expect(outcome).toEqual({ rejected: true, code: "Malformed_HTTP_Response" });
 });

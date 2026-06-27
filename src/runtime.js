@@ -25,7 +25,9 @@ function __accessProp(key) {
 // also copy the properties to "module.exports" in addition to our module's
 // internal ESM export object.
 export var __reExport = (target, mod, secondTarget) => {
-  var keys = __getOwnPropNames(mod);
+  // An external CommonJS re-export target may set "module.exports" to null,
+  // undefined, or a primitive; only objects and functions have named exports.
+  var keys = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [];
   for (let key of keys)
     if (!__hasOwnProp.call(target, key) && key !== "default")
       __defProp(target, key, {
@@ -69,12 +71,15 @@ export var __toESM = (mod, isNodeMode, target) => {
   // file that has been converted to a CommonJS file using a Babel-
   // compatible transform (i.e. "__esModule" has not been set), then set
   // "default" to the CommonJS "module.exports" for node compatibility.
-  for (let key of __getOwnPropNames(mod))
-    if (!__hasOwnProp.call(to, key))
-      __defProp(to, key, {
-        get: __accessProp.bind(mod, key),
-        enumerable: true,
-      });
+  // A CommonJS module may legitimately set "module.exports" to null,
+  // undefined, or a primitive; only objects and functions have named exports.
+  if ((mod && typeof mod === "object") || typeof mod === "function")
+    for (let key of __getOwnPropNames(mod))
+      if (!__hasOwnProp.call(to, key))
+        __defProp(to, key, {
+          get: __accessProp.bind(mod, key),
+          enumerable: true,
+        });
 
   if (canCache) cache.set(mod, to);
   return to;

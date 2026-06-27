@@ -2185,9 +2185,9 @@ impl PipeReader {
             out_kind_str(out_type),
             done
         );
-        if cfg!(debug_assertions) {
-            debug_assert!(process.is_some());
-        }
+        // `process` is `None` once `detach()` (via `close_io`) has run, i.e. this
+        // reader already signalled its Cmd. The reader can still deliver terminal
+        // callbacks after that (see `read_with_fn`'s EAGAIN arm), so no-op here.
         if let Some(proc) = process {
             // SAFETY: `proc` is the heap-allocated `ShellSubprocess` (stable
             // address) freed only by `Cmd::deinit`, which runs strictly after

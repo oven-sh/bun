@@ -1227,6 +1227,10 @@ impl<const SSL: bool> Handler<SSL> {
         if let Some(session) = tagged.session_mut() {
             return session.on_close(bun_core::err!("ConnectionClosed"));
         }
+        // PooledSocket/DeadSocket: whoever retagged the ext should have
+        // unregistered; sweep by pointer so a miss can't leave a stale
+        // entry for `drain_queued_shutdowns` to deref after free.
+        crate::unregister_abort_tracker_for_socket(socket.socket);
     }
 
     unsafe fn add_memory_back_to_pool(pooled_ptr: *mut PooledSocket<SSL>) {
@@ -1327,6 +1331,11 @@ impl<const SSL: bool> Handler<SSL> {
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);
         if let Some(client) = tagged.client_mut() {
             client.on_connect_error();
+        } else {
+            // Same backstop as `on_close`: a SEMI_SOCKET/connecting socket
+            // whose ext is no longer a client never dispatches `on_close`,
+            // so sweep any leftover tracker entry here.
+            crate::unregister_abort_tracker_for_socket(socket.socket);
         }
         // us_connecting_socket_close is always called internally by uSockets
     }

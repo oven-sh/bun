@@ -28,7 +28,7 @@
     JSGenerateToJSObject,
 ] dictionary JsonWebKey {
     // The following fields are defined in Section 3.1 of JSON Web Key
-    required DOMString kty;
+    DOMString kty;
     DOMString use;
     sequence<CryptoKeyUsage> key_ops;
     DOMString alg;

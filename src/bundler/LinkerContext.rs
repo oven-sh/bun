@@ -1326,26 +1326,39 @@ fn write_sources_for(
         let base_dir = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(
             outer_path.text,
         );
+        // `name` is capped at `MAX_PATH_BYTES` by the parser, so emitting it
+        // relative (or, on a join that still overflows, verbatim) never
+        // overflows the fixed-size path buffers.
+        let emit = |joiner: &mut StringJoiner, p: &[u8]| -> Result<(), BunError> {
+            let mut quote_buf = MutableString::init(p.len() + ", ".len() + 2)?;
+            quote_buf.append_assume_capacity(b", ");
+            js_printer::quote_for_json(p, &mut quote_buf, false)?;
+            joiner.push_owned(quote_buf.to_default_owned());
+            Ok(())
+        };
+        let mut join_buf = bun_paths::path_buffer_pool::get();
         for name in ism.map.external_source_names.iter() {
             let name: &[u8] = name.as_ref();
-            // Use `join_abs` to produce an absolute inner path (when the
-            // inner map emitted a relative source name) that can then be
-            // re-relativized against `chunk_abs_dir`. `join_abs` returns
-            // a borrow into a thread-local buffer; we copy out immediately
-            // via `relative_alloc`.
-            let abs_path: &[u8] = if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
-                name
-            } else {
-                bun_paths::resolve_path::join_abs::<bun_paths::resolve_path::platform::Auto>(
-                    base_dir, name,
-                )
-            };
-            let rel_path = LinkerContext::source_map_relative_path(chunk_abs_dir, abs_path)?;
-
-            let mut quote_buf = MutableString::init(rel_path.len() + ", ".len() + 2)?;
-            quote_buf.append_assume_capacity(b", ");
-            js_printer::quote_for_json(&rel_path, &mut quote_buf, false)?;
-            joiner.push_owned(quote_buf.to_default_owned());
+            if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
+                let rel = LinkerContext::source_map_relative_path(chunk_abs_dir, name)?;
+                emit(joiner, &rel)?;
+                continue;
+            }
+            // Relative inner name: join against `base_dir` to get an
+            // absolute path, then re-relativize to `chunk_abs_dir`. The
+            // checked join returns `None` when `base_dir + name` exceeds
+            // the buffer (an adversarial inline map); fall back to the raw
+            // (spec-valid) name rather than panicking.
+            match bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::resolve_path::platform::Auto,
+            >(base_dir, join_buf.as_mut_slice(), &[name])
+            {
+                Some(abs_path) => {
+                    let rel = LinkerContext::source_map_relative_path(chunk_abs_dir, abs_path)?;
+                    emit(joiner, &rel)?;
+                }
+                None => emit(joiner, name)?,
+            }
         }
     }
     Ok(())

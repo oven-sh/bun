@@ -439,6 +439,19 @@ describe("Bun.Transpiler replMode", () => {
         expect(code).not.toContain("var x = foo");
       });
 
+      test("pure-annotated IIFEs are not serialized", async () => {
+        // The call runs the arrow body eagerly (here it reads `a`, which is
+        // not replayable); bodies are not analyzed, so the call is rejected.
+        const ctx = vm.createContext({ effect: () => 41 });
+        const code = transpiler.transformSync(
+          "let a = effect(); const x = /* @__PURE__ */ (() => a)(); const ok = 1; x",
+        );
+        const result = await vm.runInContext(code, ctx);
+        expect(result.value).toBe(41);
+        expect(result.functions).toContain("var ok = 1");
+        expect(result.functions).not.toContain("var x");
+      });
+
       test("using declarations are never serialized", () => {
         // With `target: "bun"` a non-null `using` reaches the REPL transform
         // unlowered; replaying it as a plain `var` would drop its disposal

@@ -1101,9 +1101,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     && self.repl_eager_refs_are_admitted(&ex.right, admitted)
             }
             // `/* @__PURE__ */ f(x)`: the target and arguments are still
-            // evaluated when the declaration runs.
+            // evaluated when the declaration runs. A pure-annotated IIFE also
+            // runs its (unanalyzed) body eagerly, so inline function targets
+            // are rejected outright.
             ExprData::ECall(ex) => {
-                self.repl_eager_refs_are_admitted(&ex.target, admitted)
+                !matches!(
+                    ex.target.data,
+                    ExprData::EArrow(_) | ExprData::EFunction(_)
+                ) && self.repl_eager_refs_are_admitted(&ex.target, admitted)
                     && ex
                         .args
                         .slice()
@@ -1111,7 +1116,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         .all(|arg| self.repl_eager_refs_are_admitted(arg, admitted))
             }
             ExprData::ENew(ex) => {
-                self.repl_eager_refs_are_admitted(&ex.target, admitted)
+                !matches!(
+                    ex.target.data,
+                    ExprData::EArrow(_) | ExprData::EFunction(_)
+                ) && self.repl_eager_refs_are_admitted(&ex.target, admitted)
                     && ex
                         .args
                         .slice()
@@ -1123,8 +1131,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// `repl_eager_refs_are_admitted` for a class body: `extends`, computed
-    /// keys, field initializers, and static blocks all run when the
-    /// declaration is evaluated.
+    /// keys, static field initializers, and static blocks all run when the
+    /// declaration is evaluated. Instance field initializers only run at
+    /// construction but are checked the same way, conservatively.
     fn repl_class_eager_refs_are_admitted(&self, class: &G::Class, admitted: &[Ref]) -> bool {
         if let Some(extends) = &class.extends {
             if !self.repl_eager_refs_are_admitted(extends, admitted) {

@@ -39,8 +39,10 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 
+#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
@@ -233,17 +235,37 @@ void JSDOMExceptionPrototype::finishCreation(VM& vm)
 const ClassInfo JSDOMException::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMException) };
 
 JSDOMException::JSDOMException(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DOMException>&& impl)
-    : JSDOMWrapper<DOMException>(structure, globalObject, WTF::move(impl))
+    : Base(globalObject.vm(), structure, JSC::ErrorType::Error)
+    , m_wrapped(WTF::move(impl))
 {
 }
 
 void JSDOMException::finishCreation(VM& vm)
 {
-    Base::finishCreation(vm);
+    // Capture a stack trace like a native Error. Pass a null message/cause so
+    // they stay as prototype accessors reading from the wrapped DOMException.
+    Base::finishCreation(vm, String(), JSValue(), nullptr, JSC::TypeNothing, true);
     ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, DOMException>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
+
+template<typename Visitor>
+void JSDOMException::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSDOMException>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    // ErrorInstance drops dead stack frames via finalizeUnconditionally over
+    // vm.errorInstanceSpace(); our own subspace isn't swept there, so keep the
+    // frames alive explicitly until the stack is materialized.
+    Locker locker { thisObject->cellLock() };
+    if (auto* stackTrace = thisObject->stackTrace()) {
+        for (auto& frame : *stackTrace)
+            frame.visitAggregate(visitor);
+    }
+}
+
+DEFINE_VISIT_CHILDREN(JSDOMException);
 
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -317,12 +339,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobal
 
 JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(
+    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::Yes>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForDOMException.get(); },
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMException = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForDOMException.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMException = std::forward<decltype(space)>(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMException = std::forward<decltype(space)>(space); },
+        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSDOMException; });
 }
 
 void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

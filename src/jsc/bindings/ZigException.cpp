@@ -34,6 +34,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
+#include "JSDOMException.h"
 
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -514,7 +515,10 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         return;
     }
 
-    except.name = Bun::toStringRef(err->sanitizedNameString(global));
+    if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(err))
+        except.name = Bun::toStringRef(domException->wrapped().name());
+    else
+        except.name = Bun::toStringRef(err->sanitizedNameString(global));
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
         return;
     }

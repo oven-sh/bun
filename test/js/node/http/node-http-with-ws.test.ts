@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as options } from "harness";
 import http from "http";
 import https from "https";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 import tls from "tls";
 import { WebSocketServer } from "ws";
 

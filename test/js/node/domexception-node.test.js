@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { inspect } from "node:util";
 
 describe("DOMException in Node.js environment", () => {
   it("exists globally", () => {
@@ -101,6 +102,19 @@ describe("DOMException in Node.js environment", () => {
     expect(reason.stack).toStartWith("AbortError");
   });
 
+  it("AbortSignal.timeout() reason gets a stack even with no JS frames", async () => {
+    // The timeout fires from a native timer with no JS on the stack, so there
+    // are no frames to capture; the stack must still be the error header.
+    const signal = AbortSignal.timeout(1);
+    const { promise, resolve } = Promise.withResolvers();
+    signal.addEventListener("abort", resolve);
+    await promise;
+    const reason = signal.reason;
+    expect(reason).toBeInstanceOf(DOMException);
+    expect(Error.isError(reason)).toBe(true);
+    expect(reason.stack).toBe("TimeoutError: The operation timed out.");
+  });
+
   it("AbortController.abort() reason is a DOMException with a stack", () => {
     const c = new AbortController();
     c.abort();
@@ -124,7 +138,6 @@ describe("DOMException in Node.js environment", () => {
   });
 
   it("util.inspect shows the error name and message", () => {
-    const { inspect } = require("node:util");
     const error = new DOMException("boom", "AbortError");
     const inspected = inspect(error);
     expect(inspected).toStartWith("DOMException [AbortError]: boom");

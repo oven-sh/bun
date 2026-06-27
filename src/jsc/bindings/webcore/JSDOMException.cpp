@@ -47,6 +47,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -246,6 +247,20 @@ void JSDOMException::finishCreation(VM& vm)
     // they stay as prototype accessors reading from the wrapped DOMException.
     Base::finishCreation(vm, String(), JSValue(), nullptr, JSC::TypeNothing, true);
     ASSERT(inherits(info()));
+
+    // ErrorInstance never materializes a `stack` from an empty trace. That only
+    // happens when we are created with no JS frames on the stack (a native entry
+    // like AbortSignal.timeout). Give it the `name: message` header so `.stack`
+    // is always a string on a DOMException, like other engines.
+    auto* trace = stackTrace();
+    if (!trace || trace->isEmpty()) {
+        auto& impl = wrapped();
+        auto name = impl.name();
+        auto message = impl.message();
+        auto header = message.isEmpty() ? name : makeString(name, ": "_s, message);
+        putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(header)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        setStackPropertyAlreadyMaterialized();
+    }
 }
 
 template<typename Visitor>

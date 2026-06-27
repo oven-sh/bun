@@ -4360,8 +4360,8 @@ impl<'a> HTTPClient<'a> {
         self.report_progress(total_received);
 
         // done or streaming
-        let is_done =
-            content_length.is_some() && self.state.total_body_received >= content_length.unwrap();
+        let is_done = content_length.is_some() && self.state.total_body_received >= content_length.unwrap()
+            || content_length.is_none() && self.state.flags.received_last_chunk;
         if is_done
             || self.signals.get(signals::Field::ResponseBodyStreaming)
             || content_length.is_none()

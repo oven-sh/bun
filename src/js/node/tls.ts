@@ -1420,8 +1420,9 @@ function Server(options, secureConnectionListener): void {
   Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
 
   Server.prototype.getTicketKeys = function () {
-    if (this._handle) {
-      return _getTicketKeys(this._handle);
+    const { _handle } = this;
+    if (_handle) {
+      return _getTicketKeys(_handle);
     }
     throw $ERR_SERVER_NOT_RUNNING();
   };
@@ -1433,8 +1434,9 @@ function Server(options, secureConnectionListener): void {
     if (keys.byteLength !== 48) {
       throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
     }
-    if (this._handle) {
-      _setTicketKeys(this._handle, keys);
+    const { _handle } = this;
+    if (_handle) {
+      _setTicketKeys(_handle, keys);
     }
   };
 

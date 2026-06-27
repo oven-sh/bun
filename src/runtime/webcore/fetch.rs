@@ -43,6 +43,9 @@ pub mod fetch_tasklet;
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
 
+#[path = "fetch/sri.rs"]
+pub mod sri;
+
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
@@ -445,6 +448,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut signal = SignalRef(None);
     // Custom Hostname
     let mut hostname: Option<Box<[u8]>> = None;
+    // Subresource-integrity metadata
+    let mut integrity: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
     let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
 
@@ -905,6 +910,48 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         break 'extract_redirect_type redirect_type;
+    };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // integrity: string | undefined;
+    integrity = 'extract_integrity: {
+        // First, try to use the Request object's integrity if available
+        if let Some(req) = request_mut!() {
+            let req_integrity = req.integrity.get();
+            if !req_integrity.is_empty() {
+                integrity = Some(req_integrity.to_utf8().slice().into());
+            }
+        }
+
+        // Then check options/init objects which can override the Request's integrity
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                if let Some(value) = obj.get(global_this, "integrity")? {
+                    if value.is_string() {
+                        let slice = value.to_slice_clone(global_this)?;
+                        break 'extract_integrity if slice.slice().is_empty() {
+                            None
+                        } else {
+                            Some(slice.slice().into())
+                        };
+                    }
+                }
+
+                if global_this.has_exception() {
+                    return Ok(JSValue::ZERO);
+                }
+            }
+        }
+
+        break 'extract_integrity integrity;
     };
 
     if global_this.has_exception() {
@@ -2033,6 +2080,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
+        integrity: integrity.take(),
         upgraded_connection,
         force_http2,
         force_http3,

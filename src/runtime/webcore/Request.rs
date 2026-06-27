@@ -84,6 +84,9 @@ const _: () = {
 #[repr(C)]
 pub struct Request {
     pub url: bun_core::OwnedStringCell,
+    /// Subresource-integrity metadata (the raw `integrity` init string).
+    /// Empty means none; see `fetch()`'s handling in `FetchTasklet`.
+    pub integrity: bun_core::OwnedStringCell,
 
     headers: JsCell<Option<HeadersRef>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
@@ -372,6 +375,7 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
+            + self.integrity.get().byte_slice().len()
             + self.body_value().memory_cost()
     }
 
@@ -435,6 +439,7 @@ impl Request {
     ) -> Request {
         Request {
             url: OwnedStringCell::new(url),
+            integrity: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -491,6 +496,7 @@ impl Request {
         self.reported_estimated_size.set(
             self.body_value().estimated_size()
                 + self.size_of_url()
+                + self.integrity.get().byte_slice().len()
                 + core::mem::size_of::<Request>(),
         );
     }
@@ -753,8 +759,12 @@ impl Request {
         ZigString::init(b"").to_js(global_this)
     }
 
-    pub fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::EMPTY.to_js(global_this)
+    pub fn get_integrity(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        let integrity = self.integrity.get();
+        if integrity.is_empty() {
+            return Ok(ZigString::EMPTY.to_js(global_this));
+        }
+        integrity.to_js(global_this)
     }
 
     pub fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -785,6 +795,7 @@ impl Request {
         self.headers.set(None);
 
         self.url.set(BunString::empty());
+        self.integrity.set(BunString::empty());
 
         // AbortSignalRef::Drop unrefs the C++ handle.
         self.signal.set(None);
@@ -1041,7 +1052,7 @@ enum Fields {
     // Credentials,
     Redirect,
     Cache,
-    // Integrity,
+    Integrity,
     // Keepalive,
     Signal,
     // Proxy,
@@ -1068,6 +1079,7 @@ impl Request {
         let body_seed_ptr = body.as_ptr();
         let mut req = Request {
             url: OwnedStringCell::new(BunString::empty()),
+            integrity: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -1197,6 +1209,13 @@ impl Request {
                     if !fields.contains(Fields::Cache) {
                         req.flags.cache = request.flags.cache;
                         fields.insert(Fields::Cache);
+                    }
+
+                    if !fields.contains(Fields::Integrity) {
+                        if !request.integrity.get().is_empty() {
+                            req.integrity.set(request.integrity.get().dupe_ref());
+                        }
+                        fields.insert(Fields::Integrity);
                     }
 
                     if !fields.contains(Fields::Mode) {
@@ -1475,6 +1494,25 @@ impl Request {
                 }
             }
 
+            // Extract integrity option
+            if !fields.contains(Fields::Integrity) {
+                match value.get(global_this, "integrity") {
+                    Ok(Some(integrity_value)) => {
+                        if integrity_value.is_string() {
+                            match BunString::from_js(integrity_value, global_this) {
+                                Ok(s) => {
+                                    req.integrity.set(s);
+                                    fields.insert(Fields::Integrity);
+                                }
+                                Err(e) => bail!(Err(e)),
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
+
             // Extract mode option
             if !fields.contains(Fields::Mode) {
                 match value.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
@@ -1624,6 +1662,7 @@ impl Request {
                 req,
                 Request {
                     url: OwnedStringCell::new(url),
+                    integrity: OwnedStringCell::new(self.integrity.get().dupe_ref()),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
@@ -1651,6 +1690,7 @@ impl Request {
         // without reading or dropping it.
         let mut req = Box::new(Request {
             url: OwnedStringCell::new(BunString::empty()),
+            integrity: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1726,6 +1766,7 @@ impl Request {
     ) -> Request {
         Request {
             url: OwnedStringCell::new(BunString::empty()),
+            integrity: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),

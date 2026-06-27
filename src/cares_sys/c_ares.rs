@@ -2015,9 +2015,8 @@ impl Error {
         Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
     }
 
-    /// [`Error::get`] plus node's `lookup()`/`lookupService()` folding: NODATA
-    /// and NONAME become the fabricated ENOTFOUND, mirroring how node reports
-    /// libuv `EAI_NODATA`/`EAI_NONAME` on the getaddrinfo/getnameinfo family.
+    /// [`Error::get`] plus node's `lookup()`/`lookupService()` folding: NODATA and
+    /// NONAME become the fabricated ENOTFOUND, as on node's getaddrinfo/getnameinfo path.
     /// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
     pub fn get_for_lookup(rc: i32) -> Option<Error> {
         match Self::get(rc) {

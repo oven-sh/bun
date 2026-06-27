@@ -367,9 +367,8 @@ pub(crate) fn mx_reply_to_js(
 }
 
 // ── struct_ares_txt_ext ────────────────────────────────────────────────────
-// c-ares hands back one list node per TXT *character-string*; `record_start`
-// marks the first string of each resource record. Node groups the strings of
-// one record together (see `ParseTxtReply` in node's `cares_wrap.cc`).
+// c-ares returns one node per TXT character-string; `record_start` tags each
+// record's first string. Node groups per record (cares_wrap.cc ParseTxtReply).
 
 pub(crate) fn txt_reply_to_js_response(
     this: &mut c_ares::struct_ares_txt_ext,

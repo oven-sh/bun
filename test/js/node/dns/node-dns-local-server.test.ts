@@ -138,11 +138,9 @@ describe("an empty NOERROR answer (NODATA)", () => {
     ).toBe("ENOTFOUND");
   });
 
-  test("lookup() through the c-ares backend still folds NODATA into ENOTFOUND", async () => {
-    // node's dns.lookup() (getaddrinfo family) reports both "no such name" and
-    // "no address records" as ENOTFOUND; only the resolve*() query paths keep
-    // the verbatim c-ares status. The c-ares lookup backend uses the
-    // module-level server list, so point it at the local server for this test.
+  test("lookup() through the c-ares backend folds both NODATA and NXDOMAIN into ENOTFOUND", async () => {
+    // The c-ares lookup backend uses the module-level server list (a per-instance
+    // Resolver has no lookup()), so point the global at the local server.
     const saved = dns.getServers();
     dns.setServers(serverList);
     try {

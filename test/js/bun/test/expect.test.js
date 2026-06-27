@@ -4031,9 +4031,48 @@ describe("expect()", () => {
       expect(expect.any(BigInt)).toEqual(1n);
       expect(expect.any(Symbol)).toEqual(Symbol());
       expect(expect.any(Object)).toEqual({});
-      //expect(expect.any(Object)).toEqual(null); // TODO: succeeds on jest, fails on bun
       expect(expect.any(Array)).toEqual([]);
       expect(expect.any(Thing)).toEqual(new Thing());
+    });
+
+    test("expect.any(Object) matches typeof === 'object'", () => {
+      // https://github.com/jestjs/jest/blob/main/packages/expect/src/asymmetricMatchers.ts
+      // Jest: `if (this.sample == Object) return typeof other == 'object';`
+      class Thing {}
+
+      // typeof x === 'object'
+      expect(null).toEqual(expect.any(Object));
+      expect({}).toEqual(expect.any(Object));
+      expect([]).toEqual(expect.any(Object));
+      expect(new Thing()).toEqual(expect.any(Object));
+      expect(new Date()).toEqual(expect.any(Object));
+      expect(new Map()).toEqual(expect.any(Object));
+      expect(/re/).toEqual(expect.any(Object));
+
+      // typeof x !== 'object'
+      expect(undefined).not.toEqual(expect.any(Object));
+      expect(1).not.toEqual(expect.any(Object));
+      expect("s").not.toEqual(expect.any(Object));
+      expect(true).not.toEqual(expect.any(Object));
+      expect(1n).not.toEqual(expect.any(Object));
+      expect(Symbol()).not.toEqual(expect.any(Object));
+      expect(() => {}).not.toEqual(expect.any(Object));
+      expect(function f() {}).not.toEqual(expect.any(Object));
+      expect(async () => {}).not.toEqual(expect.any(Object));
+      expect(Thing).not.toEqual(expect.any(Object));
+
+      // nested in toEqual / objectContaining
+      expect({ a: null }).toEqual({ a: expect.any(Object) });
+      expect({ a: () => {} }).not.toEqual({ a: expect.any(Object) });
+      expect({ a: () => {} }).not.toEqual(expect.objectContaining({ a: expect.any(Object) }));
+
+      // toHaveBeenCalledWith
+      const fn = jest.fn();
+      fn(null);
+      expect(fn).toHaveBeenCalledWith(expect.any(Object));
+      const fn2 = jest.fn();
+      fn2(() => {});
+      expect(fn2).not.toHaveBeenCalledWith(expect.any(Object));
     });
 
     test("expect.any on primitive wrapper classes", () => {

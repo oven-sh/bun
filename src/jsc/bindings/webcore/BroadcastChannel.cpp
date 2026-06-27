@@ -26,6 +26,7 @@
 #include "config.h"
 #include "BroadcastChannel.h"
 
+#include "AsyncContextFrame.h"
 #include "BunBroadcastChannelRegistry.h"
 #include "BunClientData.h"
 #include "EventNames.h"
@@ -45,6 +46,10 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
     , m_contextId(context.identifier())
 {
     initializeWeakPtrFactory();
+    // dispatchMessage() runs from a posted task, not from a JS caller, so
+    // snapshot the creator's async context now (Node's AsyncWrap does the same).
+    if (auto* globalObject = context.jsGlobalObject())
+        m_creationAsyncContext.setWeakly(AsyncContextFrame::currentContext(globalObject));
     BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
     jsRef(context.jsGlobalObject());
 }
@@ -89,6 +94,9 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
         RELEASE_ASSERT(vm.hasPendingTerminationException());
         return;
     }
+    // Listeners observe the async context that was active when this channel
+    // was created.
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
     dispatchEvent(event.event);
 }
 

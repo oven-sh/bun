@@ -421,6 +421,19 @@ JSC::GCClient::IsoSubspace* JSBroadcastChannel::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForBroadcastChannel = std::forward<decltype(space)>(space); });
 }
 
+template<typename Visitor>
+void JSBroadcastChannel::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSBroadcastChannel>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    // Set once in the BroadcastChannel constructor (before this wrapper
+    // exists) and never mutated afterwards, so no output constraint is needed.
+    thisObject->wrapped().creationAsyncContext().visit(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSBroadcastChannel);
+
 void JSBroadcastChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSBroadcastChannel>(cell);

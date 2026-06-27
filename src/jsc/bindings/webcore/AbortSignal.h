@@ -92,6 +92,7 @@ public:
     void runAbortSteps();
 
     const JSValueInWrappedObject& reason() const { return m_reason; }
+    const JSValueInWrappedObject& timeoutAsyncContext() const { return m_timeoutAsyncContext; }
     JSValue jsReason(JSC::JSGlobalObject& globalObject);
     CommonAbortReason commonReason() const { return m_commonReason; }
 
@@ -202,6 +203,9 @@ private:
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;
+    // AbortSignal.timeout() only: the async context active when timeout() was
+    // called, restored around the timer-driven abort. See AsyncContextFrameScope.
+    JSValueInWrappedObject m_timeoutAsyncContext;
     CommonAbortReason m_commonReason { CommonAbortReason::None };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };

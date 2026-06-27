@@ -29,6 +29,7 @@
 #include <wtf/SetForScope.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 
+#include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "EventNames.h"
 #include "JSMessagePort.h"
@@ -63,6 +64,11 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
     // listening port keeps its thread alive until closed or unref'd); otherwise a
     // buffered message could be lost if its listener is added late.
     onDidChangeListener = &MessagePort::onDidChangeListenerImpl;
+
+    // Message delivery happens from a posted task, not from a JS caller, so
+    // snapshot the creator's async context now (Node's AsyncWrap does the same).
+    if (auto* globalObject = context.jsGlobalObject())
+        m_creationAsyncContext.setWeakly(AsyncContextFrame::currentContext(globalObject));
 }
 
 MessagePort::~MessagePort()
@@ -355,6 +361,10 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
 
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
+
+    // Listeners (and any MessagePort entangled out of this message) observe
+    // the async context that was active when this port was created.
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
 
     auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
     if (scope.exception()) [[unlikely]] {

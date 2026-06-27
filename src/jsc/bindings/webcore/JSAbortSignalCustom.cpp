@@ -81,6 +81,7 @@ template<typename Visitor>
 void JSAbortSignal::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().reason().visit(visitor);
+    wrapped().timeoutAsyncContext().visit(visitor);
     wrapped().visitAbortAlgorithms(visitor);
 }
 

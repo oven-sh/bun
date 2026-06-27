@@ -513,6 +513,64 @@ test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Node-API addons close handle scopes out of order, close them more times
+// than they opened them, or return without closing them at all. Node reports
+// a status for all of these (napi_handle_scope_mismatch at worst) and keeps
+// running; it never aborts the process.
+static napi_value
+test_napi_handle_scope_unbalanced_close(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  {
+    // Closed in open order instead of reverse order.
+    napi_handle_scope a = nullptr, b = nullptr;
+    printf("out of order: open a -> %d\n", napi_open_handle_scope(env, &a));
+    printf("out of order: open b -> %d\n", napi_open_handle_scope(env, &b));
+    printf("out of order: close a -> %d\n", napi_close_handle_scope(env, a));
+    printf("out of order: close b -> %d\n", napi_close_handle_scope(env, b));
+  }
+
+  {
+    // Three nested scopes closed as a, c, b.
+    napi_handle_scope a = nullptr, b = nullptr, c = nullptr;
+    printf("shuffled: open a -> %d\n", napi_open_handle_scope(env, &a));
+    printf("shuffled: open b -> %d\n", napi_open_handle_scope(env, &b));
+    printf("shuffled: open c -> %d\n", napi_open_handle_scope(env, &c));
+    printf("shuffled: close a -> %d\n", napi_close_handle_scope(env, a));
+    printf("shuffled: close c -> %d\n", napi_close_handle_scope(env, c));
+    printf("shuffled: close b -> %d\n", napi_close_handle_scope(env, b));
+  }
+
+  {
+    // More closes than opens: the extra close is napi_handle_scope_mismatch.
+    napi_handle_scope a = nullptr;
+    printf("double close: open a -> %d\n", napi_open_handle_scope(env, &a));
+    printf("double close: close a -> %d\n", napi_close_handle_scope(env, a));
+    printf("double close: close a again -> %d\n",
+           napi_close_handle_scope(env, a));
+  }
+
+  {
+    // Escapable scopes share the same accounting.
+    napi_escapable_handle_scope a = nullptr, b = nullptr;
+    printf("escapable: open a -> %d\n",
+           napi_open_escapable_handle_scope(env, &a));
+    printf("escapable: open b -> %d\n",
+           napi_open_escapable_handle_scope(env, &b));
+    printf("escapable: close a -> %d\n",
+           napi_close_escapable_handle_scope(env, a));
+    printf("escapable: close b -> %d\n",
+           napi_close_escapable_handle_scope(env, b));
+    printf("escapable: close b again -> %d\n",
+           napi_close_escapable_handle_scope(env, b));
+  }
+
+  return ok(env);
+}
+
 // call this with a bunch (>10) of string arguments representing increasing
 // decimal numbers. ensures that the runtime does not let these arguments be
 // freed.
@@ -565,6 +623,44 @@ static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
   printf("napi_is_exception_pending -> %s\n",
          is_exception_pending ? "true" : "false");
 
+  return ok(env);
+}
+
+// Once an exception is pending, every further napi_throw_* must report
+// napi_pending_exception and leave the first exception in place instead of
+// silently replacing it (Node's NAPI_PREAMBLE).
+static napi_value
+test_napi_throw_with_pending_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  printf("napi_throw_error #1 -> %d\n",
+         napi_throw_error(env, "ERR_FIRST", "first"));
+  bool pending = false;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &pending));
+  printf("exception pending -> %s\n", pending ? "true" : "false");
+  printf("napi_throw_error #2 -> %d\n",
+         napi_throw_error(env, "ERR_SECOND", "second"));
+  printf("napi_throw_type_error -> %d\n",
+         napi_throw_type_error(env, "ERR_THIRD", "third"));
+  printf("napi_throw_range_error -> %d\n",
+         napi_throw_range_error(env, "ERR_FOURTH", "fourth"));
+  printf("node_api_throw_syntax_error -> %d\n",
+         node_api_throw_syntax_error(env, "ERR_FIFTH", "fifth"));
+
+  napi_value err = nullptr, code = nullptr, msg = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &err));
+  NODE_API_CALL(env, napi_get_named_property(env, err, "code", &code));
+  NODE_API_CALL(env, napi_get_named_property(env, err, "message", &msg));
+  char code_buf[64] = {0}, msg_buf[64] = {0};
+  size_t len = 0;
+  NODE_API_CALL(env, napi_get_value_string_utf8(env, code, code_buf,
+                                                sizeof(code_buf), &len));
+  NODE_API_CALL(env, napi_get_value_string_utf8(env, msg, msg_buf,
+                                                sizeof(msg_buf), &len));
+  printf("pending exception -> %s: %s\n", code_buf, msg_buf);
   return ok(env);
 }
 
@@ -2893,10 +2989,12 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);
   REGISTER_FUNCTION(env, exports, test_napi_escapable_handle_scope);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_nesting);
+  REGISTER_FUNCTION(env, exports, test_napi_handle_scope_unbalanced_close);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
+  REGISTER_FUNCTION(env, exports, test_napi_throw_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
   REGISTER_FUNCTION(env, exports, bigint_to_u64);

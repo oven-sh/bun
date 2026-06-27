@@ -457,6 +457,23 @@ public:
         return static_cast<bool>(m_pendingException);
     }
 
+    // Mirrors Node's env->open_handle_scopes: the number of handle scopes the
+    // addon has opened via napi_open_handle_scope /
+    // napi_open_escapable_handle_scope and not yet closed. Bun's own handle
+    // scopes are strictly LIFO and are not counted here.
+    void didOpenAddonHandleScope() { m_openAddonHandleScopes++; }
+
+    // Returns false (napi_handle_scope_mismatch) if the addon has closed more
+    // handle scopes than it opened.
+    bool didCloseAddonHandleScope()
+    {
+        if (m_openAddonHandleScopes == 0) {
+            return false;
+        }
+        m_openAddonHandleScopes--;
+        return true;
+    }
+
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     // `bun test --isolate` creates a fresh Zig::GlobalObject per file and
     // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
@@ -585,6 +602,7 @@ private:
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
+    uint32_t m_openAddonHandleScopes = 0;
 
     WTF::Lock m_threadSafeFunctionsLock;
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);

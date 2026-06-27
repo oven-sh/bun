@@ -2954,7 +2954,7 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject)) {
-        jsObject = uncheckedDowncast<JSC::JSFunction>(wrapper->callback.get());
+        jsObject = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());
@@ -2977,15 +2977,18 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     }
 
 #if ASSERT_ENABLED
-    JSC::Integrity::auditCellFully(vm, jsObject.asCell());
+    if (jsObject.isCell())
+        JSC::Integrity::auditCellFully(vm, jsObject.asCell());
 #endif
 
     auto callData = getCallData(jsObject);
 
-    ASSERT_WITH_MESSAGE(jsObject.isCallable(), "Function passed to .call must be callable.");
-    ASSERT(callData.type != JSC::CallData::Type::None);
-    if (callData.type == JSC::CallData::Type::None)
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        if (asyncContextData)
+            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, jsObject));
         return {};
+    }
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
 
@@ -4044,6 +4047,7 @@ void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     auto pkey = key.toPropertyKey(arg1);
     RETURN_IF_EXCEPTION(scope, );
     object->putDirectMayBeIndex(arg1, pkey, value);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)

@@ -2291,7 +2291,10 @@ fn parse_build_command_options(
 
     if let Some(format_str) = args.option(b"--format") {
         let Some(format) = options::Format::from_string(format_str) else {
-            Output::err_generic("Invalid format - must be esm, cjs, or iife", ());
+            Output::err_generic(
+                "Invalid value for --format: {}. Must be 'esm', 'cjs', or 'iife'.",
+                (bun_core::fmt::quote(format_str),),
+            );
             Global::crash();
         };
 

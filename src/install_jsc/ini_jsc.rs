@@ -190,7 +190,9 @@ impl IniTestingAPIs {
     }
 
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        use bun_ast::ToJSError;
         use bun_ini::Parser;
+        use bun_jsc::JsError;
 
         let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();
@@ -217,6 +219,9 @@ impl IniTestingAPIs {
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),
+            Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
+            Err(ToJSError::JSError) => Err(JsError::Thrown),
+            Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
             Err(e) => Err(global.throw_error(e.into(), "failed to turn AST into JS")),
         }
     }

@@ -5,6 +5,7 @@
 pub mod async_http;
 #[path = "CertificateInfo.rs"]
 pub mod certificate_info;
+pub mod compress_body;
 #[path = "Decompressor.rs"]
 pub mod decompressor;
 #[path = "H2Client.rs"]
@@ -650,6 +651,19 @@ pub struct HTTPClient<'a> {
     pub async_http_id: u32,
     pub hostname: Option<&'a [u8]>,
     pub unix_socket_path: ZigStringSlice,
+    /// `fetch({ compress })` — when set, the body is compressed lazily at
+    /// write time (h1: `send_initial_request_payload`; h2/h3: at attach) so
+    /// the output can borrow `LibdeflateState::shared_buffer`. Persists across
+    /// redirects/retries so each hop re-compresses from the original
+    /// `state.original_request_body`.
+    pub compress: Option<compress_body::CompressOption>,
+    /// Backing storage for the compressed body when it must outlive a single
+    /// synchronous write (output > shared buffer, partial h1 write, or h2/h3
+    /// frame encoding). Empty in the common one-write h1 case.
+    pub compressed_request_body: Vec<u8>,
+    /// Compressed length for `Content-Length`; 0 when `compress` is None or
+    /// the body hasn't been compressed yet.
+    pub compressed_body_len: usize,
 }
 
 impl<'a> HTTPClient<'a> {
@@ -1885,6 +1899,10 @@ impl<'a> HTTPClient<'a> {
 
         if self.allow_retry
             && self.method.is_idempotent()
+            // Only a Bytes body can be rebuilt from `original_request_body`.
+            // Stream/Sendfile bodies are consumed as they are written, so a
+            // retry would silently replay a truncated request.
+            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
         {
@@ -2088,7 +2106,20 @@ impl<'a> HTTPClient<'a> {
     pub fn header_str(&self, ptr: StringPointer) -> &'a [u8] {
         // Reborrow at `'a` so the returned slice doesn't tie up `&self`.
         let buf: &'a [u8] = self.header_buf;
-        &buf[ptr.offset as usize..][..ptr.length as usize]
+        let end = (ptr.offset as usize).wrapping_add(ptr.length as usize);
+        // Match `Headers::as_str`: return empty on a desynced `header_entries`
+        // / `header_buf` rather than slice-panicking on the HTTP thread.
+        debug_assert!(
+            end <= buf.len() && ptr.offset as usize <= end,
+            "HTTPClient::header_str: StringPointer {{ offset: {}, length: {} }} out of range for header_buf of length {}",
+            ptr.offset,
+            ptr.length,
+            buf.len(),
+        );
+        if end > buf.len() || ptr.offset as usize > end {
+            return b"";
+        }
+        &buf[ptr.offset as usize..end]
     }
 
     pub fn build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
@@ -2589,6 +2620,86 @@ impl<'a> HTTPClient<'a> {
         self.complete_connecting_process();
     }
 
+    /// Body length for `Content-Length` — the compressed length once
+    /// [`compress_body_for_send`] has run, otherwise the original.
+    #[inline]
+    pub fn body_len_for_send(&self) -> usize {
+        if self.state.flags.body_compressed {
+            self.compressed_body_len
+        } else {
+            self.state.original_request_body.len()
+        }
+    }
+
+    /// Lazy one-shot request-body compression at write time. Re-seats
+    /// `state.request_body` (the send cursor) to the compressed bytes;
+    /// `state.original_request_body` stays as the original uncompressed slice
+    /// so redirects/retries can re-compress from it. When `into_shared` and
+    /// the bound fits, the cursor borrows `LibdeflateState::shared_buffer` —
+    /// callers must [`spill_compressed_body`] before returning to the event
+    /// loop with bytes left to send. Idempotent per attempt via
+    /// `state.flags.body_compressed`.
+    ///
+    /// [`spill_compressed_body`]: Self::spill_compressed_body
+    pub fn compress_body_for_send(&mut self, into_shared: bool) -> Result<(), bun_core::Error> {
+        let Some(opt) = self.compress else {
+            return Ok(());
+        };
+        if self.state.flags.body_compressed {
+            return Ok(());
+        }
+        let HTTPRequestBody::Bytes(input) = self.state.original_request_body else {
+            return Ok(());
+        };
+        if input.is_empty() {
+            return Ok(());
+        }
+
+        let deflater = http_thread().deflater();
+        let out =
+            compress_body::compress_into(deflater, input, &opt, &mut self.compressed_request_body)?;
+        let slice: &[u8] = match out {
+            compress_body::CompressOutput::Shared(n) if into_shared => &deflater.shared_buffer[..n],
+            compress_body::CompressOutput::Shared(n) => {
+                self.compressed_request_body
+                    .extend_from_slice(&deflater.shared_buffer[..n]);
+                self.compressed_request_body.as_slice()
+            }
+            compress_body::CompressOutput::Spilled => self.compressed_request_body.as_slice(),
+        };
+        self.compressed_body_len = slice.len();
+        // SAFETY: `slice` borrows either `LibdeflateState::shared_buffer`
+        // (HTTP-thread singleton, valid for the current synchronous callback —
+        // caller spills before yielding) or `self.compressed_request_body`
+        // (lives on `self`, only mutated by this function via `clear()` on the
+        // next attempt after `state.reset()`). `state.request_body` is a
+        // `RawSlice` cursor; this is the same erasure pattern
+        // `InternalState::init` uses for `original_request_body`.
+        self.state.request_body =
+            bun_ptr::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(slice) });
+        self.state.flags.body_compressed = true;
+        Ok(())
+    }
+
+    /// Copy any unsent compressed bytes still borrowing `shared_buffer` into
+    /// `compressed_request_body` and re-seat the cursor. No-op when the cursor
+    /// already points at the Vec (or is empty).
+    fn spill_compressed_body(&mut self) {
+        if !self.state.flags.body_compressed
+            || !self.compressed_request_body.is_empty()
+            || self.state.request_body.is_empty()
+        {
+            return;
+        }
+        self.compressed_request_body
+            .extend_from_slice(self.state.request_body.slice());
+        // SAFETY: `compressed_request_body` lives on `self`; same erasure as
+        // `compress_body_for_send`.
+        self.state.request_body = bun_ptr::RawSlice::new(unsafe {
+            &*core::ptr::from_ref::<[u8]>(self.compressed_request_body.as_slice())
+        });
+    }
+
     fn estimated_request_header_byte_length(&self) -> usize {
         let sliced = self.header_entries.slice();
         let mut count: usize = 0;
@@ -2607,6 +2718,8 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         socket: HttpSocket<IS_SSL>,
     ) -> Result<InitialRequestPayloadResult, bun_core::Error> {
+        self.compress_body_for_send(true)?;
+
         let mut request_body_buffer = self.get_request_body_send_buffer();
         // request_body_buffer drops at scope exit (was `defer .deinit()`)
         let mut temporary_send_buffer = request_body_buffer.to_array_list();
@@ -2614,7 +2727,7 @@ impl<'a> HTTPClient<'a> {
 
         let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
 
-        let request = self.build_request(self.state.original_request_body.len());
+        let request = self.build_request(self.body_len_for_send());
 
         if self.http_proxy.is_some() {
             if self.url.is_https() {
@@ -2658,6 +2771,7 @@ impl<'a> HTTPClient<'a> {
         if IS_FIRST_CALL {
             if amount == 0 {
                 // don't worry about it
+                self.spill_compressed_body();
                 return Ok(InitialRequestPayloadResult {
                     has_sent_headers: self.state.request_sent_len >= headers_len,
                     has_sent_body: false,
@@ -2693,6 +2807,8 @@ impl<'a> HTTPClient<'a> {
             false
         };
 
+        self.spill_compressed_body();
+
         Ok(InitialRequestPayloadResult {
             has_sent_headers,
             has_sent_body,
@@ -2712,6 +2828,45 @@ impl<'a> HTTPClient<'a> {
         buffer: &mut bun_io::StreamBuffer,
         data: &[u8],
     ) -> Result<bool, bun_core::Error> {
+        // Through a proxy tunnel the stream body goes via the inner TLS,
+        // not the outer socket.
+        if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
+            if socket.is_closed() || socket.is_shutdown() {
+                return Err(err!(ConnectionClosed));
+            }
+            let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
+            // Any Err is backpressure: WantRead/WantWrite retry on the next
+            // on_writable, and a fatal SSL error already ran on_close (and
+            // may have freed *self), so bail via Ok(true) without touching
+            // self — same as the other ProxyTunnel::write callers.
+            let pending = buffer.slice().len();
+            if pending > 0 {
+                let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
+                    let _ = buffer.write(data);
+                    return Ok(true);
+                };
+                self.state.request_sent_len += n;
+                buffer.cursor += n;
+                if n < pending {
+                    let _ = buffer.write(data);
+                    return Ok(true);
+                }
+                buffer.reset();
+            }
+            if !data.is_empty() {
+                let Ok(n) = ProxyTunnel::write(proxy, data) else {
+                    let _ = buffer.write(data);
+                    return Ok(true);
+                };
+                self.state.request_sent_len += n;
+                if n < data.len() {
+                    let _ = buffer.write(&data[n..]);
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+
         let to_send_len = buffer.slice().len();
         if to_send_len > 0 {
             let amount = write_to_socket::<IS_SSL>(socket, buffer.slice())?;
@@ -2744,6 +2899,15 @@ impl<'a> HTTPClient<'a> {
 
     pub fn write_to_stream<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>, data: &[u8]) {
         bun_core::scoped_log!(fetch, "flushStream");
+        // Never write body bytes before the request headers: drain_queued_writes can
+        // reach this via the not-yet-opened socket start_() puts in the abort tracker,
+        // and request_sent_len still indexes headers. on_writable's Body arm re-flushes.
+        if !matches!(
+            self.state.request_stage,
+            RequestStage::Body | RequestStage::ProxyBody
+        ) {
+            return;
+        }
         // reshaped for borrowck — copy out the Copy bits we need
         // (`upgrade_state`, the stream-buffer NonNull, `ended`) so the
         // `&mut self.state.original_request_body` borrow is dropped before any
@@ -2848,6 +3012,17 @@ impl<'a> HTTPClient<'a> {
 
         if let Some(proxy) = self.proxy_tunnel_mut() {
             proxy.on_writable::<IS_SSL>(socket);
+            // ProxyTunnel::on_writable → SSLWrapper::flush → handle_traffic
+            // may process a TLS alert or close_notify that was buffered
+            // alongside the handshake flight, firing on_close →
+            // close_and_fail, which terminates the outer socket and frees
+            // the AsyncHTTP that embeds `*self` via the result callback
+            // (same hazard as documented in `start_proxy_handshake`). The
+            // socket handle outlives the client; use it as the liveness
+            // guard before touching `self` again.
+            if socket.is_closed() {
+                return;
+            }
         }
 
         // Parked until the JS `checkServerIdentity` callback approves the peer
@@ -2918,7 +3093,9 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::Body => {
                 bun_core::scoped_log!(fetch, "send body");
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 match &mut self.state.original_request_body {
                     HTTPRequestBody::Bytes(_) => {
@@ -3018,10 +3195,16 @@ impl<'a> HTTPClient<'a> {
                     // `proxy_tunnel::raw_as_mut` INVARIANT).
                     let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     self.set_timeout(&socket);
+                    // Proxy-tunnel writes can be partial across event-loop ticks
+                    // — compress straight into the Vec.
+                    if let Err(e) = self.compress_body_for_send(false) {
+                        self.close_and_fail::<IS_SSL>(e, socket);
+                        return;
+                    }
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
                     let writer = &mut temporary_send_buffer;
 
-                    let request = self.build_request(self.request_body().len());
+                    let request = self.build_request(self.body_len_for_send());
                     if write_request(writer, &request).is_err() {
                         self.close_and_fail::<IS_SSL>(err!(OutOfMemory), socket);
                         return;
@@ -3071,7 +3254,15 @@ impl<'a> HTTPClient<'a> {
                         );
                     }
 
-                    let has_sent_body = self.request_body().is_empty();
+                    // Match send_initial_request_payload: a Stream/Sendfile
+                    // body has an empty `request_body()` buffer at this
+                    // point, which does not mean the body is sent.
+                    let has_sent_body =
+                        if matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_)) {
+                            self.request_body().is_empty()
+                        } else {
+                            false
+                        };
 
                     if has_sent_headers && has_sent_body {
                         self.state.request_stage = RequestStage::Done;
@@ -3085,7 +3276,17 @@ impl<'a> HTTPClient<'a> {
                             let ctx = self.get_ssl_ctx::<IS_SSL>();
                             self.progress_update::<IS_SSL>(ctx, socket);
                         }
-                        debug_assert!(!self.request_body().is_empty());
+                        debug_assert!(
+                            // leftover bytes OR stream/sendfile (whose body
+                            // buffer is empty here; the body flows via
+                            // flush_stream in the ProxyBody arm)
+                            (matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+                                && !self.request_body().is_empty())
+                                || matches!(
+                                    self.state.original_request_body,
+                                    HTTPRequestBody::Sendfile(_) | HTTPRequestBody::Stream(_)
+                                )
+                        );
 
                         // we sent everything, but there's some body leftover
                         if amount == to_send.len() {
@@ -3439,7 +3640,9 @@ impl<'a> HTTPClient<'a> {
                 self.handle_on_data_headers::<IS_SSL>(incoming_data, ctx, socket);
             }
             ResponseStage::Body => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 let report_progress = match self.handle_response_body(incoming_data, false) {
                     Ok(b) => b,
@@ -3455,7 +3658,9 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             ResponseStage::BodyChunk => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
                 let report_progress =
                     match self.handle_response_body_chunked_encoding(incoming_data) {
@@ -3619,6 +3824,39 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(idle_timeout_seconds());
     }
 
+    fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if self.state.flags.receive_paused
+            || self.proxy_tunnel.is_some()
+            || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
+            || !self.signals.is_receive_paused()
+            || socket.is_closed_or_has_error()
+        {
+            return;
+        }
+        self.state.flags.receive_paused = true;
+        socket.set_timeout(0);
+        let _ = socket.pause_stream();
+        bun_core::scoped_log!(fetch, "pause receive {}", self.async_http_id);
+    }
+
+    pub fn resume_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if !self.state.flags.receive_paused || self.signals.is_receive_paused() {
+            return;
+        }
+        self.state.flags.receive_paused = false;
+        if socket.is_closed() {
+            return;
+        }
+        // A FIN/RST/error that landed while the read poll was paused is only
+        // observable through the poll. Re-arm even when the socket already has
+        // an error or shutdown latched so the regular readable/EOF/error
+        // dispatch surfaces it; bailing here would strand the request with its
+        // timeout disabled and the body promise pending forever.
+        let _ = socket.resume_stream();
+        bun_core::scoped_log!(fetch, "resume receive {}", self.async_http_id);
+        self.set_timeout(&socket);
+    }
+
     pub fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         // Find out if we should not send any update.
         match self.state.stage {
@@ -3718,7 +3956,9 @@ impl<'a> HTTPClient<'a> {
                     && t.write_buffer.is_empty()
                     && t.wrapper
                         .as_ref()
-                        .map(|w| !w.is_shutdown())
+                        .map(|w| {
+                            !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data()
+                        })
                         .unwrap_or(false)
             } else {
                 true
@@ -3742,6 +3982,14 @@ impl<'a> HTTPClient<'a> {
                 HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
                 _ => true,
             };
+
+            // The uSockets paused bit survives `state.reset()`; never hand a
+            // paused socket back to the pool.
+            if core::mem::take(&mut self.state.flags.receive_paused)
+                && !socket.is_closed_or_has_error()
+            {
+                let _ = socket.resume_stream();
+            }
 
             if self.is_keep_alive_possible()
                 && !socket.is_closed_or_has_error()
@@ -3819,6 +4067,10 @@ impl<'a> HTTPClient<'a> {
             certificate_info,
         };
         callback.run(async_http, result);
+
+        if has_more {
+            self.maybe_pause_receive(socket);
+        }
 
         if PRINT_EVERY != 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
@@ -4192,6 +4444,7 @@ impl<'a> HTTPClient<'a> {
         if is_done
             || self.signals.get(signals::Field::ResponseBodyStreaming)
             || content_length.is_none()
+            || self.signals.body_receive_mode.is_some()
         {
             let is_final_chunk = is_done;
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
@@ -4276,7 +4529,9 @@ impl<'a> HTTPClient<'a> {
             -2 => {
                 self.report_progress(buffer_len);
                 // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming) {
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.signals.body_receive_mode.is_some()
+                {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
                     // Move the
@@ -4362,7 +4617,9 @@ impl<'a> HTTPClient<'a> {
                 self.state.get_body_buffer().append_slice_exact(buffer)?;
 
                 // streaming chunks
-                if self.signals.get(signals::Field::ResponseBodyStreaming) {
+                if self.signals.get(signals::Field::ResponseBodyStreaming)
+                    || self.signals.body_receive_mode.is_some()
+                {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 
@@ -4370,7 +4627,7 @@ impl<'a> HTTPClient<'a> {
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/body_out_str).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, true);
+                    return self.state.process_body_buffer(buffer_snap, false);
                 }
 
                 Ok(false)

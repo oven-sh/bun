@@ -117,6 +117,7 @@ pub mod task_tag {
         Open,
         PollPendingModulesTask,
         PosixSignalTask,
+        MemoryPressureTask,
         ProcessWaiterThreadTask,
         Read,
         Readdir,

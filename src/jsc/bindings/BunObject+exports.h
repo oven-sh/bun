@@ -35,6 +35,7 @@
     macro(enableANSIColors) \
     macro(hash) \
     macro(inspect) \
+    macro(isStandaloneExecutable) \
     macro(origin) \
     macro(s3) \
     macro(semver) \

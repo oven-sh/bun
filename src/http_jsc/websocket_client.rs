@@ -77,6 +77,10 @@ pub struct WebSocket<const SSL: bool> {
     pub pong_received: bool,
     pub close_received: bool,
     pub close_frame_buffering: bool,
+    /// `Some` once `send_close_with_body` has enqueued the close frame: blocks
+    /// further outbound writes and drives `clear_data` + `dispatch_close` once
+    /// the frame is fully flushed (or the socket dies).
+    pub close_dispatch_pending: Option<(u16, bun_core::String)>,
 
     pub receive_frame: usize,
     pub receive_body_remain: usize,
@@ -181,6 +185,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.pong_received = false;
         self.ping_len = 0;
         self.close_frame_buffering = false;
+        if let Some((_, r)) = self.close_dispatch_pending.take() {
+            r.deref();
+        }
         self.receive_pending_chunk_len = 0;
         self.receiving_compressed = false;
         self.message_is_compressed = false;
@@ -345,6 +352,24 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&mut self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
+        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+            // The socket closed while our close frame was mid-flush; the peer
+            // either got it or didn't, but JS should still see the
+            // user-initiated code/reason (not an abrupt 1006). Snapshot the
+            // backlog before clear_data() frees it so bufferedAmount stays
+            // non-zero when frames went unsent.
+            // SAFETY: `self` is a live `&mut Self`; buffered_amount only does
+            // short-lived raw-ptr field reads.
+            let buffered = unsafe { Self::buffered_amount(self) };
+            self.tcp.detach();
+            self.clear_data();
+            self.dispatch_close(code, &mut reason, buffered);
+            // For the socket.
+            // SAFETY: `self: &mut Self` → `*mut Self`; this is the terminal
+            // release of the socket's I/O-layer ref.
+            unsafe { Self::deref(self) };
+            return;
+        }
         // Snapshot the backlog before clear_data() frees it, so the close event
         // does not see bufferedAmount reset to 0 (e.g. peer RST with unsent
         // frames). SAFETY: `self` is a live `&mut Self`; buffered_amount only
@@ -1387,18 +1412,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         // reason text is limited to 123 bytes.
         let body_len = body_len.min(123);
         log!("Sending close with code {}", code);
+        if self.close_dispatch_pending.is_some() {
+            // A close is already mid-flush (user-initiated ws.close() under
+            // backpressure); don't enqueue a second close frame on top of it.
+            return;
+        }
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended, None);
             self.clear_data();
             return;
         }
-        // we dont wanna shutdownRead when SSL, because SSL handshake can happen when writting
-        // For tunnel mode, shutdownRead on the detached socket is a no-op; skip it.
-        if !SSL {
-            if self.proxy_tunnel.is_none() {
-                self.tcp.shutdown_read();
-            }
-        }
+        // shutdown_read/shutdown are deferred to shutdown_after_close_frame()
+        // so the close frame can finish writing first: SHUT_RD on Linux makes
+        // the socket immediately readable (recv → 0), and the resulting on_end
+        // → terminate → cancel(Failure) would RST and discard the buffered
+        // frame.
         let mut final_body_bytes = [0u8; 128 + 8];
         // WebsocketHeader has no public
         // raw-bits ctor, so build the all-zero header via from_slice.
@@ -1440,14 +1468,62 @@ impl<const SSL: bool> WebSocket<SSL> {
         let slice = &final_body_bytes[..slice_len];
 
         if self.enqueue_encoded_bytes(slice) {
-            // Snapshot the unsent backlog before clear_data() frees it, so the
-            // JS close event does not see bufferedAmount reset to 0 (spec: it
-            // does not reset once the connection closes).
+            let dispatch_code = dispatch_code.unwrap_or(code);
+            if self.send_buffer.readable_length() == 0 {
+                // Snapshot the unsent backlog before clear_data() frees it, so
+                // the JS close event does not see bufferedAmount reset to 0
+                // (spec: it does not reset once the connection closes).
+                // SAFETY: `self` is a live `&mut Self`; buffered_amount only
+                // does short-lived raw-ptr field reads.
+                let buffered = unsafe { Self::buffered_amount(self) };
+                self.shutdown_after_close_frame();
+                self.clear_data();
+                self.dispatch_close(dispatch_code, &mut reason, buffered);
+            } else {
+                // The close frame was only partially written; the remainder is
+                // in send_buffer. clear_data() would discard it (and the
+                // proxy_tunnel needed to flush it), so defer teardown until
+                // handle_writable drains the buffer or the socket dies.
+                self.close_dispatch_pending = Some((dispatch_code, reason));
+            }
+        }
+    }
+
+    /// SHUT_RD + SHUT_WR after the close frame is in the kernel send buffer.
+    /// Marks the socket shut-down so loop.c takes the CLEAN_SHUTDOWN branch on
+    /// the subsequent EOF instead of dispatching `on_end → terminate → fail →
+    /// cancel → close(Failure)`, which would RST and discard the queued close
+    /// frame. SSL is excluded because the SSL handshake can happen during
+    /// writes; tunnel mode operates on a detached socket.
+    fn shutdown_after_close_frame(&mut self) {
+        if !SSL && self.proxy_tunnel.is_none() {
+            self.tcp.shutdown_read();
+            self.tcp.shutdown();
+        }
+    }
+
+    fn finish_pending_close(&mut self) {
+        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
+            // Snapshot the backlog before clear_data() frees it so a deferred
+            // close still reports any bytes that went unsent.
             // SAFETY: `self` is a live `&mut Self`; buffered_amount only does
             // short-lived raw-ptr field reads.
             let buffered = unsafe { Self::buffered_amount(self) };
+            self.shutdown_after_close_frame();
             self.clear_data();
-            self.dispatch_close(dispatch_code.unwrap_or(code), &mut reason, buffered);
+            self.dispatch_close(code, &mut reason, buffered);
+        }
+    }
+
+    /// Shared tail of the writable handlers (direct socket and proxy tunnel):
+    /// flush whatever is queued and, once the buffer is empty, dispatch a
+    /// close that was deferred behind it.
+    fn drain_send_buffer_and_finish_close(&mut self) {
+        if self.send_buffer.readable_length() != 0 {
+            let _ = self.send_buffer_out();
+        }
+        if self.send_buffer.readable_length() == 0 {
+            self.finish_pending_close();
         }
     }
 
@@ -1457,18 +1533,21 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn handle_end(&mut self, socket: Socket<SSL>) {
         debug_assert!(self.is_same_socket(&socket));
+        if self.close_dispatch_pending.is_some() {
+            // Peer FIN'd while we're still draining our close frame; finish the
+            // drain on the next writable event instead of RST'ing via
+            // terminate → fail → cancel(Failure).
+            return;
+        }
         self.terminate(ErrorCode::Ended);
     }
 
     pub fn handle_writable(&mut self, socket: Socket<SSL>) {
-        if self.close_received {
+        if self.close_received && self.close_dispatch_pending.is_none() {
             return;
         }
         debug_assert!(self.is_same_socket(&socket));
-        if self.send_buffer.readable_length() == 0 {
-            return;
-        }
-        let _ = self.send_buffer_out();
+        self.drain_send_buffer_and_finish_close();
     }
 
     pub fn handle_timeout(&mut self, _socket: Socket<SSL>) {
@@ -1793,6 +1872,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             pong_received: false,
             close_received: false,
             close_frame_buffering: false,
+            close_dispatch_pending: None,
             receive_frame: 0,
             receive_body_remain: 0,
             receive_pending_chunk_len: 0,
@@ -1953,6 +2033,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             pong_received: false,
             close_received: false,
             close_frame_buffering: false,
+            close_dispatch_pending: None,
             receive_frame: 0,
             receive_body_remain: 0,
             receive_pending_chunk_len: 0,
@@ -2046,7 +2127,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
         // (the tunnel calls through its raw `connected_websocket` backref).
         let this = unsafe { ThisPtr::new(this_ptr) };
-        if this.close_received {
+        if this.close_received && this.close_dispatch_pending.is_none() {
             return;
         }
         // send_buffer → tunnel.write() can re-enter fail() synchronously
@@ -2054,12 +2135,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // on_writable() but not this struct.
         let _guard = this.ref_guard();
 
-        if this.send_buffer.readable_length() == 0 {
-            return;
-        }
         // SAFETY: `_guard` ref keeps `*this_ptr` live; sole owner on this
         // thread. The auto-ref `&mut *this_ptr` ends before `_guard` drops.
-        let _ = unsafe { (*this.as_ptr()).send_buffer_out() };
+        unsafe { (*this.as_ptr()).drain_send_buffer_and_finish_close() };
     }
 
     // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).

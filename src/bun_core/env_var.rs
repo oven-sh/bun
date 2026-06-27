@@ -105,7 +105,6 @@ platform_specific_new!(pub C_INCLUDE_PATH: string, posix = "C_INCLUDE_PATH", win
 // Used by bun:ffi's TinyCC integration for systems like NixOS.
 platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows = None, {});
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
-new!(pub BUN_TRACK_LAST_FN_NAME: boolean, "BUN_TRACK_LAST_FN_NAME", { default: false });
 new!(pub BUN_TRACY_PATH: string, "BUN_TRACY_PATH", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});
@@ -211,6 +210,9 @@ pub mod feature_flag {
     // The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK, "BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", {});
+    // Fall back to the scalar byte-at-a-time VLQ decode in
+    // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP, "BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP", {});
     new_feature_flag!(pub BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING, "BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING", {});
     new_feature_flag!(pub BUN_DISABLE_SOURCE_CODE_PREVIEW, "BUN_DISABLE_SOURCE_CODE_PREVIEW", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS, "BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS", {});

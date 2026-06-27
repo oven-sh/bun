@@ -23,7 +23,7 @@ if (-not ($Arch -eq "AMD64" -or $Arch -eq "ARM64")) {
   return 1
 }
 
-# This corresponds to .win10_rs5 in build.zig
+# Bun's minimum supported Windows version (win10_rs5)
 $MinBuild = 17763;
 $MinBuildName = "Windows 10 1809 / Windows Server 2019"
 

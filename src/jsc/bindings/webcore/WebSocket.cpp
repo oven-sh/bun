@@ -1029,7 +1029,10 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         break;
     }
     }
-    this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
+    // Do not clear m_connectedWebSocketKind here: when the close frame cannot
+    // be written in one send(), the native client defers didClose() until the
+    // frame has drained, and didClose() early-returns if the kind is already
+    // None. didClose() itself clears it once the close completes.
     updateHasPendingActivity();
     return {};
 }

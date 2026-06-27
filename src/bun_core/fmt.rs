@@ -1319,7 +1319,7 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
             let i = i as usize;
             let byte = self_[i];
             if byte > 0x7F {
-                offset += (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
+                offset = i + (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
                 continue;
             }
             if i > 0 {

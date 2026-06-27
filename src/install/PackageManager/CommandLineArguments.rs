@@ -1055,8 +1055,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 Some(l) => l,
                 None => {
                     Output::err_generic(
-                        "Expected --linker to be one of 'isolated' or 'hoisted'",
-                        (),
+                        "Invalid value for --linker: {}. Must be 'isolated' or 'hoisted'.",
+                        (bun_core::fmt::quote(linker),),
                     );
                     Global::exit(1);
                 }
@@ -1383,12 +1383,27 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if subcommand == Subcommand::Patch && cli.positionals.len() < 2 {
-            Output::err_generic("Missing pkg to patch\n", ());
+            if let PatchOpts::Commit { .. } = cli.patch {
+                Output::err_generic(
+                    "Missing path to the package directory containing your changes.\n  <d>Usage:<r> bun patch --commit <cyan>node_modules/\\<package\\><r>",
+                    (),
+                );
+            } else {
+                Output::err_generic(
+                    "Missing package name to patch.\n  <d>Usage:<r> bun patch <cyan>\\<package\\><r><d>[@\\<version\\>]<r>",
+                    (),
+                );
+            }
+            bun_core::note!("Run 'bun patch --help' for more information");
             Global::crash();
         }
 
         if subcommand == Subcommand::PatchCommit && cli.positionals.len() < 2 {
-            Output::err_generic("Missing pkg folder to patch\n", ());
+            Output::err_generic(
+                "Missing path to the package directory containing your changes.\n  <d>Usage:<r> bun patch-commit <cyan>node_modules/\\<package\\><r>",
+                (),
+            );
+            bun_core::note!("Run 'bun patch-commit --help' for more information");
             Global::crash();
         }
 

@@ -1,5 +1,4 @@
-// Hand-maintained. Note: generate_properties.ts (`bun run css-properties`)
-// does not write this file — edits here are safe and will not be clobbered.
+// Hand-maintained.
 //
 // Type paths below resolve against `super::*` (the leaf property
 // modules — currently data-only stub bodies in `mod.rs`) and

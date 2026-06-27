@@ -50,10 +50,10 @@ const MathMax = Math.max;
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
 
 /**
  * `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here,
@@ -103,15 +103,15 @@ function appendTlsKeylog(line: Buffer) {
     }
   }
 }
-const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
-const BlockList = $zig("node_net_binding.zig", "BlockList");
-const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
-const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
+const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
+const BlockList = $rust("node_net_binding.rs", "BlockList");
+const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
+const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
-const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
-const isNamedPipeSocket = $newZigFunction("runtime/socket/socket.zig", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newZigFunction("runtime/socket/socket.zig", "jsGetBufferedAmount", 1);
+const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -1078,22 +1078,25 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    if (
-      err &&
-      err.code === "ECONNRESET" &&
-      !self.destroyed &&
-      socket === self._handle &&
-      self.listenerCount("error") > 0
-    ) {
-      // Shape it like Node's errnoException(UV_ECONNRESET, 'read'): message,
-      // code, errno and syscall all populated.
+    if (err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       self.once("error", () => {});
-      const er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };
-      er.errno = err.errno;
-      er.syscall = "read";
-      self.destroy(er);
+      if (err.code === undefined || err.code === "ECONNRESET") {
+        // Shape it like Node's errnoException(UV_ECONNRESET, 'read').
+        const er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };
+        er.errno = err.errno;
+        er.syscall = "read";
+        self.destroy(er);
+      } else {
+        // Any other recv errno (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, ...)
+        // keeps its identity — Node's onStreamRead does
+        // `stream.destroy(errnoException(nread, 'read'))` for any nread that
+        // is not UV_EOF. The native on_close only passes a non-undefined err
+        // when the close was driven by a recv() failure (libus close-code
+        // enum values are filtered out in NewSocket::on_close).
+        self.destroy(err);
+      }
       return;
     }
     self[kended] = true;
@@ -1206,8 +1209,15 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     $debug("Bun.Socket connectError");
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
-    req!.oncomplete(error.errno, self._handle, req, true, true);
     socket.data.req = undefined;
+    // doConnect dispatches this synchronously when connect()/bind() fails at
+    // the syscall; surface it as kConnectTcp/Pipe's return value (callers'
+    // Node-derived `if (err)` expects that) instead of re-entering oncomplete.
+    if (req!.dispatching) {
+      req.errno = error.errno || UV_ECANCELED;
+      return;
+    }
+    req!.oncomplete(error.errno, self._handle, req, true, true);
   },
 };
 
@@ -1236,7 +1246,7 @@ function serverHandlersFor(server) {
 
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
-  const promise = doConnect(self._handle, {
+  return kConnectDispatch(self, req, {
     hostname: address,
     port,
     localAddress: req.localAddress || undefined,
@@ -1252,16 +1262,11 @@ function kConnectTcp(self, addressType, req, address, port) {
     data: { self, req },
     socket: self[khandlers],
   });
-  promise.catch(_reason => {
-    // eat this so there's no unhandledRejection
-    // we already catch this in connectError and error
-  });
-  return 0;
 }
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
-  const promise = doConnect(self._handle, {
+  return kConnectDispatch(self, req, {
     hostname: address,
     unix: address,
     // Always half-open natively; see kConnect.
@@ -1270,10 +1275,24 @@ function kConnectPipe(self, req, address) {
     data: { self, req },
     socket: self[khandlers],
   });
+}
+
+function kConnectDispatch(self, req, opts) {
+  // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
+  // oncomplete; doConnect instead fires connectError inside this call. Bracket
+  // it so connectError hands the errno back here instead of re-entering.
+  req.dispatching = true;
+  const promise = doConnect(self._handle, opts);
+  req.dispatching = false;
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
   });
+  const errno = req.errno;
+  if (errno !== undefined) {
+    req.errno = undefined;
+    return errno;
+  }
   return 0;
 }
 
@@ -2844,7 +2863,15 @@ function internalConnectMultiple(context, canceled?) {
     ArrayPrototypePush.$call(context.errors, ex);
 
     self.emit("connectionAttemptFailed", address, port, addressType, ex);
-    internalConnectMultiple(context);
+    // A listener may destroy() on that event; same guard as afterConnectMultiple.
+    if (self.connecting) internalConnectMultiple(context);
+    return;
+  }
+
+  // The if(err) above covers sync failure; this catches a sync open or a
+  // destroy() from a 'connectionAttempt' listener. Arming the timer now
+  // would capture a stale handle and overwrite the next attempt's kTimeout.
+  if (!self.connecting || context.current !== current + 1) {
     return;
   }
 
@@ -2868,6 +2895,10 @@ function internalConnectMultiple(context, canceled?) {
 }
 
 function internalConnectMultipleTimeout(context, req, handle) {
+  // Socket._destroy can't reach the per-context timer, so destroy() mid-attempt
+  // leaves this armed; don't emit a spurious timeout or re-close the handle.
+  if (!context.socket.connecting) return;
+
   $debug("connect/multiple: connection to %s:%s timed out", req.address, req.port);
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 

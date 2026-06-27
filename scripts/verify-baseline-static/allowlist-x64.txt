@@ -662,6 +662,24 @@ _ZN3bun9N_AVX3_DL49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh     [
 
 
 # ----------------------------------------------------------------------------
+# Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
+# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (12 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX215CountDelimsImplEPKhm                                           [AVX, AVX2]
+_ZN3bun6N_AVX217ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [AVX, AVX2, BMI1, BMI2]
+_ZN3bun6N_AVX315CountDelimsImplEPKhm                                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun6N_AVX317ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+_ZN3bun9N_AVX10_215CountDelimsImplEPKhm                                        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX10_217ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun9N_AVX3_DL15CountDelimsImplEPKhm                                        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX3_DL17ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun10N_AVX3_SPR15CountDelimsImplEPKhm                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun10N_AVX3_SPR17ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+_ZN3bun11N_AVX3_ZEN415CountDelimsImplEPKhm                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun11N_AVX3_ZEN417ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+
+# ----------------------------------------------------------------------------
 # Bun xxHash3 (src/jsc/bindings/xxhash3.cpp). Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (5 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun4xxh36N_AVX28HashLongEPKhmS3_                                          [AVX, AVX2, BMI2]
@@ -948,3 +966,21 @@ _ZN9bun_image9N_AVX3_DLL18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image9N_AVX3_DLL8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
 _ZN9bun_image9N_AVX3_DLL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image9N_AVX3_DLL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
+
+
+# ----------------------------------------------------------------------------
+# JSC LLInt. Data-in-.text false positive, NOT a gate.
+#
+# ENABLE(LLINT_EMBEDDED_OPCODE_ID) is on for x86_64 (WTF/wtf/PlatformEnable.h),
+# so every LLInt opcode handler starts with a raw 4-byte ".int <opcode_id>"
+# (LowLevelInterpreter.cpp: EMBED_OPCODE_ID_IF_NEEDED). The linear-sweep
+# decoder desyncs on those embedded ints and, depending on how preceding .text
+# code aligns, can decode a stray VEX-encoded instruction out of the garbage.
+# offlineasm's x86 backend emits SSE2 (not VEX), and the Intel SDE Nehalem
+# emulation step in this same job exercises the LLInt and passes, so any
+# single-digit hit here is decode noise. Ceiling [AVX] so a multi-feature leak
+# still fails. On ELF each opcode handler has its own symbol, so layout shifts
+# can move the desync between llint_op_* siblings; add them here as they trip.
+# (1 symbol)
+# ----------------------------------------------------------------------------
+llint_op_enter_wide32  [AVX]

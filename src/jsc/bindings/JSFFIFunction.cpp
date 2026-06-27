@@ -215,10 +215,6 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
 
     WebCore::ScriptExecutionContext::postTaskTo(wrapper.m_contextId, [argsVec = WTF::move(argsVec), protectedWrapper = Ref { wrapper }](WebCore::ScriptExecutionContext& ctx) mutable {
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
-        // The worker may have been terminated (or the VM begun shutting down) between
-        // enqueue and dispatch; never re-enter JS on a stopped global.
-        if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != JSC::ScriptExecutionStatus::Running) [[unlikely]]
-            return;
         JSC::MarkedArgumentBuffer arguments;
         for (size_t i = 0; i < argsVec.size(); ++i)
             arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));

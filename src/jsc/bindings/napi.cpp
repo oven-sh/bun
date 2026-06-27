@@ -1058,8 +1058,8 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Like napi_throw: throwing while an exception is already pending must not replace the
-    // pending exception. Node's NAPI_PREAMBLE reports napi_pending_exception and leaves it alone.
+    // Node's NAPI_PREAMBLE: throwing while an exception is already pending must not replace the
+    // pending exception; report napi_pending_exception and leave the first one alone.
     NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
 
     if (!msg_utf8) {

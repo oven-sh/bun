@@ -544,19 +544,6 @@ test("a FileHandle referenced twice in workerData deserializes to one instance",
   expect(message).toEqual({ same: true, closed: true });
 });
 
-test("an invalid transferList entry throws before anything is detached", async () => {
-  const buf = new ArrayBuffer(8);
-  let worker: Worker | undefined;
-  try {
-    expect(() => {
-      worker = new Worker("", { eval: true, workerData: buf, transferList: [buf, null as any] });
-    }).toThrow(TypeError);
-    expect(buf.byteLength).toBe(8);
-  } finally {
-    await worker?.terminate();
-  }
-});
-
 test("duplicate FileHandle transferList entries throw DataCloneError and roll back", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");

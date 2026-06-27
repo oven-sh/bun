@@ -117,7 +117,7 @@ pub mod js_bindings {
                 let lr = frameless_segv_caller as *const () as usize + step;
                 crash_handler::crash_handler(
                     crash_handler::CrashReason::SegmentationFault(0),
-                    crash_handler::TraceSeed::Fault { pc, fp, lr },
+                    crash_handler::TraceSeed::Fault { pc, fp, lr, sp: 0 },
                 );
             }
             // SAFETY: test-only, intentionally faults.

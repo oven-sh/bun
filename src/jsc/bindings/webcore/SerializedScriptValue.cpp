@@ -2044,9 +2044,11 @@ private:
             }
 
             if (auto* x509 = dynamicDowncast<Bun::JSX509Certificate>(obj)) {
+                if (checkForDuplicate(x509))
+                    return true;
                 X509* cert = x509->m_x509.get();
 
-                // Encode before touching the output so a DER failure leaves no
+                // Encode before recording or writing so a DER failure leaves no
                 // partially written tag and no stale object pool entry behind.
                 int size = i2d_X509(cert, nullptr);
                 if (size <= 0)
@@ -2060,8 +2062,7 @@ private:
                 if (i2d_X509(cert, &der_ptr) != size)
                     return false;
 
-                if (!startObjectInternal(x509)) // handle duplicates
-                    return true;
+                recordObject(x509);
                 write(Bun__X509CertificateTag);
                 write(der);
 

@@ -55,6 +55,10 @@ describe("css with invalid utf-8", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // Checked before JSON.parse so a crashed child reports its stderr
+    // instead of a JSON syntax error on the empty stdout.
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
     // Only the ASCII affixes of the specifier are asserted here: the
     // ResolveMessage getters mis-decode non-ASCII text today (reproducible
     // on its own with `import "./café.js"`), which is a separate issue.
@@ -63,7 +67,6 @@ describe("css with invalid utf-8", () => {
     expect(log.message).toStartWith('Could not resolve: "./x');
     expect(log.specifier).toStartWith("./x");
     expect(log.specifier).toEndWith("y.css");
-    expect(exitCode).toBe(0);
   });
 
   test.concurrent("url() token in an at-rule prelude reports a resolve error", async () => {

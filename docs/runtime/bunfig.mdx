@@ -230,11 +230,11 @@ The coverage threshold. By default, no threshold is set. If your test suite does
 coverageThreshold = 0.9
 ```
 
-You can set separate thresholds for line, function, and statement coverage. Only the metrics you list are enforced.
+You can set separate thresholds for line and function coverage. Only the metrics you list are enforced.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-coverageThreshold = { lines = 0.7, functions = 0.8, statements = 0.9 }
+coverageThreshold = { lines = 0.7, functions = 0.8 }
 ```
 
 ### `test.coverageSkipTestFiles`

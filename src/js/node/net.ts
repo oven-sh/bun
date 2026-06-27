@@ -794,8 +794,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server?.emit("tlsClientError", verifyError, self);
         if (self._rejectUnauthorized) {
+          server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)

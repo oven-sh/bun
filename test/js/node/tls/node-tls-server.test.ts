@@ -823,6 +823,51 @@ it("leaves socket.authorized false unless a client certificate was requested and
   }
 });
 
+it("requestCert + rejectUnauthorized:false emits only secureConnection for an unverified client cert", async () => {
+  // Node.js: when the client certificate fails verification but the server was
+  // configured to allow that (rejectUnauthorized:false), only 'secureConnection'
+  // fires with authorized:false; 'tlsClientError' is reserved for handshakes the
+  // server policy actually rejects.
+  const fixtures = join(import.meta.dir, "fixtures");
+  const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+  // agent2 is self-signed (not under ca1), so the server cannot verify it.
+  const agent2Key = readFileSync(join(fixtures, "agent2-key.pem"), "utf8");
+  const agent2Cert = readFileSync(join(fixtures, "agent2-cert.pem"), "utf8");
+
+  const events: unknown[] = [];
+  const server: Server = createServer({
+    key: agent1Key,
+    cert: agent1Cert,
+    ca: [ca1],
+    requestCert: true,
+    rejectUnauthorized: false,
+  });
+  server.on("tlsClientError", (err: NodeJS.ErrnoException) => {
+    events.push(["tlsClientError", err.code ?? err.message]);
+  });
+  server.on("secureConnection", socket => {
+    events.push(["secureConnection", { authorized: socket.authorized, authorizationError: socket.authorizationError }]);
+    socket.end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  const { port } = server.address() as AddressInfo;
+  const client = connect({ port, host: "127.0.0.1", key: agent2Key, cert: agent2Cert, rejectUnauthorized: false });
+  client.on("error", () => {});
+  try {
+    await once(client, "close");
+    expect(events).toEqual([
+      ["secureConnection", { authorized: false, authorizationError: "DEPTH_ZERO_SELF_SIGNED_CERT" }],
+    ]);
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("createServer({pfx, requestCert}) verifies client certificates against the pfx-embedded CA", async () => {
   // agent1.pfx bundles agent1's key/cert plus ca1; a server built from it must
   // be able to verify a client certificate signed by that embedded CA.

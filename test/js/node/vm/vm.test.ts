@@ -826,6 +826,30 @@ test("rejects corrupted cachedData instead of crashing", async () => {
   });
 });
 
+test("cachedData getter when bytecode production fails", async () => {
+  // `export` does not parse as a vm.Script program, so produceCachedData has
+  // nothing to produce; the getter must return undefined instead of crashing.
+  const code = /* js */ `
+    const vm = require("node:vm");
+    const script = new vm.Script("export default {};", { produceCachedData: true });
+    console.log(script.cachedData === undefined);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "true\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 describe("codeGeneration options", () => {
   test("disabling codeGeneration.strings should block eval and Function constructor", () => {
     const context = createContext(

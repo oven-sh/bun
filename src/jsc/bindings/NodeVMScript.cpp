@@ -221,7 +221,11 @@ JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
             cacheBytecode();
         }
 
-        ASSERT(m_cachedBytecode);
+        // Bytecode production fails without throwing when the source does not
+        // parse as a program; there is no cachedData to expose in that case.
+        if (!m_cachedBytecode) [[unlikely]] {
+            return nullptr;
+        }
 
         m_cachedBytecodeBuffer.set(vm(), this, createCachedDataBuffer(globalObject(), m_cachedBytecode->span()));
         if (!m_cachedBytecodeBuffer) {

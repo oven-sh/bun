@@ -713,9 +713,11 @@ impl ErrorCode {
     pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(327);
     /// `ERR_INVALID_BUFFER_SIZE` (instanceof RangeError)
     pub const INVALID_BUFFER_SIZE: ErrorCode = ErrorCode(328);
+    /// `ERR_TRAILING_JUNK_AFTER_STREAM_END` (instanceof TypeError)
+    pub const TRAILING_JUNK_AFTER_STREAM_END: ErrorCode = ErrorCode(329);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 329;
+    pub const COUNT: u16 = 330;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1026,6 +1028,8 @@ impl ErrorCode {
     pub const ERR_TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode =
         ErrorCode::TLS_ALPN_CALLBACK_INVALID_RESULT;
     pub const ERR_SSL_NO_CIPHER_MATCH: ErrorCode = ErrorCode::SSL_NO_CIPHER_MATCH;
+    pub const ERR_TRAILING_JUNK_AFTER_STREAM_END: ErrorCode =
+        ErrorCode::TRAILING_JUNK_AFTER_STREAM_END;
     pub const ERR_UNAVAILABLE_DURING_EXIT: ErrorCode = ErrorCode::UNAVAILABLE_DURING_EXIT;
     pub const ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET: ErrorCode =
         ErrorCode::UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET;
@@ -1433,6 +1437,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
     "ERR_DIR_CONCURRENT_OPERATION",
     "ERR_INVALID_BUFFER_SIZE",
+    "ERR_TRAILING_JUNK_AFTER_STREAM_END",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

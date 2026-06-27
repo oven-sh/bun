@@ -2657,6 +2657,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TOO_MANY_INVALID_FRAMES, "Too many invalid HTTP/2 frames"_s));
     case ErrorCode::ERR_HTTP2_PING_CANCEL:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PING_CANCEL, "HTTP2 ping cancelled"_s));
+    case ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END, "Trailing junk found after the end of the compressed stream"_s));
 
     default: {
         break;

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import zlib from "node:zlib";
 
 describe("CompressionStream and DecompressionStream", () => {
   describe("brotli", () => {
@@ -336,5 +337,115 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
       expect(e.code).toBe("ERR__ERROR_FORMAT_PADDING_2");
       expect(e.cause.code).toBe(e.code);
     }
+  });
+});
+
+// Node's DecompressionStream rejects any input left over after the end of the
+// compressed stream (lib/zlib.js `rejectGarbageAfterEnd`, passed by
+// lib/internal/webstreams/compression.js). Previously Bun dropped the extra
+// bytes and resolved successfully with a truncated result.
+describe("DecompressionStream trailing data (Node v26 semantics)", () => {
+  type Format = "deflate" | "deflate-raw" | "gzip" | "brotli" | "zstd";
+
+  async function decompress(format: Format, chunks: Uint8Array[]): Promise<string> {
+    const ds = new DecompressionStream(format);
+    const writer = ds.writable.getWriter();
+    const readAll = (async () => {
+      const out: Uint8Array[] = [];
+      const reader = ds.readable.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        out.push(value);
+      }
+      return new TextDecoder().decode(Buffer.concat(out));
+    })();
+    const writeAll = (async () => {
+      for (const chunk of chunks) await writer.write(chunk);
+      await writer.close();
+    })();
+    // Settle both sides so a rejection on one never goes unhandled.
+    const [read, write] = await Promise.allSettled([readAll, writeAll]);
+    if (write.status === "rejected") throw write.reason;
+    if (read.status === "rejected") throw read.reason;
+    return read.value;
+  }
+
+  async function rejection(promise: Promise<unknown>): Promise<any> {
+    return await promise.then(
+      value => ({ resolved: value }),
+      error => error,
+    );
+  }
+
+  function expectTrailingJunkError(err: any) {
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_TRAILING_JUNK_AFTER_STREAM_END");
+    expect(err.message).toBe("Trailing junk found after the end of the compressed stream");
+  }
+
+  const compressors: Record<Format, (input: string) => Uint8Array> = {
+    "deflate": input => zlib.deflateSync(input),
+    "deflate-raw": input => zlib.deflateRawSync(input),
+    "gzip": input => zlib.gzipSync(input),
+    "brotli": input => zlib.brotliCompressSync(input),
+    "zstd": input => zlib.zstdCompressSync(input),
+  };
+  const formats = Object.keys(compressors) as Format[];
+
+  // gzip is excluded here: non-zero trailing bytes after a gzip member are fed
+  // back to zlib as a second member and already failed with Z_DATA_ERROR.
+  test.each(formats.filter(format => format !== "gzip"))(
+    "%s rejects trailing junk appended to the compressed data",
+    async format => {
+      const bad = Buffer.concat([compressors[format]("AAAA"), Buffer.from("JUNK")]);
+      expectTrailingJunkError(await rejection(decompress(format, [bad])));
+    },
+  );
+
+  test("gzip rejects trailing junk appended to the compressed data", async () => {
+    const bad = Buffer.concat([compressors.gzip("AAAA"), Buffer.from("JUNK")]);
+    const err = await rejection(decompress("gzip", [bad]));
+    // The junk is parsed as a second gzip member, so zlib reports it itself.
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.cause?.code).toBe("Z_DATA_ERROR");
+  });
+
+  test.each(["deflate", "deflate-raw", "brotli"] as Format[])(
+    "%s rejects junk written after the stream already ended",
+    async format => {
+      const chunks = [compressors[format]("AAAA"), Buffer.from("JUNK")];
+      expectTrailingJunkError(await rejection(decompress(format, chunks)));
+    },
+  );
+
+  test("deflate rejects a second concatenated stream instead of silently dropping it", async () => {
+    const a = compressors.deflate("AAAA");
+    const b = compressors.deflate("BBBB");
+    expectTrailingJunkError(await rejection(decompress("deflate", [Buffer.concat([a, b])])));
+  });
+
+  // Zero bytes are skipped by the multi-member loop (historically used for
+  // padding), but node still rejects them in DecompressionStream.
+  test("gzip rejects trailing zero-byte padding", async () => {
+    const padded = Buffer.concat([compressors.gzip("AAAA"), Buffer.alloc(4)]);
+    expectTrailingJunkError(await rejection(decompress("gzip", [padded])));
+  });
+
+  test("gzip still concatenates multiple members", async () => {
+    const a = compressors.gzip("AAAA");
+    const b = compressors.gzip("BBBB");
+    expect(await decompress("gzip", [Buffer.concat([a, b])])).toBe("AAAABBBB");
+    expect(await decompress("gzip", [a, b])).toBe("AAAABBBB");
+  });
+
+  test.each(formats)("%s still decompresses a clean stream", async format => {
+    expect(await decompress(format, [compressors[format]("AAAA")])).toBe("AAAA");
+  });
+
+  test("the readable side errors too when piping", async () => {
+    const bad = Buffer.concat([compressors.deflate("AAAA"), Buffer.from("JUNK")]);
+    const response = new Response(new Blob([bad]).stream().pipeThrough(new DecompressionStream("deflate")));
+    expectTrailingJunkError(await rejection(response.arrayBuffer()));
   });
 });

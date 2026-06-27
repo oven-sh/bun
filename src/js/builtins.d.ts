@@ -759,6 +759,7 @@ declare function $ERR_HTTP2_CONNECT_SCHEME(): Error;
 declare function $ERR_HTTP2_CONNECT_PATH(): Error;
 declare function $ERR_HTTP2_TOO_MANY_INVALID_FRAMES(): Error;
 declare function $ERR_HTTP2_PING_CANCEL(): Error;
+declare function $ERR_TRAILING_JUNK_AFTER_STREAM_END(): TypeError;
 
 /**
  * Convert a function to a class-like object.

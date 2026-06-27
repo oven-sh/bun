@@ -198,6 +198,8 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._defaultFullFlushFlag = fullFlush;
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
+
+  this._rejectGarbageAfterEnd = opts?.rejectGarbageAfterEnd === true;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 
@@ -507,6 +509,13 @@ function processCallback() {
     // stream has ended early.
     // This applies to streams where we don't check data past the end of
     // what was consumed; that is, everything except Gunzip/Unzip.
+    if (self._rejectGarbageAfterEnd) {
+      const err = $ERR_TRAILING_JUNK_AFTER_STREAM_END();
+      self.destroy(err);
+      this.cb(err);
+      return;
+    }
+
     self.push(null);
   }
 

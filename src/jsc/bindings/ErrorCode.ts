@@ -340,5 +340,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
   ["ERR_DIR_CONCURRENT_OPERATION", Error],
   ["ERR_INVALID_BUFFER_SIZE", RangeError],
+  ["ERR_TRAILING_JUNK_AFTER_STREAM_END", TypeError],
 ];
 export default errors;

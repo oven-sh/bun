@@ -3043,7 +3043,7 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
 
   it("a method fragmented across writes still parses", async () => {
     const events: string[] = [];
-    const { promise: gotRequest, resolve: onRequest } = Promise.withResolvers<void>();
+    const { promise: gotRequest, resolve: onRequest, reject: onRequestFail } = Promise.withResolvers<void>();
     const server = createServer((req, res) => {
       events.push("request " + req.method + " " + req.url);
       res.end("ok");
@@ -3051,8 +3051,8 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
     });
     server.on("connection", () => events.push("connection"));
     server.on("clientError", (err: any, s) => {
-      events.push("clientError " + err.code);
       s.destroy();
+      onRequestFail(new Error("unexpected clientError " + err.code));
     });
     try {
       server.listen(0, "127.0.0.1");
@@ -3076,10 +3076,16 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
     }
   });
 
-  it("target followed by CRLF with no HTTP version surfaces to JS", async () => {
-    // Node's llhttp accepts this as HTTP/0.9 and fires 'request'; Bun's parser
-    // rejects it and fires 'clientError'. Either is observable. The bug was
-    // that the parser returned short-read here and the connection sat idle.
+  // Node accepts some of these (asterisk-form, HTTP/0.9) and fires 'request';
+  // Bun rejects them and fires 'clientError'. Either is observable. The bug
+  // was that the parser returned short-read on complete input and nothing
+  // surfaced at all while the connection sat idle.
+  it.each([
+    ["target followed by CRLF with no HTTP version", "GET /\r\nHost: localhost\r\n\r\n"],
+    ["asterisk target followed by CRLF", "GET *\r\n\r\n"],
+    ["asterisk target after a 7-char method", "OPTIONS *\r\n\r\n"],
+    ["short non-origin target followed by CRLF", "POST x\r\n\r\n"],
+  ])("%s surfaces to JS", async (_name, payload) => {
     const events: string[] = [];
     const { promise: surfaced, resolve: onSurfaced } = Promise.withResolvers<void>();
     const server = createServer((req, res) => {
@@ -3101,7 +3107,7 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
       const socket = connect(port, "127.0.0.1");
       socket.on("error", () => {});
       await once(socket, "connect");
-      socket.write("GET /\r\nHost: localhost\r\n\r\n");
+      socket.write(payload);
 
       await surfaced;
       expect(events[0]).toBe("connection");

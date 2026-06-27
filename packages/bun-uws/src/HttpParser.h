@@ -590,11 +590,6 @@ namespace uWS
             if(start == data)  [[unlikely]] {
                 return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
             }
-            if (data - start < 2 && data >= end) [[unlikely]] {
-                /* A single method char followed by the post-padding sentinel: wait for more. */
-                return ConsumeRequestLineResult::shortRead();
-            }
-
 
             /* RFC 9112 3: exactly one SP separates method and request-target */
             bool isHTTPMethod = (__builtin_expect(data[0] == 32 && data[1] == '/', 1));
@@ -659,8 +654,17 @@ namespace uWS
             if (data[0] == 32) {
                 switch (isHTTPorHTTPSPrefixForProxies(data + 1, end)) {
                     // If we haven't received enough data to check if it's http:// or https://, let's try again later
-                    case -1:
+                    case -1: {
+                        /* -1 only means fewer than 8 bytes follow the SP. If one of them is a
+                         * terminator (<= 32), the target is already complete and can never
+                         * become http(s)://, so this is an invalid request, not a fragment. */
+                        for (char *p = data + 1; p < end; p++) {
+                            if (*(unsigned char *) p <= 32) {
+                                return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
+                            }
+                        }
                         return ConsumeRequestLineResult::shortRead(false, isConnect);
+                    }
                     // Otherwise, if it's not http:// or https://, return 400
                     default:
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);

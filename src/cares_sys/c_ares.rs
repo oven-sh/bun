@@ -715,11 +715,10 @@ pub trait ChannelContainer: Sized {
     fn set_channel(&self, channel: *mut Channel);
 }
 
-/// Trait for `Channel::resolve`: ties a lookup-name string to its NSType and
+/// Trait for `Channel::resolve`: ties a record type to its c-ares `NSType` and
 /// the `extern "C"` parse-thunk used as the ares_callback.
 /// The dns_jsc consumer impls it per (T, record-type).
 pub trait ResolveHandler: Sized {
-    const LOOKUP_NAME: &'static [u8];
     const NS_TYPE: NSType;
     /// The `ares_callback`-compatible thunk that parses the reply and forwards
     /// to `Self`.
@@ -844,10 +843,10 @@ impl Channel {
     }
 
     pub fn resolve<T: ResolveHandler>(&mut self, name: &[u8], ctx: &mut T) {
-        if name.len() >= 1023
-            || name.contains(&0)
-            || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
-        {
+        // The 1024-byte stack buffer and c-ares's char* API need a bounded,
+        // NUL-free name. An empty name is valid (the root zone) and goes
+        // through to the configured servers, matching Node.js.
+        if name.len() >= 1023 || name.contains(&0) {
             // SAFETY: thunk handles ARES_EBADNAME path.
             unsafe {
                 T::raw_callback(

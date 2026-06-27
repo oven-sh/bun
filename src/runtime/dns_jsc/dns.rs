@@ -712,7 +712,6 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
 // `T::RAW_CALLBACK` parses the raw DNS reply and calls back into
 // `on_cares_complete`.
 impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
-    const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
     const NS_TYPE: c_ares::NSType = T::NS_TYPE;
     unsafe extern "C" fn raw_callback(
         ctx: *mut c_void,

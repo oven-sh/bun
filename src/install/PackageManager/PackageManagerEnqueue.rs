@@ -1999,7 +1999,9 @@ fn get_or_put_resolved_package_with_find_result(
 ) -> Result<Option<ResolvedPackageResult>, bun_core::Error> {
     // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
-    let should_update = {
+    // Led by `this.to_update` so plain `bun install` short-circuits before the
+    // root-dependency lookup and catalog scan below.
+    let should_update = this.to_update && {
         let this_ptr: *mut PackageManager = this;
         // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
         // `manager.workspace_package_json_cache` only — disjoint from
@@ -2026,7 +2028,7 @@ fn get_or_put_resolved_package_with_find_result(
                         && strings::eql_long(request.catalog_name.as_ref(), dep_catalog, true)
                 })
             };
-        this.to_update && in_update_set && (is_root_dep || is_named_catalog_update)
+        in_update_set && (is_root_dep || is_named_catalog_update)
     };
 
     // Was this package already allocated? Let's reuse the existing one.

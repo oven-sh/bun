@@ -131,6 +131,14 @@ fn rewrite_catalog_constraint(
         return Ok(());
     };
     let catalog_obj: &mut E::Object = &mut catalog_store;
+    // Leave an `npm:` alias untouched; alias-aware catalog updates are a follow-up.
+    if catalog_obj
+        .get(name)
+        .and_then(|e| e.data.e_string())
+        .is_some_and(|s| strings::trim(s.data.slice(), &strings::WHITESPACE_CHARS).starts_with(b"npm:"))
+    {
+        return Ok(());
+    }
     let value_expr = Expr::allocate(
         arena,
         E::EString::init(arena_str(arena, literal)),
@@ -199,6 +207,12 @@ fn commit_catalog_update(
         Some(s) => Box::from(s.data.slice()),
         None => return Ok(()),
     };
+
+    // Leave an `npm:` alias untouched rather than rewriting it to a bare version,
+    // which would drop the alias and point at a nonexistent package.
+    if strings::trim(&original_literal[..], &strings::WHITESPACE_CHARS).starts_with(b"npm:") {
+        return Ok(());
+    }
 
     let new_version: Vec<u8> = if exact_versions {
         resolved

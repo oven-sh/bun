@@ -689,6 +689,54 @@ it("update <name>@<version> sets the catalog constraint to the requested version
   expect(root.catalogs).toEqual({ ai: { baz: "0.0.5" } });
 });
 
+it("update <name> leaves an npm: aliased catalog entry untouched, issue#32808", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.3": { bin: { "baz-run": "index.js" } },
+      "0.0.5": { bin: { "baz-exec": "index.js" } },
+      latest: "0.0.5",
+    }),
+  );
+
+  // The catalog value is an `npm:` alias; updating must not drop the alias.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      catalogs: { ai: { "my-baz": "npm:baz@~0.0.3" } },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "server"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "server", "package.json"),
+    JSON.stringify({ name: "server", dependencies: { "my-baz": "catalog:ai" } }),
+  );
+
+  const install = spawn({ cmd: [bunExe(), "install"], cwd: package_dir, stdout: "ignore", stderr: "pipe", env });
+  const [installErr, installCode] = await Promise.all([new Response(install.stderr).text(), install.exited]);
+  expect(installErr).not.toContain("error:");
+  expect(installCode).toBe(0);
+
+  const proc = spawn({
+    cmd: [bunExe(), "update", "my-baz"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(code).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  expect(root.dependencies).toBeUndefined();
+  // The alias is preserved rather than being rewritten to a bare version.
+  expect(root.catalogs).toEqual({ ai: { "my-baz": "npm:baz@~0.0.3" } });
+});
+
 it("should support --recursive flag", async () => {
   // First verify the flag appears in help
   const {

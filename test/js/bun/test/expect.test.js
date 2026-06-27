@@ -2078,6 +2078,33 @@ describe("expect()", () => {
     expect({ "[[[": 0 }).not.toHaveProperty("[[[", 0);
   });
 
+  test("toHaveProperty() - null/undefined intermediate in path", () => {
+    // Jest treats a null/undefined intermediate as "property not found" rather than throwing.
+    expect({ a: null }).not.toHaveProperty("a.b");
+    expect({ a: undefined }).not.toHaveProperty("a.b");
+    expect({ a: null }).not.toHaveProperty(["a", "b"]);
+    expect({ a: undefined }).not.toHaveProperty(["a", "b"]);
+    expect({ a: { b: null } }).not.toHaveProperty("a.b.c");
+    expect({ a: { b: undefined } }).not.toHaveProperty(["a", "b", "c"]);
+    expect({ a: null }).not.toHaveProperty("a.b", 1);
+    expect({ a: null }).not.toHaveProperty(["a", "b"], 1);
+    expect({ "": null }).not.toHaveProperty("..");
+    expect({ "": null }).not.toHaveProperty(".a");
+    expect({ a: null }).not.toHaveProperty("a.");
+    expect({ a: null }).not.toHaveProperty("a..b");
+
+    expect(() => expect({ a: null }).toHaveProperty("a.b")).toThrow("Unable to find property");
+    expect(() => expect({ a: null }).toHaveProperty(["a", "b"])).toThrow("Unable to find property");
+
+    // null/undefined as the final value is still "found"
+    expect({ a: null }).toHaveProperty("a");
+    expect({ a: null }).toHaveProperty("a", null);
+    expect({ a: null }).toHaveProperty(["a"], null);
+    expect({ a: { b: undefined } }).toHaveProperty("a.b");
+    expect({ a: { b: undefined } }).toHaveProperty("a.b", undefined);
+    expect({ a: { b: undefined } }).toHaveProperty(["a", "b"], undefined);
+  });
+
   test("toHaveProperty() - with string or array", () => {
     const a = new Array(["a", "b", "c"]);
     expect(a).toHaveProperty("0.1", "b");

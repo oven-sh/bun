@@ -102,4 +102,35 @@ describe("failure-skip", async () => {
     expect(report).toInclude('skipped="2"');
     expect(exitCode).toBe(1);
   });
+
+  // A test filtered out by -t must stay in the "filtered out" bucket even
+  // when its scope's beforeAll throws, not get promoted to a regular skip.
+  test("a failing beforeAll keeps -t filtered-out tests suppressed", async () => {
+    using dir = tempDir("failure-skip-filter", {
+      "filter.test.ts": `
+        import { test, describe, beforeAll } from "bun:test";
+        describe("d", () => {
+          beforeAll(() => {
+            throw new Error("boom");
+          });
+          test("yes-match", () => {});
+          test("no-thanks", () => {});
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "-t", "yes-match", "filter.test.ts"],
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: String(dir),
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toMatch(/\(skip\) d > yes-match\b/);
+    expect(stderr).not.toInclude("(skip) d > no-thanks");
+    expect(stderr).toInclude("1 skip");
+    // fail(hook) + skip(yes-match); the filtered-out test is not counted
+    expect(stderr).toInclude("Ran 2 tests across 1 file");
+    expect(exitCode).toBe(1);
+  });
 });

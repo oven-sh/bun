@@ -880,8 +880,12 @@ pub(crate) fn step_group(
                     if sequence.test_entry.is_none() || sequence.result != Result::Pending {
                         continue;
                     }
+                    // Keep this in sync with the `next_item.base.mode` match in
+                    // step_sequence_one so an unreached test reports the same
+                    // way it would have if the beforeAll had not failed.
                     sequence.result = match sequence.entry_mode() {
                         ScopeMode::Todo => Result::Todo,
+                        ScopeMode::FilteredOut => Result::SkippedBecauseLabel,
                         _ => Result::Skip,
                     };
                     Execution::on_sequence_completed(buntest_ptr, sequence);

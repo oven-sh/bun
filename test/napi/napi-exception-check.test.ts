@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Path to the in-repo copies of node_api.h / js_native_api.h.
@@ -39,14 +39,26 @@ test.skipIf(isWindows || !cc)("N-API module Init runs under BUN_JSC_validateExce
   });
 
   const compile = Bun.spawnSync({
-    cmd: [cc!, "-shared", "-fPIC", `-I${napiHeaderDir}`, "-o", "addon.node", "addon.c"],
+    cmd: [
+      cc!,
+      "-shared",
+      "-fPIC",
+      // The napi_* symbols are resolved from the host process at dlopen time.
+      // Linux ld allows undefined symbols in shared objects by default; macOS
+      // ld64 errors on them unless told to defer, which is what node-gyp does.
+      ...(isMacOS ? ["-undefined", "dynamic_lookup"] : []),
+      `-I${napiHeaderDir}`,
+      "-o",
+      "addon.node",
+      "addon.c",
+    ],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(compile.stderr.toString()).toBe("");
-  expect(compile.exitCode).toBe(0);
+  // Don't require an empty stderr: ld64 may warn about dynamic_lookup.
+  expect({ exitCode: compile.exitCode, stderr: compile.stderr.toString() }).toMatchObject({ exitCode: 0 });
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "load.js"],

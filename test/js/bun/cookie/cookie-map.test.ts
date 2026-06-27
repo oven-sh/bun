@@ -203,6 +203,19 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
+  test("percent-decoding a cookie value keeps invalid escapes literal", () => {
+    // A "%" not followed by two hex digits is not a percent-escape
+    // (RFC 3986 section 2.1) and must pass through unchanged.
+    const map = new Bun.CookieMap("a=50%-off; b=caf%C3%A9; c=x%zz; d=100%25; e=abc%");
+    expect(Object.fromEntries(map)).toEqual({
+      a: "50%-off",
+      b: "café",
+      c: "x%zz",
+      d: "100%",
+      e: "abc%",
+    });
+  });
+
   test("can create CookieMap from object", () => {
     const map = new Bun.CookieMap({
       name: "value",

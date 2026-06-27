@@ -1056,18 +1056,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             };
 
                             if let Some(follow_active) = follow_active {
-                                let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                let subdir_entry_name = self.walker.join(subdir_parts)?;
-                                let joined = work_item_logical_path(&subdir_entry_name);
-                                let entry_start: u32 =
-                                    u32::try_from(joined.len() - strings::basename(joined).len())
-                                        .unwrap();
-
-                                self.walker.workbuf.push(WorkItem::new_symlink(
-                                    subdir_entry_name,
+                                self.walker.push_symlink_work_item(
+                                    dir_dir_path,
+                                    entry_name,
                                     follow_active,
-                                    entry_start,
-                                ));
+                                )?;
                                 continue;
                             }
 
@@ -1149,18 +1142,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             (subset.count() != 0).then_some(subset)
                                         };
                                     if let Some(follow_active) = follow_active {
-                                        let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                        let subdir_entry_name = self.walker.join(subdir_parts)?;
-                                        let joined = work_item_logical_path(&subdir_entry_name);
-                                        let entry_start: u32 = u32::try_from(
-                                            joined.len() - strings::basename(joined).len(),
-                                        )
-                                        .unwrap();
-                                        self.walker.workbuf.push(WorkItem::new_symlink(
-                                            subdir_entry_name,
+                                        self.walker.push_symlink_work_item(
+                                            dir_dir_path,
+                                            entry_name,
                                             follow_active,
-                                            entry_start,
-                                        ));
+                                        )?;
                                     } else if !self.walker.only_files {
                                         if self.walker.eval_file(&active, entry_name) {
                                             match self
@@ -1912,6 +1898,21 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
         // For SENTINEL, bun_join already included trailing NUL in the slice it returned.
         Ok(bun_join::<SENTINEL>(subdir_parts))
+    }
+
+    fn push_symlink_work_item(
+        &mut self,
+        dir_path: &[u8],
+        entry_name: &[u8],
+        active: ComponentSet,
+    ) -> Result<(), AllocError> {
+        let subdir_entry_name = self.join(&[dir_path, entry_name])?;
+        let joined = work_item_logical_path(&subdir_entry_name);
+        let entry_start: u32 =
+            u32::try_from(joined.len() - strings::basename(joined).len()).unwrap();
+        self.workbuf
+            .push(WorkItem::new_symlink(subdir_entry_name, active, entry_start));
+        Ok(())
     }
 
     #[inline]

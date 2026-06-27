@@ -1020,7 +1020,7 @@ describe("production headers and import.meta.env", () => {
   });
 
   test("distinct source maps get distinct ETags", async () => {
-    const fixture = (body: string) => /*js*/ `
+    const serveTs = /*js*/ `
       import index from "./index.html";
       const server = Bun.serve({ port: 0, development: false, routes: { "/": index } });
       const base = server.url.href;
@@ -1034,7 +1034,7 @@ describe("production headers and import.meta.env", () => {
       const dir = tempDirWithFiles("html-map-etag", {
         "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
         "app.ts": appBody,
-        "serve.ts": fixture(appBody),
+        "serve.ts": serveTs,
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "serve.ts"],

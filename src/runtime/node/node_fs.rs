@@ -3838,16 +3838,31 @@ pub mod args {
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
                         if current.is_number() {
-                            args.position = Some(i52::from_js(current));
-                            arguments.eat();
-                            let Some(next) = arguments.next() else {
-                                break 'parse;
-                            };
-                            current = next;
+                            let position = i52::from_js(current);
+                            if position >= 0 {
+                                args.position = Some(position);
+                            }
                         }
+                        // Node consumes the position slot whatever its type
+                        // (null, undefined, a non-number); the encoding is
+                        // strictly the next argument.
+                        arguments.eat();
+                        let Some(next) = arguments.next() else {
+                            break 'parse;
+                        };
+                        current = next;
                         if current.is_string() {
                             args.encoding = Encoding::assert(current, ctx, args.encoding)?;
                             arguments.eat();
+                            // `bv` was converted to UTF-8 before the encoding
+                            // argument was parsed; re-encode it now.
+                            if args.encoding != Encoding::Utf8 {
+                                if let Some(encoded) =
+                                    StringOrBuffer::from_js_with_encoding(ctx, bv, args.encoding)?
+                                {
+                                    args.buffer = encoded;
+                                }
+                            }
                         }
                     }
                 }
@@ -4713,14 +4728,13 @@ pub mod ret {
                     Ok(array)
                 }
                 Readdir::Buffers(items) => {
-                    // `JSValue.fromAny(_, []Buffer, _)` — generic-slice arm:
-                    // build an empty array, push `item.toJS(globalObject)` for
-                    // each. Ownership of every `Buffer`'s bytes transfers to
-                    // JSC via `MarkedArrayBuffer::to_js`; the boxed slice
+                    // Node returns `Buffer[]` for `{ encoding: "buffer" }`, not
+                    // `Uint8Array[]`. Ownership of every `Buffer`'s bytes
+                    // transfers to JSC via `to_node_buffer`; the boxed slice
                     // itself is freed when `items` drops.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     for (i, item) in items.iter().enumerate() {
-                        let res = item.to_js(global_object)?;
+                        let res = item.to_node_buffer(global_object);
                         if res == JSValue::ZERO {
                             return Ok(JSValue::ZERO);
                         }

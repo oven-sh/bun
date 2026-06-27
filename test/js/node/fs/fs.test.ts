@@ -1179,6 +1179,23 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   }
 });
 
+// Node returns Buffer[] for { encoding: "buffer" }, not Uint8Array[].
+it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
+  using dir = tempDir("readdir-buffer-entries", { "a.txt": "", "b.txt": "" });
+  const summarize = (entries: Buffer[]) =>
+    entries.map(entry => [Buffer.isBuffer(entry), entry.toString("utf8")]).sort((a, b) => (a[1] < b[1] ? -1 : 1));
+  const expected = [
+    [true, "a.txt"],
+    [true, "b.txt"],
+  ];
+  expect(summarize(readdirSync(String(dir), { encoding: "buffer" }))).toEqual(expected);
+  expect(summarize(readdirSync(String(dir), { encoding: "buffer", recursive: true }))).toEqual(expected);
+  expect(summarize(await promises.readdir(String(dir), { encoding: "buffer" }))).toEqual(expected);
+  expect(
+    summarize((await promisify(fs.readdir)(String(dir), { encoding: "buffer" } as const)) as unknown as Buffer[]),
+  ).toEqual(expected);
+});
+
 // The error cleanup path previously called MarkedArrayBuffer.destroy() on
 // structs stored by-value inside the entries ArrayList, which passed interior
 // ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and
@@ -1480,6 +1497,40 @@ describe("writeSync", () => {
       expect(count).toBe(4);
     }
     closeSync(fd);
+  });
+
+  // writeSync(fd, string[, position[, encoding]]): the encoding used to be
+  // parsed but never applied, so utf16le/hex/base64/latin1 all wrote raw UTF-8.
+  it("honors the encoding argument for strings", () => {
+    const dest = join(tmpdirSync(), "writeSync-string-encoding.bin");
+    const cases: [args: unknown[], expected: Buffer][] = [
+      [["abc", 0, "utf16le"], Buffer.from("abc", "utf16le")],
+      // Node consumes the position slot whatever its type; the encoding is
+      // always the following argument.
+      [["abc", null, "ucs2"], Buffer.from("abc", "utf16le")],
+      [["abc", undefined, "utf16le"], Buffer.from("abc", "utf16le")],
+      [["61626364", 0, "hex"], Buffer.from("abcd")],
+      [["aGk=", null, "base64"], Buffer.from("hi")],
+      [["\u00ff", 0, "latin1"], Buffer.from([0xff])],
+      // A lone string in the position slot is not an encoding.
+      [["ab", "utf16le"], Buffer.from("ab")],
+      [["abc", 0], Buffer.from("abc")],
+      [["abc"], Buffer.from("abc")],
+    ];
+    for (const [args, expected] of cases) {
+      const fd = openSync(dest, "w");
+      let written: number;
+      try {
+        written = (writeSync as Function)(fd, ...args);
+      } finally {
+        closeSync(fd);
+      }
+      expect({ args, written, bytes: [...readFileSync(dest)] }).toEqual({
+        args,
+        written: expected.length,
+        bytes: [...expected],
+      });
+    }
   });
 });
 
@@ -3480,6 +3531,36 @@ describe("fs.write", () => {
     });
   });
 
+  // Same bug as the writeSync case: the encoding was parsed but never applied.
+  it("honors a non-utf8 encoding for strings", async () => {
+    const expected = [...Buffer.from("bun", "utf16le")];
+    const dest = join(tmpdirSync(), "fs-write-string-encoding.bin");
+
+    // fs.write(fd, string, position, encoding, callback)
+    {
+      const fd = fs.openSync(dest, "w");
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.write(fd, "bun", null, "utf16le", (err, written) => (err ? reject(err) : resolve(written)));
+      try {
+        expect(await promise).toBe(6);
+      } finally {
+        closeSync(fd);
+      }
+      expect([...readFileSync(dest)]).toEqual(expected);
+    }
+
+    // filehandle.write(string, position, encoding)
+    {
+      const handle = await promises.open(dest, "w");
+      try {
+        expect((await handle.write("bun", 0, "utf16le")).bytesWritten).toBe(6);
+      } finally {
+        await handle.close();
+      }
+      expect([...readFileSync(dest)]).toEqual(expected);
+    }
+  });
+
   it("should work with (fd, string, position, callback)", done => {
     const path = `${tmpdir()}/bun-fs-write-4-${Date.now()}.txt`;
     const fd = fs.openSync(path, "w");
@@ -3906,6 +3987,15 @@ it("open flags verification", async () => {
   expect(() => fs.open(__filename, 4294967298.5, () => {})).toThrow(
     RangeError(`The value of "flags" is out of range. It must be an integer. Received 4294967298.5`),
   );
+});
+
+// Node's stringToFlags throws ERR_INVALID_ARG_VALUE for every unrecognized
+// flag string; Bun threw ERR_INVALID_ARG_TYPE.
+it("an unrecognized flag string throws ERR_INVALID_ARG_VALUE", () => {
+  for (const flag of ["bogus", "", "z", Buffer.alloc(32, "w").toString()]) {
+    expect(() => fs.openSync(__filename, flag)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(() => fs.open(__filename, flag, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+  }
 });
 
 it("open mode verification", async () => {

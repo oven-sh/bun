@@ -988,7 +988,18 @@ describe("explicit dotfile segments match without dot:true", () => {
 // symlinked directories. A segment that names the symlink literally is an
 // explicit path the user wrote; it should resolve regardless, matching
 // fast-glob and bash.
-describe("literal path segment through a symlinked directory", () => {
+const canCreateDirSymlink = (() => {
+  using probe = tempDir("glob-scan-symlink-probe", { "target/x": "" });
+  try {
+    fs.symlinkSync("target", path.join(String(probe), "link"), "dir");
+    return true;
+  } catch (err: any) {
+    if (err.code === "EPERM" || err.code === "EACCES") return false;
+    throw err;
+  }
+})();
+
+describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked directory", () => {
   const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
 
   function makeTree(prefix: string) {
@@ -997,73 +1008,45 @@ describe("literal path segment through a symlinked directory", () => {
       "realdir/nested/deep.txt": "x",
       "plain/file.txt": "x",
     });
-    try {
-      fs.symlinkSync("realdir", path.join(String(dir), "linkdir"), "dir");
-    } catch (err: any) {
-      if (err.code === "EPERM" || err.code === "EACCES") {
-        dir[Symbol.dispose]();
-        return null;
-      }
-      throw err;
-    }
+    fs.symlinkSync("realdir", path.join(String(dir), "linkdir"), "dir");
     return dir;
   }
 
   test("literal segment resolves through a symlink with followSymlinks:false", () => {
-    const dir = makeTree("glob-scan-symlink-literal");
-    if (dir === null) return;
-    try {
-      const cwd = String(dir);
-      const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: false })));
+    using dir = makeTree("glob-scan-symlink-literal");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: false })));
 
-      expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
-      expect(scan("linkdir/*.txt")).toEqual(["linkdir/file.txt"]);
-      expect(scan("linkdir/nested/deep.txt")).toEqual(["linkdir/nested/deep.txt"]);
-      expect(scan("linkdir/**/*.txt")).toEqual(["linkdir/file.txt", "linkdir/nested/deep.txt"]);
-    } finally {
-      dir[Symbol.dispose]();
-    }
+    expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
+    expect(scan("linkdir/*.txt")).toEqual(["linkdir/file.txt"]);
+    expect(scan("linkdir/nested/deep.txt")).toEqual(["linkdir/nested/deep.txt"]);
+    expect(scan("linkdir/**/*.txt")).toEqual(["linkdir/file.txt", "linkdir/nested/deep.txt"]);
   });
 
   test("wildcard segment still respects followSymlinks:false", () => {
-    const dir = makeTree("glob-scan-symlink-wildcard");
-    if (dir === null) return;
-    try {
-      const cwd = String(dir);
-      const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: false })));
+    using dir = makeTree("glob-scan-symlink-wildcard");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: false })));
 
-      expect(scan("*/file.txt")).toEqual(["plain/file.txt", "realdir/file.txt"]);
-      expect(scan("**/file.txt")).toEqual(["plain/file.txt", "realdir/file.txt"]);
-      expect(scan("link*/file.txt")).toEqual([]);
-    } finally {
-      dir[Symbol.dispose]();
-    }
+    expect(scan("*/file.txt")).toEqual(["plain/file.txt", "realdir/file.txt"]);
+    expect(scan("**/file.txt")).toEqual(["plain/file.txt", "realdir/file.txt"]);
+    expect(scan("link*/file.txt")).toEqual([]);
   });
 
   test("followSymlinks:true still traverses via wildcards", () => {
-    const dir = makeTree("glob-scan-symlink-follow");
-    if (dir === null) return;
-    try {
-      const cwd = String(dir);
-      const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: true })));
+    using dir = makeTree("glob-scan-symlink-follow");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: true })));
 
-      expect(scan("*/file.txt")).toEqual(["linkdir/file.txt", "plain/file.txt", "realdir/file.txt"]);
-      expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
-    } finally {
-      dir[Symbol.dispose]();
-    }
+    expect(scan("*/file.txt")).toEqual(["linkdir/file.txt", "plain/file.txt", "realdir/file.txt"]);
+    expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
   });
 
   test("symlink cycles do not loop when reached via a literal segment", () => {
     using dir = tempDir("glob-scan-symlink-cycle", {
       "top/file.txt": "x",
     });
-    try {
-      fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
-    } catch (err: any) {
-      if (err.code === "EPERM" || err.code === "EACCES") return;
-      throw err;
-    }
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
     // `top` is reached literally; the `loop -> .` symlink inside is only ever
     // reached via `**`, which must not follow it with followSymlinks:false.
     const result = norm(Array.from(new Glob("top/**/*.txt").scanSync({ cwd: String(dir), followSymlinks: false })));
@@ -1071,15 +1054,10 @@ describe("literal path segment through a symlinked directory", () => {
   });
 
   test("async scan resolves a literal path through a symlink", async () => {
-    const dir = makeTree("glob-scan-symlink-literal-async");
-    if (dir === null) return;
-    try {
-      const result = await Array.fromAsync(
-        new Glob("linkdir/file.txt").scan({ cwd: String(dir), followSymlinks: false }),
-      );
-      expect(norm(result)).toEqual(["linkdir/file.txt"]);
-    } finally {
-      dir[Symbol.dispose]();
-    }
+    using dir = makeTree("glob-scan-symlink-literal-async");
+    const result = await Array.fromAsync(
+      new Glob("linkdir/file.txt").scan({ cwd: String(dir), followSymlinks: false }),
+    );
+    expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
 });

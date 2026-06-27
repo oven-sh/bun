@@ -175,9 +175,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
             }
         }
     } else if (produceCachedData) {
+        // cacheBytecode records whether production actually succeeded; it fails
+        // for source that does not parse as a program.
         script->cacheBytecode();
-        // TODO(@heimskr): is there ever a case where bytecode production fails?
-        script->cachedDataProduced(true);
     }
 
     return JSValue::encode(script);

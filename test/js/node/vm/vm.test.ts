@@ -828,10 +828,12 @@ test("rejects corrupted cachedData instead of crashing", async () => {
 
 test("cachedData getter when bytecode production fails", async () => {
   // `export` does not parse as a vm.Script program, so produceCachedData has
-  // nothing to produce; the getter must return undefined instead of crashing.
+  // nothing to produce; cachedDataProduced must report false and the cachedData
+  // getter must return undefined instead of crashing.
   const code = /* js */ `
     const vm = require("node:vm");
     const script = new vm.Script("export default {};", { produceCachedData: true });
+    console.log(script.cachedDataProduced);
     console.log(script.cachedData === undefined);
   `;
 
@@ -843,7 +845,7 @@ test("cachedData getter when bytecode production fails", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "true\n",
+    stdout: "false\ntrue\n",
     stderr: "",
     exitCode: 0,
     signalCode: null,

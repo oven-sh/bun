@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.Cookie and Bun.CookieMap", () => {
   // Basic Cookie tests
@@ -347,6 +348,80 @@ describe("iterator", () => {
     a=b
     c=d"
   `);
+  });
+});
+
+describe("CookieMap percent-decoding with non-ASCII values", () => {
+  test("percent-decoding one value does not affect a sibling non-ASCII value", () => {
+    // Each value is decoded independently: the presence of a '%' in one
+    // cookie's value must not change how another cookie's value is parsed.
+    const map = new Bun.CookieMap("a=é; z=%41");
+    expect([...map]).toEqual([
+      ["a", "é"],
+      ["z", "A"],
+    ]);
+  });
+
+  test("reversing the order does not change results", () => {
+    const map = new Bun.CookieMap("z=%41; a=é");
+    expect([...map]).toEqual([
+      ["z", "A"],
+      ["a", "é"],
+    ]);
+  });
+
+  test("non-ASCII value with no percent escapes is preserved exactly", () => {
+    const map = new Bun.CookieMap("name=读写汉字学中文; plain=hello");
+    expect(map.get("name")).toBe("读写汉字学中文");
+    expect(map.get("plain")).toBe("hello");
+  });
+
+  test("non-ASCII value alongside a percent-encoded sibling is preserved exactly", () => {
+    const map = new Bun.CookieMap("name=读写汉字学中文; token=abc%3Ddef");
+    expect([...map]).toEqual([
+      ["name", "读写汉字学中文"],
+      ["token", "abc=def"],
+    ]);
+  });
+
+  test("a single value containing both non-ASCII characters and percent escapes decodes correctly", () => {
+    const map = new Bun.CookieMap("greeting=café%20au%20lait");
+    expect(map.get("greeting")).toBe("café au lait");
+  });
+
+  test("astral-plane characters are preserved when another cookie has percent escapes", () => {
+    const map = new Bun.CookieMap("emoji=🍪; other=%20");
+    expect([...map]).toEqual([
+      ["emoji", "🍪"],
+      ["other", " "],
+    ]);
+  });
+
+  test("a single value containing both astral-plane characters and percent escapes decodes correctly", () => {
+    const map = new Bun.CookieMap("mix=🍪%20cookie");
+    expect(map.get("mix")).toBe("🍪 cookie");
+  });
+
+  test("percent-encoded UTF-8 still decodes via the fast path when the value is ASCII", () => {
+    const map = new Bun.CookieMap("k=%C3%A9");
+    expect(map.get("k")).toBe("é");
+  });
+
+  test("parsing a Cookie header with non-ASCII and percent escapes does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = new Bun.CookieMap("a=é; z=%41");` +
+          `process.stdout.write(JSON.stringify([m.get("a"), m.get("z")]));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe('["é","A"]');
+    expect(exitCode).toBe(0);
   });
 });
 

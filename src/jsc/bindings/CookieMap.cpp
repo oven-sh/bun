@@ -8,8 +8,32 @@
 #include "HTTPParsers.h"
 #include "decodeURIComponentSIMD.h"
 #include "BunString.h"
+#include <wtf/ASCIICType.h>
 #include <wtf/HashSet.h>
 namespace WebCore {
+
+// decodeURIComponentSIMD requires ASCII input. For values that mix non-ASCII
+// characters with percent escapes, decode over the UTF-8 representation so
+// the original characters round-trip instead of being treated as Latin-1.
+static String percentDecodeUTF8CookieValue(StringView value)
+{
+    Bun::UTF8View utf8View(value);
+    auto bytes = utf8View.bytes();
+    Vector<uint8_t, 256> decoded;
+    decoded.reserveInitialCapacity(bytes.size());
+    size_t i = 0;
+    while (i < bytes.size()) {
+        uint8_t byte = bytes[i];
+        if (byte == '%' && i + 2 < bytes.size() && isASCIIHexDigit(bytes[i + 1]) && isASCIIHexDigit(bytes[i + 2])) {
+            decoded.append(static_cast<uint8_t>((toASCIIHexValue(bytes[i + 1]) << 4) | toASCIIHexValue(bytes[i + 2])));
+            i += 3;
+        } else {
+            decoded.append(byte);
+            i += 1;
+        }
+    }
+    return String::fromUTF8ReplacingInvalidSequences(decoded.span());
+}
 
 template<typename Res>
 static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, Res* res)
@@ -95,7 +119,6 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
             auto pairs = forCookieHeader.split(';');
             Vector<KeyValuePair<String, String>> cookies;
 
-            bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
             for (auto pair : pairs) {
                 String name = ""_s;
                 String value = ""_s;
@@ -114,11 +137,17 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
 
                 name = nameView.toString();
 
-                if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(valueView);
-                    value = Bun::decodeURIComponentSIMD(utf8View.bytes());
-                } else {
+                if (valueView.find('%') == notFound) {
                     value = valueView.toString();
+                } else if (valueView.containsOnlyASCII()) {
+                    if (valueView.is8Bit()) {
+                        value = Bun::decodeURIComponentSIMD(valueView.span8());
+                    } else {
+                        Bun::UTF8View utf8View(valueView);
+                        value = Bun::decodeURIComponentSIMD(utf8View.bytes());
+                    }
+                } else {
+                    value = percentDecodeUTF8CookieValue(valueView);
                 }
 
                 cookies.append(KeyValuePair<String, String>(name, value));

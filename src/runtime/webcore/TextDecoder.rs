@@ -422,13 +422,14 @@ impl TextDecoder {
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
                 let big_endian = matches!(enc, EncodingLabel::Utf16Be);
 
-                // When the stream's BOM is whole at the start of this chunk,
-                // strip it from the INPUT: dropping it from the decoded output
-                // below would be an O(n) `Vec::remove(0)`.
+                // When the stream's BOM is whole at the start of this chunk, strip
+                // it from the INPUT (avoids the O(n) `Vec::remove(0)` below). A
+                // carried lead byte or surrogate means these are not its first bytes.
                 let bom: &[u8; 2] = if big_endian { b"\xfe\xff" } else { b"\xff\xfe" };
                 let pre_stripped = !self.ignore_bom
                     && !self.bom_seen.get()
                     && self.lead_byte.get().is_none()
+                    && self.lead_surrogate.get().is_none()
                     && buffer_slice.starts_with(bom);
                 let input = if pre_stripped {
                     &buffer_slice[2..]

@@ -467,6 +467,7 @@ impl WriteFile {
         if let Some(mode) = self.mode {
             if self.is_allowed_to_close() {
                 if let bun_sys::Result::Err(err) = bun_sys::fchmod(fd, mode) {
+                    let err = err.with_path(self.pathlike().path().slice());
                     self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
                     self.system_error = Some(err.to_system_error().into());
                     self.on_finish();
@@ -960,8 +961,8 @@ mod windows_impl {
                 {
                     // SAFETY: `this` is live; `throw` consumes it.
                     match unsafe { Self::throw(this, err) } {
-                        WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
-                        WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
+                        WriteFileWindowsError::WriteFileWindowsDeinitialized
+                        | WriteFileWindowsError::JSTerminated => {}
                     }
                     return;
                 }

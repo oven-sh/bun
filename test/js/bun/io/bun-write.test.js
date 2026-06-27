@@ -653,6 +653,15 @@ describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
     expect(modeOf(dest)).toBe(0o000);
   });
 
+  // 0o646's group/other write bits are cleared by a typical umask, so only a
+  // post-open chmod can produce it. This is the path createPath recovery uses.
+  test("mode is not masked by the umask when the parent directory is created", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "sub", "out.txt");
+    await Bun.write(dest, new Blob([]), { mode: 0o646 });
+    expect(modeOf(dest)).toBe(0o646);
+  });
+
   test("omitted mode leaves default permissions", async () => {
     using dir = tempDir("bun-write-mode", {});
     const dest = join(String(dir), "out.txt");
@@ -660,5 +669,13 @@ describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
     await Bun.write(baseline, "x");
     await Bun.write(dest, "hello");
     expect(modeOf(dest)).toBe(modeOf(baseline));
+  });
+
+  test("omitted mode leaves an existing file's permissions alone", async () => {
+    using dir = tempDir("bun-write-mode", { "out.txt": "old" });
+    const dest = join(String(dir), "out.txt");
+    fs.chmodSync(dest, 0o751);
+    await Bun.write(dest, "hello");
+    expect(modeOf(dest)).toBe(0o751);
   });
 });

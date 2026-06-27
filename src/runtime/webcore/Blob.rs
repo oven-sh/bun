@@ -4595,6 +4595,16 @@ fn write_file_with_empty_source_to_destination(
                                         break 'err;
                                     }
                                     bun_sys::Result::Ok(f) => {
+                                        // open()'s mode is masked by the umask; fchmod so an
+                                        // explicit `mode` is authoritative here too.
+                                        if let Some(m) = options.mode {
+                                            if let bun_sys::Result::Err(e) =
+                                                bun_sys::fchmod(f.fd(), m)
+                                            {
+                                                *err = e;
+                                                break 'err;
+                                            }
+                                        }
                                         let _ = f.close(); // close error is non-actionable
                                         return Ok(JSPromise::resolved_promise_value(
                                             ctx,

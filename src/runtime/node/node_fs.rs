@@ -4166,9 +4166,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| {
-                            ctx.throw_invalid_arguments(format_args!("Invalid flag"))
-                        })?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
@@ -4268,9 +4266,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| {
-                            ctx.throw_invalid_arguments(format_args!("Invalid flag"))
-                        })?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);

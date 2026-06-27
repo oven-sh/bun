@@ -56,7 +56,7 @@ import fs, {
 } from "node:fs";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
-import { promisify } from "node:util";
+import { inspect, promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
 
@@ -1717,6 +1717,152 @@ describe("open with a numeric flag boxed as a double", () => {
     using dir = tempDir("fs-flags-double-reject", {});
     const file = join(String(dir), "bad.txt");
     expect(() => openSync(file, asDouble(578.5), 0o666)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  });
+});
+
+describe("open flag string validation matches node", () => {
+  // Node's stringToFlags is a case-sensitive exhaustive switch; anything not
+  // in the table (including uppercase spellings like "W" or numeric strings
+  // like "577") throws ERR_INVALID_ARG_VALUE.
+  const validFlags = [
+    "r",
+    "rs",
+    "sr",
+    "r+",
+    "rs+",
+    "sr+",
+    "w",
+    "wx",
+    "xw",
+    "w+",
+    "wx+",
+    "xw+",
+    "a",
+    "ax",
+    "xa",
+    "as",
+    "sa",
+    "a+",
+    "ax+",
+    "xa+",
+    "as+",
+    "sa+",
+  ];
+  const invalidFlags = [
+    "W",
+    "R",
+    "A",
+    "A+",
+    "R+",
+    "W+",
+    "RS",
+    "Rs",
+    "AS+",
+    "0",
+    "1",
+    "577",
+    "0o644",
+    // Previously the Rust port parsed any leading-digit flag string into an
+    // integer, so values at and past these width boundaries reached open(2).
+    "65535",
+    "65536",
+    "2147483647",
+    "2147483648",
+    "4294967295",
+    "4294967296",
+    "xyz",
+    "",
+    true,
+  ];
+
+  it.each(invalidFlags)("openSync rejects flag %p with ERR_INVALID_ARG_VALUE", flag => {
+    using dir = tempDir("fs-flags-invalid", {});
+    const file = join(String(dir), "f.txt");
+    let err: any;
+    try {
+      // @ts-expect-error intentionally passing bad flag types
+      const fd = openSync(file, flag);
+      closeSync(fd);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    // Node renders the received value with util.inspect.
+    expect(err.message).toBe(`The argument 'flags' is invalid. Received ${inspect(flag)}`);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it.each(validFlags)("openSync accepts flag %p", flag => {
+    // O_EXCL ('x' in the flag string) fails on an existing file, while the
+    // read-only flags need an existing file. Pick the target accordingly.
+    using dir = tempDir("fs-flags-valid", { "existing.txt": "x" });
+    const file = join(String(dir), flag.includes("x") ? "new.txt" : "existing.txt");
+    const fd = openSync(file, flag);
+    closeSync(fd);
+  });
+
+  it("callback open and promises.open reject uppercase flags", async () => {
+    using dir = tempDir("fs-flags-invalid-async", {});
+    const file = join(String(dir), "f.txt");
+    // fs.open validates flags synchronously, matching Node.
+    expect(() => fs.open(file, "W", () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    await expect(promises.open(file, "W")).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("readFileSync and writeFileSync reject uppercase flag option", () => {
+    using dir = tempDir("fs-flags-invalid-rw", { "f.txt": "x" });
+    const file = join(String(dir), "f.txt");
+    expect(() => readFileSync(file, { flag: "R" })).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(() => writeFileSync(file, "y", { flag: "W" })).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+  });
+
+  it("rejects a String wrapper object even when it boxes a valid flag", () => {
+    // Node's stringToFlags is a strict-equality switch, so only a primitive
+    // string can match; `new String("w")` is an object and must throw.
+    using dir = tempDir("fs-flags-string-object", {});
+    expect(() => readFileSync(join(String(dir), "f.txt"), { flag: new String("w") as any })).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_VALUE",
+    );
+  });
+});
+
+describe("open/mkdir mode string validation matches node", () => {
+  const invalidModes = ["0o755", "+755", "7_5_5", "888", "7a5", ""];
+
+  it.each(invalidModes)("openSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {
+    using dir = tempDir("fs-mode-invalid", {});
+    const file = join(String(dir), "f.txt");
+    expect(() => openSync(file, "w", mode)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it.each(["755", "0755", "0644", "0"])("openSync accepts octal mode string %p", mode => {
+    using dir = tempDir("fs-mode-valid", {});
+    const file = join(String(dir), "f.txt");
+    const fd = openSync(file, "w", mode);
+    closeSync(fd);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it.each(invalidModes)("mkdirSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {
+    using dir = tempDir("fs-mode-invalid-mkdir", {});
+    expect(() => mkdirSync(join(String(dir), "sub"), { mode })).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+  });
+
+  it("rejects a String wrapper object as a mode", () => {
+    // Node's parseFileMode only octal-parses `typeof value === 'string'`, so a
+    // boxed String falls through to the number validator (ERR_INVALID_ARG_TYPE).
+    using dir = tempDir("fs-mode-string-object", {});
+    expect(() => openSync(join(String(dir), "f.txt"), "w", new String("755") as any)).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
   });
 });
 

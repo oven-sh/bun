@@ -2768,6 +2768,12 @@ impl ExpectMatcherContext {
         JSValue::FALSE
     }
 
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_custom_testers(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        // TODO: populate from expect.addEqualityTesters once supported
+        JSValue::create_empty_array(global_this, 0)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn equals(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
@@ -2857,6 +2863,56 @@ impl ExpectMatcherUtils {
         let arguments = arguments.slice();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, Some("<red>")))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn diff(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<2>();
+        let args = arguments.slice();
+        let a = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
+        let b = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
+        let formatter = DiffFormatter {
+            received_string: None,
+            expected_string: None,
+            received: Some(b),
+            expected: Some(a),
+            global_this: Some(global_this),
+            not: false,
+        };
+        let buf = format!("{}", formatter);
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn iterable_equality(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<2>();
+        let args = arguments.slice();
+        let a = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
+        let b = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
+        if !a.is_cell() || !a.js_type().is_object() || a.is_array()
+            || !b.is_cell() || !b.js_type().is_object() || b.is_array()
+            || !a.is_iterable(global_this)? || !b.is_iterable(global_this)?
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        Ok(JSValue::from(a.jest_deep_equals(b, global_this)?))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn subset_equality(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<2>();
+        let args = arguments.slice();
+        let object = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
+        let subset = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
+        if !subset.is_cell() || !subset.js_type().is_object()
+            || subset.is_array() || subset.is_error() || subset.is_date()
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        if !object.is_cell() || !object.js_type().is_object() {
+            return Ok(JSValue::FALSE);
+        }
+        Ok(JSValue::from(object.jest_deep_match(subset, global_this, false)?))
     }
 
     #[bun_jsc::host_fn(method)]

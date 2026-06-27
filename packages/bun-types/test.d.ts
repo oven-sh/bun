@@ -1958,7 +1958,7 @@ declare module "bun:test" {
   type MatcherHintColor = (arg: string) => string; // subset of Chalk type
 
   interface MatcherUtils {
-    //customTesters: Array<Tester>;
+    customTesters: Array<Tester>;
     //dontThrow(): void; // (internally used by jest snapshot)
     equals: EqualsFunction;
     utils: Readonly<{
@@ -1980,8 +1980,9 @@ declare module "bun:test" {
           secondArgumentColor?: MatcherHintColor;
         },
       ): string;
-      //iterableEquality: Tester;
-      //subsetEquality: Tester;
+      diff(a: unknown, b: unknown, options?: unknown): string | null;
+      iterableEquality: Tester;
+      subsetEquality: Tester;
       // ...
     }>;
   }

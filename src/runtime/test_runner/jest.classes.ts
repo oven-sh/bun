@@ -123,6 +123,9 @@ export default [
       expand: {
         getter: "getExpand",
       },
+      customTesters: {
+        getter: "getCustomTesters",
+      },
       equals: {
         fn: "equals",
         length: 3,
@@ -162,6 +165,18 @@ export default [
       matcherHint: {
         fn: "matcherHint",
         length: 1,
+      },
+      diff: {
+        fn: "diff",
+        length: 2,
+      },
+      iterableEquality: {
+        fn: "iterableEquality",
+        length: 2,
+      },
+      subsetEquality: {
+        fn: "subsetEquality",
+        length: 2,
       },
     },
   }),

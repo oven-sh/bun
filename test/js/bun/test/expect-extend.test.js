@@ -95,14 +95,10 @@ it("is available globally when matcher is variadic", () => {
 it("exposes matcherUtils in context", () => {
   expect.extend({
     _shouldNotError(_actual) {
-      const pass = "equals" in this;
-      //const pass = this.equals(
-      //  this.utils,
-      //  Object.assign(matcherUtils, {
-      //    iterableEquality,
-      //    subsetEquality,
-      //  }),
-      //);
+      const pass =
+        typeof this.equals === "function" &&
+        typeof this.utils.iterableEquality === "function" &&
+        typeof this.utils.subsetEquality === "function";
       const message = pass
         ? () => "expected this.utils to be defined in an extend call"
         : () => "expected this.utils not to be defined in an extend call";
@@ -112,6 +108,50 @@ it("exposes matcherUtils in context", () => {
   });
 
   expect("test")._shouldNotError();
+});
+
+it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with jest semantics", () => {
+  /** @type {any} */
+  let captured;
+  expect.extend({
+    _captureMatcherContext() {
+      captured = {
+        customTesters: this.customTesters,
+        diff: this.utils.diff,
+        iterableEquality: this.utils.iterableEquality,
+        subsetEquality: this.utils.subsetEquality,
+        diffOutput: this.utils.diff({ a: 1 }, { a: 2 }),
+        iterEqSets: this.utils.iterableEquality(new Set([1, 2]), new Set([2, 1])),
+        iterEqSetsNe: this.utils.iterableEquality(new Set([1]), new Set([2])),
+        iterEqArrays: this.utils.iterableEquality([1], [1]),
+        iterEqNonIter: this.utils.iterableEquality({}, {}),
+        subsetEqMatch: this.utils.subsetEquality({ a: 1, b: 2 }, { a: 1 }),
+        subsetEqMiss: this.utils.subsetEquality({ a: 1 }, { b: 2 }),
+        subsetEqArray: this.utils.subsetEquality({ a: 1 }, [1]),
+        subsetEqPrimitive: this.utils.subsetEquality(1, 1),
+      };
+      return { pass: true, message: () => "" };
+    },
+  });
+  expect(null)._captureMatcherContext();
+
+  expect(Array.isArray(captured.customTesters)).toBe(true);
+  expect(typeof captured.diff).toBe("function");
+  expect(typeof captured.iterableEquality).toBe("function");
+  expect(typeof captured.subsetEquality).toBe("function");
+
+  expect(typeof captured.diffOutput).toBe("string");
+  expect(captured.diffOutput.length).toBeGreaterThan(0);
+
+  expect(captured.iterEqSets).toBe(true);
+  expect(captured.iterEqSetsNe).toBe(false);
+  expect(captured.iterEqArrays).toBe(undefined);
+  expect(captured.iterEqNonIter).toBe(undefined);
+
+  expect(captured.subsetEqMatch).toBe(true);
+  expect(captured.subsetEqMiss).toBe(false);
+  expect(captured.subsetEqArray).toBe(undefined);
+  expect(captured.subsetEqPrimitive).toBe(undefined);
 });
 
 it("is ok if there is no message specified", () => {

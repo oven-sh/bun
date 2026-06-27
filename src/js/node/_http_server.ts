@@ -1414,21 +1414,22 @@ function _writeHead(statusCode, reason, obj, response) {
   // message will be terminated by the first empty line after the
   // header fields, regardless of the header fields present in the
   // message, and thus cannot contain a message body or 'trailers'.
-  // Mirrors the framing decision in Node.js's _storeHeader(): the response
-  // is chunked unless a Content-Length is present, the response carries no
-  // body (204/304/1xx/HEAD), chunked encoding is not the default, or the
-  // user removed Transfer-Encoding.
+  // Mirrors the framing decision in Node.js's _storeHeader(): a no-body
+  // response (204/304/1xx/HEAD) is never chunk-framed regardless of the
+  // Transfer-Encoding header; otherwise the response is chunked unless a
+  // Content-Length is present, chunked encoding is not the default
+  // (HTTP/1.0), or the user removed Transfer-Encoding.
   if (response._trailer || response.hasHeader("trailer")) {
     const hasContentLength = response.hasHeader("content-length");
     const te = response.getHeader("transfer-encoding");
     const willBeChunked =
-      response.chunkedEncoding === true ||
-      (te !== undefined && chunkExpression.test(te)) ||
-      (te === undefined &&
-        !hasContentLength &&
-        response._hasBody &&
-        response.useChunkedEncodingByDefault &&
-        !response._removedTE);
+      response._hasBody &&
+      (response.chunkedEncoding === true ||
+        (te !== undefined && chunkExpression.test(te)) ||
+        (te === undefined &&
+          !hasContentLength &&
+          response.useChunkedEncodingByDefault &&
+          !response._removedTE));
     if (!willBeChunked) {
       if (hasContentLength) {
         response.removeHeader("trailer");
@@ -1578,10 +1579,14 @@ function renderNativeHeaders(res) {
     } else if (res._removedTE) {
       closeDelimited = true;
       res[kMustCloseConnection] = true;
-    } else if (res._removedContLen || res._trailer || res[kOutHeaders]?.["trailer"] !== undefined) {
+    } else if (
+      res._removedContLen ||
+      ((res._trailer || res[kOutHeaders]?.["trailer"] !== undefined) && res.useChunkedEncodingByDefault)
+    ) {
       // Node's _storeHeader: a Trailer header (`state.trailer`) suppresses the
       // auto Content-Length and selects chunked framing so the trailer can be
-      // emitted after the terminating chunk.
+      // emitted after the terminating chunk. Never chunk-frame an HTTP/1.0
+      // response (uWS refuses to, so advertising it would corrupt the body).
       forceChunked = true;
     }
   }

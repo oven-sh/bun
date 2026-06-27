@@ -3751,13 +3751,13 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
 });
 
 describe("ServerResponse trailers", () => {
-  async function rawGet(port: number): Promise<string> {
+  async function rawGet(port: number, httpVersion: "1.0" | "1.1" = "1.1"): Promise<string> {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     let wire = "";
     const socket = connect(port, "127.0.0.1");
     socket.on("error", reject);
     socket.on("connect", () => {
-      socket.write("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+      socket.write(`GET / HTTP/${httpVersion}\r\nHost: a\r\nConnection: close\r\n\r\n`);
     });
     socket.on("data", d => {
       wire += d.toString("latin1");
@@ -3821,6 +3821,31 @@ describe("ServerResponse trailers", () => {
     }
   });
 
+  it("addTrailers before writeHead() with no body does not throw", async () => {
+    // https://github.com/oven-sh/bun/issues/26171
+    let serverError: unknown;
+    const server = createServer((req, res) => {
+      req.resume();
+      try {
+        res.addTrailers({ "Content-MD5": "7895bf4b8828b55ceaf47747b4bca667" });
+        res.writeHead(200);
+        res.end();
+      } catch (e) {
+        serverError = e;
+        res.destroy();
+      }
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const wire = await rawGet((server.address() as AddressInfo).port);
+      expect(serverError).toBeUndefined();
+      expect(wire).toContain("Transfer-Encoding: chunked\r\n");
+      expect(wire).toContain("\r\n0\r\nContent-MD5: 7895bf4b8828b55ceaf47747b4bca667\r\n\r\n");
+    } finally {
+      server.close();
+    }
+  });
+
   it("writeHead with Trailer and Content-Length throws ERR_HTTP_TRAILER_INVALID", async () => {
     let thrown: unknown;
     const server = createServer((req, res) => {
@@ -3837,6 +3862,74 @@ describe("ServerResponse trailers", () => {
     try {
       await rawGet((server.address() as AddressInfo).port);
       expect((thrown as NodeJS.ErrnoException)?.code).toBe("ERR_HTTP_TRAILER_INVALID");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("writeHead with Trailer on a 204 throws even with an explicit Transfer-Encoding: chunked", async () => {
+    // A no-body status (204/304/1xx) is never chunk-framed and can never emit
+    // a terminating chunk, so a Trailer header is invalid even when the user
+    // also set Transfer-Encoding: chunked.
+    let thrown: unknown;
+    const server = createServer((req, res) => {
+      req.resume();
+      try {
+        res.writeHead(204, { "Trailer": "x-t", "Transfer-Encoding": "chunked" });
+      } catch (e) {
+        thrown = e;
+      }
+      res.removeHeader("Trailer");
+      res.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      await rawGet((server.address() as AddressInfo).port);
+      expect((thrown as NodeJS.ErrnoException)?.code).toBe("ERR_HTTP_TRAILER_INVALID");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("writeHead with Trailer on an HTTP/1.0 request throws ERR_HTTP_TRAILER_INVALID", async () => {
+    // HTTP/1.0 responses are never chunk-framed (useChunkedEncodingByDefault
+    // is false), so trailers cannot be emitted.
+    let thrown: unknown;
+    const server = createServer((req, res) => {
+      req.resume();
+      try {
+        res.writeHead(200, { Trailer: "x-t" });
+      } catch (e) {
+        thrown = e;
+      }
+      res.removeHeader("Trailer");
+      res.end("body");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      await rawGet((server.address() as AddressInfo).port, "1.0");
+      expect((thrown as NodeJS.ErrnoException)?.code).toBe("ERR_HTTP_TRAILER_INVALID");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a Trailer header on an HTTP/1.0 response never advertises chunked framing", async () => {
+    // The implicit-header path (setHeader + end, no writeHead) must not force
+    // chunked framing for an HTTP/1.0 response: uWS refuses to chunk-frame
+    // ancient requests, so advertising Transfer-Encoding: chunked while the
+    // body is written raw would produce an unparseable response.
+    const server = createServer((req, res) => {
+      req.resume();
+      res.setHeader("Trailer", "x-t");
+      res.end("body");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const wire = await rawGet((server.address() as AddressInfo).port, "1.0");
+      expect(wire).not.toContain("Transfer-Encoding:");
+      expect(wire).toContain("Content-Length: 4\r\n");
+      expect(wire.endsWith("\r\n\r\nbody")).toBe(true);
     } finally {
       server.close();
     }

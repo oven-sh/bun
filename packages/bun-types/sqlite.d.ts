@@ -659,10 +659,10 @@ declare module "bun:sqlite" {
      * Execute the prepared statement and return an iterator over the results.
      *
      * While the iterator is running, the statement's cursor belongs to it: calling
-     * `get`, `all`, `values`, `raw`, `run`, or `iterate` on the same `Statement`
-     * throws `TypeError: This statement is busy executing a query`. Exhaust the
-     * iterator or break out of the loop first, or prepare a second statement with
-     * {@link Database.prototype.prepare}.
+     * `get`, `all`, `values`, `raw`, `run`, or `iterate` on the same `Statement`, or
+     * reading `columnTypes`, throws `TypeError: This statement is busy executing a
+     * query`. Exhaust the iterator or break out of the loop first, or prepare a
+     * second statement with {@link Database.prepare}.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
      */
@@ -823,6 +823,7 @@ declare module "bun:sqlite" {
      * ```
      *
      * @throws Error if statement is not read-only (INSERT, UPDATE, DELETE, etc.)
+     * @throws TypeError if an iterator returned by {@link iterate} on this statement is still running
      * @since Bun v1.2.13
      */
     readonly columnTypes: Array<"INTEGER" | "FLOAT" | "TEXT" | "BLOB" | "NULL" | null>;

@@ -910,17 +910,20 @@ pub(crate) fn edit(
     // A `bun update <name>` for a package defined only in a `catalog`/
     // `catalogs` map updates the catalog entry instead of synthesizing a root
     // dependency; record it in `updating_packages` so the install re-resolves it.
+    // Detection runs only before install: a request matched in a root dependency
+    // group (`e_string` set, or the `replacing` branch which keys on
+    // `package_id`) is handled there and must not be reclassified as a catalog
+    // update on the post-install pass. The `is_catalog` flag persists across both.
     if manager.subcommand == Subcommand::Update {
         for request in updates.iter_mut() {
-            if request.e_string.is_some() {
-                continue;
-            }
-            if !request.is_catalog {
+            if options.before_install
+                && !request.is_catalog
+                && request.e_string.is_none()
+                && request.package_id == INVALID_PACKAGE_ID
+            {
                 let name = request.get_name();
                 if let Some(catalog_name) = find_package_catalog(current_package_json, name) {
-                    if options.before_install {
-                        manager.updating_packages.get_or_put(name)?;
-                    }
+                    manager.updating_packages.get_or_put(name)?;
                     request.is_catalog = true;
                     request.catalog_name = catalog_name;
                 }

@@ -641,6 +641,56 @@ it("update <name> leaves an npm: aliased catalog entry untouched, issue#32808", 
   expect(root.catalogs).toEqual({ ai: { "my-baz": "npm:baz@~0.0.3" } });
 });
 
+it("update <name> updates the root dependency when a package is in both a dep group and a catalog, issue#32808", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.3": { bin: { "baz-run": "index.js" } },
+      "0.0.5": { bin: { "baz-exec": "index.js" } },
+      latest: "0.0.5",
+    }),
+  );
+
+  // `baz` is a direct root dependency AND defined in a catalog. The direct
+  // dependency takes precedence; the catalog entry is left alone.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { baz: "~0.0.3" },
+      catalogs: { ai: { baz: "~0.0.3" } },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "server"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "server", "package.json"),
+    JSON.stringify({ name: "server", dependencies: { baz: "catalog:ai" } }),
+  );
+
+  const install = spawn({ cmd: [bunExe(), "install"], cwd: package_dir, stdout: "ignore", stderr: "pipe", env });
+  const [installErr, installCode] = await Promise.all([new Response(install.stderr).text(), install.exited]);
+  expect(installErr).not.toContain("error:");
+  expect(installCode).toBe(0);
+
+  const proc = spawn({
+    cmd: [bunExe(), "update", "baz"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(code).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  // The root dependency is bumped (not left stale); the catalog entry is untouched.
+  expect(root.dependencies).toEqual({ baz: "~0.0.5" });
+  expect(root.catalogs).toEqual({ ai: { baz: "~0.0.3" } });
+});
+
 it("should support --recursive flag", async () => {
   // First verify the flag appears in help
   const {

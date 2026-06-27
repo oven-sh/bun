@@ -190,6 +190,55 @@ for (const { name, connect } of tests) {
     });
     const COMMON_CERT = { ...COMMON_CERT_ };
 
+    it("surfaces the fatal TLS alert when ALPN has no overlap", async () => {
+      // The server only speaks h2 and the client only offers xyz, so the
+      // server rejects the handshake with a fatal no_application_protocol
+      // alert. No TLS session (and no peer certificate) ever exists: the
+      // error must carry the OpenSSL alert, not a certificate-verification
+      // code, and checkServerIdentity must never run.
+      await using server = tls.createServer({
+        key: COMMON_CERT.key,
+        cert: COMMON_CERT.cert,
+        ALPNProtocols: ["h2"],
+      });
+      server.on("tlsClientError", () => {});
+      server.on("secureConnection", s => {
+        s.on("error", () => {});
+        s.end();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      let checkServerIdentityCalled = false;
+      const result = await new Promise<{ kind: string; code?: string; library?: string }>(resolve => {
+        const socket = connect({
+          host: "127.0.0.1",
+          port,
+          servername: "localhost",
+          ca: COMMON_CERT.cert,
+          ALPNProtocols: ["xyz"],
+          checkServerIdentity(hostname, cert) {
+            checkServerIdentityCalled = true;
+            return tls.checkServerIdentity(hostname, cert);
+          },
+        });
+        socket.on("secureConnect", () => {
+          resolve({ kind: "secureConnect" });
+          socket.destroy();
+        });
+        socket.on("error", (err: NodeJS.ErrnoException & { library?: string }) => {
+          resolve({ kind: "error", code: err.code, library: err.library });
+        });
+      });
+
+      expect({ ...result, checkServerIdentityCalled }).toEqual({
+        kind: "error",
+        code: "ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL",
+        library: "SSL routines",
+        checkServerIdentityCalled: false,
+      });
+    });
+
     it("Bun.serve() should work with tls and Bun.file()", async () => {
       using server = Bun.serve({
         port: 0,

@@ -1047,6 +1047,29 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    unsafe { auto_tick_active_impl(vm, true) }
+}
+
+/// One non-blocking loop turn (immediates, zero-timeout poll, due timers) run
+/// once, right after the entry point finishes. Node starts its loop there, so
+/// immediates the main script queued must run before the startup GC, which can
+/// last long enough for freshly completed async work to be delivered first.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+pub(crate) unsafe fn auto_tick_startup(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    unsafe { auto_tick_active_impl(vm, false) }
+}
+
+/// Body of [`auto_tick_active`]: `allow_idle` gates whether the I/O poll may
+/// block on the next timer deadline (`tickWithTimeout`) or must return
+/// immediately (`tickWithoutIdle`).
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn auto_tick_active_impl(vm: *mut VirtualMachine, allow_idle: bool) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
@@ -1108,7 +1131,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         };
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
+        if allow_idle && unsafe { (*loop_).is_active() } {
             // Before `get_timeout` — see the matching call in `auto_tick`.
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).drain_pending_gc_hint() };

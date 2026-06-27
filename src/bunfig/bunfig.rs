@@ -1064,20 +1064,21 @@ impl<'a> Parser<'a> {
                     .e_array()
                     .expect("infallible: variant checked");
                 let items = array.items.slice();
-                // Append to any existing conditions (e.g. from a previously
-                // loaded global bunfig) so multiple configs stack rather than
-                // clobber.
-                let mut combined: Vec<Box<[u8]>> =
-                    Vec::with_capacity(self.ctx.args.conditions.len() + items.len());
-                combined.extend(self.ctx.args.conditions.drain(..));
+                // Validate all entries into a local vec first, then append to
+                // any existing conditions so configs stack rather than clobber.
+                // Building first keeps ctx.args.conditions intact if a later
+                // entry is invalid (a bad element must not wipe CLI conditions
+                // already set, especially on the `bun run` deferred-load path
+                // where the parse error is swallowed).
+                let mut parsed: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                 for item in items {
                     self.expect_string(item)?;
                     let ExprData::EString(s) = &item.data else {
                         unreachable!("expect_string returned Ok for non-EString")
                     };
-                    combined.push(estring_to_owned(s, self.bump));
+                    parsed.push(estring_to_owned(s, self.bump));
                 }
-                self.ctx.args.conditions = combined;
+                self.ctx.args.conditions.extend(parsed);
             }
         }
 

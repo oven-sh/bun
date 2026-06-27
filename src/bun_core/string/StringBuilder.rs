@@ -44,14 +44,14 @@ impl StringBuilder {
     }
 
     pub fn count16(&mut self, slice: &[u16]) {
-        self.cap += simdutf::length::utf8::from::utf16::le(slice);
+        self.cap += crate::string::strings::element_length_utf16_into_utf8(slice);
     }
 
     pub fn count16_z(&mut self, slice: &[u16]) {
         // Callers pass &[u16] (WStr has no len method on its DST slice yet).
-        // For WTF-16 with lone surrogates the simdutf length estimate
-        // overestimates by 0-1 bytes, which is fine for a capacity reservation.
-        self.cap += simdutf::length::utf8::from::utf16::le(slice) + 1;
+        // element_length_utf16_into_utf8 charges 3 bytes (U+FFFD) per unpaired
+        // surrogate, which is exactly what append16's fallback writes.
+        self.cap += crate::string::strings::element_length_utf16_into_utf8(slice) + 1;
     }
 
     pub fn append16(&mut self, slice: &[u16]) -> Option<&mut ZStr> {
@@ -76,10 +76,10 @@ impl StringBuilder {
             Some(unsafe { ZStr::from_raw_mut(buf_ptr, count) })
         } else {
             // Fallback: WTF-16 → WTF-8 via the slow path that handles lone surrogates.
-            // The signature returns a borrow into `self`, so we copy
-            // the WTF-8 bytes into the builder's reserved buffer (count16_z reserved
-            // enough — simdutf's length estimate is an upper bound for WTF-16) and
-            // drop the temporary Vec normally. No `mem::forget`.
+            // The signature returns a borrow into `self`, so we copy the WTF-8
+            // bytes into the builder's reserved buffer (count16_z uses the same
+            // replacement-aware length, so the reservation is exact) and drop
+            // the temporary Vec normally. No `mem::forget`.
             let out = crate::string::strings::to_utf8_alloc(slice);
             let len = out.len();
             let avail = self.cap - self.len;

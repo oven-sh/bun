@@ -242,10 +242,30 @@ void JSAbortController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     addWebCoreOpaqueRoot(visitor, thisObject->wrapped().opaqueRoot());
-    thisObject->wrapped().signal().reason().visit(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSAbortController);
+
+template<typename Visitor>
+void JSAbortController::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSAbortController>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+template void JSAbortController::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSAbortController::visitOutputConstraints(JSCell*, SlotVisitor&);
+
+template<typename Visitor>
+void JSAbortController::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    wrapped().signal().reason().visit(visitor);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSAbortController);
 
 void JSAbortController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {

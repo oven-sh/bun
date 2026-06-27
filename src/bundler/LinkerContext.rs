@@ -1075,6 +1075,18 @@ impl<'a> LinkerContext<'a> {
             .expect("TODO: handle error");
     }
 
+    /// The relative path from the chunk directory to a file source, as written
+    /// into the source map's `sources` array. `sources` entries are URLs, so the
+    /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
+    fn source_map_relative_path(
+        chunk_abs_dir: &[u8],
+        source_abs_path: &[u8],
+    ) -> Result<Box<[u8]>, AllocError> {
+        let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
+        Ok(rel)
+    }
+
     pub fn generate_source_map_for_chunk(
         &mut self,
         isolated_hash: u64,
@@ -1283,7 +1295,8 @@ fn write_sources_for(
     // 1) the intermediate input.
     let rel_path_storage;
     let pretty: &[u8] = if outer_path.is_file() {
-        rel_path_storage = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, outer_path.text)?;
+        rel_path_storage =
+            LinkerContext::source_map_relative_path(chunk_abs_dir, outer_path.text)?;
         &rel_path_storage
     } else {
         outer_path.pretty
@@ -1327,7 +1340,7 @@ fn write_sources_for(
                 // the inner map emitted a relative source name) that can
                 // then be re-relativized against `chunk_abs_dir`.
                 // `join_abs` returns a borrow into a thread-local buffer;
-                // we copy out immediately via `relative_alloc`.
+                // we copy out immediately via `source_map_relative_path`.
                 let abs_path: &[u8] = if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
                     name
                 } else {
@@ -1336,7 +1349,7 @@ fn write_sources_for(
                     )
                 };
                 rel_path_storage =
-                    bun_paths::resolve_path::relative_alloc(chunk_abs_dir, abs_path)?;
+                    LinkerContext::source_map_relative_path(chunk_abs_dir, abs_path)?;
                 &rel_path_storage
             };
 

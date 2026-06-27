@@ -1189,3 +1189,58 @@ describe("pathological autolink opener inputs", () => {
     );
   }, 90_000);
 });
+
+describe("inputs of 2^32 bytes or more", () => {
+  // The parser addresses its input with u32 offsets, so a 2^32-byte input
+  // cannot be represented and must be rejected with a catchable RangeError by
+  // every entry point. One subprocess covers all four: a crash must not take
+  // down the test runner, and one 4 GiB reservation (virtual only, never
+  // written) keeps this cheap. The SKIP branch covers runners that cannot
+  // reserve 4 GiB; under ASAN the allocator must be allowed to return null
+  // for that to surface as a catchable error rather than an abort. The
+  // explicit timeout is for the debug+ASAN lanes, where a spawned child is
+  // slow under load (same as the linear-time test above).
+  test("html, ansi, render and react reject a 2^32-byte input", async () => {
+    const script = `
+      let big;
+      try {
+        big = new Uint8Array(2 ** 32);
+      } catch {
+        console.log(JSON.stringify("SKIP"));
+        process.exit(0);
+      }
+      const runs = [
+        () => Bun.markdown.html(big),
+        () => Bun.markdown.ansi(big),
+        () => Bun.markdown.render(big, {}),
+        () => Bun.markdown.react(big, undefined, { reactVersion: 18 }),
+      ];
+      const results = [];
+      for (const run of runs) {
+        try {
+          run();
+          results.push("UNEXPECTED_SUCCESS");
+        } catch (e) {
+          results.push([e.constructor.name, e.code, e.message].join(" | "));
+        }
+      }
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const rangeError =
+      'RangeError | ERR_OUT_OF_RANGE | The value of "input.byteLength" is out of range. It must be <= 4294967295. Received 4294967296';
+    expect(["SKIP", [rangeError, rangeError, rangeError, rangeError]]).toContainEqual(
+      JSON.parse(stdout.trim() || '"NO_OUTPUT"'),
+    );
+    expect(exitCode).toBe(0);
+  }, 30_000);
+});

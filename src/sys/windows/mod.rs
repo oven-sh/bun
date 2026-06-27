@@ -427,10 +427,10 @@ impl Win32ErrorUnwrap for Win32Error {
         if self == Win32Error::SUCCESS {
             return Ok(());
         }
-        if let Some(err) = self.to_system_errno() {
-            return Err(err.to_error());
-        }
-        Ok(())
+        Err(self
+            .to_system_errno()
+            .unwrap_or(SystemErrno::EUNKNOWN)
+            .to_error())
     }
 }
 
@@ -4975,3 +4975,36 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
 bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 // SetFilePointerEx referenced via the `pub use` at the top of this module.
+
+#[cfg(test)]
+mod tests {
+    use super::{E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _};
+
+    /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
+    const UNMAPPED: Win32Error = Win32Error(0xFFFE);
+
+    #[test]
+    fn unwrap_success_is_ok() {
+        assert!(Win32Error::SUCCESS.unwrap().is_ok());
+    }
+
+    #[test]
+    fn unwrap_mapped_is_err() {
+        assert!(Win32Error::FILE_NOT_FOUND.unwrap().is_err());
+    }
+
+    /// `GetLastError()` after a failed Win32 call can return codes not present
+    /// in the errno mapping table (filter drivers, network redirectors, AV
+    /// hooks). Reporting success for those would swallow the failure.
+    #[test]
+    fn unwrap_unmapped_is_err() {
+        assert!(UNMAPPED.to_system_errno().is_none());
+        assert!(UNMAPPED.unwrap().is_err());
+    }
+
+    #[test]
+    fn to_e_unmapped_is_unknown() {
+        assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
+        assert_eq!(SystemErrno::EUNKNOWN.to_e(), E::UNKNOWN);
+    }
+}

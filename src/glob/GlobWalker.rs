@@ -1863,7 +1863,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         !filepath.is_empty() && filepath[0] == b'.'
     }
 
-    const SYNTAX_TOKENS: &'static [u8] = b"*[{?!";
+    const SYNTAX_TOKENS: &'static [u8] = b"*[{?!\\";
 
     fn check_special_syntax(pattern: &[u8]) -> bool {
         strings::index_of_any(pattern, Self::SYNTAX_TOKENS).is_some()
@@ -1942,7 +1942,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                             // We also don't need to look for the `!` token,
                             // because that only applies negation if at the
                             // beginning of the string.
-                            b'[' | b'{' | b'?' | b'*' => break 'out_of_check_wildcard_filepath,
+                            b'[' | b'{' | b'?' | b'*' | b'\\' => {
+                                break 'out_of_check_wildcard_filepath
+                            }
                             _ => {}
                         }
                     }

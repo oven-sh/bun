@@ -224,12 +224,13 @@ describe("bundler", () => {
           capture(process.env.NODE_ENV);
           capture(process.env.NODE_ENV === 'production');
           capture(process.env.NODE_ENV !== 'production');
+          capture(process.env.BUN_ENV);
         `,
       },
       target,
       production: true,
       backend: "cli",
-      capture: ['"production"', "!0", "!1"],
+      capture: ['"production"', "!0", "!1", '"production"'],
     });
     // An explicit `--define` must still inline on server-side targets.
     itBundled("edgecase/NodeEnvInlinedWithDefine_" + target, {

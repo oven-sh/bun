@@ -4,18 +4,11 @@
 // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
 // Buffer.alloc frame construction here.
 //
-// PostgresSQLConnection/MySQLConnection kept the raw us_socket_t* in
-// self.socket after usockets dispatched on_close/on_connect_error. usockets
-// frees closed sockets at the end of the same tick, so any later read of
-// self.socket.is_closed() (connection.ref()/.unref()/.close(), or the
-// connectionTimeout timer) was a heap-use-after-free. Valkey already
-// detaches its stored socket in the same callbacks; Postgres and MySQL now
-// do too.
-//
-// The fixture captures the native connection by shadowing the query
-// handle's .run(connection, query), lets the server drop the socket, yields
-// past us_internal_free_closed_sockets, then touches the native connection
-// through a method that reads the stored socket pointer.
+// The SQL drivers kept the raw us_socket_t* in self.socket after
+// on_close/on_connect_error; usockets frees it at end-of-tick, so later
+// reads (timer callbacks, ref()/unref()/close()) were heap-use-after-free.
+// Capture the native handle via the query handle's .run(connection, …),
+// drop the server socket, yield past the free, then touch the handle.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
@@ -76,6 +69,7 @@ for (const { name, touch, server } of drivers) {
         "server.ts": server,
         "fixture.ts": /* js */ `
           import net from "node:net";
+          import { once } from "node:events";
           import { SQL } from "bun";
           import { onSocket, url } from "./server.ts";
 
@@ -85,7 +79,7 @@ for (const { name, touch, server } of drivers) {
             onSocket(socket);
           });
           server.listen(0, "127.0.0.1");
-          await new Promise(r => server.on("listening", r));
+          await once(server, "listening");
           const { port } = server.address();
 
           const sql = new SQL({ url: url(port), max: 1, connectionTimeout: 30 });

@@ -3299,6 +3299,10 @@ pub mod flags {
 
         /// Only applicable to function statements.
         IsExport,
+
+        /// A `// eslint-disable… react-hooks/…` comment was scanned at or before
+        /// this function's body close. The React Compiler skips such functions.
+        HasReactHooksSuppression,
     }
     pub type FunctionSet = EnumSet<Function>;
     pub const FUNCTION_NONE: FunctionSet = EnumSet::empty();

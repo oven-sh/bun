@@ -165,12 +165,14 @@ class FSWatcher extends EventEmitter {
 
   ref() {
     // like node, honour a replaced _handle and support chaining
-    if (this._handle) this._handle.ref();
+    const handle = this._handle;
+    if (handle) handle.ref();
     return this;
   }
 
   unref() {
-    if (this._handle) this._handle.unref();
+    const handle = this._handle;
+    if (handle) handle.unref();
     return this;
   }
 

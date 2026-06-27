@@ -2464,6 +2464,7 @@ impl Data {
                     is_async: el.is_async,
                     has_rest_arg: el.has_rest_arg,
                     prefer_expr: el.prefer_expr,
+                    has_react_hooks_suppression: el.has_react_hooks_suppression,
                 });
                 Ok(Data::EArrow(StoreRef::from_bump(item)))
             }

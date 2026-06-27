@@ -319,48 +319,29 @@ pub enum StreamResult {
 }
 
 impl StreamResult {
-    // Intentionally not Drop — Result is bitwise-copied in the to_js() shutdown path, so
-    // ownership is contextual and a Drop impl would double-free.
-    // Named `release` (not `deinit`) per PORTING.md — `pub fn deinit` is forbidden as a public API.
     pub fn release(&mut self) {
         match self {
-            StreamResult::Owned(owned) => owned.clear_and_free(),
-            StreamResult::OwnedAndDone(owned_and_done) => owned_and_done.clear_and_free(),
-            StreamResult::Err(err) => {
-                if let StreamError::JSValue(v) = err {
-                    v.unprotect();
-                }
+            StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) => {
+                owned.clear_and_free()
             }
+            StreamResult::Err(StreamError::JSValue(s)) => s.deinit(),
             _ => {}
         }
     }
 }
 
-#[derive(Clone)]
 pub enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),
-    // TODO: use an explicit jsc.Strong.Optional here.
-    JSValue(JSValue),
-    WeakJSValue(JSValue),
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum WasStrong {
-    Strong,
-    Weak,
+    JSValue(jsc::strong::Optional),
 }
 
 impl StreamError {
-    pub fn to_js_weak(&self, global_object: &JSGlobalObject) -> (JSValue, WasStrong) {
+    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         match self {
-            StreamError::Error(err) => (err.to_js(global_object), WasStrong::Weak),
-            StreamError::JSValue(v) => (*v, WasStrong::Strong),
-            StreamError::WeakJSValue(v) => (*v, WasStrong::Weak),
-            StreamError::AbortReason(reason) => {
-                let value = reason.to_js(global_object);
-                (value, WasStrong::Weak)
-            }
+            StreamError::Error(err) => err.to_js(global_object),
+            StreamError::JSValue(v) => v.get().unwrap_or(JSValue::UNDEFINED),
+            StreamError::AbortReason(reason) => reason.to_js(global_object),
         }
     }
 }
@@ -406,6 +387,13 @@ pub enum Writable {
     Err(SysError),
     Done,
     Owned(BlobSizeType),
+    /// The bytes were accepted, but the transport is now backed up. `to_js()`
+    /// reports `-(len + 1)` so the JS write loop can detect backpressure
+    /// without conflating it with `Pending` (FileSink on Windows returns a
+    /// Promise on every write — `Promise < 0` is false, so `readStreamIntoSink`
+    /// keeps its main-branch behavior for non-HTTP sinks). The drain itself is
+    /// awaited via `flush(true)` → `pending_flush`.
+    Backpressure(BlobSizeType),
     OwnedAndDone(BlobSizeType),
     TemporaryAndDone(BlobSizeType),
     Temporary(BlobSizeType),
@@ -574,6 +562,8 @@ impl Writable {
                 JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
             }
             Writable::Owned(len) => JSValue::from(len),
+            // Negative sentinel; the writer awaits the drain via `flush(true)`.
+            Writable::Backpressure(len) => JSValue::js_number(-((len as f64) + 1.0)),
             Writable::OwnedAndDone(len) => JSValue::from(len),
             Writable::TemporaryAndDone(len) => JSValue::from(len),
             Writable::Temporary(len) => JSValue::from(len),
@@ -808,14 +798,8 @@ impl StreamResult {
 
         match result {
             StreamResult::Err(err) => {
-                let value = 'brk: {
-                    let (js_err, was_strong) = err.to_js_weak(global_this);
-                    js_err.ensure_still_alive();
-                    if was_strong == WasStrong::Strong {
-                        js_err.unprotect();
-                    }
-                    break 'brk js_err;
-                };
+                let value = err.to_js(global_this);
+                value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut`
                 // deref. Fresh temp `&mut` is the sole borrow across this
@@ -900,10 +884,7 @@ impl StreamResult {
                 Ok(promise_js)
             }
             StreamResult::Err(err) => {
-                let (js_err, was_strong) = err.to_js_weak(global_this);
-                if was_strong == WasStrong::Strong {
-                    js_err.unprotect();
-                }
+                let js_err = err.to_js(global_this);
                 js_err.ensure_still_alive();
                 Ok(JSPromise::rejected_promise(global_this, js_err).to_js())
             }
@@ -1086,6 +1067,17 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub has_backpressure: bool,
     pub end_len: usize,
     pub aborted: bool,
+    /// This sink fully ended the uWS response (`res.end()` / a completed
+    /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
+    /// point, so the owning `RequestContext` is never told if the peer closes
+    /// afterwards and its `resp` must not be dereferenced again: by the time
+    /// the parked stream-resolution microtask runs, uSockets may already have
+    /// freed the socket (`us_internal_free_closed_sockets`) or recycled it
+    /// onto the next keep-alive request. `handle_resolve_stream` /
+    /// `handle_reject_stream` consult this instead of reading the response's
+    /// state. HTTP/1 only; see `end_already_responded_stream` for why
+    /// `Http3Response::markDone()` makes the H3 `resp` still safe to use.
+    pub ended_response: bool,
 
     pub on_first_write: Option<fn(Option<*mut c_void>)>,
     pub ctx: Option<*mut c_void>,
@@ -1112,6 +1104,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             has_backpressure: false,
             end_len: 0,
             aborted: false,
+            ended_response: false,
             on_first_write: None,
             ctx: None,
             auto_flusher: AutoFlusher::default(),
@@ -1265,6 +1258,19 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.has_backpressure && self.end_len > 0
     }
 
+    /// `len` bytes were accepted by `send`/`send_readable`. When uWS reports
+    /// the socket is now backed up, surface that via the negative-sentinel
+    /// `Backpressure` variant so the JS writer can `await flush(true)`;
+    /// `on_writable` resolves that promise via `flush_promise()`.
+    #[inline]
+    fn writable_result(&self, len: BlobSizeType) -> Writable {
+        if self.has_backpressure && !self.done && !self.requested_end {
+            Writable::Backpressure(len)
+        } else {
+            Writable::Owned(len)
+        }
+    }
+
     fn send_without_auto_flusher(&mut self, buf: &[u8]) -> bool {
         debug_assert!(!self.done);
 
@@ -1291,14 +1297,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 self.handle_wrote(self.end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
-                res.on_writable::<Self, _>(
-                    |this: *mut Self, off, _r| {
-                        // SAFETY: `this` was registered as live `*mut Self` and uWS invokes
-                        // the callback while the sink is still alive.
-                        unsafe { (*this).on_writable(off, core::ptr::null_mut()) }
-                    },
-                    std::ptr::from_mut::<Self>(self),
-                );
             }
             bun_core::scoped_log!(
                 HTTPServerWritableLog,
@@ -1310,14 +1308,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
         // clean this so we know when its relevant or not
         self.end_len = 0;
-        // we clear the onWritable handler so uWS can handle the backpressure for us
-        res.clear_on_writable();
         self.handle_first_write_if_necessary();
-        // uWebSockets lacks a tryWrite() function
-        // This means that backpressure will be handled by appending to an "infinite" memory buffer
-        // It will do the backpressure handling for us
-        // so in this scenario, we just append to the buffer
-        // and report success
+        // uWS has no tryWrite(): write() always accepts the buffer (queuing the
+        // unsent tail internally) and reports whether the socket is now backed
+        // up. Track that so the JS writer can pause; the owning RequestContext
+        // holds the on_writable registration and forwards the drain to
+        // `on_writable()` below.
         if self.requested_end {
             res.end(buf, false);
             self.has_backpressure = false;
@@ -1376,14 +1372,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 self.handle_wrote(end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
-                res.on_writable::<Self, _>(
-                    |this: *mut Self, off, _r| {
-                        // SAFETY: `this` was registered as a live `*mut Self`;
-                        // uWS invokes the callback while the sink is alive.
-                        unsafe { (*this).on_writable(off, core::ptr::null_mut()) }
-                    },
-                    std::ptr::from_mut::<Self>(self),
-                );
             }
             bun_core::scoped_log!(
                 HTTPServerWritableLog,
@@ -1395,10 +1383,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
         // clean this so we know when its relevant or not
         self.end_len = 0;
-        // we clear the onWritable handler so uWS can handle the backpressure for us
-        res.clear_on_writable();
         self.handle_first_write_if_necessary();
         let buf_len = self.buffer.len().saturating_sub(base);
+        // See `send_without_auto_flusher`.
         if self.requested_end {
             res.end(&self.buffer[base..], false);
             self.has_backpressure = false;
@@ -1434,17 +1421,43 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.finalize();
             return false;
         }
+
+        // Streaming-write drain: uWS already holds the data (our buffer is
+        // empty), so there is nothing to resend. Resolve any flush(true) waiter
+        // — that promise is the resume signal for both readStreamIntoSink and
+        // direct-stream callers. Handled before the try_end resend bookkeeping
+        // below, which assumes a non-empty buffer.
+        if self.readable_slice().is_empty() {
+            if self.done {
+                self.signal.close(None);
+                let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+                self.finalize();
+                return true;
+            }
+            let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+            return true;
+        }
+
         let mut total_written: u64 = 0;
 
-        // do not write more than available
-        // if we do, it will cause this to be delayed until the next call, each time
-        // TODO: should we break it in smaller chunks?
-        let to_write = (write_offset as BlobSizeType).min(self.buffer.len() as BlobSizeType - 1);
+        // try_end resend vs streaming-write drain:
+        // - end_len > 0: the buffer holds the body uWS partially sent via
+        //   try_end; `write_offset` is the resume point into that same buffer.
+        // - end_len == 0: the buffer holds *new* data the user queued while the
+        //   socket was backed up (e.g. write(small) after a write(big) that hit
+        //   backpressure). uWS already owns the earlier bytes; send from 0.
+        //   `write_offset` is uWS's cumulative response count here and is not a
+        //   valid index into our buffer.
+        let chunk_start = if self.end_len > 0 {
+            // do not write more than available
+            (write_offset as BlobSizeType).min(self.buffer.len() as BlobSizeType - 1) as usize
+        } else {
+            0
+        };
         // Capture the chunk length before send.
         // `send_readable` re-slices the buffer at call time, which observes any
         // mutation send's internals perform. The length is used only for
         // `total_written` and the empty check.
-        let chunk_start = to_write as usize;
         let chunk_len = self.readable_slice().len().saturating_sub(chunk_start);
         // if we have nothing to write, we are done
         if chunk_len == 0 {
@@ -1465,6 +1478,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
                 }
+                // `send_readable` drained the parked `try_end`, so uWS has
+                // `markDone()`d the response and dropped its `onAborted`.
+                self.ended_response = true;
                 self.signal.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards
                 self.finalize();
@@ -1567,11 +1583,17 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if let Some(prom) = self.pending_flush {
+            // A prior `flush(true)` is already waiting on the drain. Push any
+            // data buffered since (below highWaterMark) so it reaches uWS now
+            // rather than when `on_writable` fires.
+            if self.end_len == 0 && !self.readable_slice().is_empty() {
+                let _ = self.send_readable(0);
+            }
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
             return bun_sys::Result::Ok(JSPromise::opaque_ref(prom).to_js());
         }
 
-        if self.buffer.len() == 0 || self.done {
+        if self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 global_this,
                 JSValue::from(0i32),
@@ -1580,8 +1602,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if !self.has_backpressure_and_is_try_end() {
             let slice_len = self.readable_slice().len();
-            debug_assert!(slice_len > 0);
-            if self.send_readable(0) {
+            if slice_len > 0 {
+                let _ = self.send_readable(0);
+            }
+            // Only resolve once the socket has actually accepted everything;
+            // otherwise fall through and let on_writable resolve the promise.
+            if !self.has_backpressure {
                 return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                     global_this,
                     JSValue::from(slice_len),
@@ -1628,7 +1654,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // - large-ish chunk
             // - no backpressure
             if self.send(bytes) {
-                return Writable::Owned(len);
+                return self.writable_result(len);
             }
 
             if self.buffer.write(bytes).is_err() {
@@ -1640,7 +1666,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
             if self.send_readable(0) {
-                return Writable::Owned(len);
+                return self.writable_result(len);
             }
         } else {
             // queue the data wait until highWaterMark is reached or the auto flusher kicks in
@@ -1651,7 +1677,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         self.register_auto_flusher();
 
-        Writable::Owned(len)
+        self.writable_result(len)
     }
 
     pub fn write_bytes(&mut self, data: &StreamResult) -> Writable {
@@ -1681,7 +1707,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 // - large-ish chunk
                 // - no backpressure
                 if self.send(bytes) {
-                    return Writable::Owned(len);
+                    return self.writable_result(len);
                 }
                 do_send = false;
             }
@@ -1692,7 +1718,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
             if do_send {
                 if self.send_readable(0) {
-                    return Writable::Owned(len);
+                    return self.writable_result(len);
                 }
             }
         } else if self.buffer.len() as BlobSizeType + len >= self.high_water_mark {
@@ -1703,7 +1729,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
             if self.send_readable(0) {
-                return Writable::Owned(len);
+                return self.writable_result(len);
             }
         } else {
             if self.buffer.write_latin1(bytes).is_err() {
@@ -1713,7 +1739,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         self.register_auto_flusher();
 
-        Writable::Owned(len)
+        self.writable_result(len)
     }
 
     pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
@@ -1743,12 +1769,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let readable_len = self.readable_slice().len();
         if readable_len >= self.high_water_mark as usize || self.has_backpressure() {
             if self.send_readable(0) {
-                return Writable::Owned(written as BlobSizeType);
+                return self.writable_result(written as BlobSizeType);
             }
         }
 
         self.register_auto_flusher();
-        Writable::Owned(written as BlobSizeType)
+        self.writable_result(written as BlobSizeType)
     }
 
     pub fn mark_done(&mut self) {
@@ -1820,6 +1846,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         }
 
+        // Both branches above fully ended the response through uWS, which
+        // `markDone()`s it and drops its `onAborted`.
+        self.ended_response = true;
         self.mark_done();
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
         self.signal.close(None);
@@ -1832,18 +1861,36 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         Sink::init(self)
     }
 
-    pub fn abort(&mut self) {
+    /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
+    /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
+    /// sink. A `&mut self` argument protector must not be live across that free.
+    ///
+    /// # Safety
+    /// `this` must point at the live sink owned by the `RequestContext`.
+    pub unsafe fn abort(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
-        self.done = true;
-        self.res = None;
-        self.unregister_auto_flusher();
+        // SAFETY: caller contract — `this` is live, and every borrow formed here
+        // ends before the signal close below, which may free `*this`.
+        let sink = unsafe { &mut *this };
+        sink.done = true;
+        sink.res = None;
+        sink.unregister_auto_flusher();
 
-        self.aborted = true;
+        sink.aborted = true;
 
-        self.signal.close(None);
+        // Only JsTerminated escapes flush_promise; there is no JS caller to
+        // surface it to from a socket-close callback, so teardown continues.
+        let _ = sink.flush_promise();
+        sink.finalize();
 
-        let _ = self.flush_promise(); // TODO: properly propagate exception upwards
-        self.finalize();
+        // Close the signal last and through a stack copy: the close fires the JS
+        // onClose callback, and the teardown it can re-enter frees this sink, so
+        // no reference into the allocation may be live across the call.
+        let mut signal = Signal {
+            ptr: sink.signal.ptr,
+            vtable: sink.signal.vtable,
+        };
+        signal.close(None);
     }
 
     fn unregister_auto_flusher(&mut self) {
@@ -1918,10 +1965,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if !self.done {
             self.unregister_auto_flusher();
             if let Some(res) = self.any_res() {
-                // Detach the handlers this sink registered before flushing.
-                // onAborted/onData belong to RequestContext, not the sink —
-                // clearing them here would drop the holder's pointer (and on
-                // H3, where the stream is freed after FIN, leave it dangling).
+                // The body is finished; drop the drain callback so the owning
+                // RequestContext is not re-entered for a sink that will never
+                // write again. onAborted/onData stay installed — clearing them
+                // here would drop the holder's pointer (and on H3, where the
+                // stream is freed after FIN, leave it dangling).
                 res.clear_on_writable();
             }
             let _ = self.flush_no_wait();
@@ -2467,7 +2515,7 @@ impl BufferAction {
         err: &StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js_weak(global).0))
+        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
     }
 
     pub fn resolve(

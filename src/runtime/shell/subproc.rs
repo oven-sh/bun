@@ -1103,6 +1103,10 @@ impl Writable {
                 Stdio::Ipc | Stdio::Capture(_) => {
                     return Ok(Writable::Ignore);
                 }
+                Stdio::SocketFd => {
+                    // The shell never uses this; rejected at i < 3 anyway.
+                    panic!("Unimplemented stdin socket-fd");
+                }
             }
         }
         #[cfg(not(windows))]
@@ -1162,6 +1166,10 @@ impl Writable {
                 Stdio::ReadableStream(_) => {
                     // The shell never uses this
                     panic!("Unimplemented stdin readable_stream");
+                }
+                Stdio::SocketFd => {
+                    // The shell never uses this; rejected at i < 3 anyway.
+                    panic!("Unimplemented stdin socket-fd");
                 }
             }
         }
@@ -1236,17 +1244,22 @@ impl Readable {
         event_loop: EventLoopHandle,
         eager: bool,
     ) -> bun_sys::Result<()> {
-        if let Readable::Pipe(pipe) = self {
-            let p = arc_as_mut_ptr(pipe);
-            // SAFETY: see `arc_as_mut_ptr` — single-threaded shell, and
-            // during `spawn` the `Arc<PipeReader>` is uniquely held (the
-            // reader callback is registered by `start` itself), so no other
-            // `&PipeReader` can exist for this scope.
-            let p = unsafe { &mut *p };
-            p.start(process, event_loop)?;
-            if eager {
-                p.read_all();
-            }
+        // `start` (poll registration failing) and `read_all` (the eager read
+        // erroring) can both complete the reader synchronously, which runs
+        // `close_io` → `Readable::finalize` and drops this slot's `Arc`.
+        // Clone it so the `PipeReader` outlives both re-entrant calls.
+        let keepalive = match self {
+            Readable::Pipe(pipe) => Arc::clone(pipe),
+            _ => return Ok(()),
+        };
+        let p = arc_as_mut_ptr(&keepalive);
+        // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; the
+        // re-entrant reader callbacks only hold raw `*mut PipeReader`, so no
+        // other `&PipeReader` can exist for this scope.
+        let p = unsafe { &mut *p };
+        p.start(process, event_loop)?;
+        if eager {
+            p.read_all();
         }
         Ok(())
     }
@@ -1320,6 +1333,8 @@ impl Readable {
                     event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+                // The shell never uses this; rejected at i < 3 anyway.
+                Stdio::SocketFd => Readable::Ignore,
             };
         }
 
@@ -1363,6 +1378,8 @@ impl Readable {
                     event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+                // The shell never uses this; rejected at i < 3 anyway.
+                Stdio::SocketFd => Readable::Ignore,
             }
         }
     }
@@ -1997,6 +2014,13 @@ impl PipeReader {
         match self.reader.start(self.stdio_result.unwrap(), true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
+                // `reader.start` reports a poll-registration failure through
+                // `on_reader_error` (not its return value), so the reader may
+                // already be errored/torn down here; same guard as
+                // `SubprocessPipeReader::start`.
+                if matches!(self.state, PipeReaderState::Err(_)) {
+                    return Ok(());
+                }
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct

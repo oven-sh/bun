@@ -2468,6 +2468,16 @@ pub mod parse_worker {
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
+        opts.features.react_compiler = if topts.react_compiler.is_enabled()
+            && loader.is_jsx()
+            && !source.path.is_node_module()
+        {
+            topts.react_compiler
+        } else {
+            bun_ast::runtime::ReactCompilerMode::Disabled
+        };
+        opts.features.react_compiler_parse_test_pragmas =
+            opts.features.react_compiler.is_enabled() && topts.react_compiler_parse_test_pragmas;
 
         opts.features.server_components = if topts.server_components {
             use bun_ast::runtime::ServerComponentsMode as SC;

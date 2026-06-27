@@ -556,6 +556,29 @@ static napi_value test_is_typedarray(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// https://github.com/oven-sh/bun/issues/32624
+// info[0] is the GC callback; the values to classify start at info[1]. For each
+// one, print napi_is_arraybuffer and the raw napi_get_arraybuffer_info status so
+// the output can be diffed against Node (napi_ok is 0, napi_invalid_arg is 1).
+static napi_value test_is_arraybuffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value value = info[i];
+
+    bool is_ab = false;
+    NODE_API_CALL(env, napi_is_arraybuffer(env, value, &is_ab));
+
+    void *data = nullptr;
+    size_t length = 0;
+    napi_status info_status =
+        napi_get_arraybuffer_info(env, value, &data, &length);
+
+    printf("napi_is_arraybuffer=%s napi_get_arraybuffer_info=%d\n",
+           is_ab ? "true" : "false", static_cast<int>(info_status));
+  }
+  return ok(env);
+}
+
 static napi_value test_napi_get_default_values(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -2386,6 +2409,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, bigint_to_64_null);
   REGISTER_FUNCTION(env, exports, test_is_buffer);
   REGISTER_FUNCTION(env, exports, test_is_typedarray);
+  REGISTER_FUNCTION(env, exports, test_is_arraybuffer);
   REGISTER_FUNCTION(env, exports, test_napi_get_default_values);
   REGISTER_FUNCTION(env, exports, test_napi_numeric_string_keys);
   REGISTER_FUNCTION(env, exports, test_deferred_exceptions);

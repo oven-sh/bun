@@ -1366,7 +1366,13 @@ pub(super) extern "C" fn napi_is_arraybuffer(
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
-    *result = !value.is_number() && value.js_type_loose() == jsc::JSType::ArrayBuffer;
+    // A SharedArrayBuffer shares the `ArrayBuffer` cell type with a plain
+    // ArrayBuffer in JSC, so `js_type` alone can't tell them apart. Node's
+    // `napi_is_arraybuffer` maps to V8's `IsArrayBuffer()`, which is false for
+    // SharedArrayBuffer, so exclude shared buffers here too.
+    *result = value
+        .as_array_buffer(env.to_js())
+        .is_some_and(|ab| ab.typed_array_type == jsc::JSType::ArrayBuffer && !ab.shared);
     env.ok()
 }
 
@@ -1651,7 +1657,9 @@ pub(super) extern "C" fn napi_create_date(
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
-    let mut args = [JSValue::js_number(time).as_object_ref()];
+    // The addon controls every bit of `time`. Purify before boxing: the Date
+    // constructor receives this JSValue before any timeClip runs.
+    let mut args = [JSValue::js_number(JSValue::purify_nan(time)).as_object_ref()];
     result.set(
         env,
         // SAFETY: `args` is a stack array of one valid JSValueRef; FFI constructs a Date.

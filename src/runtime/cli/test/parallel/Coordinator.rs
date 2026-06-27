@@ -477,9 +477,9 @@ impl<'a> Coordinator<'a> {
             // A worker dying mid-file is never silently retried. If a test
             // intentionally exits (process.exit) that file is marked failed
             // and the run continues in a fresh worker. If the worker was
-            // killed by a fatal signal — SIGILL/SIGTRAP from Bun's own panic
-            // handler, SIGSEGV/SIGBUS/SIGFPE from native code, SIGABRT from a
-            // JSC/WTF assertion — that's a Bun or addon bug and must not be
+            // killed by a fatal signal — SIGABRT from Bun's own panic handler
+            // or a JSC/WTF assertion, SIGSEGV/SIGBUS/SIGFPE/SIGILL from native
+            // code — that's a Bun or addon bug and must not be
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
@@ -683,8 +683,9 @@ impl<'a> Coordinator<'a> {
 
 /// Fatal signals that indicate Bun itself (or a native addon) crashed,
 /// as opposed to the test calling process.exit() or being SIGKILL'd by
-/// the OOM killer. Bun's panic handler ends in @trap() → SIGILL on
-/// POSIX; JSC/WTF assertion failures abort() → SIGABRT. On Windows
+/// the OOM killer. Bun's panic handler re-raises the original fault
+/// (SIGSEGV/SIGBUS/SIGFPE/SIGILL) or SIGABRT for panics; JSC/WTF
+/// assertion failures abort() → SIGABRT. On Windows
 /// neither surfaces as a signal — abort() is exit code 3 and NTSTATUS
 /// fault codes arrive as a plain exit status, both indistinguishable
 /// from process.exit(N) — so this classification is effectively

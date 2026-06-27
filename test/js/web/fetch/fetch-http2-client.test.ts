@@ -1538,6 +1538,62 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test.each([
+    ["small (shared-buffer fast path)", 32 * 1024],
+    ["large (zlib-streaming spill path)", 600 * 1024],
+  ])("compress: gzip request body over h2 — %s", async (_, size) => {
+    await withH2Server(
+      (req, res) => {
+        const chunks: Buffer[] = [];
+        req.on("data", c => chunks.push(c));
+        req.on("end", () => {
+          const raw = Buffer.concat(chunks);
+          res.writeHead(200, {
+            "x-recv-len": String(raw.length),
+            "x-recv-encoding": req.headers["content-encoding"] ?? "",
+            "x-recv-content-length": req.headers["content-length"] ?? "",
+          });
+          res.end(zlib.gunzipSync(raw));
+        });
+      },
+      async url => {
+        await using proc = await spawnCapped({
+          cmd: [
+            bunExe(),
+            "--no-warnings",
+            "-e",
+            `const payload = Buffer.alloc(${size}, "abcdefghij");
+             const r = await fetch("${url}", {
+               method: "POST",
+               body: payload,
+               compress: "gzip",
+               protocol: "http2",
+               tls: { rejectUnauthorized: false },
+             });
+             const decoded = Buffer.from(await r.arrayBuffer());
+             console.log(JSON.stringify({
+               recvLen: Number(r.headers.get("x-recv-len")),
+               encoding: r.headers.get("x-recv-encoding"),
+               contentLength: r.headers.get("x-recv-content-length"),
+               match: decoded.equals(payload),
+             }));`,
+          ],
+          env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const out = JSON.parse(stdout.trim());
+        expect(out.encoding).toBe("gzip");
+        expect(out.recvLen).toBeLessThan(size);
+        expect(out.contentLength).toBe(String(out.recvLen));
+        expect(out.match).toBe(true);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("protocol:'http2' against an h1-only server fails with HTTP2Unsupported", async () => {
     const server = https.createServer({ ...tls }, (_req, res) => res.end("h1"));
     server.listen(0);

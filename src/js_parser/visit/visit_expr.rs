@@ -161,6 +161,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        // The substitution revisit re-enters with an already-resolved `Ref`.
+        // `find_symbol` below only looks in `scope.members`, so a symbol that
+        // lives only in `scope.generated` (e.g. a React Compiler outlined
+        // function) would be re-bound to a fresh `Unbound` and the renamer
+        // would lose the link to its declaration.
+        if p.is_revisit_for_substitution {
+            return;
+        }
         let expr = *e;
         let mut e_ = expr
             .data
@@ -478,6 +486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             } else {
                                 E::CallUnwrap::Never
                             },
+                            was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
                             ..Default::default()
                         },
@@ -1676,9 +1685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .data
                         .e_string()
                         .expect("infallible: variant checked")
-                        .data
-                        == b"__proto__"
-                // __proto__ is utf8, assume it lives in refs
+                        .eql_comptime(b"__proto__")
                 {
                     if has_proto {
                         let r = js_lexer::range_of_identifier(p.source, key.loc);
@@ -2486,8 +2493,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
+        let rc_binding = p.react_compiler_candidate_name.take();
+        if rc_binding.is_some() {
+            let mut flags = bun_ast::flags::FUNCTION_NONE;
+            if e_.is_async {
+                flags |= bun_ast::flags::Function::IsAsync;
+            }
+            if e_.has_rest_arg {
+                flags |= bun_ast::flags::Function::HasRestArg;
+            }
+            if e_.has_react_hooks_suppression {
+                flags |= bun_ast::flags::Function::HasReactHooksSuppression;
+            }
+            p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
+                args: e_.args,
+                flags,
+                body_loc: e_.body.loc,
+                args_loc: e_.body.loc,
+                binding: rc_binding,
+                in_react_hoc: core::mem::take(&mut p.react_compiler_in_react_hoc),
+            });
+        }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
+        p.react_compiler_pending = None;
+        if let Some(result) = p.react_compiler_result.take() {
+            e_.args = result.args;
+            e_.is_async = result.flags.contains(bun_ast::flags::Function::IsAsync);
+            e_.has_rest_arg = result.flags.contains(bun_ast::flags::Function::HasRestArg);
+            e_.prefer_expr = false;
+            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+                p.record_usage(b);
+            }
+        }
         p.pop_scope();
         p.pop_scope();
 

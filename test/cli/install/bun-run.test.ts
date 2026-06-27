@@ -1006,4 +1006,66 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(1);
     });
   });
+
+  // BUN-3MAQ: guards the user-visible contract that a >32,767-u16 environment
+  // block reaches a .bunx child intact. CreateProcessW with
+  // CREATE_UNICODE_ENVIRONMENT has no documented block-size limit. This does
+  // not assert which spawn path (fast .bunx shim vs. libuv fallback) was
+  // taken, since both are correct; it fails only if the child loses env data
+  // or the process crashes. POSIX hits E2BIG first, so Windows-only.
+  it.if(isWindows)(
+    "runs a node_modules/.bin entry with an environment block larger than 32,767 wide chars",
+    async () => {
+      using dir = tempDir("bun-run-large-env", {
+        "package.json": JSON.stringify({
+          name: "consumer",
+          version: "0.0.0",
+          dependencies: { "print-env-len": "file:./print-env-len" },
+        }),
+        "print-env-len": {
+          "package.json": JSON.stringify({
+            name: "print-env-len",
+            version: "0.0.0",
+            bin: { "print-env-len": "./bin.js" },
+          }),
+          "bin.js": `#!/usr/bin/env node\nprocess.stdout.write(String((process.env.HUGE_A || "").length + (process.env.HUGE_B || "").length));\n`,
+        },
+      });
+
+      {
+        await using install = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          install.stdout.text(),
+          install.stderr.text(),
+          install.exited,
+        ]);
+        expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+      }
+
+      expect(await Bun.file(join(String(dir), "node_modules", ".bin", "print-env-len.bunx")).exists()).toBe(true);
+
+      // Two 25,000-char values plus the rest of bunEnv push the serialized
+      // block past 32,767 u16s without approaching any per-variable or
+      // per-block ceiling Windows actually enforces.
+      const chunk = Buffer.alloc(25_000, "a").toString();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "print-env-len"],
+        cwd: String(dir),
+        env: { ...bunEnv, HUGE_A: chunk, HUGE_B: chunk },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error");
+      expect(stdout).toBe(String(chunk.length * 2));
+      expect(exitCode).toBe(0);
+    },
+  );
 });

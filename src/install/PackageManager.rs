@@ -211,7 +211,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 
 use crate::lockfile_real::package as Package;
 use crate::package_manager_task as Task;
-use crate::resolvers::folder_resolver::FolderResolution;
+use crate::resolvers::folder_resolver::{Entry as FolderResolutionEntry, FolderResolution};
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
     Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
@@ -314,7 +314,7 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
-    HashMap<u64, FolderResolution /* , IdentityContext<u64>, 80 */>;
+    HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
 pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
@@ -2072,7 +2072,10 @@ pub fn init(
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         unsafe { &mut *manager_ptr }.folders.put(
             crate::resolvers::folder_resolver::hash(normalized),
-            crate::resolvers::folder_resolver::FolderResolution::PackageId(0),
+            FolderResolutionEntry {
+                abs_path: Box::<[u8]>::from(&*normalized),
+                resolution: FolderResolution::PackageId(0),
+            },
         )?;
         // normalized.deinit() → Drop (stack buffer)
     }

@@ -1875,10 +1875,33 @@ folded: >
           expect(() => YAML.parse("!!float 0x1f")).toThrow();
         });
 
-        test.todo("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
-          // js-yaml/eemeli combine surrogate halves to the supplementary code
-          // point. Currently rejected.
+        test("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
+          // YAML 1.2 is a JSON superset; JSON encodes supplementary code
+          // points as `\uD8xx\uDCxx` surrogate pairs.
           expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("𝄞");
+          expect(YAML.parse('"\\uD83D\\uDE00"')).toBe("😀");
+          expect(YAML.parse('"\\ud83d\\ude00"')).toBe("😀");
+          expect(YAML.parse('"a\\uD83D\\uDE00b"')).toBe("a😀b");
+          expect(YAML.parse('"\\uD83D\\uDE00\\uD83D\\uDE01"')).toBe("😀😁");
+          expect(YAML.parse('"\\uDBFF\\uDFFF"')).toBe("\u{10FFFF}");
+          // Matches JSON.parse on the same document.
+          const doc = '{"k": "\\uD83D\\uDE00"}';
+          expect(YAML.parse(doc)).toEqual(JSON.parse(doc));
+          // `\U` 32-bit escapes for the same code point still work.
+          expect(YAML.parse('"\\U0001F600"')).toBe("😀");
+          // Lone or mis-ordered surrogates are rejected.
+          expect(() => YAML.parse('"\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83Dx"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uDE00"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uDE00\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\uD83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\u0041"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\uD83D\\n"')).toThrow(SyntaxError);
+          // `\U` ([60] ns-esc-32-bit) names a Unicode character; surrogate
+          // code points are not characters and are never combined.
+          expect(() => YAML.parse('"\\U0000D83D"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\U0000D83D\\uDE00"')).toThrow(SyntaxError);
+          expect(() => YAML.parse('"\\U0000D83D\\U0000DE00"')).toThrow(SyntaxError);
         });
 
         test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {
@@ -2660,6 +2683,43 @@ config:
         expect(YAML.parse(YAML.stringify('with "quotes"'))).toBe('with "quotes"');
         expect(YAML.parse(YAML.stringify("with\ttab"))).toBe("with\ttab");
         expect(YAML.parse(YAML.stringify("with\rcarriage"))).toBe("with\rcarriage");
+      });
+
+      test("round-trips U+00A8/U+00A9 and escapes U+2028/U+2029 as \\L/\\P", () => {
+        // U+00A8 (DIAERESIS) and U+00A9 (COPYRIGHT SIGN) are ordinary printable
+        // characters; only U+2028/U+2029 map to the YAML \L and \P escapes.
+        expect(YAML.parse(YAML.stringify("\u00a8"))).toBe("\u00a8");
+        expect(YAML.parse(YAML.stringify("\u00a9"))).toBe("\u00a9");
+        expect(YAML.parse(YAML.stringify("x\u00a8y"))).toBe("x\u00a8y");
+        expect(YAML.parse(YAML.stringify("x\u00a9y"))).toBe("x\u00a9y");
+        expect(YAML.parse(YAML.stringify({ k: "a\u00a8b\u00a9c" }))).toEqual({ k: "a\u00a8b\u00a9c" });
+
+        expect(YAML.stringify("\u00a8")).not.toContain("\\L");
+        expect(YAML.stringify("\u00a9")).not.toContain("\\P");
+        expect(YAML.stringify("\u2028")).toBe('"\\L"');
+        expect(YAML.stringify("\u2029")).toBe('"\\P"');
+        expect(YAML.parse(YAML.stringify("\u2028"))).toBe("\u2028");
+        expect(YAML.parse(YAML.stringify("\u2029"))).toBe("\u2029");
+        expect(YAML.parse(YAML.stringify("a\u2028b\u2029c"))).toBe("a\u2028b\u2029c");
+      });
+
+      test("round-trips every non-surrogate BMP code point", () => {
+        let all = "";
+        for (let cp = 0; cp <= 0xffff; cp++) {
+          if (cp >= 0xd800 && cp <= 0xdfff) continue;
+          all += String.fromCharCode(cp);
+        }
+        const back = YAML.parse(YAML.stringify(all));
+        expect(typeof back).toBe("string");
+        expect(back.length).toBe(all.length);
+        for (let i = 0; i < all.length; i++) {
+          if (back.charCodeAt(i) !== all.charCodeAt(i)) {
+            throw new Error(
+              `U+${all.charCodeAt(i).toString(16).padStart(4, "0")} did not round-trip: ` +
+                `got U+${back.charCodeAt(i).toString(16).padStart(4, "0")}`,
+            );
+          }
+        }
       });
 
       test("round-trips arrays", () => {
@@ -4682,4 +4742,32 @@ describe("plain scalar whitespace handling", () => {
   test("bare dash after a mapping key is a block-sequence indicator, not a plain scalar", () => {
     expect(() => YAML.parse("g: -")).toThrow(SyntaxError);
   });
+});
+
+// The YAML scanner records every source position as an i32, so an input of
+// 2**31 bytes or more used to abort the process with
+// `panic: int cast: TryFromIntError(PosOverflow)` instead of throwing. It is
+// rejected before parsing, so the Uint8Array below is virtual pages that are
+// never read. The runtime accepts a TypedArray here (the binding takes a
+// Blob, Buffer or string); the declared `string` type is narrower.
+test("parse rejects an input of 2**31 bytes or more instead of panicking", () => {
+  let input: Uint8Array;
+  try {
+    input = new Uint8Array(2 ** 31 + 2);
+  } catch {
+    // The 2 GiB reservation itself can fail on a memory-pressured runner;
+    // there is nothing to test then.
+    return;
+  }
+  let err: any;
+  try {
+    YAML.parse(input as unknown as string);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.constructor?.name).toBe("RangeError");
+  expect(err?.code).toBe("ERR_OUT_OF_RANGE");
+  expect(err?.message).toBe(
+    'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
+  );
 });

@@ -369,11 +369,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::ExportDefault,
     ) -> Result<(), Error> {
         // scopeguard can't borrow `p` across the body; restructured to a tail
-        // closure invoked at every return site below.
+        // closure invoked at every return site below. Guard on `is_symbol()`
+        // because early returns can reach this before the parse-time name
+        // ref (SourceContentsSlice/AllocatedName) has been rewritten.
         macro_rules! record_on_exit {
             () => {
-                if let Some(ref_) = data.default_name.ref_.to_nullable() {
-                    p.record_declared_symbol(ref_);
+                if data.default_name.ref_.is_symbol() {
+                    p.record_declared_symbol(data.default_name.ref_);
                 }
             };
         }
@@ -411,7 +413,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
+                if p.react_compiler.is_some()
+                    && let Some(in_hoc) = p.react_compiler_candidate_expr(expr)
+                {
+                    p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
+                    p.react_compiler_in_react_hoc = in_hoc;
+                }
                 p.visit_expr(expr);
+                p.react_compiler_candidate_name = None;
+                p.react_compiler_in_react_hoc = false;
                 p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
@@ -447,7 +457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if data.default_name.ref_.is_source_contents_slice() {
+                if !data.default_name.ref_.is_symbol() {
                     data.default_name = p.create_default_name(expr.loc).expect("unreachable");
                 }
 
@@ -583,8 +593,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.react_refresh.hook_ctx_storage =
                             Some(core::ptr::NonNull::from(&mut react_hook_data));
 
+                        if p.react_compiler.is_some() {
+                            p.react_compiler_candidate_name = Some(
+                                func.func
+                                    .name
+                                    .filter(|_| name != js_ast::ClauseItem::DEFAULT_ALIAS)
+                                    .map(|n| n.ref_)
+                                    .unwrap_or(js_ast::Ref::NONE),
+                            );
+                        }
                         let open_parens_loc = func.func.open_parens_loc;
                         func.func = p.visit_func(core::mem::take(&mut func.func), open_parens_loc);
+                        p.react_compiler_candidate_name = None;
 
                         if p.is_control_flow_dead {
                             p.react_refresh.hook_ctx_storage = prev;
@@ -593,7 +613,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Ok(());
                         }
 
-                        if data.default_name.ref_.is_source_contents_slice() {
+                        if !data.default_name.ref_.is_symbol() {
                             data.default_name =
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
@@ -788,7 +808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        if data.default_name.ref_.is_source_contents_slice() {
+                        if !data.default_name.ref_.is_symbol() {
                             data.default_name =
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
@@ -883,8 +903,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
+        if p.react_compiler.is_some() && p.current_scope == p.module_scope {
+            p.react_compiler_candidate_name = data.func.name.map(|n| n.ref_);
+        }
         let open_parens_loc = data.func.open_parens_loc;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);
+        p.react_compiler_candidate_name = None;
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
         debug_assert!(name_ref.is_symbol());
@@ -1185,6 +1209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         data.kind = kind;
+
         stmts.push(*stmt);
 
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
@@ -1350,7 +1375,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
+        if is_top_level
+            && p.react_compiler.is_some()
+            && let Some(in_hoc) = p.react_compiler_candidate_expr(&data.value)
+        {
+            p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
+            p.react_compiler_in_react_hoc = in_hoc;
+        }
         p.visit_expr(&mut data.value);
+        p.react_compiler_candidate_name = None;
+        p.react_compiler_in_react_hoc = false;
 
         // `p.stmt_expr_value` is reset to EMissing at every return below.
         macro_rules! restore_stmt_expr {

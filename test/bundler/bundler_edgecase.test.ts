@@ -192,6 +192,55 @@ describe("bundler", () => {
       NODE_ENV: "development",
     },
   });
+  // For server-side targets the bundle runs against a real `process.env`, so
+  // `NODE_ENV` must NOT be inlined by default: inlining would freeze the
+  // build machine's value into the output.
+  for (const target of ["bun", "node"] as const) {
+    itBundled("edgecase/NodeEnvNotInlined_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.NODE_ENV === 'production');
+          capture(process.env.NODE_ENV === 'development');
+          capture(process.env.BUN_ENV);
+        `,
+      },
+      target,
+      // The build machine's NODE_ENV must not leak into the bundle.
+      env: { NODE_ENV: "production" },
+      capture: [
+        "process.env.NODE_ENV",
+        'process.env.NODE_ENV === "production"',
+        'process.env.NODE_ENV === "development"',
+        "process.env.BUN_ENV",
+      ],
+    });
+    // An explicit `--define` must still inline on server-side targets.
+    itBundled("edgecase/NodeEnvInlinedWithDefine_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.NODE_ENV === 'production');
+        `,
+      },
+      target,
+      define: { "process.env.NODE_ENV": '"production"' },
+      capture: ['"production"', "true"],
+    });
+    // `--env=inline` must still inline on server-side targets.
+    itBundled("edgecase/NodeEnvInlinedWithEnvInline_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+        `,
+      },
+      target,
+      dotenv: "inline",
+      env: { NODE_ENV: "staging" },
+      backend: "cli",
+      capture: ['"staging"'],
+    });
+  }
 
   itBundled("edgecase/StarExternal", {
     files: {

@@ -592,6 +592,22 @@ impl<'a> Transpiler<'a> {
                     }
                 }
             }
+        } else if self.options.env.behavior
+            != bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining
+        {
+            // Server-side targets don't get a default `process.env.NODE_ENV`
+            // define (see `defines_from_transform_options`): the output runs
+            // against a real `process.env`. Resolve the same value here so the
+            // JSX dev/prod decision is unaffected by that.
+            let node_env = match self.env().get_node_env() {
+                Some(v) if !v.is_empty() => v,
+                _ => self.options.default_node_env(),
+            };
+            if node_env == b"production" {
+                is_production = true;
+            } else if node_env == b"development" {
+                is_development = true;
+            }
         }
 
         if is_development {

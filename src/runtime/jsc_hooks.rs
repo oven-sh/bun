@@ -1052,9 +1052,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 }
 
 /// One non-blocking loop turn (immediates, zero-timeout poll, due timers) run
-/// once, right after the entry point finishes. Node starts its loop there, so
-/// immediates the main script queued must run before the startup GC, which can
-/// last long enough for freshly completed async work to be delivered first.
+/// once between the startup GC and the task drain that follows it, so
+/// immediates the entry point queued run before async work that finished
+/// during the collection is delivered. Node has no such stall inside its loop.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.

@@ -163,12 +163,16 @@ test("bunfig.toml [resolve] conditions applies to the Bake dev server", async ()
 
   const { promise, resolve, reject } = Promise.withResolvers<{ port: number; hostname: string }>();
 
+  // The dev server is long-running and never exits, so we can't drain piped
+  // stdout/stderr via Promise.all([..., proc.exited]) like the other tests.
+  // Inherit both streams instead: no pipe to fill (avoids deadlock) and any
+  // bundler diagnostics surface in the test runner's output.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "dev-server-fixture.js"],
     env: bunEnv,
     cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
+    stdout: "inherit",
+    stderr: "inherit",
     ipc(message) {
       resolve(message);
     },

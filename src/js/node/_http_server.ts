@@ -14,6 +14,7 @@ const {
   validateBoolean,
   validateInteger,
   validateFunction,
+  isUint8Array,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
@@ -167,16 +168,16 @@ function strictContentLength(response) {
   }
 }
 
-// Like Node's write_(), validate strictContentLength before the native
-// handle.writeHead() puts bytes on the wire: the native write/end check runs
-// after writeHead has already emitted the status line + headers (without the
-// terminating CRLF), so a throw there leaves the client with a syntactically
-// incomplete message it will block on forever.
+// Match Node's write_(): enforce strictContentLength before handle.writeHead()
+// flushes the header block. The native write/end check throws only after the
+// (unterminated) headers are already corked, so the client gets a partial message.
 function checkStrictContentLength(strictCL, handle, chunk, encoding, fromEnd) {
   if (strictCL === undefined) return;
+  // Measure only the chunk types Node's write_() accepts; anything else keeps
+  // its existing chunk-type error from the native write/end path.
+  if (chunk && typeof chunk !== "string" && !isUint8Array(chunk)) return;
   const len = chunk ? (typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength) : 0;
-  // Optional chain: the http2 allowHTTP1 fallback installs a JS shim handle
-  // (http2.ts createHttp1FallbackResponseHandle) without getBytesWritten.
+  // The http2 allowHTTP1 fallback installs a JS shim handle without getBytesWritten.
   const written = (handle.getBytesWritten?.() ?? 0) + len;
   if (fromEnd ? written !== strictCL : written > strictCL) {
     throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(

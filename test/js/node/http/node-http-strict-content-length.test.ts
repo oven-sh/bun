@@ -6,18 +6,12 @@ import http2 from "node:http2";
 import net from "node:net";
 import tls from "node:tls";
 
-// When res.strictContentLength is set and the first end()/write() call
-// detects a mismatch, Node throws before any bytes reach the wire. Bun was
-// calling handle.writeHead() inside the same cork block as handle.end()/
-// handle.write(), so the throw happened *after* the status line and headers
-// (without the terminating blank line) were already buffered and flushed on
-// uncork, leaving the client with a syntactically incomplete HTTP message it
-// would block on until its own timeout.
+// A strictContentLength mismatch on the first end()/write() must throw before
+// any bytes reach the wire; throwing after the header block is corked leaves
+// the client a response with no terminating CRLFCRLF to block on forever.
 
-// The server hard-closes via res.socket.destroy(), which on some platforms
-// surfaces as RST -> ECONNRESET on the client. once(sock, "close") would
-// reject on that 'error' even with a no-op listener, so wait on 'close'
-// directly.
+// Resolve on 'close' without once(): once() rejects if the socket ever emits
+// 'error' (e.g. an RST from the server) before closing.
 function waitForClose(sock: net.Socket): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   sock.on("close", () => resolve());
@@ -50,9 +44,8 @@ test("strictContentLength: short end() throws before any bytes reach the wire", 
     } catch (e: any) {
       resolve({ code: e.code, headersSent: res.headersSent });
     }
-    // Close the underlying connection on a later tick so any already-flushed
-    // bytes reach the client before the socket goes away.
-    setImmediate(() => res.socket!.destroy());
+    // FIN a tick later so any erroneously-flushed bytes reach the client first.
+    setImmediate(() => res.socket!.end());
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
 
@@ -61,8 +54,8 @@ test("strictContentLength: short end() throws before any bytes reach the wire", 
 
   expect({ ...result, wire }).toEqual({
     code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
-    // writeHead() already marked headers as sent (like Node.js); the point is
-    // that nothing was actually *flushed*.
+    // writeHead() marks headers as sent (like Node.js); the invariant under
+    // test is that nothing was actually *flushed*.
     headersSent: true,
     wire: "",
   });
@@ -81,7 +74,7 @@ test("strictContentLength: over-long write() throws before any bytes reach the w
     } catch (e: any) {
       resolve({ code: e.code, headersSent: res.headersSent });
     }
-    setImmediate(() => res.socket!.destroy());
+    setImmediate(() => res.socket!.end());
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
 
@@ -108,8 +101,7 @@ test("strictContentLength: response can be recovered after a rejected end()", as
     } catch (e: any) {
       resolve(e.code);
     }
-    // Nothing was flushed, so a subsequent end() with the right length
-    // produces a well-formed response.
+    // Nothing was flushed, so a correct-length end() still forms a valid response.
     res.end("1234567890");
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
@@ -139,7 +131,7 @@ test("strictContentLength: end() with no chunk and unmet Content-Length throws b
     } catch (e: any) {
       resolve({ code: e.code, headersSent: res.headersSent });
     }
-    setImmediate(() => res.socket!.destroy());
+    setImmediate(() => res.socket!.end());
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
 
@@ -151,6 +143,30 @@ test("strictContentLength: end() with no chunk and unmet Content-Length throws b
     headersSent: true,
     wire: "",
   });
+});
+
+test("strictContentLength: an invalid chunk still throws the chunk-type error, not a length mismatch", async () => {
+  const { promise: handled, resolve, reject } = Promise.withResolvers<string>();
+  await using server = http.createServer((req, res) => {
+    req.resume();
+    res.strictContentLength = true;
+    res.writeHead(200, { "content-length": "10" });
+    try {
+      // A duck-typed non-buffer: measuring its byteLength (3 !== 10) would
+      // misreport this as a Content-Length mismatch.
+      res.end({ byteLength: 3 } as any);
+      reject(new Error("end() should have thrown"));
+      return;
+    } catch (e: any) {
+      resolve(e.code);
+    }
+    setImmediate(() => res.socket!.end());
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  await requestRaw((server.address() as net.AddressInfo).port);
+
+  expect(await handled).toBe("ERR_INVALID_ARG_TYPE");
 });
 
 // The http2 allowHTTP1 fallback drives ServerResponse with a JS shim handle
@@ -201,7 +217,7 @@ test("strictContentLength: http2 allowHTTP1 fallback mismatch throws the right e
     } catch (e: any) {
       resolve(`${e.constructor.name}:${e.code}`);
     }
-    res.socket!.destroy();
+    setImmediate(() => res.socket!.end());
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
 

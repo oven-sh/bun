@@ -174,10 +174,9 @@ describe("TextDecoder - error recovery", () => {
   const codePoints = (encoding: string, bytes: number[]) =>
     Array.from(new TextDecoder(encoding).decode(new Uint8Array(bytes)), c => c.codePointAt(0));
 
-  // https://encoding.spec.whatwg.org/#euc-jp-decoder step 5.3 unconditionally
-  // sets the jis0212 flag to false. An aborted JIS X 0212 sequence (0x8F lead)
-  // must not leave the flag set, or the NEXT valid JIS X 0208 pair silently
-  // decodes through the wrong index.
+  // https://encoding.spec.whatwg.org/#euc-jp-decoder step 5.3 clears the jis0212
+  // flag unconditionally; an aborted JIS X 0212 sequence must not make the NEXT
+  // valid JIS X 0208 pair decode through the wrong index.
   test("EUC-JP: aborted JIS X 0212 sequence does not leak into the next pair", () => {
     // 8F A1 starts a JIS X 0212 sequence; 0x61 aborts it. A1 A1 is then a
     // plain JIS X 0208 pair: pointer 0 is U+3000 IDEOGRAPHIC SPACE.
@@ -196,10 +195,9 @@ describe("TextDecoder - error recovery", () => {
     expect(codePoints("big5", [0x81, 0xa1, 0x41])).toEqual([0xfffd, 0x41]);
   });
 
-  // https://encoding.spec.whatwg.org/#iso-2022-jp-decoder "escape" step 8:
-  // when the byte after an escape lead is not a valid suffix, the lead and the
-  // byte are restored to the queue and reprocessed, so the bad suffix also
-  // produces its own error.
+  // https://encoding.spec.whatwg.org/#iso-2022-jp-decoder "escape" step 8: an
+  // invalid escape suffix is restored to the queue along with the lead and
+  // reprocessed, so it produces its own error.
   test("ISO-2022-JP: invalid escape suffix produces its own replacement", () => {
     // ESC $ 0E: not an escape; 0x24 is reprocessed as '$' and 0x0E errors.
     expect(codePoints("iso-2022-jp", [0x1b, 0x24, 0x0e])).toEqual([0xfffd, 0x24, 0xfffd]);

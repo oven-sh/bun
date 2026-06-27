@@ -9,13 +9,9 @@
 
 import { describe, expect, test } from "bun:test";
 
-// ---------------------------------------------------------------------------
 // https://github.com/web-platform-tests/wpt/blob/master/encoding/single-byte-decoder.window.js
-//
-// The decoder half of every single-byte index from
-// https://encoding.spec.whatwg.org/indexes.json. A `null` marks an unmapped
-// pointer, which the decoder must turn into U+FFFD.
-// ---------------------------------------------------------------------------
+// The decoder half of every single-byte index from the spec's indexes.json.
+// A `null` marks an unmapped pointer, which must decode to U+FFFD.
 // prettier-ignore
 const singleByteIndexes: Record<string, (number | null)[]> = {
   "ibm866": [
@@ -338,14 +334,9 @@ describe("WPT: single-byte-decoder", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
 // https://github.com/web-platform-tests/wpt/blob/master/encoding/textdecoder-labels.any.js
-//
-// Every label for every encoding in https://encoding.spec.whatwg.org/encodings.json,
-// keyed by the canonical name `TextDecoder.prototype.encoding` must report.
-// The `replacement` encoding is tested separately below; the constructor
-// rejects it.
-// ---------------------------------------------------------------------------
+// Every label of every encoding in the spec's encodings.json, keyed by the
+// name `TextDecoder.prototype.encoding` must report. `replacement` is below.
 const encodingLabels: Record<string, string[]> = {
   "utf-8": ["unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "utf-8", "utf8", "x-unicode20utf8"],
   "ibm866": ["866", "cp866", "csibm866", "ibm866"],
@@ -529,12 +520,9 @@ describe("WPT: textdecoder-labels", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
 // https://github.com/web-platform-tests/wpt/blob/master/encoding/api-replacement-encodings.any.js
-//
 // https://encoding.spec.whatwg.org/#dom-textdecoder: "If encoding is failure
 // or replacement, then throw a RangeError."
-// ---------------------------------------------------------------------------
 describe("WPT: api-replacement-encodings", () => {
   const replacementLabels = [
     "csiso2022kr",
@@ -549,11 +537,9 @@ describe("WPT: api-replacement-encodings", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // https://github.com/web-platform-tests/wpt/blob/master/encoding/api-invalid-label.any.js
-// (a representative subset; the full WPT file decorates every valid label
-//  with every non-ASCII whitespace code point)
-// ---------------------------------------------------------------------------
+// A representative subset; the full WPT file also decorates every valid
+// label with every non-ASCII whitespace code point.
 describe("WPT: api-invalid-label", () => {
   const invalidLabels = [
     "",

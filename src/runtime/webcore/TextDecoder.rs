@@ -39,9 +39,8 @@ pub struct TextDecoder {
     pub lead_surrogate: Cell<Option<u16>>,
 
     // https://encoding.spec.whatwg.org/#textdecoder-bom-seen-flag
-    // False at the start of each stream. Becomes true once the stream's BOM
-    // decision has been made: either a leading U+FEFF was suppressed, or the
-    // stream started with something else so no later U+FEFF may be dropped.
+    // True once the stream's BOM decision is made: its first scalar was either
+    // a suppressed U+FEFF or something else, so no later U+FEFF may be dropped.
     bom_seen: Cell<bool>,
     // https://encoding.spec.whatwg.org/#textdecoder-do-not-flush-flag
     // True when the previous `decode()` was a `{stream: true}` chunk, so the
@@ -236,9 +235,7 @@ impl TextDecoder {
 
         // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2:
         // a decode() that follows a flushing one starts a new stream, which
-        // re-arms the per-stream BOM suppression. The rest of the per-stream
-        // state (`buffered`, `lead_byte`, `lead_surrogate`, `codec`) is
-        // already reset by the flushing call itself.
+        // re-arms the per-stream BOM suppression.
         if !self.do_not_flush.replace(stream) {
             self.bom_seen.set(false);
         }
@@ -316,9 +313,8 @@ impl TextDecoder {
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the
-                // previous `{stream: true}` chunk. The BOM check below must see
-                // the JOINED bytes: the three BOM bytes may arrive in
-                // different chunks.
+                // previous `{stream: true}` chunk; the BOM check below must
+                // see the JOINED bytes (a BOM may be split across chunks).
                 let joined_owned: Box<[u8]>;
                 let buffered = self.buffered.get();
                 let joined: &[u8] = if buffered.len > 0 {
@@ -334,12 +330,9 @@ impl TextDecoder {
                     buffer_slice
                 };
 
-                // https://encoding.spec.whatwg.org/#concept-td-serialize: at
-                // most one leading U+FEFF is suppressed per stream, never one
-                // appearing later. A strict prefix of the BOM ("", EF, EF BB)
-                // is still ambiguous, so it leaves `bom_seen` unset and gets
-                // carried over in `buffered` until another chunk (or the
-                // flush) resolves it.
+                // https://encoding.spec.whatwg.org/#concept-td-serialize: suppress
+                // at most one LEADING U+FEFF per stream. A strict BOM prefix ("",
+                // EF, EF BB) is still ambiguous; `buffered` carries it to the next chunk.
                 const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
                 let input: &[u8] = if self.ignore_bom || self.bom_seen.get() {
                     joined
@@ -411,8 +404,7 @@ impl TextDecoder {
                 }
 
                 // All-ASCII input needed no conversion. `ZigString::init(..).to_js`
-                // COPIES into a GC-managed JSString, so `input` may borrow either
-                // the caller's buffer or `joined_owned`.
+                // copies, so `input` may borrow the caller's buffer or `joined_owned`.
                 // Experiment: using mimalloc directly is slightly slower
                 Ok(ZigString::init(input).to_js(global_this))
             }
@@ -425,11 +417,9 @@ impl TextDecoder {
                     self.decode_utf16::<false, FLUSH>(buffer_slice)?
                 };
 
-                // https://encoding.spec.whatwg.org/#concept-td-serialize: the
-                // stream's very first code unit is the only U+FEFF that gets
-                // dropped. This must happen at the code-unit level, not on the
-                // raw chunk bytes: the two BOM bytes may arrive in different
-                // `{stream: true}` chunks (the first is held in `lead_byte`).
+                // https://encoding.spec.whatwg.org/#concept-td-serialize: only the
+                // stream's FIRST code unit is dropped as a BOM. Work on code units,
+                // not chunk bytes: `lead_byte` may already hold half of the BOM.
                 if !self.ignore_bom && !self.bom_seen.get() && !decoded.is_empty() {
                     self.bom_seen.set(true);
                     if decoded[0] == 0xFEFF {

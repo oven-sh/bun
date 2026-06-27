@@ -331,11 +331,9 @@ describe("TextDecoder ignoreBOM", () => {
   });
 });
 
-// https://encoding.spec.whatwg.org/#concept-td-serialize: per stream, the
-// decoder suppresses the FIRST output code point if it is U+FEFF. That is a
-// code-point-level rule: the BOM bytes may be split across `{stream: true}`
-// chunks, and BOM-shaped bytes that are not at the very start of the stream
-// must NOT be dropped.
+// https://encoding.spec.whatwg.org/#concept-td-serialize: per stream, only the
+// FIRST output code point is dropped if it is U+FEFF. Its bytes may be split
+// across `{stream: true}` chunks, and a later U+FEFF must NOT be dropped.
 describe("TextDecoder BOM across {stream: true} chunks", () => {
   const decodeChunks = (encoding, chunks) => {
     const d = new TextDecoder(encoding);

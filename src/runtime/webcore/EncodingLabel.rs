@@ -111,9 +111,7 @@ impl EncodingLabel {
 }
 
 // The complete label table from https://encoding.spec.whatwg.org/encodings.json.
-// Every label the spec defines (and only those) must resolve here; the WPT
-// `encoding/textdecoder-labels` and `encoding/api-invalid-label` suites check
-// both directions.
+// Every label the spec defines, and only those, must resolve here.
 bun_core::comptime_string_map! {
     static STRING_MAP: EncodingLabel = {
     // UTF-8

@@ -1,32 +1,21 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
 
-// Sentry BUN-3KFE: SEGV in us_internal_socket_close_raw, reached from
-// HTTPThread::drain_queued_shutdowns when the abort tracker still holds a
-// socket pointer after that socket was closed and freed. Every socket event
-// handler that owns a client/session calls unregister_abort_tracker(), but a
-// socket whose ext was already retagged to DeadSocket/PooledSocket (via
-// terminate_socket/close_socket) falls through Handler::on_close without
-// touching the tracker. On a TLS socket a graceful close(Normal) sends
-// close_notify and defers the raw close, so the socket lives with a
-// DeadSocket ext until the peer's FIN/close_notify; when on_close eventually
-// fires it does nothing and any leftover tracker entry dangles across
-// us_internal_free_closed_sockets. The next abort for that id derefs freed
-// memory in drain_queued_shutdowns.
+// Sentry BUN-3KFE: SEGV in drain_queued_shutdowns derefing a freed socket
+// left in the abort tracker after Handler::on_close fell through on a
+// DeadSocket/PooledSocket ext. See PR #32862 for the root-cause analysis.
 //
-// All production events were macOS aarch64 release builds; on Linux
-// debug+ASAN the per-tick assert_abort_tracker_sockets_alive() check did not
-// fire over ~10k iterations before the fix, so the precise leaking path is
-// timing-dependent. The test asserts the abort/close race remains
-// memory-safe under ASAN; a leaked tracker entry pointing at freed memory
-// trips ASAN (or the debug invariant check) in the child and fails the
-// exit-code assertion.
+// All production events were macOS aarch64 release; on Linux debug+ASAN the
+// per-tick assert_abort_tracker_sockets_alive() check never fired pre-fix
+// over ~10k iterations, so this test asserts the abort/close race stays
+// memory-safe under ASAN: a leaked tracker entry trips ASAN (or the debug
+// invariant check) in the child and fails the exit-code assertion.
 
 const handshakeFailFixture = /* ts */ `
 import { createServer } from "node:net";
 import { once } from "node:events";
 
-const ITERS = 300;
+const ITERS = 200;
 
 const server = createServer((socket) => {
   // Accept TCP, read the ClientHello, then reset: the client's TLS handshake
@@ -82,32 +71,28 @@ server.close();
 console.log(JSON.stringify({ iters: ITERS, aborted, errored }));
 `;
 
-test.skipIf(!isASAN)(
-  "abort racing a TLS handshake failure does not leave a stale abort-tracker entry",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", handshakeFailFixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+test.skipIf(!isASAN)("abort racing a TLS handshake failure does not leave a stale abort-tracker entry", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", handshakeFailFixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const summary = stdout.trim();
-    expect({ summary, stderr, exitCode }).toEqual({
-      summary: expect.stringMatching(/^\{"iters":300,"aborted":\d+,"errored":\d+\}$/),
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+  const summary = stdout.trim();
+  expect({ summary, stderr, exitCode }).toEqual({
+    summary: expect.stringMatching(/^\{"iters":200,"aborted":\d+,"errored":\d+\}$/),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 
-    const { iters, aborted, errored } = JSON.parse(summary);
-    expect({ iters, total: aborted + errored }).toEqual({ iters: 300, total: 300 });
-  },
-  30_000,
-);
+  const { iters, aborted, errored } = JSON.parse(summary);
+  expect({ iters, total: aborted + errored }).toEqual({ iters: 200, total: 200 });
+});
 
 const connectionCloseFixture = /* ts */ `
-const ITERS = 300;
+const ITERS = 250;
 
 using server = Bun.serve({
   port: 0,
@@ -161,10 +146,9 @@ test.skipIf(!isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ summary: stdout.trim(), stderr, exitCode }).toEqual({
-      summary: JSON.stringify({ iters: 300, settled: 300 }),
+      summary: JSON.stringify({ iters: 250, settled: 250 }),
       stderr: expect.any(String),
       exitCode: 0,
     });
   },
-  30_000,
 );

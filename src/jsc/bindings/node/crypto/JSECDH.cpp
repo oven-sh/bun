@@ -55,6 +55,19 @@ point_conversion_form_t JSECDH::getFormat(JSC::JSGlobalObject* globalObject, JSC
     return POINT_CONVERSION_UNCOMPRESSED;
 }
 
+// BoringSSL's EC_POINT_point2oct does not implement POINT_CONVERSION_HYBRID.
+// Hybrid is the uncompressed layout (0x04 || X || Y) with the prefix replaced
+// by 0x06|y_bit, so encode as uncompressed and fix up the leading byte.
+size_t JSECDH::pointToBuffer(const EC_GROUP* group, const EC_POINT* point, point_conversion_form_t form, uint8_t* buf, size_t len)
+{
+    point_conversion_form_t effective = form == POINT_CONVERSION_HYBRID ? POINT_CONVERSION_UNCOMPRESSED : form;
+    size_t written = EC_POINT_point2oct(group, point, effective, buf, len, nullptr);
+    if (form == POINT_CONVERSION_HYBRID && buf != nullptr && written > 0) {
+        buf[0] = static_cast<uint8_t>(POINT_CONVERSION_HYBRID | (buf[written - 1] & 1));
+    }
+    return written;
+}
+
 EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue, JSValue formatValue)
 {
     point_conversion_form_t form = JSECDH::getFormat(globalObject, scope, formatValue);
@@ -69,7 +82,7 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
     }
 
     // Calculate the length needed for the result
-    size_t bufLen = EC_POINT_point2oct(group, pubKey, form, nullptr, 0, nullptr);
+    size_t bufLen = JSECDH::pointToBuffer(group, pubKey, form, nullptr, 0);
     if (bufLen == 0) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to determine size for public key encoding"_s);
         return {};
@@ -83,7 +96,7 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
     }
 
     // Encode the point to the buffer
-    if (EC_POINT_point2oct(group, pubKey, form, static_cast<unsigned char*>(result->data()), bufLen, nullptr) == 0) {
+    if (JSECDH::pointToBuffer(group, pubKey, form, static_cast<unsigned char*>(result->data()), bufLen) == 0) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to encode public key"_s);
         return {};
     }

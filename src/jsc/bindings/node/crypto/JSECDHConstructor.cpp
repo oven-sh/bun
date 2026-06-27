@@ -118,7 +118,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to convert Buffer to EC_POINT"_s);
     }
 
-    size_t size = EC_POINT_point2oct(group, point, form, nullptr, 0, nullptr);
+    size_t size = JSECDH::pointToBuffer(group, point, form, nullptr, 0);
     if (size == 0) {
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to get public key length"_s);
     }
@@ -129,7 +129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
         return {};
     }
 
-    if (!EC_POINT_point2oct(group, point, form, buf.begin(), buf.size(), nullptr)) {
+    if (!JSECDH::pointToBuffer(group, point, form, buf.begin(), buf.size())) {
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to get public key"_s);
     }
 

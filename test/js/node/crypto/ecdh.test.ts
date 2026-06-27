@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createECDH, ECDH, getCurves } from "node:crypto";
 
 // Helper function to generate test key pairs for various curves
@@ -265,4 +265,108 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   expect(carolSecret).toBeInstanceOf(Buffer);
   expect(carolSecret.length).toBeGreaterThan(0);
   expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
+});
+
+describe("ECDH hybrid point format", () => {
+  // X9.62 hybrid: prefix 0x06|y_bit, followed by X || Y (same layout as uncompressed 0x04).
+  // Known-good P-256 hybrid point emitted by Node.js (prefix 0x07 => y is odd).
+  const knownHybrid =
+    "0710fc112b0b2d57a701d22b1dc7f9aad0d66dd8ab6eaf71e0e6531ba136f4f14072ff13402beadb679e9d9636600f806070f22ad44b23ac0e2a75cd605c9e4d8f";
+  const knownUncompressed = "04" + knownHybrid.slice(2);
+  const knownCompressed = "03" + knownHybrid.slice(2, 66);
+
+  test.each(["prime256v1", "secp384r1", "secp521r1"])("getPublicKey/generateKeys emit hybrid on %s", curve => {
+    const ecdh = createECDH(curve);
+    const gen = ecdh.generateKeys(undefined, "hybrid");
+    const hyb = ecdh.getPublicKey(undefined, "hybrid");
+    const unc = ecdh.getPublicKey(undefined, "uncompressed");
+
+    expect(gen.equals(hyb)).toBe(true);
+    expect(hyb.length).toBe(unc.length);
+    expect(unc[0]).toBe(0x04);
+    // Hybrid prefix is 0x06 | (Y's least-significant bit).
+    expect(hyb[0]).toBe(0x06 | (unc[unc.length - 1] & 1));
+    // Coordinates after the prefix byte are identical.
+    expect(hyb.subarray(1).equals(unc.subarray(1))).toBe(true);
+  });
+
+  test("ECDH.convertKey round-trips hybrid with a known vector", () => {
+    expect(ECDH.convertKey(knownHybrid, "prime256v1", "hex", "hex", "uncompressed")).toBe(knownUncompressed);
+    expect(ECDH.convertKey(knownHybrid, "prime256v1", "hex", "hex", "compressed")).toBe(knownCompressed);
+    expect(ECDH.convertKey(knownHybrid, "prime256v1", "hex", "hex", "hybrid")).toBe(knownHybrid);
+    expect(ECDH.convertKey(knownUncompressed, "prime256v1", "hex", "hex", "hybrid")).toBe(knownHybrid);
+    expect(ECDH.convertKey(knownCompressed, "prime256v1", "hex", "hex", "hybrid")).toBe(knownHybrid);
+  });
+
+  test.each(["prime256v1", "secp384r1", "secp521r1"])("ECDH.convertKey round-trips hybrid on %s", curve => {
+    const ecdh = createECDH(curve);
+    ecdh.generateKeys();
+    const unc = ecdh.getPublicKey("hex", "uncompressed");
+    const cmp = ecdh.getPublicKey("hex", "compressed");
+    const hyb = ecdh.getPublicKey("hex", "hybrid");
+
+    expect(ECDH.convertKey(unc, curve, "hex", "hex", "hybrid")).toBe(hyb);
+    expect(ECDH.convertKey(cmp, curve, "hex", "hex", "hybrid")).toBe(hyb);
+    expect(ECDH.convertKey(hyb, curve, "hex", "hex", "uncompressed")).toBe(unc);
+    expect(ECDH.convertKey(hyb, curve, "hex", "hex", "compressed")).toBe(cmp);
+    expect(ECDH.convertKey(hyb, curve, "hex", "hex", "hybrid")).toBe(hyb);
+  });
+
+  test("computeSecret and setPublicKey accept a hybrid-encoded peer key", () => {
+    const bob = createECDH("prime256v1");
+    bob.generateKeys();
+    const fromHybrid = bob.computeSecret(knownHybrid, "hex");
+    const fromUncompressed = bob.computeSecret(knownUncompressed, "hex");
+    expect(fromHybrid.equals(fromUncompressed)).toBe(true);
+    expect(fromHybrid.length).toBe(32);
+
+    const carol = createECDH("prime256v1");
+    carol.generateKeys();
+    carol.setPublicKey(knownHybrid, "hex");
+    expect(carol.getPublicKey("hex", "uncompressed")).toBe(knownUncompressed);
+    expect(carol.getPublicKey("hex", "hybrid")).toBe(knownHybrid);
+  });
+
+  test.each(["prime256v1", "secp384r1", "secp521r1"])(
+    "computeSecret agrees when the peer key is hybrid on %s",
+    curve => {
+      const alice = createECDH(curve);
+      const bob = createECDH(curve);
+      alice.generateKeys();
+      bob.generateKeys();
+
+      const aliceHybrid = alice.getPublicKey(undefined, "hybrid");
+      const bobHybrid = bob.getPublicKey(undefined, "hybrid");
+
+      const aliceSecret = alice.computeSecret(bobHybrid);
+      const bobSecret = bob.computeSecret(aliceHybrid);
+      const reference = alice.computeSecret(bob.getPublicKey());
+
+      expect(aliceSecret.equals(bobSecret)).toBe(true);
+      expect(aliceSecret.equals(reference)).toBe(true);
+    },
+  );
+
+  test("rejects hybrid input whose y-parity bit does not match Y", () => {
+    // knownHybrid has prefix 0x07 (y odd); 0x06 with the same coordinates is invalid.
+    const badHybrid = "06" + knownHybrid.slice(2);
+    expect(() => ECDH.convertKey(badHybrid, "prime256v1", "hex", "hex", "uncompressed")).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" }),
+    );
+
+    const bob = createECDH("prime256v1");
+    bob.generateKeys();
+    expect(() => bob.computeSecret(badHybrid, "hex")).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY" }),
+    );
+  });
+
+  test("rejects hybrid input with wrong length", () => {
+    // Valid hybrid prefix but truncated body.
+    const truncated = Buffer.from(knownHybrid, "hex").subarray(0, 33);
+    expect(truncated[0]).toBe(0x07);
+    expect(() => ECDH.convertKey(truncated, "prime256v1", null, "hex", "uncompressed")).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" }),
+    );
+  });
 });

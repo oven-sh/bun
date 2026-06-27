@@ -3690,6 +3690,20 @@ bool ECPointPointer::setFromBuffer(const Buffer<const unsigned char>& buffer,
     const EC_GROUP* group)
 {
     if (!point_) return false;
+    // BoringSSL does not decode the X9.62 hybrid form (0x06/0x07). Hybrid is
+    // the uncompressed encoding with a redundant y-parity bit, so rewrite the
+    // prefix to 0x04 and verify the parity bit matches the encoded Y.
+    if (buffer.len > 0 && (buffer.data[0] & ~1u) == POINT_CONVERSION_HYBRID) {
+        size_t field_len = (EC_GROUP_get_degree(group) + 7) / 8;
+        if (buffer.len != 1 + 2 * field_len) return false;
+        if ((buffer.data[0] & 1) != (buffer.data[buffer.len - 1] & 1)) return false;
+        WTF::Vector<uint8_t, 256> tmp;
+        if (!tmp.tryGrow(buffer.len)) return false;
+        memcpy(tmp.begin(), buffer.data, buffer.len);
+        tmp[0] = POINT_CONVERSION_UNCOMPRESSED;
+        return EC_POINT_oct2point(
+            group, point_.get(), tmp.begin(), tmp.size(), nullptr);
+    }
     return EC_POINT_oct2point(
         group, point_.get(), buffer.data, buffer.len, nullptr);
 }

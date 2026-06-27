@@ -50,6 +50,7 @@ public:
     JSC::EncodedJSValue getPublicKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue encodingValue, JSC::JSValue formatValue);
 
     static point_conversion_form_t getFormat(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue formatValue);
+    static size_t pointToBuffer(const EC_GROUP* group, const EC_POINT* point, point_conversion_form_t form, uint8_t* buf, size_t len);
 
 private:
     JSECDH(JSC::VM& vm, JSC::Structure* structure, ncrypto::ECKeyPointer&& key, const EC_GROUP* group)

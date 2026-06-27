@@ -55,13 +55,13 @@ std::span<const EVP_PKEY_ALG* const> rsaPssAlgorithms()
     return kAlgorithms;
 }
 
-// Retries a SubjectPublicKeyInfo parse that the default algorithm list
-// rejected, allowing id-RSASSA-PSS. Drops the default parser's pending error
-// so callers that treat a non-empty error queue as failure see this outcome.
+// Retries a SubjectPublicKeyInfo parse the default algorithm list rejected,
+// allowing id-RSASSA-PSS. On success the error queue is cleared (callers
+// treat a non-empty queue as failure); on failure the default parser's
+// error stays oldest so ERR_peek_error still reports the original cause.
 EVP_PKEY* parseRsaPssSubjectPublicKeyInfo(const unsigned char* data, size_t len)
 {
     auto algs = rsaPssAlgorithms();
-    ERR_clear_error();
     EVP_PKEY* key = EVP_PKEY_from_subject_public_key_info(data, len, algs.data(), algs.size());
     if (key != nullptr) ERR_clear_error();
     return key;
@@ -71,7 +71,6 @@ EVP_PKEY* parseRsaPssSubjectPublicKeyInfo(const unsigned char* data, size_t len)
 EVP_PKEY* parseRsaPssPrivateKeyInfo(const unsigned char* data, size_t len)
 {
     auto algs = rsaPssAlgorithms();
-    ERR_clear_error();
     EVP_PKEY* key = EVP_PKEY_from_private_key_info(data, len, algs.data(), algs.size());
     if (key != nullptr) ERR_clear_error();
     return key;

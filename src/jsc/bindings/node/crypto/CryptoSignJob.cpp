@@ -404,6 +404,12 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         // don't require a separate digest algorithm.
         if (keyObject.asymmetricKey().isRsaVariant()) {
             digest = Digest::FromName("SHA256"_s);
+            // For an id-RSASSA-PSS key, OpenSSL returns the key's own
+            // restriction instead of SHA256 (the `rsa_type !=
+            // RSA_FLAG_TYPE_RSASSAPSS || ...is_unrestricted` branch above).
+            if (auto pssParams = keyObject.asymmetricKey().getRsaPssParams()) {
+                digest = Digest::FromName(pssParams->digest);
+            }
         }
     }
 

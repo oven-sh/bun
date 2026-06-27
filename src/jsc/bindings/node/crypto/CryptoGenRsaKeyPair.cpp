@@ -243,8 +243,6 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RsaKeyVariant::RSA_PSS,
         modulusLength,
         publicExponent,
-        saltLength,
         md,
-        mgf1Md,
         encodingConfig);
 }

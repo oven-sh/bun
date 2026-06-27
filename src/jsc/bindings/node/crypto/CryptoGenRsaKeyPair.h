@@ -24,14 +24,14 @@ public:
     {
     }
 
-    RsaKeyPairJobCtx(RsaKeyVariant variant, uint32_t modulusLength, uint32_t exponent, std::optional<int32_t> saltLength, ncrypto::Digest md, ncrypto::Digest mgfMd, const KeyEncodingConfig& encodingConfig)
+    // The RSA_PSS variant only needs the message digest: fromJS rejects any
+    // parameter set where the MGF1 hash or salt length differs from it.
+    RsaKeyPairJobCtx(RsaKeyVariant variant, uint32_t modulusLength, uint32_t exponent, ncrypto::Digest md, const KeyEncodingConfig& encodingConfig)
         : KeyPairJobCtx(encodingConfig.publicKeyEncoding, encodingConfig.privateKeyEncoding)
         , m_variant(variant)
         , m_modulusLength(modulusLength)
         , m_exponent(exponent)
-        , m_saltLength(saltLength.value_or(-1))
         , m_md(md)
-        , m_mgfMd(mgfMd)
     {
     }
 
@@ -40,9 +40,7 @@ public:
         , m_variant(other.m_variant)
         , m_modulusLength(other.m_modulusLength)
         , m_exponent(other.m_exponent)
-        , m_saltLength(other.m_saltLength)
         , m_md(other.m_md)
-        , m_mgfMd(other.m_mgfMd)
     {
     }
 
@@ -57,9 +55,7 @@ public:
     uint32_t m_modulusLength;
     uint32_t m_exponent;
 
-    int32_t m_saltLength;
     ncrypto::Digest m_md = nullptr;
-    ncrypto::Digest m_mgfMd = nullptr;
 };
 
 struct RsaKeyPairJob {

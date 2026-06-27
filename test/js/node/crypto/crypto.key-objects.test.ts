@@ -1956,6 +1956,43 @@ PS9orUUFp7aAU0qzPFhVzK4R0NPBdD/nhAl0KqoVuVu8G+FYA3MUL4Y=
     expect(verify("sha256", message, publicKey, nodeSig)).toBeTrue();
   });
 
+  test("verify(null) uses an rsa-pss key's own restriction digest", () => {
+    // https://github.com/oven-sh/bun/issues/29370
+    // The key's digest AlgorithmIdentifiers use the absent-params form (no
+    // explicit NULL) and the restriction is sha384/sha384/48.
+    const pubkey = `-----BEGIN PUBLIC KEY-----
+MIIBUjA9BgkqhkiG9w0BAQowMKANMAsGCWCGSAFlAwQCAqEaMBgGCSqGSIb3DQEBC
+DALBglghkgBZQMEAgKiAwIBMAOCAQ8AMIIBCgKCAQEAo3iVbsT8MIiTUmehBFL2e
+r8SwXqKkPCZMi1jw4zQ2Dzwrl8IyQpQS4NSbn0bdYHEkP+SU2V7GsAnnhXdIzWaH
+QsvHE44vndDIxnmaTg2R5BUZaDdi5aX6xpYP39KC5Z6XlyehCSIFLSQUIyfgCxII
+JhV+aHKK5zNBAgdAVjEWao687vtbqu6rng6VbKChW1I2aIIjBCCdkQsw1uxyVcNp
+KWeqHhMCF0TIC90DiBTX+r1C3ASly906BTEqeonSNguClzz7oQukbZMncnWpxSnp
+f8/Dr7qOL0AVMkOYCYHk7XR5WX+2zp2LqJwtcO87Dek5QOKcAwpOFTTuI2ZpN+3n
+QIDAQAB
+-----END PUBLIC KEY-----`;
+    const data = Buffer.from(
+      "AAIVMNT5BLy1lujIfq8YFB1hA8JNtPWT1s2RsOHJFObgsByptK6dkzOhF4WbExKotstRCIcIVxJ2DFwX+5rl5SiX84HnDRAmTib96kh22O22xDPJex27ug/u/+3wymfe5PA=",
+      "base64",
+    );
+    const sig = Buffer.from(
+      "lmtscYxdv2gvMGN6EPKNE6sMB2tu1OVwwhNGpRpj1Ym5VV8PtKyyxgZDH7gQXZUpyKRLMAlfGBmMbJx2QorimlMlWcfhfnnFAvIDcnhrdniT3Z0rUM1Diskn8Q2bUr8aCNVAacdF8hQ4bBvaeQElyDz7jGY111fK3xqIqGO2AU6A2RgDFpMTlx0RLqqsYa0ZAx87X+2bSGa4ctRq1DrTpJQ/bIK/8NEGESSwdbPkZdpdBuLEntTKq36o9seD0nKMPX4A719J6l0aNJ0Tal+4un5/oLmoMQ++nm7unNMFknuT8eMEvASUInn761+jqXIv0rLmlD/pZyyTVPnQ+AD7wQ==",
+      "base64",
+    );
+
+    const key = createPublicKey(pubkey);
+    expect(key.asymmetricKeyType).toBe("rsa-pss");
+    expect(key.asymmetricKeyDetails).toEqual({
+      modulusLength: 2048,
+      publicExponent: 65537n,
+      hashAlgorithm: "sha384",
+      mgf1HashAlgorithm: "sha384",
+      saltLength: 48,
+    });
+    // A null algorithm must use the key's own (mandatory) restriction digest.
+    expect(verify(null, data, { key: pubkey }, sig)).toBeTrue();
+    expect(verify("sha384", data, { key: pubkey }, sig)).toBeTrue();
+  });
+
   test.each([
     [{ modulusLength: 2048 }, /requires options\.hashAlgorithm/],
     [{ modulusLength: 2048, hashAlgorithm: "sha1" }, /must be 'sha256', 'sha384' or 'sha512'/],

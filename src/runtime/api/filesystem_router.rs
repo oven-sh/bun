@@ -606,15 +606,11 @@ impl FileSystemRouter {
         // `URLPath::parse` percent-decoded — in that case nothing borrows `path_bytes`
         // anymore and `path` is swapped for the decode buffer below.
         let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
-        let mut url_path = match URLPath::parse(path_bytes) {
-            Ok(v) => v,
-            Err(err) => {
-                return Err(global_this.throw(format_args!(
-                    "{} parsing path: {}",
-                    bun_url::Error::from(err).name(),
-                    bstr::BStr::new(path.slice())
-                )));
-            }
+        // A path with a malformed percent escape cannot name any route.
+        // `match()` is typed as `MatchedRoute | null`, so a bad URL (trivially
+        // reachable from `router.match(request)`) must not throw.
+        let Ok(mut url_path) = URLPath::parse(path_bytes) else {
+            return Ok(JSValue::NULL);
         };
         let mut params = route_param::List::default();
         // `defer params.deinit(allocator)` → Drop

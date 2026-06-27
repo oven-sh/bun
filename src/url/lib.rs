@@ -1388,7 +1388,7 @@ impl From<DecodeError> for crate::Error {
 
 impl PercentEncoding {
     pub fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
-        Self::decode_fault_tolerant::<_, false>(writer, input, None)
+        Self::decode_fault_tolerant::<_, false, false>(writer, input, None)
     }
 
     /// Decode percent-encoded input into allocated memory.
@@ -1411,7 +1411,18 @@ impl PercentEncoding {
         Self::decode(&mut w, input)
     }
 
-    pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(
+    /// `PRESERVE_STRUCTURE` copies `%2F` and `%25` through verbatim instead
+    /// of decoding them. Route matchers split the output on `/`, so decoding
+    /// an escaped slash here would let it create or merge path segments; and
+    /// decoding `%25` to `%` would make a later per-value decode read the
+    /// following two bytes as a fresh escape (a double decode). Keeping both
+    /// encoded lets a single downstream decode of the captured value produce
+    /// the right result.
+    pub fn decode_fault_tolerant<
+        W: bun_core::io::Write,
+        const FAULT_TOLERANT: bool,
+        const PRESERVE_STRUCTURE: bool,
+    >(
         writer: &mut W,
         input: &[u8],
         needs_redirect: Option<&mut bool>,
@@ -1455,10 +1466,15 @@ impl PercentEncoding {
                         }
                     }
 
-                    writer.write_byte(
-                        (strings::to_ascii_hex_value(input[i + 1]) << 4)
-                            | strings::to_ascii_hex_value(input[i + 2]),
-                    )?;
+                    let decoded = (strings::to_ascii_hex_value(input[i + 1]) << 4)
+                        | strings::to_ascii_hex_value(input[i + 2]);
+                    if PRESERVE_STRUCTURE && matches!(decoded, b'/' | b'%') {
+                        writer.write_all(&input[i..i + 3])?;
+                        i += 3;
+                        written += 3;
+                        continue;
+                    }
+                    writer.write_byte(decoded)?;
                     i += 3;
                     written += 1;
                     continue;

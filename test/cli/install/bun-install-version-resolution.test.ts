@@ -151,6 +151,19 @@ describe.concurrent("bun install version resolution", () => {
     expect(resolved["star-stable"]).toBe("2.0.0");
   });
 
+  // Only the literal `*` follows a prerelease latest dist-tag. npm resolves
+  // `>=0.0.0` and `x` with a plain satisfies check, which excludes
+  // prereleases, so both pick 1.0.0 here.
+  test("ranges equivalent to star do not follow a prerelease latest dist-tag", async () => {
+    const packages: Packages = {
+      "star-like": { versions: ["1.0.0", "2.0.0-beta.1"], latest: "2.0.0-beta.1" },
+    };
+    const gte_zero = await resolve(packages, { "star-like": ">=0.0.0" });
+    const x_range = await resolve(packages, { "star-like": "x" });
+    expect(gte_zero.resolved["star-like"]).toBe("1.0.0");
+    expect(x_range.resolved["star-like"]).toBe("1.0.0");
+  });
+
   // With minimumReleaseAge, `*` keeps the dist-tag fallback: a too recent
   // latest falls back to an older version from the same list, including
   // prereleases on a prerelease-only package.

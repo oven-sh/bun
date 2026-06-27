@@ -4954,6 +4954,40 @@ describe("expect()", () => {
       expect(e.message).toContain('"ball"');
     }
   });
+
+  // Jest 30 removed these alias matchers. Bun keeps them for backward
+  // compatibility and marks them @deprecated in its type definitions.
+  describe("legacy Jest matcher aliases (removed in Jest 30)", () => {
+    test_skipIf(isJest)("toThrowError aliases toThrow", () => {
+      expect(() => {
+        throw new Error("x");
+      }).toThrowError("x");
+      expect(() => {}).not.toThrowError();
+    });
+
+    test_skipIf(isJest)("mock call aliases", () => {
+      const fn = jest.fn((/** @type {number} */ a) => a + 1);
+      expect(fn).not.toBeCalled();
+      fn(1);
+      fn(2);
+      expect(fn).toBeCalled();
+      expect(fn).toBeCalledTimes(2);
+      expect(fn).toBeCalledWith(1);
+      expect(fn).lastCalledWith(2);
+      expect(fn).nthCalledWith(1, 1);
+      expect(fn).nthCalledWith(2, 2);
+    });
+
+    test_skipIf(isJest)("mock return aliases", () => {
+      const fn = jest.fn((/** @type {number} */ a) => a + 1);
+      fn(1);
+      fn(2);
+      expect(fn).toReturn();
+      expect(fn).lastReturnedWith(3);
+      expect(fn).nthReturnedWith(1, 2);
+      expect(fn).nthReturnedWith(2, 3);
+    });
+  });
 });
 
 function tmpFile(exists) {

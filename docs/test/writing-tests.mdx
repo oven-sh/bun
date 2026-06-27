@@ -581,6 +581,22 @@ Bun implements the following matchers. Full Jest compatibility is planned; see t
 | ------ | -------------------------- |
 | ❌     | `.addSnapshotSerializer()` |
 
+### Legacy Jest Aliases
+
+Jest 30 removed the following matcher aliases. Bun continues to accept them at runtime so existing test suites keep working, but they are marked `@deprecated` in the type definitions. Prefer the canonical names so your tests run under Bun, Jest 30, and Vitest without changes.
+
+| Alias (deprecated)    | Use instead                   |
+| --------------------- | ----------------------------- |
+| `.toThrowError()`     | `.toThrow()`                  |
+| `.toBeCalled()`       | `.toHaveBeenCalled()`         |
+| `.toBeCalledTimes()`  | `.toHaveBeenCalledTimes()`    |
+| `.toBeCalledWith()`   | `.toHaveBeenCalledWith()`     |
+| `.lastCalledWith()`   | `.toHaveBeenLastCalledWith()` |
+| `.nthCalledWith()`    | `.toHaveBeenNthCalledWith()`  |
+| `.toReturn()`         | `.toHaveReturned()`           |
+| `.lastReturnedWith()` | `.toHaveLastReturnedWith()`   |
+| `.nthReturnedWith()`  | `.toHaveNthReturnedWith()`    |
+
 ## Best Practices
 
 ### Use Descriptive Test Names

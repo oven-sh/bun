@@ -233,13 +233,6 @@ impl TextDecoder {
             false
         };
 
-        // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2:
-        // a decode() that follows a flushing one starts a new stream, which
-        // re-arms the per-stream BOM suppression.
-        if !self.do_not_flush.replace(stream) {
-            self.bom_seen.set(false);
-        }
-
         // Hoisted out of the labeled block — `ArrayBuffer::slice` borrows from
         // the by-value `ArrayBuffer`, so it must outlive the `'input_slice` block.
         let array_buffer;
@@ -257,6 +250,13 @@ impl TextDecoder {
                 "TextDecoder.decode expects an ArrayBuffer or TypedArray",
             )));
         };
+
+        // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2:
+        // a decode() after a flushing one starts a new stream. This runs AFTER
+        // the input check: a type error must leave the stream state untouched.
+        if !self.do_not_flush.replace(stream) {
+            self.bom_seen.set(false);
+        }
 
         // Dispatch the runtime `stream` bool to a const-generic flush parameter.
         if !stream {
@@ -334,15 +334,18 @@ impl TextDecoder {
                 // at most one LEADING U+FEFF per stream. A strict BOM prefix ("",
                 // EF, EF BB) is still ambiguous; `buffered` carries it to the next chunk.
                 const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
+                let set_bom_seen: bool;
                 let input: &[u8] = if self.ignore_bom || self.bom_seen.get() {
+                    set_bom_seen = false;
                     joined
                 } else if let Some(rest) = joined.strip_prefix(UTF8_BOM) {
-                    self.bom_seen.set(true);
+                    set_bom_seen = true;
                     rest
                 } else if UTF8_BOM.starts_with(joined) {
+                    set_bom_seen = false;
                     joined
                 } else {
-                    self.bom_seen.set(true);
+                    set_bom_seen = true;
                     joined
                 };
 
@@ -372,6 +375,13 @@ impl TextDecoder {
                         return Err(global_this.throw_out_of_memory());
                     }
                 };
+
+                // "BOM seen" is only written by "serialize I/O queue", which a
+                // thrown fatal decode never reaches, so only commit it once the
+                // decode succeeded.
+                if set_bom_seen {
+                    self.bom_seen.set(true);
+                }
 
                 if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
                     // `joined_owned` drops at scope exit.
@@ -417,16 +427,6 @@ impl TextDecoder {
                     self.decode_utf16::<false, FLUSH>(buffer_slice)?
                 };
 
-                // https://encoding.spec.whatwg.org/#concept-td-serialize: only the
-                // stream's FIRST code unit is dropped as a BOM. Work on code units,
-                // not chunk bytes: `lead_byte` may already hold half of the BOM.
-                if !self.ignore_bom && !self.bom_seen.get() && !decoded.is_empty() {
-                    self.bom_seen.set(true);
-                    if decoded[0] == 0xFEFF {
-                        decoded.remove(0);
-                    }
-                }
-
                 if saw_error && self.fatal {
                     drop(decoded);
                     return Err(global_this
@@ -440,6 +440,16 @@ impl TextDecoder {
                             ),
                         )
                         .throw());
+                }
+
+                // https://encoding.spec.whatwg.org/#concept-td-serialize: only the
+                // stream's FIRST code unit is dropped as a BOM. Runs on code units
+                // (`lead_byte` may hold half the BOM) and only AFTER the fatal throw.
+                if !self.ignore_bom && !self.bom_seen.get() && !decoded.is_empty() {
+                    self.bom_seen.set(true);
+                    if decoded[0] == 0xFEFF {
+                        decoded.remove(0);
+                    }
                 }
 
                 if decoded.is_empty() {

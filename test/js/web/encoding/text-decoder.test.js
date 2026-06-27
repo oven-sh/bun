@@ -427,6 +427,28 @@ describe("TextDecoder BOM across {stream: true} chunks", () => {
     expect(n.decode(Uint8Array.of(0xbb, 0xbf), { stream: true })).toBe("");
     expect(n.decode()).toBe("");
   });
+
+  // A fatal decode() that throws never reaches the spec's "serialize I/O
+  // queue" step, so it must not spend the stream's one suppressible U+FEFF.
+  it.each([
+    ["utf-16le", [0x00, 0xdc], [0xff, 0xfe, 0x42, 0x00]],
+    ["utf-8", [0xff], [0xef, 0xbb, 0xbf, 0x42]],
+  ])("%s: a fatal chunk that throws does not consume the stream's BOM", (encoding, bad, next) => {
+    const d = new TextDecoder(encoding, { fatal: true });
+    expect(() => d.decode(Uint8Array.from(bad), { stream: true })).toThrow(TypeError);
+    expect(d.decode(Uint8Array.from(next))).toBe("B");
+  });
+
+  // https://encoding.spec.whatwg.org/#dom-textdecoder-decode: the `input`
+  // argument is converted before step 1, so a non-BufferSource input throws a
+  // TypeError without touching `do not flush` (and therefore `BOM seen`).
+  it("a decode() with an invalid input does not end the stream", () => {
+    const d = new TextDecoder();
+    expect(d.decode(Uint8Array.of(0x41), { stream: true })).toBe("A");
+    expect(() => d.decode(123)).toThrow(TypeError);
+    // Still the same stream: its suppressible U+FEFF was already spent on "A".
+    expect(d.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x42))).toBe("\uFEFFB");
+  });
 });
 
 it("truncated sequences", () => {

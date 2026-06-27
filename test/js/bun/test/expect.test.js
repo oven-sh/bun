@@ -949,6 +949,19 @@ describe("expect()", () => {
     }
   });
 
+  // jest and vitest call RegExp#test here, which reads and advances lastIndex for /g
+  test_skipIf(!isBun)("toThrow with global regex is stateless across calls", () => {
+    const re = /oops/g;
+    const fn = () => {
+      throw new Error("oops");
+    };
+    expect(fn).toThrow(re);
+    expect(fn).toThrow(re);
+    expect(fn).toThrow(re);
+    expect(re.lastIndex).toBe(0);
+    expect(fn).not.toThrow(/nope/g);
+  });
+
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");
     let b = "hello";
@@ -3579,6 +3592,28 @@ describe("expect()", () => {
     for (const { label, value, matched } of tests) {
       test(label, () => expect(value).toMatch(matched));
     }
+
+    test("global regex is stateless across calls", () => {
+      const re = /a/g;
+      expect("a").toMatch(re);
+      expect("a").toMatch(re);
+      expect("a").toMatch(re);
+    });
+
+    // vitest's toMatch goes through String#match, which is stateful for /y
+    test_skipIf(isVitest)("sticky regex is stateless across calls", () => {
+      const re = /a/y;
+      expect("a").toMatch(re);
+      expect("a").toMatch(re);
+    });
+
+    // vitest's toMatch goes through String#match, which resets lastIndex for /g
+    test_skipIf(isVitest)("does not read or mutate lastIndex", () => {
+      const re = /a/g;
+      re.lastIndex = 100;
+      expect("aaaa").toMatch(re);
+      expect(re.lastIndex).toBe(100);
+    });
   });
 
   test_skipIf(isJest)("toBeNaN()", () => {
@@ -4417,6 +4452,28 @@ describe("expect()", () => {
     test("StringMatching matches string against regexp", () => {
       expect(expect.stringMatching(/en/)).toEqual("queen");
       expect(expect.stringMatching(/en/)).not.toEqual("queue");
+    });
+
+    test("StringMatching with global regex is stateless across calls", () => {
+      const re = /en/g;
+      expect("queen").toEqual(expect.stringMatching(re));
+      expect("queen").toEqual(expect.stringMatching(re));
+      expect("queen").toEqual(expect.stringMatching(re));
+      expect(re.lastIndex).toBe(0);
+    });
+
+    test("StringMatching with sticky regex is stateless across calls", () => {
+      const re = /qu/y;
+      expect("queen").toEqual(expect.stringMatching(re));
+      expect("queen").toEqual(expect.stringMatching(re));
+    });
+
+    // jest and vitest hold a live RegExp on the matcher, so reusing one instance is stateful there
+    test_skipIf(!isBun)("StringMatching instance with global regex is stateless across calls", () => {
+      const matcher = expect.stringMatching(/en/g);
+      expect("queen").toEqual(matcher);
+      expect("queen").toEqual(matcher);
+      expect("queen").toEqual(matcher);
     });
 
     test("StringMatching matches string against string", () => {

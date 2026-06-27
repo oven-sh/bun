@@ -706,6 +706,15 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
+fn missing_option_value(flag: &[u8]) -> ! {
+    bun_core::pretty_errorln!(
+        "<red>error<r><d>:<r> The argument '{}' requires a value but none was supplied.",
+        BStr::new(flag),
+    );
+    Output::flush();
+    Global::exit(1);
+}
+
 /// `--cwd` / `--prefix` can appear after the script name for `bun run` (npm-style).
 /// `stop_after_positional_at` leaves them in `remaining()` instead of `option()`.
 fn cwd_prefix_in_remaining<'a>(
@@ -754,8 +763,7 @@ fn cwd_prefix_in_remaining<'a>(
             skip.push(i + 1);
             i += 2;
         } else {
-            skip.push(i);
-            i += 1;
+            missing_option_value(arg);
         }
     }
     (cwd, prefix, skip)
@@ -824,8 +832,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         };
     let cwd_arg = args
         .option(b"--cwd")
-        .or(args.option(b"--prefix"))
         .or(remaining_cwd)
+        .or(args.option(b"--prefix"))
         .or(remaining_prefix);
     let cwd: Box<[u8]> = if let Some(cwd_arg) = cwd_arg {
         let mut outbuf = PathBuffer::uninit();

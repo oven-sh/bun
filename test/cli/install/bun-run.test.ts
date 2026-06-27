@@ -322,7 +322,7 @@ describe.concurrent("bun run", () => {
       },
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toMatch(/subdir/);
     // The exit code will not be 1 if it panics.
@@ -348,7 +348,7 @@ describe.concurrent("bun run", () => {
         },
       });
 
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stdout).toMatch(/subdir/);
       expect(exitCode).toBe(0);
@@ -376,7 +376,7 @@ describe.concurrent("bun run", () => {
       },
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toMatch(/subdir/);
     expect(exitCode).toBe(0);
@@ -400,7 +400,7 @@ describe.concurrent("bun run", () => {
       },
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toMatch(/good/);
     expect(stdout).not.toMatch(/wrong/);
@@ -425,7 +425,7 @@ describe.concurrent("bun run", () => {
       },
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toMatch(/good/);
     expect(stdout).not.toMatch(/wrong/);

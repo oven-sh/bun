@@ -1539,9 +1539,11 @@ impl<'a> BundleOptions<'a> {
             out_extensions: self.out_extensions.clone(),
             import_path_format: self.import_path_format,
             defines_loaded: self.defines_loaded,
-            // `Env.defaults: MultiArrayList` has no `Clone`; workers never read
-            // it (`configure_defines` early-returns on `defines_loaded`), so
-            // carry the scalars + an empty list.
+            // `Env.defaults: MultiArrayList` has no `Clone`. Workers either
+            // early-return in `configure_defines` on `defines_loaded`, or
+            // call `load_defines` directly (`initialize_client_transpiler`
+            // after retargeting to `Browser`); `defines_from_transform_options`
+            // handles empty `defaults` there. Carry scalars + an empty list.
             env: Env {
                 behavior: self.env.behavior,
                 prefix: self.env.prefix.clone(),

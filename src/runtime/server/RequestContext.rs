@@ -2452,10 +2452,7 @@ where
             body_value.to_blob_if_possible();
             !matches!(
                 body_value,
-                Body::Value::Used
-                    | Body::Value::Null
-                    | Body::Value::Empty
-                    | Body::Value::Error(_)
+                Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_)
             )
         };
         // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
@@ -2479,8 +2476,7 @@ where
                         return;
                     }
                 }
-                if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength)
-                {
+                if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
                     // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                     // and deref the FetchHeaders, freeing the borrowed StringImpl.
                     let content_length_str = content_length.to_slice();

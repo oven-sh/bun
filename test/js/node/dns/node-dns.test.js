@@ -505,14 +505,26 @@ describe("dns.lookupService", () => {
   });
 });
 
-// Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
-describe("lookup deprecated behavior", () => {
-  it.each([undefined, false, null, NaN, ""])("dns.lookup", domain => {
-    dns.lookup(domain, (error, address, family) => {
-      expect(error).toBeNull();
-      expect(address).toBeNull();
-      expect(family).toBe(4);
-    });
+// DEP0118 was removed; falsy hostnames now throw ERR_INVALID_ARG_VALUE.
+describe("lookup with a falsy hostname", () => {
+  const expected = {
+    constructor: TypeError,
+    code: "ERR_INVALID_ARG_VALUE",
+    message: expect.stringMatching(/^The argument 'hostname' must be a non-empty string\. Received /),
+  };
+
+  it.each([undefined, false, null, NaN, "", 0])("dns.lookup(%p) throws", domain => {
+    let called = false;
+    expect(() => dns.lookup(domain, () => (called = true))).toThrow(expect.objectContaining(expected));
+    expect(called).toBe(false);
+  });
+
+  it.each([undefined, false, null, NaN, "", 0])("dns.promises.lookup(%p) rejects", async domain => {
+    await expect(dns_promises.lookup(domain)).rejects.toMatchObject(expected);
+  });
+
+  it("dns.promises.lookup('', { all: true }) rejects", async () => {
+    await expect(dns_promises.lookup("", { all: true })).rejects.toMatchObject(expected);
   });
 });
 

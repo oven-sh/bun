@@ -217,3 +217,75 @@ test("console.table repeat 50", () => {
     expect(renderTable([{ n: 8 }])).toBe(expected);
   }
 });
+
+// Every cell must be read exactly once, matching Node. The table is built in
+// two logical passes (column sizing, then rendering); re-reading in the second
+// pass doubles getter side effects and renders the second call's value.
+describe("console.table reads each cell once", () => {
+  const box = (v: string) => `┌───┬───┐\n│   │ x │\n├───┼───┤\n│ 0 │ ${v} │\n└───┴───┘\n`;
+
+  test("enumerable getter on an array row", () => {
+    let calls = 0;
+    const row = {};
+    Object.defineProperty(row, "x", { get: () => ++calls, enumerable: true });
+    const out = Bun.inspect.table([row]);
+    expect({ calls, out }).toEqual({ calls: 1, out: box("1") });
+  });
+
+  test("enumerable getter with an explicit properties list", () => {
+    let calls = 0;
+    const row = {};
+    Object.defineProperty(row, "x", { get: () => ++calls, enumerable: true });
+    const out = Bun.inspect.table([row], ["x"]);
+    expect({ calls, out }).toEqual({ calls: 1, out: box("1") });
+  });
+
+  test("getter on a plain-object row key", () => {
+    let calls = 0;
+    const data = {};
+    Object.defineProperty(data, "r", {
+      get() {
+        calls++;
+        return { a: calls };
+      },
+      enumerable: true,
+    });
+    const out = Bun.inspect.table(data);
+    expect({ calls, out }).toEqual({
+      calls: 1,
+      out: `┌───┬───┐\n│   │ a │\n├───┼───┤\n│ r │ 1 │\n└───┴───┘\n`,
+    });
+  });
+
+  test("a generator is not consumed twice", () => {
+    function* rows() {
+      yield { a: 1 };
+      yield { a: 2 };
+    }
+    expect(Bun.inspect.table(rows())).toBe(
+      `┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n│ 1 │ 2 │\n└───┴───┘\n`,
+    );
+  });
+
+  test("console.table", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let calls = 0;
+const row = {};
+Object.defineProperty(row, "x", { get: () => ++calls, enumerable: true });
+console.table([row]);
+console.log("calls=" + calls);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect({ stdout, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", exitCode: 0 });
+  });
+});

@@ -647,6 +647,24 @@ enum RowKey {
     Num(u32),
 }
 
+/// A cell value formatted to bytes, with its visible width cached.
+struct FormattedCell {
+    text: Vec<u8>,
+    width: u32,
+}
+
+/// One row's pre-formatted cells, collected while computing column widths so
+/// the render loop does not re-read properties (which would re-invoke getters).
+struct FormattedRow {
+    key: FormattedCell,
+    /// Indexed by `column_index - 1`. `None` means the row has no value for
+    /// that column. May be shorter than `columns.len() - 1` when later rows
+    /// added columns this row lacks.
+    cells: Vec<Option<FormattedCell>>,
+    /// Cell for the trailing "Values" column (primitives / Map values).
+    values_cell: Option<FormattedCell>,
+}
+
 const PADDING: u32 = 1;
 
 impl<'a> TablePrinter<'a> {
@@ -679,25 +697,14 @@ impl<'a> TablePrinter<'a> {
     }
 }
 
-/// A `Write` sink that counts visible terminal columns instead of bytes.
-struct VisibleCharacterCounter<'a> {
-    width: &'a mut usize,
-}
-
-impl bun_io::Write for VisibleCharacterCounter<'_> {
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        *self.width += strings::immutable::visible::width::exclude_ansi_colors::utf8(bytes);
-        Ok(())
-    }
-}
-
 impl<'a> TablePrinter<'a> {
-    /// Compute how much horizontal space a `JSValue` will take when printed.
-    fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
-        let mut width: usize = 0;
-        // PERF: writes straight into the counter with no buffering between
-        // the generic writer adapter and the counter. Profile if hot.
-        let mut counter = VisibleCharacterCounter { width: &mut width };
+    /// Format a cell value once, returning both the rendered bytes and the
+    /// visible terminal width.
+    fn format_cell<const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        value: JSValue,
+    ) -> JsResult<FormattedCell> {
+        let mut text: Vec<u8> = Vec::new();
         let mut value_formatter = self.value_formatter.shallow_clone();
 
         let tag = formatter::Tag::get(value, self.global_object)?;
@@ -705,41 +712,58 @@ impl<'a> TablePrinter<'a> {
             tag.tag,
             TagPayload::String | TagPayload::StringPossiblyFormatted
         ));
-        let _ = value_formatter.format::<false>(tag, &mut counter, value, self.global_object);
-        // VisibleCharacterCounter write cannot fail.
-        let _ = bun_io::Write::flush(&mut counter);
+        let _ =
+            value_formatter.format::<ENABLE_ANSI_COLORS>(tag, &mut text, value, self.global_object);
 
-        Ok(width as u32)
+        let width = strings::immutable::visible::width::exclude_ansi_colors::utf8(&text) as u32;
+        Ok(FormattedCell { text, width })
     }
 
-    /// Update the sizes of the columns for the values of a given row, and
-    /// create any additional columns as needed.
-    fn update_columns_for_row(
+    fn format_row_key(row_key: &RowKey) -> FormattedCell {
+        match row_key {
+            RowKey::Str(value) => {
+                let width =
+                    u32::try_from(value.visible_width_exclude_ansi_colors(false)).expect("int cast");
+                FormattedCell {
+                    text: format!("{value}").into_bytes(),
+                    width,
+                }
+            }
+            RowKey::Num(value) => FormattedCell {
+                text: format!("{value}").into_bytes(),
+                width: bun_core::fmt::digit_count(*value) as u32,
+            },
+        }
+    }
+
+    /// Read the row's cell values once, format them, update column widths
+    /// (creating columns on demand), and return the collected row.
+    fn collect_row<const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         columns: &mut Vec<Column>,
         row_key: &RowKey,
         row_value: JSValue,
-    ) -> JsResult<()> {
-        // update size of "(index)" column
-        let row_key_len: u32 = match &row_key {
-            RowKey::Str(value) => {
-                u32::try_from(value.visible_width_exclude_ansi_colors(false)).expect("int cast")
-            }
-            RowKey::Num(value) => bun_core::fmt::digit_count(*value) as u32,
+    ) -> JsResult<FormattedRow> {
+        let key = Self::format_row_key(row_key);
+        columns[0].width = columns[0].width.max(key.width);
+
+        let mut row = FormattedRow {
+            key,
+            cells: Vec::new(),
+            values_cell: None,
         };
-        columns[0].width = columns[0].width.max(row_key_len);
 
         // special handling for Map: column with idx=1 is "Keys"
         if self.jstype.is_map() {
             let entry_key = row_value.get_index(self.global_object, 0)?;
             let entry_value = row_value.get_index(self.global_object, 1)?;
-            columns[1].width = columns[1].width.max(self.get_width_for_value(entry_key)?);
-            self.values_col_width = Some(
-                self.values_col_width
-                    .unwrap_or(0)
-                    .max(self.get_width_for_value(entry_value)?),
-            );
-            return Ok(());
+            let key_cell = self.format_cell::<ENABLE_ANSI_COLORS>(entry_key)?;
+            let value_cell = self.format_cell::<ENABLE_ANSI_COLORS>(entry_value)?;
+            columns[1].width = columns[1].width.max(key_cell.width);
+            self.values_col_width = Some(self.values_col_width.unwrap_or(0).max(value_cell.width));
+            row.cells.push(Some(key_cell));
+            row.values_cell = Some(value_cell);
+            return Ok(row);
         }
 
         if let Some(obj) = row_value.get_object() {
@@ -751,7 +775,11 @@ impl<'a> TablePrinter<'a> {
             if !self.properties.is_undefined() {
                 for column in columns[1..].iter_mut() {
                     if let Some(value) = row_value.get_own(self.global_object, &column.name)? {
-                        column.width = column.width.max(self.get_width_for_value(value)?);
+                        let cell = self.format_cell::<ENABLE_ANSI_COLORS>(value)?;
+                        column.width = column.width.max(cell.width);
+                        row.cells.push(Some(cell));
+                    } else {
+                        row.cells.push(None);
                     }
                 }
             } else {
@@ -768,14 +796,14 @@ impl<'a> TablePrinter<'a> {
                     let value = cols_iter.value;
 
                     // find or create the column for the property
-                    let column: &mut Column = 'brk: {
+                    let col_idx: usize = 'brk: {
                         let col_str = BunString::init(col_key);
 
                         // reshaped for borrowck — split find/append.
                         if let Some(idx) =
                             columns[1..].iter().position(|col| col.name.eql(&col_str))
                         {
-                            break 'brk &mut columns[1 + idx];
+                            break 'brk 1 + idx;
                         }
 
                         // Need to ref this string because JSPropertyIterator
@@ -787,22 +815,25 @@ impl<'a> TablePrinter<'a> {
                             name: col_str,
                             width: 1,
                         });
-                        let last = columns.len() - 1;
-                        break 'brk &mut columns[last];
+                        break 'brk columns.len() - 1;
                     };
 
-                    column.width = column.width.max(self.get_width_for_value(value)?);
+                    let cell = self.format_cell::<ENABLE_ANSI_COLORS>(value)?;
+                    columns[col_idx].width = columns[col_idx].width.max(cell.width);
+                    let slot = col_idx - 1;
+                    if row.cells.len() <= slot {
+                        row.cells.resize_with(slot + 1, || None);
+                    }
+                    row.cells[slot] = Some(cell);
                 }
             }
         } else if self.properties.is_undefined() {
             // not object -> the value will go to the special "Values" column
-            self.values_col_width = Some(
-                self.values_col_width
-                    .unwrap_or(1)
-                    .max(self.get_width_for_value(row_value)?),
-            );
+            let cell = self.format_cell::<ENABLE_ANSI_COLORS>(row_value)?;
+            self.values_col_width = Some(self.values_col_width.unwrap_or(1).max(cell.width));
+            row.values_cell = Some(cell);
         }
-        Ok(())
+        Ok(row)
     }
 
     fn write_string_n_times(
@@ -819,33 +850,15 @@ impl<'a> TablePrinter<'a> {
         Ok(())
     }
 
-    fn print_row<const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        writer: &mut dyn bun_io::Write,
-        columns: &mut [Column],
-        row_key: &RowKey,
-        row_value: JSValue,
-    ) -> JsResult<()> {
+    fn print_row(&self, writer: &mut dyn bun_io::Write, columns: &[Column], row: &FormattedRow) {
         writer.write_all("│".as_bytes()).ok();
         {
-            let len: u32 = match &row_key {
-                RowKey::Str(value) => value.visible_width_exclude_ansi_colors(false) as u32,
-                RowKey::Num(value) => bun_core::fmt::digit_count(*value) as u32,
-            };
-            let needed = columns[0].width.saturating_sub(len);
-
+            let needed = columns[0].width.saturating_sub(row.key.width);
             // Right-align the number column
             writer
                 .splat_byte_all(b' ', (needed + PADDING) as usize)
                 .ok();
-            match &row_key {
-                RowKey::Str(value) => {
-                    write!(writer, "{value}").ok();
-                }
-                RowKey::Num(value) => {
-                    write!(writer, "{value}").ok();
-                }
-            }
+            writer.write_all(&row.key.text).ok();
             writer.splat_byte_all(b' ', PADDING as usize).ok();
         }
 
@@ -854,74 +867,29 @@ impl<'a> TablePrinter<'a> {
 
             writer.write_all("│".as_bytes()).ok();
 
-            let mut value = JSValue::ZERO;
-            if col_idx == 1 && self.jstype.is_map() {
-                // is the "Keys" column, when iterating a Map?
-                value = row_value.get_index(self.global_object, 0)?;
-            } else if col_idx == self.values_col_idx {
-                // is the "Values" column?
-                if self.jstype.is_map() {
-                    value = row_value.get_index(self.global_object, 1)?;
-                } else if !row_value.is_object() {
-                    value = row_value;
-                }
-            } else if row_value.is_object() {
-                value = row_value
-                    .get_own(self.global_object, &col.name)?
-                    .unwrap_or(JSValue::ZERO);
-            }
-
-            if value.is_empty() {
-                writer
-                    .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
-                    .ok();
+            let cell = if col_idx == self.values_col_idx {
+                row.values_cell.as_ref()
             } else {
-                let len: u32 = self.get_width_for_value(value)?;
-                let needed = col.width.saturating_sub(len);
-                writer.splat_byte_all(b' ', PADDING as usize).ok();
-                let tag = formatter::Tag::get(value, self.global_object)?;
-                let mut value_formatter = self.value_formatter.shallow_clone();
+                row.cells.get(col_idx - 1).and_then(Option::as_ref)
+            };
 
-                value_formatter.quote_strings = !(matches!(
-                    tag.tag,
-                    TagPayload::String | TagPayload::StringPossiblyFormatted
-                ));
-
-                // Release pooled visit map after formatting.
-                // `shallow_clone()` guarantees the source's `map_node` is
-                // `None`, so only the local clone needs draining.
-                // `Formatter::Drop` does the same release, so a plain scope
-                // is sufficient.
-                {
-                    let result = value_formatter.format::<ENABLE_ANSI_COLORS>(
-                        tag,
-                        writer,
-                        value,
-                        self.global_object,
-                    );
-                    if let Some(mut node) = value_formatter.map_node.take() {
-                        self.value_formatter.map_node = None;
-                        let data = formatter::visited::node_data_mut(&mut node);
-                        if data.capacity() > 512 {
-                            data.deinit();
-                        } else {
-                            data.clear();
-                        }
-                        // SAFETY: `node` was obtained from `Pool::get_node()` and is
-                        // exclusively owned by this formatter; `Map::INIT` is `Some`,
-                        // so `data` is initialized. Ownership returns to the pool.
-                        unsafe { formatter::visited::Pool::release(node.as_mut()) };
-                    }
-                    result?;
+            match cell {
+                None => {
+                    writer
+                        .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
+                        .ok();
                 }
-
-                writer
-                    .splat_byte_all(b' ', (needed + PADDING) as usize)
-                    .ok();
+                Some(cell) => {
+                    let needed = col.width.saturating_sub(cell.width);
+                    writer.splat_byte_all(b' ', PADDING as usize).ok();
+                    writer.write_all(&cell.text).ok();
+                    writer
+                        .splat_byte_all(b' ', (needed + PADDING) as usize)
+                        .ok();
+                }
             }
         }
         writer.write_all("│\n".as_bytes()).ok();
-        Ok(())
     }
 
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
@@ -964,12 +932,17 @@ impl<'a> TablePrinter<'a> {
             }
         }
 
-        // rows first pass - calculate the column widths
+        // single pass over the rows: read and format each cell exactly once,
+        // computing column widths as we go. The rendered cells are kept so the
+        // render loop below does not re-read properties or re-run the iterator
+        // (which would re-invoke getters and exhaust one-shot iterables).
+        let mut rows: Vec<FormattedRow> = Vec::new();
         {
             if self.is_iterable {
                 struct Ctx<'c, 'a> {
                     this: &'c mut TablePrinter<'a>,
                     columns: &'c mut Vec<Column>,
+                    rows: &'c mut Vec<FormattedRow>,
                     idx: u32,
                     err: bool,
                 }
@@ -978,10 +951,11 @@ impl<'a> TablePrinter<'a> {
                 let mut ctx = Ctx {
                     this: self,
                     columns,
+                    rows: &mut rows,
                     idx: 0,
                     err: false,
                 };
-                extern "C" fn callback(
+                extern "C" fn callback<const C: bool>(
                     _: *mut jsc::VM,
                     _: &JSGlobalObject,
                     ctx: *mut c_void,
@@ -989,19 +963,19 @@ impl<'a> TablePrinter<'a> {
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
                     let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
-                    if ctx
+                    match ctx
                         .this
-                        .update_columns_for_row(ctx.columns, &RowKey::Num(ctx.idx), value)
-                        .is_err()
+                        .collect_row::<C>(ctx.columns, &RowKey::Num(ctx.idx), value)
                     {
-                        ctx.err = true;
+                        Ok(row) => ctx.rows.push(row),
+                        Err(_) => ctx.err = true,
                     }
                     ctx.idx += 1;
                 }
                 tabular_data.for_each_with_context(
                     global_object,
                     (&raw mut ctx).cast::<c_void>(),
-                    callback,
+                    callback::<ENABLE_ANSI_COLORS>,
                 )?;
                 if ctx.err {
                     return Err(jsc::JsError::Thrown);
@@ -1018,11 +992,12 @@ impl<'a> TablePrinter<'a> {
                 )?;
 
                 while let Some(row_key) = rows_iter.next()? {
-                    self.update_columns_for_row(
+                    let row = self.collect_row::<ENABLE_ANSI_COLORS>(
                         columns,
                         &RowKey::Str(BunString::init(row_key)),
                         rows_iter.value,
                     )?;
+                    rows.push(row);
                 }
             }
         }
@@ -1093,77 +1068,9 @@ impl<'a> TablePrinter<'a> {
             writer.write_all("┤\n".as_bytes()).ok();
         }
 
-        // rows second pass - print the actual table rows
-        {
-            if self.is_iterable {
-                struct Ctx<'c, 'a> {
-                    this: &'c mut TablePrinter<'a>,
-                    columns: &'c mut Vec<Column>,
-                    writer: &'c mut dyn bun_io::Write,
-                    idx: u32,
-                    err: bool,
-                }
-                // Capture before constructing `ctx` (which mutably borrows `*self`).
-                let tabular_data = self.tabular_data;
-                let mut ctx = Ctx {
-                    this: self,
-                    columns,
-                    writer,
-                    idx: 0,
-                    err: false,
-                };
-                extern "C" fn callback<const C: bool>(
-                    _: *mut jsc::VM,
-                    _: &JSGlobalObject,
-                    ctx: *mut c_void,
-                    value: JSValue,
-                ) {
-                    // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
-                    if ctx
-                        .this
-                        .print_row::<C>(ctx.writer, ctx.columns, &RowKey::Num(ctx.idx), value)
-                        .is_err()
-                    {
-                        ctx.err = true;
-                    }
-                    ctx.idx += 1;
-                }
-                tabular_data.for_each_with_context(
-                    global_object,
-                    (&raw mut ctx).cast::<c_void>(),
-                    callback::<ENABLE_ANSI_COLORS>,
-                )?;
-                if ctx.err {
-                    return Err(jsc::JsError::Thrown);
-                }
-            } else {
-                let Some(cell) = self.tabular_data.to_cell() else {
-                    return Err(global_object.throw_type_error(format_args!(
-                        "tabular_data must be an object or array"
-                    )));
-                };
-                // `JSCell` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-                // centralised non-null deref proof (live JSC heap cell).
-                let row_obj = jsc::JSCell::opaque_ref(cell).to_object(global_object);
-                let mut rows_iter = jsc::JSPropertyIterator::init(
-                    global_object,
-                    row_obj,
-                    jsc::PropertyIteratorOptions {
-                        skip_empty_name: false,
-                        include_value: true,
-                    },
-                )?;
-
-                while let Some(row_key) = rows_iter.next()? {
-                    self.print_row::<ENABLE_ANSI_COLORS>(
-                        writer,
-                        columns,
-                        &RowKey::Str(BunString::init(row_key)),
-                        rows_iter.value,
-                    )?;
-                }
-            }
+        // render the rows collected above
+        for row in &rows {
+            self.print_row(writer, columns, row);
         }
 
         // print the table bottom border

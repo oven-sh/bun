@@ -8,7 +8,7 @@ use bun_semver as semver;
 
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
+use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::DependencyGroup;
 
 use super::package_manager_options::{Do, Enable};
@@ -50,6 +50,158 @@ fn copy_property(p: &G::Property) -> G::Property {
         value: p.value,
         ..G::Property::default()
     }
+}
+
+/// Locate the `catalog`/`catalogs` object, preferring a nesting under
+/// `workspaces` and falling back to the root level. Mirrors the lookup used by
+/// the interactive updater.
+fn catalog_map_object(package_json: &Expr, key: &[u8]) -> Option<bun_ast::StoreRef<E::Object>> {
+    if let Some(workspaces) = package_json.as_property(b"workspaces") {
+        if workspaces.expr.is_object() {
+            if let Some(q) = workspaces.expr.as_property(key) {
+                if let Some(o) = q.expr.data.e_object() {
+                    return Some(o);
+                }
+            }
+        }
+    }
+    if let Some(q) = package_json.as_property(key) {
+        if let Some(o) = q.expr.data.e_object() {
+            return Some(o);
+        }
+    }
+    None
+}
+
+/// If `name` is defined in a catalog, return the group it belongs to (an empty
+/// slice denotes the default `catalog`). The default catalog is checked before
+/// named catalogs. Returns `None` when the package is not cataloged.
+fn find_package_catalog(package_json: &Expr, name: &[u8]) -> Option<Box<[u8]>> {
+    if let Some(default_catalog) = catalog_map_object(package_json, b"catalog") {
+        if default_catalog.has_property(name) {
+            return Some(Box::default());
+        }
+    }
+    if let Some(catalogs) = catalog_map_object(package_json, b"catalogs") {
+        for prop in catalogs.properties.slice() {
+            let (Some(key), Some(value)) = (&prop.key, &prop.value) else {
+                continue;
+            };
+            let (Some(group), Some(group_obj)) = (key.data.e_string(), value.data.e_object())
+            else {
+                continue;
+            };
+            if group_obj.has_property(name) {
+                return Some(Box::from(group.data.slice()));
+            }
+        }
+    }
+    None
+}
+
+/// The specific catalog `E::Object` that contains `key`, or `None` if the
+/// package is not found in the requested group.
+fn catalog_object_with_key(
+    package_json: &Expr,
+    catalog_name: &[u8],
+    key: &[u8],
+) -> Option<bun_ast::StoreRef<E::Object>> {
+    if catalog_name.is_empty() {
+        let obj = catalog_map_object(package_json, b"catalog")?;
+        return obj.has_property(key).then_some(obj);
+    }
+    let catalogs = catalog_map_object(package_json, b"catalogs")?;
+    let catalogs_obj: &E::Object = &catalogs;
+    let group = catalogs_obj.get(catalog_name)?;
+    let obj = group.data.e_object()?;
+    obj.has_property(key).then_some(obj)
+}
+
+/// The concrete npm version a catalog package resolved to, formatted against
+/// the lockfile string buffer. Scans every dependency so a catalog entry
+/// consumed only by member workspaces is still found.
+fn resolved_catalog_version(lockfile: &Lockfile, name: &[u8], catalog_name: &[u8]) -> Option<Vec<u8>> {
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let dep_resolutions = lockfile.buffers.resolutions.as_slice();
+    let packages = lockfile.packages.slice();
+    let pkg_resolutions = packages.items_resolution();
+
+    for (dep, &pkg_id) in deps.iter().zip(dep_resolutions.iter()) {
+        if dep.version.tag != dependency::Tag::Catalog {
+            continue;
+        }
+        if !strings::eql_long(dep.name.slice(string_buf), name, true) {
+            continue;
+        }
+        if !strings::eql_long(dep.version.catalog().slice(string_buf), catalog_name, true) {
+            continue;
+        }
+        if pkg_id == INVALID_PACKAGE_ID || pkg_id as usize >= pkg_resolutions.len() {
+            continue;
+        }
+        let res = &pkg_resolutions[pkg_id as usize];
+        if res.tag != resolution::Tag::Npm {
+            continue;
+        }
+        let mut v = Vec::new();
+        write!(&mut v, "{}", res.npm().version.fmt(string_buf)).ok()?;
+        return Some(v);
+    }
+    None
+}
+
+/// Write the resolved version of a catalog package back into its catalog
+/// definition, preserving the existing constraint's prefix (`^`/`~`/exact).
+fn commit_catalog_update(
+    arena: &bun_alloc::Arena,
+    lockfile: &Lockfile,
+    package_json: &mut Expr,
+    name: &[u8],
+    catalog_name: &[u8],
+    exact_versions: bool,
+) -> Result<(), bun_alloc::AllocError> {
+    let Some(resolved) = resolved_catalog_version(lockfile, name, catalog_name) else {
+        return Ok(());
+    };
+    let Some(mut catalog_store) = catalog_object_with_key(package_json, catalog_name, name) else {
+        return Ok(());
+    };
+    let catalog_obj: &mut E::Object = &mut catalog_store;
+
+    let original_literal: Box<[u8]> = match catalog_obj.get(name).and_then(|e| e.data.e_string()) {
+        Some(s) => Box::from(s.data.slice()),
+        None => return Ok(()),
+    };
+
+    let new_version: Vec<u8> = if exact_versions {
+        resolved
+    } else {
+        let mut v = Vec::new();
+        match semver::Version::which_version_is_pinned(&original_literal) {
+            semver::PinnedVersion::Patch => v.extend_from_slice(&resolved),
+            semver::PinnedVersion::Minor => {
+                v.push(b'~');
+                v.extend_from_slice(&resolved);
+            }
+            semver::PinnedVersion::Major => {
+                v.push(b'^');
+                v.extend_from_slice(&resolved);
+            }
+        }
+        v
+    };
+
+    if new_version.as_slice() == &original_literal[..] {
+        return Ok(());
+    }
+
+    let value_expr = Expr::allocate(
+        arena,
+        E::EString::init(arena_str(arena, &new_version)),
+        bun_ast::Loc::EMPTY,
+    );
+    catalog_obj.put(arena, arena_dup(arena, name), value_expr)
 }
 
 pub(crate) fn edit_patched_dependencies(
@@ -745,6 +897,30 @@ pub(crate) fn edit(
         }
     }
 
+    // A `bun update <name>` for a package defined only in a `catalog`/
+    // `catalogs` map updates the catalog entry instead of synthesizing a root
+    // dependency; record it in `updating_packages` so the install re-resolves it.
+    if manager.subcommand == Subcommand::Update {
+        for request in updates.iter_mut() {
+            if request.e_string.is_some() {
+                continue;
+            }
+            if !request.is_catalog {
+                let name = request.get_name();
+                if let Some(catalog_name) = find_package_catalog(current_package_json, name) {
+                    if options.before_install {
+                        manager.updating_packages.get_or_put(name)?;
+                    }
+                    request.is_catalog = true;
+                    request.catalog_name = catalog_name;
+                }
+            }
+            if request.is_catalog {
+                remaining -= 1;
+            }
+        }
+    }
+
     if remaining != 0 {
         let mut new_dependencies: Vec<G::Property> = {
             let mut dependencies: Vec<G::Property> = Vec::new();
@@ -819,7 +995,7 @@ pub(crate) fn edit(
         };
 
         for request in updates.iter_mut() {
-            if request.e_string.is_some() {
+            if request.e_string.is_some() || request.is_catalog {
                 continue;
             }
 
@@ -1255,6 +1431,27 @@ pub(crate) fn edit(
                 });
         }
     }
+
+    // Commit catalog updates once install has resolved the new versions,
+    // writing into the catalog definition in place (prefix preserved) and
+    // leaving the `catalog:` references in member workspaces untouched.
+    if !options.before_install {
+        let exact_versions = options.exact_versions;
+        for request in updates.iter() {
+            if !request.is_catalog {
+                continue;
+            }
+            commit_catalog_update(
+                arena,
+                &manager.lockfile,
+                current_package_json,
+                request.get_name(),
+                &request.catalog_name,
+                exact_versions,
+            )?;
+        }
+    }
+
     Ok(())
 }
 

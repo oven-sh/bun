@@ -421,6 +421,114 @@ it("should support catalog versions in update", async () => {
   expect(pkg.dependencies["no-deps"]).toBe("catalog:");
 });
 
+it("update <name> updates a named catalog entry instead of adding a root dependency, issue#32808", async () => {
+  const urls: string[] = [];
+  const registry = {
+    "0.0.3": { bin: { "baz-run": "index.js" } },
+    "0.0.5": { bin: { "baz-exec": "index.js" } },
+    latest: "0.0.5",
+  };
+  setHandler(dummyRegistry(urls, registry));
+
+  // `baz` lives only in a named catalog; workspaces consume it via `catalog:ai`.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      catalogs: { ai: { baz: "~0.0.3" } },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "server"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "server", "package.json"),
+    JSON.stringify({ name: "server", dependencies: { baz: "catalog:ai" } }),
+  );
+
+  const { exited: installed } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await installed).toBe(0);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "baz"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  const out = await new Response(stdout).text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  // No spurious top-level dependency is synthesized for the catalog package.
+  expect(root.dependencies).toBeUndefined();
+  // The catalog entry is bumped in place, preserving the `~` prefix.
+  expect(root.catalogs).toEqual({ ai: { baz: "~0.0.5" } });
+  // The workspace reference stays pointed at the catalog.
+  const server = await file(join(package_dir, "packages", "server", "package.json")).json();
+  expect(server.dependencies.baz).toBe("catalog:ai");
+  // Not the spurious `installed baz@latest` the old code printed.
+  expect(out).not.toContain("installed baz@");
+});
+
+it("update <name> updates the default catalog entry, issue#32808", async () => {
+  const urls: string[] = [];
+  const registry = {
+    "0.0.3": { bin: { "baz-run": "index.js" } },
+    "0.0.5": { bin: { "baz-exec": "index.js" } },
+    latest: "0.0.5",
+  };
+  setHandler(dummyRegistry(urls, registry));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      catalog: { baz: "~0.0.3" },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "server"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "server", "package.json"),
+    JSON.stringify({ name: "server", dependencies: { baz: "catalog:" } }),
+  );
+
+  const { exited: installed } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await installed).toBe(0);
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "baz"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const root = await file(join(package_dir, "package.json")).json();
+  expect(root.dependencies).toBeUndefined();
+  expect(root.catalog).toEqual({ baz: "~0.0.5" });
+  const server = await file(join(package_dir, "packages", "server", "package.json")).json();
+  expect(server.dependencies.baz).toBe("catalog:");
+});
+
 it("should support --recursive flag", async () => {
   // First verify the flag appears in help
   const {

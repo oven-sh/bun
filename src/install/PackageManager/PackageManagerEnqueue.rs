@@ -2004,15 +2004,21 @@ fn get_or_put_resolved_package_with_find_result(
         // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
         // `manager.workspace_package_json_cache` only — disjoint from
         // `manager.lockfile`.
-        this.to_update
-            // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
-            // no need to do a look up if update requests are empty (`bun update` with no args)
-            && (this.update_requests.is_empty()
-                || this.updating_packages.contains(
-                    dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),
-                ))
+        // If updating, only update packages in the current workspace.
+        let is_root_dep = unsafe { &*(*this_ptr).lockfile }
+            .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id);
+        let dep_name = dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice());
+        // no need to do a look up if update requests are empty (`bun update` with no args)
+        let in_update_set =
+            this.update_requests.is_empty() || this.updating_packages.contains(dep_name);
+        // A catalog entry is declared at the workspace root but consumed by
+        // member workspaces, so its dependency instance is not a root
+        // dependency of the install's workspace. Allow a named `bun update
+        // <pkg>` to re-resolve a catalog package it explicitly targets.
+        let is_named_catalog_update = !this.update_requests.is_empty()
+            && dependency.version.tag == dependency::version::Tag::Catalog
+            && this.updating_packages.contains(dep_name);
+        this.to_update && in_update_set && (is_root_dep || is_named_catalog_update)
     };
 
     // Was this package already allocated? Let's reuse the existing one.

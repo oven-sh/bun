@@ -262,9 +262,7 @@ describe("console.table reads each cell once", () => {
       yield { a: 1 };
       yield { a: 2 };
     }
-    expect(Bun.inspect.table(rows())).toBe(
-      `┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n│ 1 │ 2 │\n└───┴───┘\n`,
-    );
+    expect(Bun.inspect.table(rows())).toBe(`┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n│ 1 │ 2 │\n└───┴───┘\n`);
   });
 
   test("console.table", async () => {
@@ -281,11 +279,7 @@ console.log("calls=" + calls);`,
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", exitCode: 0 });
   });
 });

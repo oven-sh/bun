@@ -722,8 +722,8 @@ impl<'a> TablePrinter<'a> {
     fn format_row_key(row_key: &RowKey) -> FormattedCell {
         match row_key {
             RowKey::Str(value) => {
-                let width =
-                    u32::try_from(value.visible_width_exclude_ansi_colors(false)).expect("int cast");
+                let width = u32::try_from(value.visible_width_exclude_ansi_colors(false))
+                    .expect("int cast");
                 FormattedCell {
                     text: format!("{value}").into_bytes(),
                     width,

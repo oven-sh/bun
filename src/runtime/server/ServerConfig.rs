@@ -1062,6 +1062,17 @@ impl ServerConfig {
                         user_options.bundler_options.ssr.define = define.clone();
                     }
 
+                    // Propagate bunfig/--conditions into each Bake transpiler so
+                    // the dev server honors custom export conditions. Keys are
+                    // arena-duped (like env_prefix above) to back the `&'static`
+                    // map entries with `UserOptions.arena`.
+                    for condition in &o.conditions {
+                        let key = bb::arena_dupe_z(&user_options.arena, condition).as_bytes();
+                        user_options.bundler_options.client.conditions.insert(key, ());
+                        user_options.bundler_options.server.conditions.insert(key, ());
+                        user_options.bundler_options.ssr.conditions.insert(key, ());
+                    }
+
                     args.bake = Some(user_options);
                 } else {
                     if !init_ctx.framework_router_list.is_empty() {

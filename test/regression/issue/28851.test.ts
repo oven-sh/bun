@@ -150,3 +150,39 @@ test("CLI --conditions appends to bunfig.toml [resolve] conditions", async () =>
   expect(stdout2).toBe("cli-file\n");
   expect(exitCode2).toBe(0);
 });
+
+test("bunfig.toml [resolve] conditions applies to the Bake dev server", async () => {
+  using dir = tempDir("bunfig-resolve-conditions-devserver", {
+    ...packageFiles,
+    "bunfig.toml": `[resolve]\nconditions = ["source"]\n`,
+    "index.html": `<!DOCTYPE html><html><head><script type="module" src="./entry.js"></script></head><body></body></html>`,
+    // Fixture lives next to this test; copy it in so its relative
+    // `./index.html` import resolves and bunfig is loaded from cwd.
+    "dev-server-fixture.js": await Bun.file(new URL("./28851-dev-server-fixture.js", import.meta.url)).text(),
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<{ port: number; hostname: string }>();
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "dev-server-fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    ipc(message) {
+      resolve(message);
+    },
+  });
+  proc.exited.then(code => reject(new Error(`dev server exited early with code ${code}`)));
+
+  const { port, hostname } = await promise;
+
+  // Fetch the HTML route, pull the bundled JS chunk URL out of it, then fetch
+  // the chunk and assert it bundled the "source" export (src.js), not dist.js.
+  const html = await (await fetch(`http://${hostname}:${port}/`)).text();
+  const jsPath = html.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
+  expect(jsPath).toBeTruthy();
+  const chunk = await (await fetch(new URL(jsPath!, `http://${hostname}:${port}/`))).text();
+  expect(chunk).toContain("source-file");
+  expect(chunk).not.toContain("dist-file");
+});

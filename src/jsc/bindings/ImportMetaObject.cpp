@@ -645,7 +645,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_hot, (JSGlobalObject * jsGloba
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    return JSValue::encode(thisObject->hotProperty.getInitializedOnMainThread(thisObject));
+    auto* nullable = thisObject->hotProperty.getInitializedOnMainThread(thisObject);
+    return JSValue::encode(nullable ? nullable : jsUndefined());
 }
 
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {

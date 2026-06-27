@@ -111,12 +111,7 @@ describe("Web Crypto", () => {
     const cases: Array<[string, object, object, KeyUsage[]]> = [
       ["AES-GCM", { k: "AAECAwQFBgcICQoLDA0ODw" }, { name: "AES-GCM" }, ["encrypt"]],
       ["HMAC", { k: "AAECAwQFBgcICQoLDA0ODw" }, { name: "HMAC", hash: "SHA-256" }, ["sign"]],
-      [
-        "RSA-OAEP",
-        { n: "AQAB", e: "AQAB" },
-        { name: "RSA-OAEP", hash: "SHA-256" },
-        ["encrypt"],
-      ],
+      ["RSA-OAEP", { n: "AQAB", e: "AQAB" }, { name: "RSA-OAEP", hash: "SHA-256" }, ["encrypt"]],
       ["ECDSA", { crv: "P-256", x: "", y: "" }, { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
       ["Ed25519", { crv: "Ed25519", x: "" }, { name: "Ed25519" }, ["verify"]],
     ];

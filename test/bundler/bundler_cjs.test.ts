@@ -706,10 +706,9 @@ describe("bundler", () => {
         class MyClass { static v = 42; }
         export const c = 3;
         export { MyClass as "module.exports" };
-        // Access the class after declaration so the getter, called lazily
-        // through the wrapper from outside, returns the real value.
-        globalThis.__got = typeof MyClass;
-        console.log(globalThis.__got);
+        // Produce observable output so the test can assert the bundle
+        // loaded without throwing on the TDZ above.
+        console.log(typeof MyClass);
       `,
     },
     format: "cjs",

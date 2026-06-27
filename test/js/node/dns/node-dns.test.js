@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -570,5 +572,133 @@ describe("hostnames containing NUL bytes", () => {
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
     expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+// A NODATA response (NOERROR, zero answers, SOA in authority) means the
+// name exists but has no records of the requested type. Node surfaces that
+// as ENODATA on resolve*(), distinct from NXDOMAIN which is ENOTFOUND.
+describe("resolver error codes: ENODATA vs ENOTFOUND", () => {
+  const wn = s =>
+    Buffer.concat([
+      ...s
+        .split(".")
+        .filter(Boolean)
+        .map(l => Buffer.concat([Buffer.from([l.length]), Buffer.from(l)])),
+      Buffer.from([0]),
+    ]);
+  const u16 = v => {
+    const b = Buffer.alloc(2);
+    b.writeUInt16BE(v);
+    return b;
+  };
+  const u32 = v => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(v >>> 0);
+    return b;
+  };
+  const rr = (n, t, ttl, rd) => Buffer.concat([wn(n), u16(t), u16(1), u32(ttl), u16(rd.length), rd]);
+  const soa = Buffer.concat([wn("ns1.test.zone"), wn("h.test.zone"), u32(1), u32(2), u32(3), u32(4), u32(5)]);
+
+  function respond(query, rcode) {
+    let i = 12;
+    while (query[i]) i += query[i] + 1;
+    i++;
+    const question = query.subarray(12, i + 4);
+    const h = Buffer.alloc(12);
+    h.writeUInt16BE(query.readUInt16BE(0), 0);
+    // QR=1 AA=1 | RCODE=rcode
+    h.writeUInt16BE(0x8400 | rcode, 2);
+    h.writeUInt16BE(1, 4); // QDCOUNT
+    h.writeUInt16BE(0, 6); // ANCOUNT
+    h.writeUInt16BE(1, 8); // NSCOUNT (SOA in authority)
+    return Buffer.concat([h, question, rr("test.zone", 6, 300, soa)]);
+  }
+
+  async function startServer(rcode) {
+    const srv = dgram.createSocket("udp4");
+    srv.on("message", (m, ri) => {
+      srv.send(respond(m, rcode), ri.port, ri.address);
+    });
+    srv.bind(0, "127.0.0.1");
+    await once(srv, "listening");
+    return srv;
+  }
+
+  it("Resolver.resolve4 on a NODATA response rejects with ENODATA (promises)", async () => {
+    const srv = await startServer(0); // NOERROR
+    try {
+      const r = new dns_promises.Resolver();
+      r.setServers(["127.0.0.1:" + srv.address().port]);
+      let err;
+      try {
+        await r.resolve4("onlytxt.test.zone");
+      } catch (e) {
+        err = e;
+      }
+      expect({ code: err?.code, syscall: err?.syscall, hostname: err?.hostname }).toEqual({
+        code: "ENODATA",
+        syscall: "queryA",
+        hostname: "onlytxt.test.zone",
+      });
+    } finally {
+      srv.close();
+    }
+  });
+
+  it("Resolver.resolve4 on an NXDOMAIN response rejects with ENOTFOUND (promises)", async () => {
+    const srv = await startServer(3); // NXDOMAIN
+    try {
+      const r = new dns_promises.Resolver();
+      r.setServers(["127.0.0.1:" + srv.address().port]);
+      let err;
+      try {
+        await r.resolve4("missing.test.zone");
+      } catch (e) {
+        err = e;
+      }
+      expect({ code: err?.code, syscall: err?.syscall, hostname: err?.hostname }).toEqual({
+        code: "ENOTFOUND",
+        syscall: "queryA",
+        hostname: "missing.test.zone",
+      });
+    } finally {
+      srv.close();
+    }
+  });
+
+  it("callback resolve4 on a NODATA response reports ENODATA", async () => {
+    const srv = await startServer(0);
+    try {
+      const r = new dns.Resolver();
+      r.setServers(["127.0.0.1:" + srv.address().port]);
+      const { promise, resolve } = Promise.withResolvers();
+      r.resolve4("onlytxt.test.zone", err => resolve(err));
+      const err = await promise;
+      expect(err?.code).toBe("ENODATA");
+    } finally {
+      srv.close();
+    }
+  });
+
+  it.each([
+    ["resolve6", "queryAaaa"],
+    ["resolveMx", "queryMx"],
+    ["resolveTxt", "queryTxt"],
+  ])("Resolver.%s on a NODATA response rejects with ENODATA", async (method, syscall) => {
+    const srv = await startServer(0);
+    try {
+      const r = new dns_promises.Resolver();
+      r.setServers(["127.0.0.1:" + srv.address().port]);
+      let err;
+      try {
+        await r[method]("onlytxt.test.zone");
+      } catch (e) {
+        err = e;
+      }
+      expect({ code: err?.code, syscall: err?.syscall }).toEqual({ code: "ENODATA", syscall });
+    } finally {
+      srv.close();
+    }
   });
 });

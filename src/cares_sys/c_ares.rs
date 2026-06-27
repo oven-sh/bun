@@ -659,6 +659,13 @@ impl AddrInfo {
     ) {
         // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
         let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        // Node's dns.lookup (getaddrinfo) collapses EAI_NODATA into ENOTFOUND
+        // (internal/errors.js DnsException). Preserve that for ares_getaddrinfo.
+        let status = if status == ARES_ENODATA {
+            ARES_ENOTFOUND
+        } else {
+            status
+        };
         this.on_addr_info(Error::get(status), timeouts, addr_info);
     }
 
@@ -2002,8 +2009,10 @@ impl Error {
     }
 
     pub fn get(rc: i32) -> Option<Error> {
-        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-        if rc == ARES_ENODATA || rc == ARES_ENONAME {
+        // ENONAME is not a public DNS code; Node's table has no entry for it
+        // so it surfaces as ENOTFOUND. ENODATA must pass through: resolver
+        // queries distinguish NODATA (name exists) from NXDOMAIN (ENOTFOUND).
+        if rc == ARES_ENONAME {
             return Self::get(ARES_ENOTFOUND);
         }
 

@@ -333,6 +333,52 @@ describe("Ed25519", () => {
       expect(privateKey.algorithm!.namedCurve).toBe(undefined);
     });
   });
+
+  // https://wicg.github.io/webcrypto-secure-curves/#ed25519-operations step 6.2:
+  // exported Ed25519 JWKs carry `alg: "Ed25519"` (X25519 JWKs do not).
+  it('exportKey("jwk") sets alg to "Ed25519"', async () => {
+    const { publicKey, privateKey } = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+      "sign",
+      "verify",
+    ])) as CryptoKeyPair;
+
+    const pub = (await crypto.subtle.exportKey("jwk", publicKey)) as JsonWebKey;
+    expect(pub).toEqual({
+      kty: "OKP",
+      crv: "Ed25519",
+      alg: "Ed25519",
+      x: expect.any(String),
+      key_ops: ["verify"],
+      ext: true,
+    });
+    expect(Object.keys(pub).sort()).toEqual(["alg", "crv", "ext", "key_ops", "kty", "x"]);
+
+    const priv = (await crypto.subtle.exportKey("jwk", privateKey)) as JsonWebKey;
+    expect(priv).toEqual({
+      kty: "OKP",
+      crv: "Ed25519",
+      alg: "Ed25519",
+      x: expect.any(String),
+      d: expect.any(String),
+      key_ops: ["sign"],
+      ext: true,
+    });
+
+    // The exported JWK must round-trip back through importKey.
+    const reimported = await crypto.subtle.importKey("jwk", pub, { name: "Ed25519" }, true, ["verify"]);
+    expect(((await crypto.subtle.exportKey("jwk", reimported)) as JsonWebKey).alg).toBe("Ed25519");
+  });
+
+  it('X25519 exportKey("jwk") omits alg (spec does not define one)', async () => {
+    const { publicKey, privateKey } = (await crypto.subtle.generateKey({ name: "X25519" }, true, [
+      "deriveBits",
+    ])) as CryptoKeyPair;
+    const pub = (await crypto.subtle.exportKey("jwk", publicKey)) as JsonWebKey;
+    const priv = (await crypto.subtle.exportKey("jwk", privateKey)) as JsonWebKey;
+    expect("alg" in pub).toBe(false);
+    expect("alg" in priv).toBe(false);
+    expect(pub.crv).toBe("X25519");
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/32613

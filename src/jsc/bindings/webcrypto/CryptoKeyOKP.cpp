@@ -200,6 +200,7 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
         break;
     case NamedCurve::Ed25519:
         result.crv = Ed25519;
+        result.alg = Ed25519;
         break;
     }
 

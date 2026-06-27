@@ -1808,6 +1808,13 @@ describe("rsa-pss keys", () => {
     const otherHash = hash === "sha256" ? "sha384" : "sha256";
     expect(() => sign(otherHash, message, privateKey)).toThrow(/INVALID_DIGEST_TYPE/);
 
+    // The streaming Sign/Verify APIs must derive the same default padding
+    // from the key (PSS, not PKCS#1) and interoperate with the one-shot APIs.
+    const streamingSignature = createSign(hash).update(message).sign(privateKey);
+    expect(createVerify(hash).update(message).verify(publicKey, streamingSignature)).toBeTrue();
+    expect(verify(hash, message, publicKey, streamingSignature)).toBeTrue();
+    expect(createVerify(hash).update(message).verify(publicKey, signature)).toBeTrue();
+
     // DER and PEM exports re-import as rsa-pss with the same restriction.
     const spki = publicKey.export({ type: "spki", format: "der" });
     const pkcs8 = privateKey.export({ type: "pkcs8", format: "der" });

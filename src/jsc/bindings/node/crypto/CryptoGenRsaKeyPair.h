@@ -48,6 +48,7 @@ public:
 
     void deinit();
     ncrypto::EVPKeyCtxPointer setup();
+    void runTask(JSC::JSGlobalObject*, ncrypto::EVPKeyCtxPointer& ctx);
     static std::optional<RsaKeyPairJobCtx> fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& config);
 
     RsaKeyVariant m_variant;

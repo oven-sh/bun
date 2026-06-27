@@ -448,10 +448,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     auto outputEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});
-    RETURN_IF_EXCEPTION(scope, {});
-
     std::optional<int> saltLen = getSaltLength(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -479,6 +475,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     }
 
     const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();
+
+    // Get RSA padding mode (after the key is available so RSA-PSS defaults correctly)
+    int32_t padding = getPadding(lexicalGlobalObject, scope, options, keyPtr);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);

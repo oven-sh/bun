@@ -973,8 +973,21 @@ public:
     bool isSigVariant() const;
     bool validateDsaParameters() const;
 
+    // BoringSSL does not support the id-RSASSA-PSS key type through its default
+    // parsers and does not implement RSA_get0_pss_params or PSS keygen. When this
+    // is set the wrapped key is a plain EVP_PKEY_RSA that should be treated as
+    // EVP_PKEY_RSA_PSS, with the restriction parameters stored here.
+    struct RsaPssDetails {
+        int hash_nid = NID_undef;
+        int mgf1_hash_nid = NID_undef;
+        int64_t salt_length = -1;
+    };
+    inline const std::optional<RsaPssDetails>& rsaPssDetails() const { return rsa_pss_details_; }
+    inline void setRsaPssDetails(RsaPssDetails details) { rsa_pss_details_ = details; }
+
 private:
     DeleteFnPtr<EVP_PKEY, EVP_PKEY_free> pkey_;
+    std::optional<RsaPssDetails> rsa_pss_details_;
 };
 
 class DHPointer final {

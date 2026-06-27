@@ -26,6 +26,32 @@ extern "C" void Bun__RsaKeyPairJobCtx__runTask(RsaKeyPairJobCtx* ctx, JSGlobalOb
     ctx->runTask(globalObject, keyCtx);
 }
 
+void RsaKeyPairJobCtx::runTask(JSC::JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& keyCtx)
+{
+    EVP_PKEY* pkey = nullptr;
+    if (!EVP_PKEY_keygen(keyCtx.get(), &pkey)) {
+        m_opensslError = ERR_get_error();
+        return;
+    }
+    ncrypto::EVPKeyPointer key(pkey);
+    if (m_variant == RsaKeyVariant::RSA_PSS) {
+        ncrypto::EVPKeyPointer::RsaPssDetails details;
+        if (m_md) details.hash_nid = EVP_MD_nid(m_md);
+        if (m_mgfMd) {
+            details.mgf1_hash_nid = EVP_MD_nid(m_mgfMd);
+        } else if (m_md) {
+            details.mgf1_hash_nid = details.hash_nid;
+        }
+        if (m_saltLength >= 0) {
+            details.salt_length = m_saltLength;
+        } else if (m_md) {
+            details.salt_length = static_cast<int64_t>(m_md.size());
+        }
+        key.setRsaPssDetails(details);
+    }
+    m_keyObj = KeyObject::create(WebCore::CryptoKeyType::Private, WTF::move(key));
+}
+
 extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
 {
     ctx->runFromJS(globalObject, JSValue::decode(callback));
@@ -53,7 +79,9 @@ void RsaKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJo
 
 ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
 {
-    ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(m_variant == RsaKeyVariant::RSA_PSS ? EVP_PKEY_RSA_PSS : EVP_PKEY_RSA);
+    // BoringSSL does not implement keygen for EVP_PKEY_RSA_PSS; generate a
+    // plain RSA key and tag it as RSA-PSS after keygen instead.
+    ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_RSA);
     if (!ctx || !ctx.initForKeygen() || !ctx.setRsaKeygenBits(m_modulusLength)) {
         m_opensslError = ERR_get_error();
         return {};
@@ -62,33 +90,6 @@ ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
     if (m_exponent != ncrypto::EVPKeyCtxPointer::kDefaultRsaExponent) {
         auto bn = ncrypto::BignumPointer::New();
         if (!bn.setWord(m_exponent) || !ctx.setRsaKeygenPubExp(WTF::move(bn))) {
-            m_opensslError = ERR_get_error();
-            return {};
-        }
-    }
-
-    if (m_variant == RsaKeyVariant::RSA_PSS) {
-        if (m_md && !ctx.setRsaPssKeygenMd(m_md)) {
-            m_opensslError = ERR_get_error();
-            return {};
-        }
-
-        auto& mgf1Md = m_mgfMd;
-        if (!mgf1Md && m_md) {
-            mgf1Md = m_md;
-        }
-
-        if (mgf1Md && !ctx.setRsaPssKeygenMgf1Md(mgf1Md)) {
-            m_opensslError = ERR_get_error();
-            return {};
-        }
-
-        int saltLength = m_saltLength;
-        if (saltLength < 0 && m_md) {
-            saltLength = m_md.size();
-        }
-
-        if (saltLength >= 0 && !ctx.setRsaPssSaltlen(saltLength)) {
             m_opensslError = ERR_get_error();
             return {};
         }

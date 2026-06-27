@@ -6,6 +6,7 @@
 #include "ncrypto.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
+#include <openssl/bytestring.h>
 #include <openssl/dh.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -2195,6 +2196,7 @@ EVPKeyPointer::EVPKeyPointer(EVP_PKEY* pkey)
 
 EVPKeyPointer::EVPKeyPointer(EVPKeyPointer&& other) noexcept
     : pkey_(other.release())
+    , rsa_pss_details_(std::exchange(other.rsa_pss_details_, std::nullopt))
 {
 }
 
@@ -2213,6 +2215,7 @@ EVPKeyPointer::~EVPKeyPointer()
 void EVPKeyPointer::reset(EVP_PKEY* pkey)
 {
     pkey_.reset(pkey);
+    rsa_pss_details_.reset();
 }
 
 EVP_PKEY* EVPKeyPointer::release()
@@ -2234,11 +2237,13 @@ int EVPKeyPointer::base_id(const EVP_PKEY* key)
 
 int EVPKeyPointer::id() const
 {
+    if (rsa_pss_details_.has_value()) return EVP_PKEY_RSA_PSS;
     return id(get());
 }
 
 int EVPKeyPointer::base_id() const
 {
+    if (rsa_pss_details_.has_value()) return EVP_PKEY_RSA_PSS;
     return base_id(get());
 }
 
@@ -2395,6 +2400,405 @@ constexpr bool IsEncryptedPrivateKeyInfo(
     return len >= 1 && buffer.data[offset] != 2;
 }
 
+// id-RSASSA-PSS (1.2.840.113549.1.1.10)
+constexpr uint8_t kRsaPssOID[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a };
+// id-mgf1 (1.2.840.113549.1.1.8)
+constexpr uint8_t kMgf1OID[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08 };
+
+bool CBSBytesEqual(const CBS* cbs, const uint8_t* data, size_t len)
+{
+    return CBS_mem_equal(cbs, data, len) == 1;
+}
+
+// RFC 4055, section 3.1. All fields are optional with DEFAULT values.
+bool ParseRsaPssParams(CBS* algorithm, EVPKeyPointer::RsaPssDetails& out)
+{
+    out = {};
+    if (CBS_len(algorithm) == 0) return true;
+
+    CBS params;
+    if (!CBS_get_asn1(algorithm, &params, CBS_ASN1_SEQUENCE)) return false;
+    if (CBS_len(algorithm) != 0) return false;
+
+    constexpr CBS_ASN1_TAG kTag0 = CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 0;
+    constexpr CBS_ASN1_TAG kTag1 = CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 1;
+    constexpr CBS_ASN1_TAG kTag2 = CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 2;
+    constexpr CBS_ASN1_TAG kTag3 = CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 3;
+
+    CBS field;
+    int present;
+
+    if (!CBS_get_optional_asn1(&params, &field, &present, kTag0)) return false;
+    if (present) {
+        int nid = EVP_parse_digest_algorithm_nid(&field);
+        if (nid == NID_undef || CBS_len(&field) != 0) return false;
+        out.hash_nid = nid;
+    }
+
+    if (!CBS_get_optional_asn1(&params, &field, &present, kTag1)) return false;
+    if (present) {
+        CBS mgf_alg, mgf_oid;
+        if (!CBS_get_asn1(&field, &mgf_alg, CBS_ASN1_SEQUENCE) || CBS_len(&field) != 0
+            || !CBS_get_asn1(&mgf_alg, &mgf_oid, CBS_ASN1_OBJECT)
+            || !CBSBytesEqual(&mgf_oid, kMgf1OID, sizeof(kMgf1OID))) {
+            return false;
+        }
+        int nid = NID_sha1;
+        if (CBS_len(&mgf_alg) != 0) {
+            nid = EVP_parse_digest_algorithm_nid(&mgf_alg);
+            if (nid == NID_undef || CBS_len(&mgf_alg) != 0) return false;
+        }
+        out.mgf1_hash_nid = nid;
+    }
+
+    if (!CBS_get_optional_asn1(&params, &field, &present, kTag2)) return false;
+    if (present) {
+        uint64_t salt_len;
+        if (!CBS_get_asn1_uint64(&field, &salt_len) || CBS_len(&field) != 0
+            || salt_len > static_cast<uint64_t>(INT64_MAX)) {
+            return false;
+        }
+        out.salt_length = static_cast<int64_t>(salt_len);
+    }
+
+    if (!CBS_get_optional_asn1(&params, &field, &present, kTag3)) return false;
+    if (present) {
+        uint64_t trailer;
+        if (!CBS_get_asn1_uint64(&field, &trailer) || CBS_len(&field) != 0 || trailer != 1) {
+            return false;
+        }
+    }
+
+    return CBS_len(&params) == 0;
+}
+
+bool MarshalRsaPssAlgorithm(CBB* algorithm, const EVPKeyPointer::RsaPssDetails& details)
+{
+    if (!CBB_add_asn1_element(algorithm, CBS_ASN1_OBJECT, kRsaPssOID, sizeof(kRsaPssOID))) {
+        return false;
+    }
+    if (details.hash_nid == NID_undef && details.mgf1_hash_nid == NID_undef && details.salt_length < 0) {
+        return true;
+    }
+
+    CBB params;
+    if (!CBB_add_asn1(algorithm, &params, CBS_ASN1_SEQUENCE)) return false;
+
+    if (details.hash_nid != NID_undef) {
+        const EVP_MD* md = EVP_get_digestbynid(details.hash_nid);
+        if (md == nullptr) return false;
+        CBB tag0;
+        if (!CBB_add_asn1(&params, &tag0, CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 0)
+            || !EVP_marshal_digest_algorithm(&tag0, md)
+            || !CBB_flush(&params)) {
+            return false;
+        }
+    }
+
+    if (details.mgf1_hash_nid != NID_undef) {
+        const EVP_MD* md = EVP_get_digestbynid(details.mgf1_hash_nid);
+        if (md == nullptr) return false;
+        CBB tag1, mgf_alg;
+        if (!CBB_add_asn1(&params, &tag1, CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 1)
+            || !CBB_add_asn1(&tag1, &mgf_alg, CBS_ASN1_SEQUENCE)
+            || !CBB_add_asn1_element(&mgf_alg, CBS_ASN1_OBJECT, kMgf1OID, sizeof(kMgf1OID))
+            || !EVP_marshal_digest_algorithm(&mgf_alg, md)
+            || !CBB_flush(&params)) {
+            return false;
+        }
+    }
+
+    if (details.salt_length >= 0) {
+        CBB tag2;
+        if (!CBB_add_asn1(&params, &tag2, CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 2)
+            || !CBB_add_asn1_uint64(&tag2, static_cast<uint64_t>(details.salt_length))
+            || !CBB_flush(&params)) {
+            return false;
+        }
+    }
+
+    return CBB_flush(algorithm);
+}
+
+// Decrypts a PBES2-encrypted EncryptedPrivateKeyInfo (RFC 5958) to the raw
+// inner PrivateKeyInfo bytes. Only PBES2 with PBKDF2 is handled; PBES1 and
+// scrypt are rejected since BoringSSL's own fallback path already handles
+// keys whose inner algorithm it understands.
+DataPointer DecryptEncryptedPrivateKeyInfo(const uint8_t* data, size_t len,
+    const char* pass, size_t pass_len)
+{
+    static constexpr uint8_t kPBES2[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d };
+    static constexpr uint8_t kPBKDF2[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0c };
+    static constexpr uint8_t kHMACWithSHA1[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x07 };
+    static constexpr uint8_t kHMACWithSHA256[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x09 };
+    static constexpr uint8_t kHMACWithSHA384[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x0a };
+    static constexpr uint8_t kHMACWithSHA512[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x0b };
+
+    CBS cbs, epki, algorithm, oid, ciphertext;
+    CBS_init(&cbs, data, len);
+    if (!CBS_get_asn1(&cbs, &epki, CBS_ASN1_SEQUENCE) || CBS_len(&cbs) != 0
+        || !CBS_get_asn1(&epki, &algorithm, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&epki, &ciphertext, CBS_ASN1_OCTETSTRING)
+        || CBS_len(&epki) != 0
+        || !CBS_get_asn1(&algorithm, &oid, CBS_ASN1_OBJECT)
+        || !CBSBytesEqual(&oid, kPBES2, sizeof(kPBES2))) {
+        return {};
+    }
+
+    CBS param, kdf, kdf_oid, enc_scheme, enc_oid;
+    if (!CBS_get_asn1(&algorithm, &param, CBS_ASN1_SEQUENCE) || CBS_len(&algorithm) != 0
+        || !CBS_get_asn1(&param, &kdf, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&param, &enc_scheme, CBS_ASN1_SEQUENCE)
+        || CBS_len(&param) != 0
+        || !CBS_get_asn1(&kdf, &kdf_oid, CBS_ASN1_OBJECT)
+        || !CBSBytesEqual(&kdf_oid, kPBKDF2, sizeof(kPBKDF2))
+        || !CBS_get_asn1(&enc_scheme, &enc_oid, CBS_ASN1_OBJECT)) {
+        return {};
+    }
+
+    int cipher_nid = OBJ_cbs2nid(&enc_oid);
+    const EVP_CIPHER* cipher = cipher_nid != NID_undef ? EVP_get_cipherbynid(cipher_nid) : nullptr;
+    if (cipher == nullptr) return {};
+
+    CBS pbkdf2_params, salt, iv;
+    uint64_t iterations;
+    if (!CBS_get_asn1(&kdf, &pbkdf2_params, CBS_ASN1_SEQUENCE) || CBS_len(&kdf) != 0
+        || !CBS_get_asn1(&pbkdf2_params, &salt, CBS_ASN1_OCTETSTRING)
+        || !CBS_get_asn1_uint64(&pbkdf2_params, &iterations)
+        || iterations == 0 || iterations > 0x7fffffff) {
+        return {};
+    }
+    if (CBS_peek_asn1_tag(&pbkdf2_params, CBS_ASN1_INTEGER)) {
+        uint64_t key_len;
+        if (!CBS_get_asn1_uint64(&pbkdf2_params, &key_len)
+            || key_len != EVP_CIPHER_key_length(cipher)) {
+            return {};
+        }
+    }
+    const EVP_MD* prf_md = EVP_sha1();
+    if (CBS_len(&pbkdf2_params) != 0) {
+        CBS prf_alg, prf_oid;
+        if (!CBS_get_asn1(&pbkdf2_params, &prf_alg, CBS_ASN1_SEQUENCE)
+            || CBS_len(&pbkdf2_params) != 0
+            || !CBS_get_asn1(&prf_alg, &prf_oid, CBS_ASN1_OBJECT)) {
+            return {};
+        }
+        if (CBSBytesEqual(&prf_oid, kHMACWithSHA1, sizeof(kHMACWithSHA1))) prf_md = EVP_sha1();
+        else if (CBSBytesEqual(&prf_oid, kHMACWithSHA256, sizeof(kHMACWithSHA256))) prf_md = EVP_sha256();
+        else if (CBSBytesEqual(&prf_oid, kHMACWithSHA384, sizeof(kHMACWithSHA384))) prf_md = EVP_sha384();
+        else if (CBSBytesEqual(&prf_oid, kHMACWithSHA512, sizeof(kHMACWithSHA512))) prf_md = EVP_sha512();
+        else return {};
+    }
+    if (!CBS_get_asn1(&enc_scheme, &iv, CBS_ASN1_OCTETSTRING)
+        || CBS_len(&enc_scheme) != 0
+        || CBS_len(&iv) != EVP_CIPHER_iv_length(cipher)) {
+        return {};
+    }
+
+    uint8_t key[EVP_MAX_KEY_LENGTH];
+    if (!PKCS5_PBKDF2_HMAC(pass, pass_len, CBS_data(&salt), CBS_len(&salt),
+            static_cast<uint32_t>(iterations), prf_md,
+            EVP_CIPHER_key_length(cipher), key)) {
+        return {};
+    }
+    CipherCtxPointer ctx = CipherCtxPointer::New();
+    bool init_ok = ctx && EVP_CipherInit_ex(ctx.get(), cipher, nullptr, key, CBS_data(&iv), 0);
+    OPENSSL_cleanse(key, sizeof(key));
+    if (!init_ok) return {};
+
+    size_t in_len = CBS_len(&ciphertext);
+    auto out = DataPointer::Alloc(in_len);
+    if (!out) return {};
+    int n1, n2;
+    if (!EVP_CipherUpdate(ctx.get(), static_cast<uint8_t*>(out.get()), &n1,
+            CBS_data(&ciphertext), static_cast<int>(in_len))
+        || !EVP_CipherFinal_ex(ctx.get(), static_cast<uint8_t*>(out.get()) + n1, &n2)) {
+        return {};
+    }
+    return out.resize(static_cast<size_t>(n1) + static_cast<size_t>(n2));
+}
+
+// Returns {} if `buffer` is not an RSA-PSS SPKI (so the caller can fall
+// through to generic parsing); sets ok=false only on a malformed RSA-PSS key.
+EVPKeyPointer TryParseRsaPssSPKI(const uint8_t* data, size_t len, bool& ok)
+{
+    ok = true;
+    CBS cbs, spki, algorithm, oid, key_bits;
+    CBS_init(&cbs, data, len);
+    if (!CBS_get_asn1(&cbs, &spki, CBS_ASN1_SEQUENCE) || CBS_len(&cbs) != 0
+        || !CBS_get_asn1(&spki, &algorithm, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&algorithm, &oid, CBS_ASN1_OBJECT)) {
+        return {};
+    }
+    if (!CBSBytesEqual(&oid, kRsaPssOID, sizeof(kRsaPssOID))) return {};
+
+    EVPKeyPointer::RsaPssDetails details;
+    if (!ParseRsaPssParams(&algorithm, details)
+        || !CBS_get_asn1(&spki, &key_bits, CBS_ASN1_BITSTRING)
+        || CBS_len(&spki) != 0
+        || CBS_len(&key_bits) < 1
+        || CBS_data(&key_bits)[0] != 0) {
+        ok = false;
+        return {};
+    }
+
+    RSAPointer rsa(RSA_public_key_from_bytes(CBS_data(&key_bits) + 1, CBS_len(&key_bits) - 1));
+    if (!rsa) {
+        ok = false;
+        return {};
+    }
+    auto key = EVPKeyPointer::NewRSA(WTF::move(rsa));
+    if (key) key.setRsaPssDetails(details);
+    return key;
+}
+
+EVPKeyPointer TryParseRsaPssPKCS8(const uint8_t* data, size_t len, bool& ok)
+{
+    ok = true;
+    CBS cbs, pkcs8, algorithm, oid, priv_key;
+    uint64_t version;
+    CBS_init(&cbs, data, len);
+    if (!CBS_get_asn1(&cbs, &pkcs8, CBS_ASN1_SEQUENCE) || CBS_len(&cbs) != 0
+        || !CBS_get_asn1_uint64(&pkcs8, &version) || version > 1
+        || !CBS_get_asn1(&pkcs8, &algorithm, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&algorithm, &oid, CBS_ASN1_OBJECT)) {
+        return {};
+    }
+    if (!CBSBytesEqual(&oid, kRsaPssOID, sizeof(kRsaPssOID))) return {};
+
+    EVPKeyPointer::RsaPssDetails details;
+    if (!ParseRsaPssParams(&algorithm, details)
+        || !CBS_get_asn1(&pkcs8, &priv_key, CBS_ASN1_OCTETSTRING)) {
+        ok = false;
+        return {};
+    }
+
+    RSAPointer rsa(RSA_private_key_from_bytes(CBS_data(&priv_key), CBS_len(&priv_key)));
+    if (!rsa) {
+        ok = false;
+        return {};
+    }
+    auto key = EVPKeyPointer::NewRSA(WTF::move(rsa));
+    if (key) key.setRsaPssDetails(details);
+    return key;
+}
+
+bool WriteRsaPssSPKI(const BIOPointer& bio, const RSA* rsa,
+    const EVPKeyPointer::RsaPssDetails& details,
+    EVPKeyPointer::PKFormatType format)
+{
+    bssl::ScopedCBB cbb;
+    CBB spki, algorithm, key_bits;
+    uint8_t* out = nullptr;
+    size_t out_len = 0;
+    if (!CBB_init(cbb.get(), 256)
+        || !CBB_add_asn1(cbb.get(), &spki, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1(&spki, &algorithm, CBS_ASN1_SEQUENCE)
+        || !MarshalRsaPssAlgorithm(&algorithm, details)
+        || !CBB_add_asn1(&spki, &key_bits, CBS_ASN1_BITSTRING)
+        || !CBB_add_u8(&key_bits, 0)
+        || !RSA_marshal_public_key(&key_bits, rsa)
+        || !CBB_finish(cbb.get(), &out, &out_len)) {
+        return false;
+    }
+    DataPointer der(out, out_len);
+    if (format == EVPKeyPointer::PKFormatType::PEM) {
+        return PEM_write_bio(bio.get(), "PUBLIC KEY", "", static_cast<const unsigned char*>(der.get()), der.size()) > 0;
+    }
+    return BIO_write(bio.get(), der.get(), der.size()) == static_cast<int>(der.size());
+}
+
+bool WriteRsaPssPKCS8(const BIOPointer& bio, const RSA* rsa,
+    const EVPKeyPointer::RsaPssDetails& details,
+    EVPKeyPointer::PKFormatType format,
+    const EVPKeyPointer::PrivateKeyEncodingConfig& config,
+    Buffer<char>& passphrase)
+{
+    bssl::ScopedCBB cbb;
+    CBB pkcs8, algorithm, priv_key;
+    uint8_t* out = nullptr;
+    size_t out_len = 0;
+    if (!CBB_init(cbb.get(), 256)
+        || !CBB_add_asn1(cbb.get(), &pkcs8, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1_uint64(&pkcs8, 0)
+        || !CBB_add_asn1(&pkcs8, &algorithm, CBS_ASN1_SEQUENCE)
+        || !MarshalRsaPssAlgorithm(&algorithm, details)
+        || !CBB_add_asn1(&pkcs8, &priv_key, CBS_ASN1_OCTETSTRING)
+        || !RSA_marshal_private_key(&priv_key, rsa)
+        || !CBB_finish(cbb.get(), &out, &out_len)) {
+        return false;
+    }
+    DataPointer der(out, out_len);
+
+    if (config.cipher == nullptr) {
+        if (format == EVPKeyPointer::PKFormatType::PEM) {
+            return PEM_write_bio(bio.get(), "PRIVATE KEY", "", static_cast<const unsigned char*>(der.get()), der.size()) > 0;
+        }
+        return BIO_write(bio.get(), der.get(), der.size()) == static_cast<int>(der.size());
+    }
+
+    // Encrypt as PBES2 + PBKDF2-HMAC-SHA256 (RFC 8018). BoringSSL's PKCS8_encrypt
+    // routes through EVP_PKCS82PKEY which rejects the RSA-PSS OID, so we build
+    // the EncryptedPrivateKeyInfo ourselves from the already-serialized DER.
+    static constexpr uint8_t kPBES2[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0d };
+    static constexpr uint8_t kPBKDF2[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x05, 0x0c };
+    static constexpr uint8_t kHMACWithSHA256[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x09 };
+    static constexpr uint32_t kIterations = PKCS12_DEFAULT_ITER;
+    static constexpr size_t kSaltLen = 16;
+
+    uint8_t salt[kSaltLen];
+    uint8_t iv[EVP_MAX_IV_LENGTH];
+    size_t iv_len = EVP_CIPHER_iv_length(config.cipher);
+    if (!RAND_bytes(salt, kSaltLen) || !RAND_bytes(iv, iv_len)) return false;
+
+    uint8_t key[EVP_MAX_KEY_LENGTH];
+    if (!PKCS5_PBKDF2_HMAC(passphrase.data, passphrase.len, salt, kSaltLen,
+            kIterations, EVP_sha256(), EVP_CIPHER_key_length(config.cipher), key)) {
+        return false;
+    }
+    CipherCtxPointer ctx = CipherCtxPointer::New();
+    bool init_ok = ctx && EVP_CipherInit_ex(ctx.get(), config.cipher, nullptr, key, iv, 1);
+    OPENSSL_cleanse(key, sizeof(key));
+    if (!init_ok) return false;
+
+    bssl::ScopedCBB ecbb;
+    CBB epki, enc_alg, param, kdf, kdf_param, prf, cipher_cbb, ciphertext;
+    uint8_t* ctbuf;
+    int n1, n2;
+    size_t max_out = der.size() + EVP_CIPHER_CTX_block_size(ctx.get());
+    if (max_out < der.size()) return false;
+    if (!CBB_init(ecbb.get(), 256)
+        || !CBB_add_asn1(ecbb.get(), &epki, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1(&epki, &enc_alg, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1_element(&enc_alg, CBS_ASN1_OBJECT, kPBES2, sizeof(kPBES2))
+        || !CBB_add_asn1(&enc_alg, &param, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1(&param, &kdf, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1_element(&kdf, CBS_ASN1_OBJECT, kPBKDF2, sizeof(kPBKDF2))
+        || !CBB_add_asn1(&kdf, &kdf_param, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1_octet_string(&kdf_param, salt, kSaltLen)
+        || !CBB_add_asn1_uint64(&kdf_param, kIterations)
+        || !CBB_add_asn1(&kdf_param, &prf, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1_element(&prf, CBS_ASN1_OBJECT, kHMACWithSHA256, sizeof(kHMACWithSHA256))
+        || !CBB_add_asn1_element(&prf, CBS_ASN1_NULL, nullptr, 0)
+        || !CBB_add_asn1(&param, &cipher_cbb, CBS_ASN1_SEQUENCE)
+        || !OBJ_nid2cbb(&cipher_cbb, EVP_CIPHER_nid(config.cipher))
+        || !CBB_add_asn1_octet_string(&cipher_cbb, iv, iv_len)
+        || !CBB_add_asn1(&epki, &ciphertext, CBS_ASN1_OCTETSTRING)
+        || !CBB_reserve(&ciphertext, &ctbuf, max_out)
+        || !EVP_CipherUpdate(ctx.get(), ctbuf, &n1, static_cast<const uint8_t*>(der.get()), static_cast<int>(der.size()))
+        || !EVP_CipherFinal_ex(ctx.get(), ctbuf + n1, &n2)
+        || !CBB_did_write(&ciphertext, static_cast<size_t>(n1) + static_cast<size_t>(n2))
+        || !CBB_finish(ecbb.get(), &out, &out_len)) {
+        return false;
+    }
+    DataPointer encrypted(out, out_len);
+    if (format == EVPKeyPointer::PKFormatType::PEM) {
+        return PEM_write_bio(bio.get(), "ENCRYPTED PRIVATE KEY", "",
+                   static_cast<const unsigned char*>(encrypted.get()), encrypted.size()) > 0;
+    }
+    return BIO_write(bio.get(), encrypted.get(), encrypted.size()) == static_cast<int>(encrypted.size());
+}
+
 } // namespace
 
 bool EVPKeyPointer::IsRSAPrivateKey(const Buffer<const unsigned char>& buffer)
@@ -2425,6 +2829,21 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
                 return d2i_PUBKEY(nullptr, p, l);
             })) {
         return ret;
+    }
+
+    // BoringSSL's d2i_PUBKEY does not recognize id-RSASSA-PSS.
+    if (bp.resetBio()) {
+        MarkPopErrorOnReturn mark_pop_error_on_return;
+        unsigned char* der_data;
+        long der_len;
+        if (PEM_bytes_read_bio(&der_data, &der_len, nullptr, "PUBLIC KEY", bp.get(), nullptr, nullptr) == 1) {
+            DataPointer der(der_data, der_len);
+            bool ok;
+            if (auto key = TryParseRsaPssSPKI(der_data, der_len, ok)) {
+                return ParseKeyResult(WTF::move(key));
+            }
+            if (!ok) return ParseKeyResult(PKParseError::FAILED);
+        }
     }
 
     // Maybe it is PKCS#1.
@@ -2471,8 +2890,15 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKey(
         return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
     }
 
-    if (config.type == PKEncodingType::SPKI && (key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
-        return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+    if (config.type == PKEncodingType::SPKI) {
+        if ((key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
+            return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+        }
+        MarkPopErrorOnReturn mark_pop_error_on_return;
+        bool ok;
+        if (auto pss = TryParseRsaPssSPKI(buffer.data, buffer.len, ok)) {
+            return EVPKeyPointer::ParseKeyResult(WTF::move(pss));
+        }
     }
 
     return ParseKeyResult(PKParseError::FAILED);
@@ -2525,13 +2951,54 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
 
     auto passphrase = GetPassphrase(config);
 
+    auto tryRsaPssPKCS8 = [](const unsigned char* data, size_t len) -> ParseKeyResult {
+        ERR_clear_error();
+        bool ok;
+        if (auto key = TryParseRsaPssPKCS8(data, len, ok)) {
+            return ParseKeyResult(WTF::move(key));
+        }
+        return ParseKeyResult(PKParseError::FAILED, ERR_peek_error());
+    };
+
+    auto tryRsaPssEncrypted = [&](const unsigned char* data, size_t len) -> ParseKeyResult {
+        if (!config.passphrase.has_value()) return ParseKeyResult(PKParseError::FAILED);
+        ERR_clear_error();
+        auto plaintext = DecryptEncryptedPrivateKeyInfo(data, len, passphrase.data, passphrase.len);
+        if (!plaintext) return ParseKeyResult(PKParseError::FAILED, ERR_peek_error());
+        return tryRsaPssPKCS8(static_cast<const unsigned char*>(plaintext.get()), plaintext.size());
+    };
+
     if (config.format == PKFormatType::PEM) {
         auto key = PEM_read_bio_PrivateKey(
             bio.get(),
             nullptr,
             PasswordCallback,
             config.passphrase.has_value() ? &passphrase : nullptr);
-        return keyOrError(EVPKeyPointer(key), config.passphrase.has_value());
+        auto res = keyOrError(EVPKeyPointer(key), config.passphrase.has_value());
+        if (res || res.error.value_or(PKParseError::FAILED) == PKParseError::NEED_PASSPHRASE) {
+            return res;
+        }
+        // BoringSSL rejects id-RSASSA-PSS; re-read the PEM body and try it.
+        if (bio.resetBio()) {
+            ERR_clear_error();
+            char* name = nullptr;
+            char* header = nullptr;
+            unsigned char* der = nullptr;
+            long der_len = 0;
+            if (PEM_read_bio(bio.get(), &name, &header, &der, &der_len) == 1) {
+                DataPointer owned_der(der, der_len);
+                DataPointer owned_name(name, name ? strlen(name) : 0);
+                DataPointer owned_header(header, header ? strlen(header) : 0);
+                if (name && strcmp(name, "PRIVATE KEY") == 0) {
+                    auto pss = tryRsaPssPKCS8(der, der_len);
+                    if (pss) return pss;
+                } else if (name && strcmp(name, "ENCRYPTED PRIVATE KEY") == 0) {
+                    auto pss = tryRsaPssEncrypted(der, der_len);
+                    if (pss) return pss;
+                }
+            }
+        }
+        return res;
     }
 
     if (config.format != PKFormatType::DER) {
@@ -2550,14 +3017,22 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
                 nullptr,
                 PasswordCallback,
                 config.passphrase.has_value() ? &passphrase : nullptr);
-            return keyOrError(EVPKeyPointer(key), config.passphrase.has_value());
+            auto res = keyOrError(EVPKeyPointer(key), config.passphrase.has_value());
+            if (res || res.error.value_or(PKParseError::FAILED) == PKParseError::NEED_PASSPHRASE) {
+                return res;
+            }
+            auto pss = tryRsaPssEncrypted(buffer.data, buffer.len);
+            return pss ? WTF::move(pss) : WTF::move(res);
         }
 
         PKCS8Pointer p8inf(d2i_PKCS8_PRIV_KEY_INFO_bio(bio.get(), nullptr));
         if (!p8inf) {
             return ParseKeyResult(PKParseError::FAILED, ERR_peek_error());
         }
-        return keyOrError(EVPKeyPointer(EVP_PKCS82PKEY(p8inf.get())));
+        auto res = keyOrError(EVPKeyPointer(EVP_PKCS82PKEY(p8inf.get())));
+        if (res) return res;
+        auto pss = tryRsaPssPKCS8(buffer.data, buffer.len);
+        return pss ? WTF::move(pss) : WTF::move(res);
     }
     case PKEncodingType::SEC1: {
         auto key = d2i_PrivateKey_bio(bio.get(), nullptr);
@@ -2584,6 +3059,15 @@ Result<BIOPointer, bool> EVPKeyPointer::writePrivateKey(
     auto passphrase = GetPassphrase(config);
     MarkPopErrorOnReturn mark_pop_error_on_return;
     bool err;
+
+    if (rsa_pss_details_.has_value() && config.type == PKEncodingType::PKCS8
+        && (config.format == PKFormatType::PEM || config.format == PKFormatType::DER)) {
+        const RSA* rsa = EVP_PKEY_get0_RSA(get());
+        if (rsa == nullptr || !WriteRsaPssPKCS8(bio, rsa, *rsa_pss_details_, config.format, config, passphrase)) {
+            return Result<BIOPointer, bool>(false, mark_pop_error_on_return.peekError());
+        }
+        return bio;
+    }
 
     switch (config.type) {
     case PKEncodingType::PKCS1: {
@@ -2708,6 +3192,15 @@ Result<BIOPointer, bool> EVPKeyPointer::writePublicKey(
     if (!bio) return Result<BIOPointer, bool>(false);
 
     MarkPopErrorOnReturn mark_pop_error_on_return;
+
+    if (rsa_pss_details_.has_value() && config.type == PKEncodingType::SPKI
+        && (config.format == PKFormatType::PEM || config.format == PKFormatType::DER)) {
+        const RSA* rsa = EVP_PKEY_get0_RSA(get());
+        if (rsa == nullptr || !WriteRsaPssSPKI(bio, rsa, *rsa_pss_details_, config.format)) {
+            return Result<BIOPointer, bool>(false, mark_pop_error_on_return.peekError());
+        }
+        return bio;
+    }
 
     if (config.type == ncrypto::EVPKeyPointer::PKEncodingType::PKCS1) {
         // PKCS#1 is only valid for RSA keys.

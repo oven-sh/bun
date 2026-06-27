@@ -515,17 +515,22 @@ void KeyObject::getRsaKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope
     result->putDirect(vm, Identifier::fromString(vm, "publicExponent"_s), publicExponent);
 
     if (pkey.id() == EVP_PKEY_RSA_PSS) {
-        auto maybeParams = rsa.getPssParams();
-        if (maybeParams.has_value()) {
-            auto& params = maybeParams.value();
-            result->putDirect(vm, Identifier::fromString(vm, "hashAlgorithm"_s), jsString(vm, params.digest));
-
-            if (params.mgf1_digest.has_value()) {
-                auto digest = params.mgf1_digest.value();
-                result->putDirect(vm, Identifier::fromString(vm, "mgf1HashAlgorithm"_s), jsString(vm, digest));
+        const auto& maybeDetails = pkey.rsaPssDetails();
+        if (maybeDetails.has_value()) {
+            const auto& details = *maybeDetails;
+            if (details.hash_nid != NID_undef) {
+                if (const char* name = OBJ_nid2ln(details.hash_nid)) {
+                    result->putDirect(vm, Identifier::fromString(vm, "hashAlgorithm"_s),
+                        jsString(vm, String::fromLatin1(name)));
+                }
+                int mgf1_nid = details.mgf1_hash_nid != NID_undef ? details.mgf1_hash_nid : details.hash_nid;
+                if (const char* name = OBJ_nid2ln(mgf1_nid)) {
+                    result->putDirect(vm, Identifier::fromString(vm, "mgf1HashAlgorithm"_s),
+                        jsString(vm, String::fromLatin1(name)));
+                }
+                int64_t salt = details.salt_length >= 0 ? details.salt_length : 20;
+                result->putDirect(vm, Identifier::fromString(vm, "saltLength"_s), jsNumber(salt));
             }
-
-            result->putDirect(vm, Identifier::fromString(vm, "saltLength"_s), jsNumber(params.salt_length));
         }
     }
 }

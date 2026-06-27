@@ -1523,6 +1523,159 @@ describe("crypto.KeyObjects", () => {
   });
 });
 
+describe("RSA-PSS key type", () => {
+  // SubjectPublicKeyInfo produced by Node.js with
+  // generateKeyPairSync("rsa-pss", { modulusLength: 2048, hashAlgorithm: "sha256",
+  //   mgf1HashAlgorithm: "sha256", saltLength: 32 })
+  // and a signature of Buffer.from("m") made with the matching private key.
+  const nodeSpki = Buffer.from(
+    "MIIBVjBBBgkqhkiG9w0BAQowNKAPMA0GCWCGSAFlAwQCAQUAoRwwGgYJKoZIhvcNAQEIMA0GCWCGSAFlAwQCAQUAogMCASADggEPADCCAQoCggEBAMcerX486CUtxrIIVJA9NrD2TArrcLj9N/ZyBfas177vtZ5YYPS3gniLb9/k7ayRq/EBaSB3Y/FBKEzLMFalGxkKr5pSQDxmdc75abA+24FW1WDwvnwrDPpn6uFeF14ZdNfF5tFDQKy5mFKJPj/cW9/tE01Koz9GLnkyKSh/D1JHPhWF+yWBfLCLFv3NOgzJIo4PV/pmcgvgOhtV955yXX1JWJwLciGP95DpRgLVnUjgWIELzVTU+mP67DAnvlrRXyhHA7dHnMDhJNcwlocFyQ63RMaGBGfoYoi4bTbwDRHoOR1MA20L2qx8t9CnnO6s6iryOpAAwrhPoqMpnhoTYv8CAwEAAQ==",
+    "base64",
+  );
+  const nodeSig = Buffer.from(
+    "oTHIp0HjBZ9A9FoU3k8Z5+nz6Dfd0hymheuKRKUXCEpoMyhZjnMsfgvdbHJyCTtGhTOWU7ot0ojb3Txr3ksGp/iKWFImcueeq9yKUVR01xkIGxxhAGKO/e1nyfyOoWbje0/6IAtvb+T4+disLJhNXYTb2Df/Zl3Lxe6c2oapacuWiiCkU8kO3o80H6u5EQ137I1WwyQqm6smjE/z7kA1YpZjQeeoPxWk+FTXQZLQN/Uts+C1fQT5KnellJgCdo3ZfM55sMX1o4wjiOZyoBcC5IGHGUXKhn2nZFO7SOS7ESVOELqVEWxGD90CPjH3MDwZgidFmjs4CYYU/Rcrgf19fA==",
+    "base64",
+  );
+
+  it("imports a Node-generated RSA-PSS SPKI and verifies a Node-generated signature", () => {
+    const pub = createPublicKey({ key: nodeSpki, format: "der", type: "spki" });
+    expect(pub.asymmetricKeyType).toBe("rsa-pss");
+    expect(pub.asymmetricKeyDetails).toEqual({
+      modulusLength: 2048,
+      publicExponent: 65537n,
+      hashAlgorithm: "sha256",
+      mgf1HashAlgorithm: "sha256",
+      saltLength: 32,
+    });
+    expect(verify("sha256", Buffer.from("m"), pub, nodeSig)).toBe(true);
+    expect(verify("sha256", Buffer.from("wrong"), pub, nodeSig)).toBe(false);
+  });
+
+  it("imports RSA-PSS PEM fixtures without parameters", () => {
+    const pubPem = readFile(path.join(import.meta.dir, "fixtures", "rsa_pss_public_2048.pem"), "ascii");
+    const privPem = readFile(path.join(import.meta.dir, "fixtures", "rsa_pss_private_2048.pem"), "ascii");
+    const pub = createPublicKey(pubPem);
+    const priv = createPrivateKey(privPem);
+    expect(pub.asymmetricKeyType).toBe("rsa-pss");
+    expect(priv.asymmetricKeyType).toBe("rsa-pss");
+    expect(pub.asymmetricKeyDetails).toEqual({ modulusLength: 2048, publicExponent: 65537n });
+
+    const msg = Buffer.from("hello");
+    const s = sign("sha256", msg, priv);
+    expect(verify("sha256", msg, pub, s)).toBe(true);
+  });
+
+  it.each([
+    ["sha256", 32],
+    ["sha384", 48],
+    ["sha512", 64],
+  ])("generateKeyPairSync('rsa-pss') with %s", (hash, saltLength) => {
+    const { publicKey, privateKey } = generateKeyPairSync("rsa-pss", {
+      modulusLength: 2048,
+      hashAlgorithm: hash,
+      mgf1HashAlgorithm: hash,
+      saltLength,
+    });
+    expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
+    expect(privateKey.asymmetricKeyType).toBe("rsa-pss");
+    expect(publicKey.asymmetricKeyDetails).toEqual({
+      modulusLength: 2048,
+      publicExponent: 65537n,
+      hashAlgorithm: hash,
+      mgf1HashAlgorithm: hash,
+      saltLength,
+    });
+
+    const msg = Buffer.from("payload");
+    const s = sign(hash, msg, privateKey);
+    expect(verify(hash, msg, publicKey, s)).toBe(true);
+
+    // streaming Sign/Verify default to PSS padding for rsa-pss keys
+    const signer = createSign(hash).update(msg);
+    const sig2 = signer.sign(privateKey);
+    expect(createVerify(hash).update(msg).verify(publicKey, sig2)).toBe(true);
+  });
+
+  it("generateKeyPairSync('rsa-pss') with no PSS parameters", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("rsa-pss", { modulusLength: 2048 });
+    expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
+    expect(publicKey.asymmetricKeyDetails).toEqual({ modulusLength: 2048, publicExponent: 65537n });
+    const msg = Buffer.from("x");
+    for (const algo of ["sha1", "sha256"]) {
+      for (const saltLength of [undefined, 8, 16, 20]) {
+        const s = sign(algo, msg, { key: privateKey, saltLength });
+        expect(verify(algo, msg, { key: publicKey, saltLength }, s)).toBe(true);
+      }
+    }
+  });
+
+  it("round-trips RSA-PSS through SPKI and PKCS8 in DER and PEM", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("rsa-pss", {
+      modulusLength: 2048,
+      hashAlgorithm: "sha256",
+      mgf1HashAlgorithm: "sha256",
+      saltLength: 32,
+    });
+    const msg = Buffer.from("roundtrip");
+    const refSig = sign("sha256", msg, privateKey);
+
+    for (const format of ["der", "pem"]) {
+      const spki = publicKey.export({ type: "spki", format });
+      const pub2 =
+        format === "der" ? createPublicKey({ key: spki, format: "der", type: "spki" }) : createPublicKey(spki);
+      expect(pub2.asymmetricKeyType).toBe("rsa-pss");
+      expect(pub2.asymmetricKeyDetails.hashAlgorithm).toBe("sha256");
+      expect(verify("sha256", msg, pub2, refSig)).toBe(true);
+
+      const pkcs8 = privateKey.export({ type: "pkcs8", format });
+      const priv2 =
+        format === "der" ? createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" }) : createPrivateKey(pkcs8);
+      expect(priv2.asymmetricKeyType).toBe("rsa-pss");
+      const s2 = sign("sha256", msg, priv2);
+      expect(verify("sha256", msg, publicKey, s2)).toBe(true);
+    }
+
+    // deriving a public key from the private KeyObject preserves the type
+    const derived = createPublicKey(privateKey);
+    expect(derived.asymmetricKeyType).toBe("rsa-pss");
+    expect(verify("sha256", msg, derived, refSig)).toBe(true);
+  });
+
+  it("round-trips RSA-PSS through encrypted PKCS8", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("rsa-pss", {
+      modulusLength: 2048,
+      hashAlgorithm: "sha256",
+    });
+    const msg = Buffer.from("enc");
+
+    for (const format of ["der", "pem"]) {
+      const enc = privateKey.export({ type: "pkcs8", format, cipher: "aes-256-cbc", passphrase: "secret" });
+      const priv2 =
+        format === "der"
+          ? createPrivateKey({ key: enc, format: "der", type: "pkcs8", passphrase: "secret" })
+          : createPrivateKey({ key: enc, passphrase: "secret" });
+      expect(priv2.asymmetricKeyType).toBe("rsa-pss");
+      const s = sign("sha256", msg, priv2);
+      expect(verify("sha256", msg, publicKey, s)).toBe(true);
+    }
+  });
+
+  it("generateKeyPair('rsa-pss') async", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    generateKeyPair(
+      "rsa-pss",
+      { modulusLength: 2048, hashAlgorithm: "sha384", mgf1HashAlgorithm: "sha384", saltLength: 48 },
+      (err, pub, priv) => (err ? reject(err) : resolve({ pub, priv })),
+    );
+    const { pub, priv } = await promise;
+    expect(pub.asymmetricKeyType).toBe("rsa-pss");
+    expect(priv.asymmetricKeyType).toBe("rsa-pss");
+    expect(pub.asymmetricKeyDetails.hashAlgorithm).toBe("sha384");
+    const msg = Buffer.from("a");
+    expect(verify("sha384", msg, pub, sign("sha384", msg, priv))).toBe(true);
+  });
+});
+
 test.todo("RSA-PSS should work", async () => {
   // Test RSA-PSS.
   const expectedKeyDetails = {

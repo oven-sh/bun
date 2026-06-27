@@ -908,6 +908,8 @@ it("match() splits path and query before percent-decoding", () => {
     encodedQuestionInPath: q("/posts/a%3Fb"),
     encodedQuestionInPathWithQuery: q("/posts/a%3Fb?c=1"),
     literalQuestionInQueryValue: q("/p?a=b?c=d"),
+    // https://github.com/oven-sh/bun/issues/8384
+    encodedQuestionInQueryValue: q("/p?prompt=test%3ftest"),
   }).toEqual({
     encodedAmpAndEq: { name: "/p", params: {}, query: { a: "b&c=d" } },
     doubleEncoded: { name: "/p", params: {}, query: { a: "%20" } },
@@ -918,5 +920,6 @@ it("match() splits path and query before percent-decoding", () => {
       query: { id: "a?b", c: "1" },
     },
     literalQuestionInQueryValue: { name: "/p", params: {}, query: { a: "b?c=d" } },
+    encodedQuestionInQueryValue: { name: "/p", params: {}, query: { prompt: "test?test" } },
   });
 });

@@ -105,6 +105,8 @@ void BroadcastChannel::close()
     uint64_t prev = m_state.fetch_or(Closed, std::memory_order_acq_rel);
     if (prev & Closed)
         return;
+    // A closed channel can never dispatch again; release the creation snapshot.
+    m_creationAsyncContext.clear();
     BunBroadcastChannelRegistry::singleton().unsubscribe(m_name, *this);
 }
 

@@ -643,6 +643,8 @@ bool Worker::dispatchExit(int32_t exitCode)
             }
 
             protectedThis->m_state.store(State::Closed);
+            // A Closed worker never dispatches again; release the creation snapshot.
+            protectedThis->m_creationAsyncContext.clear();
             WebWorker__releaseParentPollRef(protectedThis->impl_);
             // protectedThis (and the JSWorker GC cell, if still rooted) keep us
             // alive across the close-event dispatch; both deref on the parent

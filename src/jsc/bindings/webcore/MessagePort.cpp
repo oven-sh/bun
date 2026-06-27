@@ -217,6 +217,9 @@ void MessagePort::close()
     // it in hasPendingActivity()); marking our side Closed is sufficient.
     m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
 
+    // A closed port can never dispatch again; release the creation snapshot.
+    m_creationAsyncContext.clear();
+
     // Release the self-reference taken by jsRef() (set when .onmessage is
     // assigned or .ref() is called from JS). The JS .close() binding calls
     // jsUnref() first, so m_hasRef is already false on that path; we only
@@ -305,6 +308,9 @@ TransferredMessagePort MessagePort::disentangle()
     // there would be nothing to unref.
     removeAllEventListeners();
     m_hasMessageEventListener = false;
+
+    // A transferred-away port is inert; release the creation snapshot.
+    m_creationAsyncContext.clear();
 
     // Release the self-reference taken by jsRef() on the sending side. After
     // transfer this object is inert (the receiving side gets a fresh

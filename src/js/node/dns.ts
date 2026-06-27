@@ -333,7 +333,7 @@ function lookup(hostname, options, callback) {
         err.hostname = hostname;
         err.message = `${syscall} ${err.code} ${hostname}`;
       }
-      callback(err, undefined, undefined);
+      callback(err);
     });
 }
 

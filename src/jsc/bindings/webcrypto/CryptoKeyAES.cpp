@@ -113,12 +113,12 @@ JsonWebKey CryptoKeyAES::exportJwk() const
     return result;
 }
 
-ExceptionOr<size_t> CryptoKeyAES::getKeyLength(const CryptoAlgorithmParameters& parameters)
+ExceptionOr<std::optional<size_t>> CryptoKeyAES::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
     auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
     if (!lengthIsValid(aesParameters.length))
         return Exception { OperationError };
-    return aesParameters.length;
+    return std::optional<size_t>(aesParameters.length);
 }
 
 auto CryptoKeyAES::algorithm() const -> KeyAlgorithm

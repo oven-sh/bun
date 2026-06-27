@@ -35,14 +35,13 @@ test("X25519 deriveBits with null length returns full output", async () => {
   expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
 });
 
-test("X25519 deriveBits with zero length returns full output", async () => {
+test("X25519 deriveBits with zero length returns empty output", async () => {
   const { privateKey, publicKey } = await importX25519Keys();
 
   const bits = await crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey, 0);
 
   expect(bits).toBeInstanceOf(ArrayBuffer);
-  expect(bits.byteLength).toBe(32);
-  expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
+  expect(bits.byteLength).toBe(0);
 });
 
 test("X25519 deriveBits with shorter length", async () => {

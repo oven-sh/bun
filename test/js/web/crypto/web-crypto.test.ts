@@ -418,3 +418,122 @@ describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
     expect(jwk.k).toBe("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QA");
   });
 });
+
+// deriveBits(alg, key, length) must distinguish between length === 0 (first 0 bits,
+// i.e. an empty buffer) and length == null/undefined/omitted (algorithm default).
+describe("deriveBits length 0 vs null", () => {
+  it("has .length of 2 (length argument is optional)", () => {
+    expect(crypto.subtle.deriveBits.length).toBe(2);
+  });
+
+  describe.each([
+    ["ECDH", { name: "ECDH", namedCurve: "P-256" }, 32],
+    ["X25519", { name: "X25519" }, 32],
+  ] as const)("%s", (label, genParams, fullBytes) => {
+    async function setup() {
+      const pair = await crypto.subtle.generateKey(genParams as any, false, ["deriveBits", "deriveKey"]);
+      const alg = { name: label, public: pair.publicKey } as any;
+      return { pair, alg };
+    }
+
+    it("length 0 returns an empty ArrayBuffer (not the full secret)", async () => {
+      const { pair, alg } = await setup();
+      const bits = await crypto.subtle.deriveBits(alg, pair.privateKey, 0);
+      expect(bits).toBeInstanceOf(ArrayBuffer);
+      expect(bits.byteLength).toBe(0);
+    });
+
+    it.each([["null", null] as const, ["undefined", undefined] as const])(
+      "length %s returns the full shared secret",
+      async (_, lengthArg) => {
+        const { pair, alg } = await setup();
+        const bits = await crypto.subtle.deriveBits(alg, pair.privateKey, lengthArg as any);
+        expect(bits.byteLength).toBe(fullBytes);
+      },
+    );
+
+    it("omitted length returns the full shared secret", async () => {
+      const { pair, alg } = await setup();
+      // @ts-expect-error types may not yet reflect optional length
+      const bits = await crypto.subtle.deriveBits(alg, pair.privateKey);
+      expect(bits.byteLength).toBe(fullBytes);
+    });
+
+    it("deriveKey with HKDF derivedKeyType still yields the full secret", async () => {
+      const { pair, alg } = await setup();
+      const full = await crypto.subtle.deriveBits(alg, pair.privateKey, null as any);
+      const key = await crypto.subtle.deriveKey(
+        alg,
+        pair.privateKey,
+        { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new Uint8Array(0) } as any,
+        false,
+        ["deriveBits"],
+      );
+      const derived = await crypto.subtle.deriveBits(
+        { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new Uint8Array(0) },
+        key,
+        fullBytes * 8,
+      );
+      const expected = await crypto.subtle.deriveBits(
+        { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new Uint8Array(0) },
+        await crypto.subtle.importKey("raw", full, "HKDF", false, ["deriveBits"]),
+        fullBytes * 8,
+      );
+      expect(Buffer.from(derived).toString("hex")).toBe(Buffer.from(expected).toString("hex"));
+    });
+  });
+
+  describe.each([
+    [
+      "HKDF",
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(8), info: new Uint8Array(0) },
+      "HKDF" as AlgorithmIdentifier,
+    ],
+    [
+      "PBKDF2",
+      { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(8), iterations: 1 },
+      "PBKDF2" as AlgorithmIdentifier,
+    ],
+  ] as const)("%s", (label, deriveParams, importAlg) => {
+    async function importRaw() {
+      return crypto.subtle.importKey("raw", new Uint8Array(22), importAlg, false, ["deriveBits"]);
+    }
+
+    it("length 0 returns an empty ArrayBuffer", async () => {
+      const key = await importRaw();
+      const bits = await crypto.subtle.deriveBits(deriveParams as any, key, 0);
+      expect(bits).toBeInstanceOf(ArrayBuffer);
+      expect(bits.byteLength).toBe(0);
+    });
+
+    it.each([["null", null] as const, ["undefined", undefined] as const])(
+      "length %s rejects with OperationError",
+      async (_, lengthArg) => {
+        const key = await importRaw();
+        const err = await crypto.subtle.deriveBits(deriveParams as any, key, lengthArg as any).then(
+          () => null,
+          e => e,
+        );
+        expect(err).toBeInstanceOf(DOMException);
+        expect(err.name).toBe("OperationError");
+      },
+    );
+
+    it("omitted length rejects with OperationError", async () => {
+      const key = await importRaw();
+      // @ts-expect-error types may not yet reflect optional length
+      const err = await crypto.subtle.deriveBits(deriveParams as any, key).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("OperationError");
+    });
+
+    it("nonzero length still derives correctly", async () => {
+      const key = await importRaw();
+      const bits = await crypto.subtle.deriveBits(deriveParams as any, key, 128);
+      expect(bits.byteLength).toBe(16);
+    });
+  });
+});

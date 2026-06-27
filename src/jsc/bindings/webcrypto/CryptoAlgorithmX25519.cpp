@@ -70,7 +70,7 @@ std::optional<Vector<uint8_t>> CryptoAlgorithmX25519::platformDeriveBits(const C
 }
 #endif
 
-void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, size_t length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     if (baseKey->type() != CryptoKey::Type::Private) {
         exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
@@ -111,7 +111,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
             callback(WTF::move(*derivedKey));
             return;
         }
-        auto lengthInBytes = static_cast<size_t>(std::ceil(length / 8.));
+        auto lengthInBytes = static_cast<size_t>(std::ceil(*length / 8.));
         if (lengthInBytes > (*derivedKey).size()) {
             exceptionCallback(ExceptionCode::OperationError, ""_s);
             return;

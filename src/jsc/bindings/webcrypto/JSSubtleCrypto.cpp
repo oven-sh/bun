@@ -193,7 +193,7 @@ static const HashTableValue JSSubtleCryptoPrototypeTableValues[] = {
     { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_digest, 2 } },
     { "generateKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_generateKey, 3 } },
     { "deriveKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_deriveKey, 5 } },
-    { "deriveBits"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_deriveBits, 3 } },
+    { "deriveBits"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_deriveBits, 2 } },
     { "importKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_importKey, 5 } },
     { "exportKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_exportKey, 2 } },
     { "wrapKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_wrapKey, 4 } },
@@ -455,7 +455,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveBitsBody
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (callFrame->argumentCount() < 3) [[unlikely]]
+    if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument0.value());
@@ -463,10 +463,13 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveBitsBody
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto baseKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "baseKey"_s, "SubtleCrypto"_s, "deriveBits"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
-    EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto length = convert<IDLUnsignedLong>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLArrayBuffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveBits(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *baseKey, WTF::move(length), WTF::move(promise)); })));
+    EnsureStillAliveScope argument2 = callFrame->argument(2);
+    std::optional<size_t> length;
+    if (!argument2.value().isUndefinedOrNull()) {
+        length = convert<IDLUnsignedLong>(*lexicalGlobalObject, argument2.value());
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLArrayBuffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveBits(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *baseKey, length, WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveBits, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

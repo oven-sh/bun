@@ -62,7 +62,7 @@ void CryptoAlgorithm::generateKey(const CryptoAlgorithmParameters&, bool, Crypto
     exceptionCallback(NotSupportedError, ""_s);
 }
 
-void CryptoAlgorithm::deriveBits(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, size_t, VectorCallback&&, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&, WorkQueue&)
+void CryptoAlgorithm::deriveBits(const CryptoAlgorithmParameters&, Ref<CryptoKey>&&, std::optional<size_t>, VectorCallback&&, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&, WorkQueue&)
 {
     exceptionCallback(NotSupportedError, ""_s);
 }
@@ -87,7 +87,7 @@ void CryptoAlgorithm::unwrapKey(Ref<CryptoKey>&&, Vector<uint8_t>&&, VectorCallb
     exceptionCallback(NotSupportedError, ""_s);
 }
 
-ExceptionOr<size_t> CryptoAlgorithm::getKeyLength(const CryptoAlgorithmParameters&)
+ExceptionOr<std::optional<size_t>> CryptoAlgorithm::getKeyLength(const CryptoAlgorithmParameters&)
 {
     return Exception { NotSupportedError };
 }

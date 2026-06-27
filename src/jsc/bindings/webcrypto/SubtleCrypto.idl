@@ -40,7 +40,7 @@ typedef (object or DOMString) AlgorithmIdentifier;
     [CallWith=CurrentGlobalObject] Promise<any> digest(AlgorithmIdentifier algorithm, BufferSource data);
     [CallWith=CurrentGlobalObject] Promise<any> generateKey(AlgorithmIdentifier algorithm, boolean extractable, sequence<CryptoKeyUsage> keyUsages);
     [CallWith=CurrentGlobalObject] Promise<any> deriveKey(AlgorithmIdentifier algorithm, CryptoKey baseKey, AlgorithmIdentifier derivedKeyType, boolean extractable, sequence<CryptoKeyUsage> keyUsages);
-    [CallWith=CurrentGlobalObject] Promise<ArrayBuffer> deriveBits(AlgorithmIdentifier algorithm, CryptoKey baseKey, unsigned long length);
+    [CallWith=CurrentGlobalObject] Promise<ArrayBuffer> deriveBits(AlgorithmIdentifier algorithm, CryptoKey baseKey, optional unsigned long? length = null);
     [CallWith=CurrentGlobalObject] Promise<CryptoKey> importKey(KeyFormat format, (BufferSource or JsonWebKey) keyData, AlgorithmIdentifier algorithm, boolean extractable, sequence<CryptoKeyUsage> keyUsages);
     Promise<any> exportKey(KeyFormat format, CryptoKey key);
     [CallWith=CurrentGlobalObject] Promise<any> wrapKey(KeyFormat format, CryptoKey key, CryptoKey wrappingKey, AlgorithmIdentifier wrapAlgorithm);

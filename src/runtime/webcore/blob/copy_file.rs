@@ -1004,6 +1004,13 @@ impl<'a> CopyFile<'a> {
                 } else if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
                     self.do_close();
                     return;
+                } else {
+                    let stat_size = if stat.st_size > 0 {
+                        SizeType::try_from(stat.st_size).expect("int cast")
+                    } else {
+                        0
+                    };
+                    self.read_len = stat_size.min(self.max_length);
                 }
                 if stat.st_size != 0
                     && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length

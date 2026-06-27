@@ -387,11 +387,14 @@ describe("Glob.match", () => {
     glob = new Glob("*{a," + opens + closes + "}");
     expect(glob.match("za")).toBeTrue();
 
-    // 40,000 consecutive `{`, none closed — every `{` is a literal and the
-    // closing-brace pre-scan must not overflow its depth counter.
+    // 40,000 consecutive `{`, none closed, so every `{` is a literal. The
+    // unclosed-brace pre-scan must not overflow its depth counter, and
+    // matching must stay linear in the number of unclosed braces.
     glob = new Glob(Buffer.alloc(40_000, "{").toString());
     expect(glob.match("a")).toBeFalse();
     expect(glob.match("{")).toBeFalse();
+    expect(glob.match(Buffer.alloc(40_000, "{").toString())).toBeTrue();
+    expect(glob.match(Buffer.alloc(40_001, "{").toString())).toBeFalse();
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

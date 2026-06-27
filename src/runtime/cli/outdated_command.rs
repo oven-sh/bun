@@ -553,14 +553,25 @@ impl OutdatedCommand {
                 };
 
                 let current_version = resolution.npm().version;
-                if current_version.order(actual_latest.version, string_buf, &manifest.string_buf)
-                    != core::cmp::Ordering::Less
-                {
-                    continue;
-                }
 
                 let has_filtered_update = update_version.latest_is_filtered();
                 let has_filtered_latest = latest.latest_is_filtered();
+
+                let update_result = update_version.unwrap();
+                let latest_is_newer = current_version
+                    .order(actual_latest.version, string_buf, &manifest.string_buf)
+                    == core::cmp::Ordering::Less;
+                // An in-range update can exist even when the installed version is
+                // at or ahead of the `latest` dist-tag (prereleases, `next` lines),
+                // and `bun update` would apply it, so surface the row here too.
+                let update_is_newer = update_result.is_some_and(|uv| {
+                    current_version.order(uv.version, string_buf, &manifest.string_buf)
+                        == core::cmp::Ordering::Less
+                });
+                if !latest_is_newer && !update_is_newer {
+                    continue;
+                }
+
                 if has_filtered_update || has_filtered_latest {
                     has_filtered_versions = true;
                 }
@@ -587,7 +598,7 @@ impl OutdatedCommand {
                 }
 
                 version_buf.clear();
-                if let Some(uv) = update_version.unwrap() {
+                if let Some(uv) = update_result {
                     write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
                         .expect("OOM writing version");
                 } else {

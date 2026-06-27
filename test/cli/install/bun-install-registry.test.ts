@@ -8595,6 +8595,85 @@ describe("outdated", () => {
     // The catalog grouping should show which workspaces use it
     expect(out).toMatch(/catalog.*workspace-a.*workspace-b|workspace-b.*workspace-a/);
   });
+
+  test("shows in-range update when installed version is ahead of `latest` dist-tag", async () => {
+    // prereleases-1 publishes 1.0.0-future.{0,1,4,5,7} with the `latest`
+    // dist-tag pointing at 1.0.0-future.4. Lock 1.0.0-future.5 (a version
+    // newer than `latest`), then widen the range so that 1.0.0-future.7
+    // becomes an available in-range update. Previously `bun outdated` hid
+    // this row because `current >= latest`, even though `bun update` would
+    // move to 1.0.0-future.7.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "prereleases-1": "1.0.0-future.5",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "prereleases-1": "^1.0.0-future.5",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    // Lockfile must still pin 1.0.0-future.5 (sticky resolution).
+    const installed = await file(join(packageDir, "node_modules", "prereleases-1", "package.json")).json();
+    expect(installed.version).toBe("1.0.0-future.5");
+
+    const out = await runBunOutdated(env, packageDir);
+    expect(out).toContain("prereleases-1");
+    expect(out).toContain("1.0.0-future.5");
+    expect(out).toContain("1.0.0-future.7");
+
+    // `bun update` applies exactly the update `bun outdated` just surfaced.
+    await runBunUpdate(env, packageDir);
+    const updated = await file(join(packageDir, "node_modules", "prereleases-1", "package.json")).json();
+    expect(updated.version).toBe("1.0.0-future.7");
+  });
+
+  test("shows in-range update when `latest` dist-tag points at an older stable line", async () => {
+    // prereleases-2 publishes 0.5.0 as `latest` and a 1.0.0-next.* line.
+    // Installing any 1.0.0-next.* means `current > latest` and the row was
+    // previously hidden even though a newer in-range prerelease exists.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "prereleases-2": "1.0.0-next.1",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "prereleases-2": "^1.0.0-next.1",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    const installed = await file(join(packageDir, "node_modules", "prereleases-2", "package.json")).json();
+    expect(installed.version).toBe("1.0.0-next.1");
+
+    const out = await runBunOutdated(env, packageDir);
+    expect(out).toContain("prereleases-2");
+    expect(out).toContain("1.0.0-next.1");
+    expect(out).toContain("1.0.0-next.23");
+  });
 });
 
 // TODO: setup registry to run across multiple test files, then move this and a few other describe

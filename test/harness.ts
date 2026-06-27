@@ -1828,7 +1828,10 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+    // Bind to 0.0.0.0 so the server is reachable regardless of whether the
+    // resolver picks IPv4 or IPv6 for `localhost` (some environments bind
+    // `localhost` to ::1 only, which bun's HTTP client then can't reach).
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `0.0.0.0:${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),

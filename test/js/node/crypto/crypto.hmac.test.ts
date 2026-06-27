@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Hmac, createHash, createHmac, createSecretKey, getHashes } from "crypto";
+import { Hmac, createHash, createHmac, createSecretKey, getHashes, hkdfSync, pbkdf2Sync } from "crypto";
 import { PassThrough } from "stream";
 
 function testHmac(algo, key, data, expected) {
@@ -542,6 +542,29 @@ describe("crypto.Hmac", () => {
       expect(hashes).toContain("blake2b512");
       expect(hashes).toContain("blake2s256");
       expect(hashes).toContain("blake2b256");
+    });
+
+    // Node's own test-crypto-pbkdf2.js and test-crypto-hkdf.js iterate
+    // getHashes() through these APIs, so every listed name must work there
+    // too. Values from Node.js.
+    test.each([
+      ["blake2b512", "40b77cc2ee4b4c44eeb5babc299be14af5670e39ea3ce14c0fe70e6c99369886"],
+      ["blake2s256", "7b88e65e6e95a118bc995f681a391cbd7b46e0cf9750a81100f613add62d84be"],
+    ])("pbkdf2Sync accepts %s", (algo, expected) => {
+      expect(pbkdf2Sync("password", "salt", 2, 32, algo).toString("hex")).toBe(expected);
+    });
+
+    test.each([
+      ["blake2b512", "b3b27a54dac96f4819e8befbc643bd78b7882208b2e366043cbf47ab44b033a4"],
+      ["blake2s256", "b1a7297a13a0295c6c6c50e092617114e130fe45667ca5475ae49cf8536c5ad0"],
+    ])("hkdfSync accepts %s", (algo, expected) => {
+      expect(Buffer.from(hkdfSync(algo, "key", "salt", "info", 32)).toString("hex")).toBe(expected);
+    });
+
+    test("every getHashes() entry works with createHash", () => {
+      for (const name of getHashes()) {
+        expect(createHash(name).update("abc").digest("hex").length).toBeGreaterThan(0);
+      }
     });
 
     test("blake2b256 HMAC (Bun extension)", () => {

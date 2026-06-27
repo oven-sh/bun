@@ -2114,9 +2114,14 @@ const env_md_st_layout evp_md_blake2s256 = {
 
 } // namespace
 
-const EVP_MD* EVP_blake2s256_bun()
+extern "C" const EVP_MD* Bun__EVP_blake2s256()
 {
     return reinterpret_cast<const EVP_MD*>(&evp_md_blake2s256);
+}
+
+const EVP_MD* EVP_blake2s256_bun()
+{
+    return Bun__EVP_blake2s256();
 }
 
 // ============================================================================

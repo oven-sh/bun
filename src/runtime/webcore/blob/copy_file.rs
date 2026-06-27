@@ -965,8 +965,11 @@ impl<'a> CopyFile<'a> {
                 // of its position, so use a read/write loop for slices.
                 if self.offset > 0 {
                     let mut total_written: u64 = 0;
-                    let limit =
-                        if self.max_length == MAX_SIZE { 0 } else { self.max_length as usize };
+                    let limit = if self.max_length == MAX_SIZE {
+                        0
+                    } else {
+                        self.max_length as usize
+                    };
                     match node_fs::NodeFS::copy_file_using_read_write_loop(
                         bun_core::ZStr::EMPTY,
                         bun_core::ZStr::EMPTY,
@@ -1071,8 +1074,7 @@ const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
 // No O_TRUNC: `run_async` truncates explicitly after checking that source
 // and destination are not the same inode.
-const OPEN_DESTINATION_FLAGS: i32 =
-    bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
+const OPEN_DESTINATION_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]

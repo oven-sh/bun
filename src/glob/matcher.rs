@@ -317,8 +317,7 @@ fn glob_match_impl(
                                     {
                                         state.glob_index += 1;
 
-                                        let mut high: u32 =
-                                            glob[state.glob_index as usize] as u32;
+                                        let mut high: u32 = glob[state.glob_index as usize] as u32;
                                         let mut high_len: u8 = 1;
                                         if !get_unicode(
                                             &mut high,

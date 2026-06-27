@@ -142,9 +142,9 @@ test.if(isDebug && isLinux && hasSymbolizer && ["x64", "arm64"].includes(process
     // The symbolized trace must name the Rust wrapper that called the
     // frameless asm stub. Without the lr/[rsp] seed the first non-pc frame
     // is the wrapper's caller and `frameless_segv_caller` never appears.
-    expect(
-      stdout.includes("frameless_segv_caller") ? "frameless_segv_caller" : stdout || stderr,
-    ).toBe("frameless_segv_caller");
+    expect(stdout.includes("frameless_segv_caller") ? "frameless_segv_caller" : stdout || stderr).toBe(
+      "frameless_segv_caller",
+    );
   },
   60_000,
 );

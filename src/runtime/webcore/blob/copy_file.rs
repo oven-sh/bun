@@ -942,9 +942,7 @@ impl<'a> CopyFile<'a> {
                     return;
                 }
                 if dest_is_regular {
-                    if let bun_sys::Result::Err(err) =
-                        bun_sys::ftruncate(self.destination_fd, 0)
-                    {
+                    if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, 0) {
                         self.system_error = Some(err.to_system_error());
                         self.do_close();
                         return;

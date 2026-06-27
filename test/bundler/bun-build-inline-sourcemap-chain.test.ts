@@ -209,11 +209,12 @@ describe.concurrent("Bun.build chains inline input sourcemaps", () => {
 
   // An inner `sources[i]` longer than MAX_PATH_BYTES is resolved against
   // the intermediate's directory via fixed-size path buffers; an
-  // adversarial inline map with a multi-KB source name must be rejected at
+  // adversarial inline map with such a source name must be rejected at
   // parse time (clean fallback to the intermediate) rather than panicking
-  // the build in the path normalizer.
+  // the build in the path normalizer. MAX_PATH_BYTES is platform-dependent
+  // (4096 on Linux, ~96 KB on Windows), so use a name past the largest.
   test("oversized inner source name — map rejected, build falls back", async () => {
-    const hugeName = Buffer.alloc(5000, "a").toString() + ".ts";
+    const hugeName = Buffer.alloc(128 * 1024, "a").toString() + ".ts";
     const innerMap = {
       version: 3,
       sources: [hugeName],

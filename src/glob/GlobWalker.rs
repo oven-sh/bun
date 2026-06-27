@@ -1810,9 +1810,19 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     fn eval_impl(&self, active: &ComponentSet, entry_name: &[u8]) -> bool {
+        let comps = &self.pattern_components;
         let mut it = active.iterator::<true, true>();
         while let Some(idx) = it.next() {
-            if self.match_pattern_impl(&self.pattern_components[idx], entry_name) {
+            let comp = &comps[idx];
+            if self.match_pattern_impl(comp, entry_name) {
+                return true;
+            }
+            // Mirror match_pattern_dir's `**/X` peek so the SymLink/Unknown
+            // pre-filter doesn't drop entries eval_dir would accept.
+            if comp.syntax_hint == SyntaxHint::Double
+                && idx + 1 < comps.len()
+                && self.match_pattern_impl(&comps[idx + 1], entry_name)
+            {
                 return true;
             }
         }

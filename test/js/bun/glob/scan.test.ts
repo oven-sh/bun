@@ -1046,6 +1046,24 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
   });
 
+  // The SymLink (and DT_UNKNOWN) readdir arms pre-filter entries through
+  // eval_impl before eval_dir runs. eval_impl must therefore admit the same
+  // `**/.X` peek that eval_dir does, or a symlinked `.dotdir` (and a real
+  // `.dotdir` reported as DT_UNKNOWN on NFS/overlayfs/FUSE) would be dropped
+  // before the explicit-dot logic ever sees it.
+  test("**/.dotdir peek works when .dotdir is a symlink", () => {
+    using dir = tempDir("glob-scan-symlink-dotdir", {
+      "realdir/inner.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(dir), ".dotdir"), "dir");
+    const cwd = String(dir);
+    const scan = (p: string, opts: GlobScanOptions) => norm(Array.from(new Glob(p).scanSync({ cwd, ...opts })));
+
+    expect(scan("**/.dotdir/inner.txt", { followSymlinks: true })).toEqual([".dotdir/inner.txt"]);
+    expect(scan(".dotdir/inner.txt", { followSymlinks: true })).toEqual([".dotdir/inner.txt"]);
+    expect(scan(".dotdir/inner.txt", { followSymlinks: false })).toEqual([".dotdir/inner.txt"]);
+  });
+
   test("symlink cycles do not loop when reached via a literal segment", () => {
     using dir = tempDir("glob-scan-symlink-cycle", {
       "top/file.txt": "x",

@@ -401,6 +401,18 @@ extern "C"
     }
   }
 
+  void uws_app_set_on_socket_open(int ssl, uws_app_t *app, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket), void *user_data)
+  {
+    if (ssl)
+    {
+      ((uWS::SSLApp *)app)->setOnSocketOpen(handler, user_data);
+    }
+    else
+    {
+      ((uWS::App *)app)->setOnSocketOpen(handler, user_data);
+    }
+  }
+
   void uws_app_set_on_clienterror(int ssl, uws_app_t *app, void (*handler)(void *user_data, int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength), void *user_data)
   {
     if (ssl)

@@ -3522,6 +3522,37 @@ where
         }
     }
 
+    pub fn on_node_socket_open_callback(&mut self, socket: &mut uws::Socket) {
+        let Some(callback) = self.on_node_socket_open.get() else {
+            return;
+        };
+        let is_ssl = SSL;
+        let global = self.global();
+        let node_socket = match jsc::from_js_host_call(&global, || {
+            Bun__createNodeHTTPServerSocketForClientError(
+                is_ssl,
+                std::ptr::from_mut(socket).cast::<c_void>(),
+                &global,
+            )
+        }) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        if node_socket.is_undefined_or_null() {
+            return;
+        }
+        // SAFETY: event_loop() returns a live raw pointer tied to the global.
+        let _scope =
+            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        if let Err(err) = callback.call(
+            &global,
+            JSValue::UNDEFINED,
+            &[JSValue::from(is_ssl), node_socket],
+        ) {
+            global.report_active_exception_as_unhandled(err);
+        }
+    }
+
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
     // `impl NewServer` in mod.rs; do not redefine them here.
 }
@@ -3666,6 +3697,52 @@ pub(super) fn server_set_on_client_error_(
     Ok(JSValue::UNDEFINED)
 }
 
+pub(super) fn server_set_on_node_socket_open_(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JsResult<JSValue> {
+    if !server.is_object() || !callback.is_function() {
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_::<$T>() {
+                // SAFETY: as_ returned a non-null *mut to a live server.
+                let this = unsafe { &mut *this };
+                if let Some(app) = this.app {
+                    this.on_node_socket_open.deinit();
+                    this.on_node_socket_open = StrongOptional::create(callback, global);
+                    extern "C" fn thunk(
+                        user_data: *mut c_void,
+                        _ssl: c_int,
+                        socket: *mut uws_sys::us_socket_t,
+                    ) {
+                        // SAFETY: user_data is the `*mut Self` registered below;
+                        // socket is a live uWS socket.
+                        let this = unsafe { &mut *user_data.cast::<$T>() };
+                        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+                        this.on_node_socket_open_callback(bun_opaque::opaque_deref_mut(socket));
+                    }
+                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).on_socket_open(
+                        thunk,
+                        core::ptr::from_mut::<$T>(this).cast::<c_void>(),
+                    );
+                }
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    handle!(HTTPServer);
+    handle!(HTTPSServer);
+    handle!(DebugHTTPServer);
+    handle!(DebugHTTPSServer);
+    debug_assert!(false);
+    Ok(JSValue::UNDEFINED)
+}
+
 pub(super) fn server_set_app_flags_(
     global: &JSGlobalObject,
     server: JSValue,
@@ -3766,6 +3843,18 @@ extern "C" fn server_set_on_client_error_shim(
     host_fn::to_js_host_fn_result(
         global,
         server_set_on_client_error_(global, server, callback),
+    )
+}
+
+#[unsafe(export_name = "Server__setOnNodeSocketOpen")]
+extern "C" fn server_set_on_node_socket_open_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_on_node_socket_open_(global, server, callback),
     )
 }
 

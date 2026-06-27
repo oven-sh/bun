@@ -179,6 +179,10 @@ private:
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
+
+            if (httpContextData->onSocketOpen) {
+                httpContextData->onSocketOpen(httpContextData->onSocketOpenUserData, SSL, s);
+            }
         }
     }
 
@@ -193,6 +197,10 @@ private:
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
+            }
+
+            if (httpContextData->onSocketOpen) {
+                httpContextData->onSocketOpen(httpContextData->onSocketOpenUserData, SSL, s);
             }
         }
 

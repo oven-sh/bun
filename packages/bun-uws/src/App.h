@@ -723,6 +723,10 @@ public:
     void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
         httpContext->getSocketContextData()->onSocketClosed = onClose;
     }
+    void setOnSocketOpen(HttpContextData<SSL>::OnSocketOpenCallback onOpen, void *userData) {
+        httpContext->getSocketContextData()->onSocketOpen = onOpen;
+        httpContext->getSocketContextData()->onSocketOpenUserData = userData;
+    }
     void setOnSocketDrain(HttpContextData<SSL>::OnSocketDrainCallback onDrain) {
         httpContext->getSocketContextData()->onSocketDrain = onDrain;
     }

@@ -40,6 +40,7 @@ extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGloba
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
+extern "C" EncodedJSValue Server__setOnNodeSocketOpen(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
@@ -988,13 +989,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callFrame->argumentCount() == 5);
+    ASSERT(callFrame->argumentCount() >= 5);
     // This is an internal binding.
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
     JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
     JSValue maxHeaderSize = callFrame->uncheckedArgument(3);
     JSValue callback = callFrame->uncheckedArgument(4);
+    JSValue socketOpenCallback = callFrame->argument(5);
 
     double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1007,6 +1009,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
 
     Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (socketOpenCallback.isCallable()) {
+        Server__setOnNodeSocketOpen(globalObject, JSValue::encode(serverValue), JSValue::encode(socketOpenCallback));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     return JSValue::encode(jsUndefined());
 }

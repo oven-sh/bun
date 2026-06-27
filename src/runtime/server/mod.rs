@@ -289,6 +289,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
     pub on_clienterror: jsc::StrongOptional,
+    pub on_node_socket_open: jsc::StrongOptional,
 
     pub inspector_server_id: jsc::DebuggerId,
 }
@@ -1913,6 +1914,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             plugins: None,
             user_routes: Vec::new(),
             on_clienterror: jsc::StrongOptional::empty(),
+            on_node_socket_open: jsc::StrongOptional::empty(),
             inspector_server_id: jsc::DebuggerId::init(0),
         }));
 

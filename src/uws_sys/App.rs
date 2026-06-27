@@ -260,6 +260,14 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_on_clienterror(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
+    pub fn on_socket_open(
+        &mut self,
+        handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t),
+        user_data: *mut c_void,
+    ) {
+        c::uws_app_set_on_socket_open(Self::SSL_FLAG, self.as_raw(), handler, user_data)
+    }
+
     pub fn listen_with_config(
         &mut self,
         handler: c::uws_listen_handler,
@@ -503,6 +511,12 @@ pub mod c {
             ssl: c_int,
             app: &mut uws_app_s,
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
+            user_data: *mut c_void,
+        );
+        pub(crate) safe fn uws_app_set_on_socket_open(
+            ssl: c_int,
+            app: &mut uws_app_s,
+            handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t),
             user_data: *mut c_void,
         );
         pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;

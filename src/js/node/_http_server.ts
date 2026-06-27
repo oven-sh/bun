@@ -27,7 +27,6 @@ const {
   kRealListen,
   tlsSymbol,
   optionsSymbol,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   headerStateSymbol,
   NodeHTTPHeaderState,
@@ -51,7 +50,6 @@ const {
   eofInProgress,
   runSymbol,
   drainMicrotasks,
-  setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
@@ -88,6 +86,7 @@ const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
 const MathFloor = Math.floor;
+const DateNow = Date.now;
 
 let cluster;
 
@@ -241,6 +240,7 @@ function Server(options, callback): void {
   this._unref = false;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
+  this.timeout = 0;
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
   this[tlsSymbol] = null;
@@ -324,13 +324,12 @@ function rethrowUncaught(err) {
 // Like Node.js's setupConnectionsTracking: each 'listening' event replaces
 // the connections-checking interval timer (used by the headers/request
 // timeout machinery) and destroys the previous one.
-function noopConnectionsCheck() {}
 function setupConnectionsTracking(this: any) {
   if (this[kConnectionsCheckingInterval]) {
     clearInterval(this[kConnectionsCheckingInterval]);
   }
   const delay = this.connectionsCheckingInterval || 30_000;
-  this[kConnectionsCheckingInterval] = setInterval(noopConnectionsCheck, delay);
+  this[kConnectionsCheckingInterval] = setInterval(checkConnections.bind(this), delay);
   this[kConnectionsCheckingInterval].unref();
 }
 
@@ -593,6 +592,17 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!socket) {
           socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
         }
+        // A parsed request head is activity: headers just completed, the
+        // request-start anchor advances for a keep-alive reuse, and the
+        // inactivity timer switches back from keepAliveTimeout to
+        // server.timeout (like Node.js's parserOnIncoming).
+        socket[kHeadersCompleted] = true;
+        if (socket[kRequestStart] === 0) socket[kRequestStart] = DateNow();
+        if (socket.timeout !== server.timeout) {
+          socket.setTimeout(server.timeout || 0);
+        } else {
+          socket._unrefTimer();
+        }
 
         const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
         if (isAncientHTTP) {
@@ -646,7 +656,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!requestShouldKeepAlive(http_req)) {
           http_res[kMustCloseConnection] = true;
         }
-        http_res.once("finish", endSocketOnFinishIfNeeded.bind(undefined, socket, http_res));
+        http_res.once("finish", resOnFinish.bind(undefined, server, socket, http_res));
 
         if (hasObserver("http")) {
           startPerf(http_res, kServerResponseStatistics, {
@@ -665,6 +675,14 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
+        // Like Node.js, the requestTimeout clock runs until the incoming
+        // request (not the response) is complete: a body-less request is
+        // complete at the head, and a body stops the clock at its 'end'.
+        if (!hasBody) {
+          socket[kRequestStart] = 0;
+        } else {
+          http_req.once("end", clearIncomingRequestTimer.bind(undefined, socket));
+        }
         // start buffering data if any, the user will need to resume() or .on("data") to read it
         if (hasBody) {
           handle.pause();
@@ -692,7 +710,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         }
 
-        if (isSocketNew && !reachedRequestsLimit) {
+        if (!socket[kConnectionEmitted] && !reachedRequestsLimit) {
+          socket[kConnectionEmitted] = true;
           server.emit("connection", socket);
         }
 
@@ -892,6 +911,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       true,
       typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
       onServerClientError.bind(this),
+      onServerSocketOpen.bind(this),
     );
 
     if (this?._unref) {
@@ -902,25 +922,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this.once("listening", onListen);
     }
 
-    if (this[kDeferredTimeouts]) {
-      for (const { msecs, callback } of this[kDeferredTimeouts]) {
-        this.setTimeout(msecs, callback);
-      }
-      delete this[kDeferredTimeouts];
-    }
-
     setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
 
 Server.prototype.setTimeout = function (msecs, callback) {
-  const server = this[serverSymbol];
-  if (server) {
-    setServerIdleTimeout(server, Math.ceil(msecs / 1000));
-    if (typeof callback === "function") this.once("timeout", callback);
-  } else {
-    (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
-  }
+  this.timeout = msecs;
+  if ($isCallable(callback)) this.on("timeout", callback);
   return this;
 };
 
@@ -953,6 +961,67 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_INVALID_METHOD = 9,
   HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
 }
+// Fired by the native side for every accepted connection (after the TLS
+// handshake for https), before any bytes are parsed. This is what lets the
+// headers/request/inactivity timeouts cover sockets that never send a full
+// request, and it makes 'connection' fire on accept like Node.js.
+function onServerSocketOpen(this: Server, ssl: boolean, handle: unknown) {
+  const self = this;
+  // The native side returns the existing wrapper for a handle it has seen
+  // before; a second Duplex would strand the first in kTrackedConnections.
+  const existingDuplex = (handle as any).duplex;
+  const socket = existingDuplex ?? new NodeHTTPServerSocket(self, handle, ssl);
+  // Anchor the headers/request timeout clock at accept. Node.js anchors at
+  // the first parsed byte, which we cannot observe; accept is never later.
+  socket[kRequestStart] = DateNow();
+  socket[kHeadersCompleted] = false;
+  const serverTimeout = self.timeout;
+  if (serverTimeout) socket.setTimeout(serverTimeout);
+  if (!socket[kConnectionEmitted]) {
+    socket[kConnectionEmitted] = true;
+    self.emit("connection", socket);
+  }
+}
+
+function clearIncomingRequestTimer(socket) {
+  socket[kRequestStart] = 0;
+}
+
+const requestTimeoutResponse = Buffer.from("HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n", "ascii");
+// Mirrors Node.js's default 'clientError' handling of ERR_HTTP_REQUEST_TIMEOUT:
+// user listeners take over; otherwise answer 408 (only if nothing was
+// written yet) and destroy the socket.
+function onRequestTimeout(server: Server, socket) {
+  socket[kRequestStart] = 0;
+  const err = $ERR_HTTP_REQUEST_TIMEOUT("Request timeout");
+  if (!server.emit("clientError", err, socket)) {
+    if (socket.writable && (socket.bytesWritten | 0) === 0) {
+      socket.write(requestTimeoutResponse);
+    }
+    socket.destroy(err);
+  }
+}
+
+// Node.js's checkConnections sweep: every connectionsCheckingInterval ms,
+// close connections whose request head (headersTimeout) or entire request
+// (requestTimeout) has not arrived in time.
+function checkConnections(this: Server) {
+  const headersTimeout = this.headersTimeout;
+  const requestTimeout = this.requestTimeout;
+  if (headersTimeout === 0 && requestTimeout === 0) return;
+  const now = DateNow();
+  for (const socket of this[kTrackedConnections]) {
+    const start = socket[kRequestStart];
+    if (!start) continue;
+    const elapsed = now - start;
+    if (headersTimeout > 0 && !socket[kHeadersCompleted] && elapsed > headersTimeout) {
+      onRequestTimeout(this, socket);
+    } else if (requestTimeout > 0 && elapsed > requestTimeout) {
+      onRequestTimeout(this, socket);
+    }
+  }
+}
+
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
   let err;
@@ -989,7 +1058,8 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   // connections - the existing duplex already had its 'connection' event.
   const existingDuplex = (socket as any).duplex;
   const nodeSocket = existingDuplex ?? new NodeHTTPServerSocket(self, socket, ssl);
-  if (!existingDuplex) {
+  if (!nodeSocket[kConnectionEmitted]) {
+    nodeSocket[kConnectionEmitted] = true;
     self.emit("connection", nodeSocket);
   }
   self.emit("clientError", err, nodeSocket);
@@ -1000,6 +1070,15 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 
 const kBytesWritten = Symbol("kBytesWritten");
 const kEnableStreaming = Symbol("kEnableStreaming");
+const kTimeoutHandle = Symbol("kTimeoutHandle");
+const kRequestStart = Symbol("kRequestStart");
+const kHeadersCompleted = Symbol("kHeadersCompleted");
+const kConnectionEmitted = Symbol("kConnectionEmitted");
+
+function socketOnTimeoutFire(socket) {
+  socket[kTimeoutHandle] = null;
+  socket._onTimeout();
+}
 function onServerSocketError(this: any, _err) {
   // Default 'error' listener so socket-level errors (e.g. res.destroy(err)
   // forwarding the error to the socket) do not crash the process as
@@ -1021,6 +1100,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   server: Server;
   _httpMessage;
   _secureEstablished = false;
+  [kTimeoutHandle] = null;
+  [kRequestStart] = 0;
+  [kHeadersCompleted] = false;
+  [kConnectionEmitted] = false;
   #pendingCallback = null;
   constructor(server: Server, handle, encrypted) {
     super();
@@ -1098,6 +1181,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onClose() {
     this[kHandle] = null;
+    const timeoutHandle = this[kTimeoutHandle];
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+      this[kTimeoutHandle] = null;
+    }
     this.server?.[kTrackedConnections]?.delete(this);
 
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
@@ -1152,12 +1240,20 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // If there is a response, and it has pending data,
     // we suppress the timeout because a write is in progress.
     if (response && response.writableLength > 0) {
+      this._unrefTimer();
       return;
     }
     this.emit("timeout");
   }
   _unrefTimer() {
-    // for compatibility
+    const msecs = this.timeout;
+    const handle = this[kTimeoutHandle];
+    if (handle !== null) clearTimeout(handle);
+    if (msecs > 0) {
+      this[kTimeoutHandle] = setTimeout(socketOnTimeoutFire, msecs, this).unref();
+    } else {
+      this[kTimeoutHandle] = null;
+    }
   }
 
   address() {
@@ -1293,7 +1389,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(_timeout, _callback) {
+  setTimeout(msecs, callback) {
+    this.timeout = msecs | 0;
+    if ($isCallable(callback)) this.once("timeout", callback);
+    this._unrefTimer();
     return this;
   }
 
@@ -1653,9 +1752,22 @@ function stopServerResponsePerf(this: any) {
   }
 }
 
-function endSocketOnFinishIfNeeded(socket, res) {
+function resOnFinish(server, socket, res) {
   if (res[kMustCloseConnection]) {
     socket?.end();
+    return;
+  }
+  if (!socket || socket.destroyed) return;
+  // Keep-alive idle between requests: the headers/request timeouts only
+  // apply while a request is in flight; the keep-alive inactivity timer
+  // takes over until the next request head arrives (Node.js's resOnFinish).
+  socket[kRequestStart] = 0;
+  socket[kHeadersCompleted] = false;
+  const keepAliveTimeout = server.keepAliveTimeout;
+  if (keepAliveTimeout) {
+    socket.setTimeout(keepAliveTimeout);
+  } else {
+    socket._unrefTimer();
   }
 }
 

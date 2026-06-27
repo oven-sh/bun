@@ -1708,6 +1708,16 @@ describe("generateKeyPair('rsa-pss') deprecated hash aliases", () => {
     generateKeyPair("rsa-pss", options as any, (err: any) => resolve(err?.code));
     expect(await promise).not.toBe("ERR_INVALID_ARG_VALUE");
   });
+
+  test.each([
+    ["hash", "hashAlgorithm"],
+    ["mgf1Hash", "mgf1HashAlgorithm"],
+  ])("%s set with an empty %s is not reported as a conflict", (deprecated, modern) => {
+    // Node's guard is truthiness-based (`modern && dep !== modern`), so an empty modern
+    // value is treated as unset: the deprecated value is used rather than flagged as a conflict.
+    const options = { ...base, [deprecated]: "sha256", [modern]: "" };
+    expect(errorCode(() => generateKeyPairSync("rsa-pss", options as any))).not.toBe("ERR_INVALID_ARG_VALUE");
+  });
 });
 
 test("Ed25519 should work", async () => {

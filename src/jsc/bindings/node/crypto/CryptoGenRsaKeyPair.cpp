@@ -178,7 +178,7 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         hashView = hashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!hashAlgorithmView->isNull() && hashAlgorithmView != hashView) {
+        if (!hashAlgorithmView->isEmpty() && hashAlgorithmView != hashView) {
             ERR::INVALID_ARG_VALUE(scope, globalObject, "options.hash"_s, hashValue);
             return std::nullopt;
         }
@@ -192,14 +192,14 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         mgf1HashView = mgf1HashString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!mgf1HashAlgorithmView->isNull() && mgf1HashAlgorithmView != mgf1HashView) {
+        if (!mgf1HashAlgorithmView->isEmpty() && mgf1HashAlgorithmView != mgf1HashView) {
             ERR::INVALID_ARG_VALUE(scope, globalObject, "options.mgf1Hash"_s, mgf1HashValue);
             return std::nullopt;
         }
     }
 
-    GCOwnedDataScope<WTF::StringView> hash = hashAlgorithmView->isNull() ? hashView : hashAlgorithmView;
-    GCOwnedDataScope<WTF::StringView> mgf1Hash = mgf1HashAlgorithmView->isNull() ? mgf1HashView : mgf1HashAlgorithmView;
+    GCOwnedDataScope<WTF::StringView> hash = hashAlgorithmView->isEmpty() ? hashView : hashAlgorithmView;
+    GCOwnedDataScope<WTF::StringView> mgf1Hash = mgf1HashAlgorithmView->isEmpty() ? mgf1HashView : mgf1HashAlgorithmView;
 
     ncrypto::Digest md = nullptr;
     ncrypto::Digest mgf1Md = nullptr;

@@ -479,10 +479,6 @@ impl FileRoute {
                 break 'brk 206;
             }
 
-            if size == 0 && file_type == FileType::File && this.status_code == 200 {
-                break 'brk 204;
-            }
-
             this.status_code
         };
 

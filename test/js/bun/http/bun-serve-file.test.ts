@@ -137,13 +137,11 @@ describe("Bun.file in serve routes", () => {
 
     it("serves empty file", async () => {
       const res = await fetch(new URL(`/empty.txt`, server.url));
-      expect(res.status).toBe(204);
+      // An empty file is a valid zero-byte representation: a plain 200 with
+      // `Content-Length: 0`, the same framing every other empty body form
+      // (`new Response("")`, `new Blob([])`, ...) gets.
+      expect(res.status).toBe(200);
       expect(await res.text()).toBe("");
-      // A server MUST NOT send a Content-Length header field in any response
-      // with a status code of 1xx (Informational) or 204 (No Content). A server
-      // MUST NOT send a Content-Length header field in any 2xx (Successful)
-      // response to a CONNECT request (Section 9.3.6).
-      expect(res.headers.get("Content-Length")).toBeNull();
 
       const headers = res.headers.toJSON();
       delete headers.date;
@@ -151,6 +149,7 @@ describe("Bun.file in serve routes", () => {
 
       expect(headers).toMatchInlineSnapshot(`
         {
+          "content-length": "0",
           "content-type": "text/plain;charset=utf-8",
         }
       `);
@@ -549,10 +548,36 @@ describe("Bun.file in serve routes", () => {
   });
 
   describe.concurrent("Special status codes", () => {
-    it("returns 204 for empty files with 200 status", async () => {
-      const res = await fetch(new URL(`/empty.txt`, server.url));
-      expect(res.status).toBe(204);
-      expect(await res.text()).toBe("");
+    // Bun used to rewrite the default 200 of an empty file-backed body to
+    // 204. No other empty body form got that treatment, HEAD of the same URL
+    // did not, and a server-invented 204 dropped the Content-Type.
+    it("returns 200 for empty files, for GET and HEAD alike", async () => {
+      for (const method of ["GET", "HEAD"]) {
+        const res = await fetch(new URL(`/empty.txt`, server.url), { method });
+        expect({ method, status: res.status, contentLength: res.headers.get("Content-Length") }).toEqual({
+          method,
+          status: 200,
+          contentLength: "0",
+        });
+        expect(await res.text()).toBe("");
+      }
+    });
+
+    it("returns 200 for empty files served from the fetch handler, for GET and HEAD alike", async () => {
+      const emptyPath = join(tempDir, "empty.txt");
+      using handlerServer = Bun.serve({
+        port: 0,
+        fetch: () => new Response(Bun.file(emptyPath)),
+      });
+      for (const method of ["GET", "HEAD"]) {
+        const res = await fetch(handlerServer.url, { method });
+        expect({ method, status: res.status, contentLength: res.headers.get("Content-Length") }).toEqual({
+          method,
+          status: 200,
+          contentLength: "0",
+        });
+        expect(await res.text()).toBe("");
+      }
     });
 
     it("preserves custom status for empty files", async () => {

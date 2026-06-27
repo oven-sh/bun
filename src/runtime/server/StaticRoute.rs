@@ -480,16 +480,7 @@ impl StaticRoute {
     }
 
     fn render_metadata(&self, resp: AnyResponse) {
-        let mut status = self.status_code;
-        let size = self.cached_blob_size;
-
-        status = if status == 200 && size == 0 && !self.blob.is_detached() {
-            204
-        } else {
-            status
-        };
-
-        self.do_write_status(status, resp);
+        self.do_write_status(self.status_code, resp);
         self.do_write_headers(resp);
     }
 

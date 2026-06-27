@@ -112,6 +112,13 @@ public:
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
+        /* A no-body status (1xx / 204) must not carry a Content-Length header
+         * (RFC 9110 8.6). end() short-circuits on noBodyStatus, but tryEnd()
+         * reaches here directly with allowContentLength defaulted to true. */
+        if (httpResponseData->noBodyStatus) {
+            allowContentLength = false;
+        }
+
         /* In some cases, such as when refusing huge data we want to close the connection when drained */
         if (closeConnection) {
             /* We can only write the header once */
@@ -418,6 +425,17 @@ public:
             return this;
         }
 
+        /* RFC 9110 8.6: a server MUST NOT send Content-Length in a response
+         * with a 1xx or 204 status, and such a response never has a body. The
+         * status line is the one point every response passes through, so
+         * record that here rather than at each caller. 304 also has no body
+         * but MAY carry a Content-Length; callers that want it suppressed for
+         * 304 (node:http) set noBodyStatus themselves. */
+        if (status.length() >= 3 && (status.length() == 3 || status[3] == ' ')
+            && (status[0] == '1' || (status[0] == '2' && status[1] == '0' && status[2] == '4'))) {
+            httpResponseData->noBodyStatus = true;
+        }
+
         /* Update status */
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_STATUS_CALLED;
 
@@ -441,6 +459,12 @@ public:
     /* Write an HTTP header with unsigned int value */
     HttpResponse *writeHeader(std::string_view key, uint64_t value) {
         writeStatus(HTTP_200_OK);
+
+        /* Every integer Content-Length write funnels through this overload;
+         * a 1xx / 204 response must not carry one (RFC 9110 8.6). */
+        if (getHttpResponseData()->noBodyStatus && key.length() == 14 && !strncasecmp(key.data(), "content-length", 14)) {
+            return this;
+        }
 
         Super::write(key.data(), (int) key.length());
         Super::write(": ", 2);

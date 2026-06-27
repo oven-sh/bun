@@ -58,6 +58,21 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         httpResponseData->isIdle = true;
+
+        /* A pipelined request that arrived while this (async) response was
+         * still pending was stashed instead of parsed; now that the response
+         * is written, feed it back through onData as if it had just arrived.
+         * Swap the buffer out first so a synchronous handler's markDone sees
+         * an empty buffer and does not recurse. Reserve the post-padding the
+         * parser writes past end-of-input. Must be the last thing markDone
+         * touches: the re-entered handler may close the socket and destruct
+         * this object. */
+        if (!this->deferredPipeline.empty()) {
+            std::string pending;
+            std::swap(pending, this->deferredPipeline);
+            pending.reserve(pending.length() + MINIMUM_HTTP_POST_PADDING);
+            HttpContext<SSL>::onData((us_socket_t *) uwsRes, pending.data(), (int) pending.length());
+        }
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -90,6 +105,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_WROTE_DATE_HEADER = 64, // used
         HTTP_WROTE_TRANSFER_ENCODING_HEADER = 128, // used
     };
+
+    /* Pipelined request bytes received while an async response was still
+     * pending. Cap matches the one-recv path (one per-request MAX_FALLBACK_SIZE
+     * buffer worth of extra bytes); beyond that the connection is closed,
+     * same as before this buffer existed. */
+    static constexpr size_t MAX_DEFERRED_PIPELINE_SIZE = 64 * 1024;
+    std::string deferredPipeline;
 
     /* Shared context pointer for onAborted/onTimeout/onData */
     void* userData = nullptr;

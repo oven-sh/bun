@@ -414,6 +414,15 @@ namespace uWS
     struct HttpParser
     {
 
+    public:
+        /* The pipelined-request lambda in HttpContext.h runs after this
+         * parser has already recorded the deferred request's body framing;
+         * it must undo that before stashing the raw bytes so the next
+         * consumePostPadded starts from a clean request boundary. */
+        void resetRemainingStreamingBytes() {
+            remainingStreamingBytes = 0;
+        }
+
     private:
         std::string fallback;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */

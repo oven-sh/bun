@@ -3485,6 +3485,133 @@ it("Expect: 100-Continue matches case-insensitively like Node.js", async () => {
   }
 });
 
+describe("pipelined request behind an async in-flight response", () => {
+  async function collectPipelined(
+    server: import("node:http").Server,
+    request: string,
+    expectBodies: string[],
+  ): Promise<{ wire: string; events: string[] }> {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const events: string[] = [];
+    server.on("request", req => events.push("request " + req.url));
+
+    return await new Promise<{ wire: string; events: string[] }>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      let wire = "";
+      const finish = () => {
+        socket.removeAllListeners();
+        socket.destroy();
+        resolve({ wire, events });
+      };
+      socket.setNoDelay(true);
+      socket.on("data", chunk => {
+        wire += chunk;
+        if (expectBodies.every(b => wire.includes(b))) finish();
+      });
+      socket.on("close", finish);
+      socket.on("error", reject);
+      socket.on("connect", () => socket.write(request));
+    });
+  }
+
+  it("single write: both responses reach the wire in order", async () => {
+    const server = createServer((req, res) => {
+      req.resume();
+      if (req.url === "/a") {
+        setImmediate(() => {
+          res.writeHead(200);
+          res.write("A1");
+          setImmediate(() => res.end("A2"));
+        });
+      } else {
+        res.writeHead(200);
+        res.end("B");
+      }
+    });
+    try {
+      const { wire, events } = await collectPipelined(
+        server,
+        "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+        ["A2", "\r\n\r\nB"],
+      );
+      expect(events).toEqual(["request /a", "request /b"]);
+      expect(wire).toMatch(/^HTTP\/1\.1 200/);
+      const iA1 = wire.indexOf("A1");
+      const iA2 = wire.indexOf("A2");
+      const iB = wire.lastIndexOf("\r\n\r\nB");
+      // Previously the socket was torn down the moment /b was parsed,
+      // dropping /a's body along with it.
+      expect(iA1).toBeGreaterThanOrEqual(0);
+      expect(iA2).toBeGreaterThan(iA1);
+      expect(iB).toBeGreaterThan(iA2);
+      // Two status lines, one per response.
+      expect(wire.match(/HTTP\/1\.1 200/g)?.length).toBe(2);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("three-deep chain, all handlers async", async () => {
+    const server = createServer((req, res) => {
+      req.resume();
+      setImmediate(() => {
+        res.writeHead(200);
+        res.end(req.url!.slice(1).toUpperCase());
+      });
+    });
+    try {
+      const { wire, events } = await collectPipelined(
+        server,
+        "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" +
+          "GET /b HTTP/1.1\r\nHost: x\r\n\r\n" +
+          "GET /c HTTP/1.1\r\nHost: x\r\n\r\n",
+        ["\r\n\r\nA", "\r\n\r\nB", "\r\n\r\nC"],
+      );
+      expect(events).toEqual(["request /a", "request /b", "request /c"]);
+      const bodies = [...wire.matchAll(/\r\n\r\n([A-C])/g)].map(m => m[1]);
+      expect(bodies).toEqual(["A", "B", "C"]);
+      expect(wire.match(/HTTP\/1\.1 200/g)?.length).toBe(3);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("pipelined request with a body is dispatched after the async response", async () => {
+    const bodies: string[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", c => (body += c));
+      req.on("end", () => {
+        bodies.push(req.url + ":" + body);
+        setImmediate(() => {
+          res.writeHead(200);
+          res.end(req.url!.slice(1).toUpperCase());
+        });
+      });
+    });
+    try {
+      const { wire, events } = await collectPipelined(
+        server,
+        "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" +
+          "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello",
+        ["\r\n\r\nA", "\r\n\r\nB"],
+      );
+      expect(events).toEqual(["request /a", "request /b"]);
+      expect(wire.indexOf("\r\n\r\nA")).toBeGreaterThanOrEqual(0);
+      expect(wire.indexOf("\r\n\r\nB")).toBeGreaterThan(wire.indexOf("\r\n\r\nA"));
+      // /b's body was stashed along with its headers and delivered on
+      // re-dispatch; the parser's Content-Length state was reset so the
+      // re-parse frames the body correctly.
+      expect(bodies).toEqual(["/a:", "/b:hello"]);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("the over-limit 503 advertises Connection: close, not keep-alive", async () => {
   // Node sets maxRequestsOnConnectionReached unconditionally
   // (maxRequestsPerSocket <= count), so the dropRequest 503 carries

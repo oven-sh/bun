@@ -100,7 +100,13 @@ template <bool SSL>
 struct HttpContext {
     template<bool> friend struct TemplatedApp;
     template<bool> friend struct HttpResponse;
+    template<bool> friend struct HttpResponseData;
 private:
+    /* requestHandler return sentinel: the request was stashed because an
+     * earlier async response on this socket is still pending. Never a real
+     * socket pointer. */
+    static inline void * const HTTP_PIPELINE_DEFERRED = (void *) 0x1;
+
     HttpContext() = default;
 
     /* Embedded list-head for accepted sockets. The vtable is `httpVTable` below;
@@ -261,6 +267,22 @@ private:
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
+        /* We already hold a deferred pipelined request on this socket
+         * (an earlier async response has not been written yet). Anything
+         * arriving now is either the rest of that request's body or more
+         * pipelined requests; append it verbatim so the re-parse from
+         * markDone sees a contiguous stream in wire order. */
+        if (!httpResponseData->deferredPipeline.empty()) {
+            if (httpResponseData->deferredPipeline.length() + (size_t) length > HttpResponseData<SSL>::MAX_DEFERRED_PIPELINE_SIZE) {
+                us_socket_close(s, 0, nullptr);
+                us_socket_unref(s);
+                return s;
+            }
+            httpResponseData->deferredPipeline.append(data, (size_t) length);
+            us_socket_unref(s);
+            return s;
+        }
+
         /* Cork this socket */
         ((AsyncSocket<SSL> *) s)->cork();
 
@@ -287,15 +309,33 @@ private:
 
             /* Reset httpResponse */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
-            httpResponseData->offset = 0;
 
-            /* Are we not ready for another request yet? Terminate the connection.
-             * Important for denying async pipelining until, if ever, we want to support it.
-             * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
+            /* Are we not ready for another request yet? The previous response
+             * on this connection has not been written yet (async handler).
+             * Copy this request's raw bytes (the parser does not mutate the
+             * buffer it reads from) plus anything that follows, stop the
+             * parse loop via a sentinel, and let markDone re-feed the buffer
+             * once the in-flight response finishes. Closing here instead, as
+             * uWS originally did, loses the in-flight response too. */
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
-                us_socket_close((us_socket_t *) s, 0, nullptr);
-                return nullptr;
+                const char *deferStart = httpRequest->getCaseSensitiveMethod().data();
+                const char *deferEnd = httpRequest->head.data() + httpRequest->head.size();
+                size_t deferLen = (size_t) (deferEnd - deferStart);
+                if (httpResponseData->deferredPipeline.length() + deferLen > HttpResponseData<SSL>::MAX_DEFERRED_PIPELINE_SIZE) {
+                    us_socket_close((us_socket_t *) s, 0, nullptr);
+                    return nullptr;
+                }
+                httpResponseData->deferredPipeline.append(deferStart, deferLen);
+                /* The parser already recorded this deferred request's body
+                 * framing before calling us; undo it so subsequent recv()s
+                 * are not misinterpreted as its body and the re-parse from
+                 * deferredPipeline starts at a request boundary. */
+                httpResponseData->resetRemainingStreamingBytes();
+                httpResponseData->isConnectRequest = false;
+                return HTTP_PIPELINE_DEFERRED;
             }
+
+            httpResponseData->offset = 0;
 
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
@@ -425,6 +465,12 @@ private:
         }
 
         auto returnedData = result.returnedData;
+        /* A deferred pipelined request stopped the parse loop but left the
+         * socket open and the in-flight response untouched; take the normal
+         * uncork path so the first response's bytes still reach the wire. */
+        if (returnedData == HTTP_PIPELINE_DEFERRED) {
+            returnedData = s;
+        }
         /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
         if (returnedData != nullptr) {
             /* We don't want open sockets to keep the event loop alive between HTTP requests */

@@ -714,6 +714,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // through to 'request'.
         http_req.upgrade = is_upgrade;
         if (!is_upgrade) {
+          // The native side only dispatches a new request once the previous
+          // response's markDone() has run. With async pipelining that
+          // re-dispatch happens from inside handle.end(), before the JS
+          // ServerResponse#end reaches its own detachSocket(), so the slot
+          // is still occupied by the previous (finished) response. Release
+          // it here; the previous response's end() detachSocket is then a
+          // no-op via its `socket._httpMessage === this` guard.
+          if (socket._httpMessage) {
+            socket._httpMessage = null;
+          }
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
             assignSocketInternal(http_res, socket);

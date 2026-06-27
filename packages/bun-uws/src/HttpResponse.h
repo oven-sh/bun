@@ -143,6 +143,13 @@ public:
             /* Terminating 0 chunk */
             Super::write("0\r\n\r\n", 5);
             httpResponseData->markDone(this);
+            /* markDone may have dispatched a deferred pipelined request
+             * whose handler closed the socket (and destructed
+             * httpResponseData); the socket struct itself stays valid on
+             * the loop's closed list, so this check is safe. */
+            if (us_socket_is_closed((us_socket_t *) this)) {
+                return true;
+            }
 
             /* We need to check if we should close this socket here now */
             if (!Super::isCorked()) {
@@ -209,6 +216,9 @@ public:
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
+                if (us_socket_is_closed((us_socket_t *) this)) {
+                    return success;
+                }
 
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {

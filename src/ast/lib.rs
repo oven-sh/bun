@@ -3063,6 +3063,9 @@ impl Source {
         state.to_error_position(scan_line_end(contents, offset))
     }
 
+    /// Byte offset of 1-based (`line`, `col`) in `source_contents`, resuming the
+    /// scan from (`start_line`, `start_col`). Columns count UTF-16 code units,
+    /// the convention of JSC stack traces and source-map mappings.
     pub fn line_col_to_byte_offset(
         source_contents: &[u8],
         start_line: u64,
@@ -3102,7 +3105,7 @@ impl Source {
                     column_number = 1;
                 }
                 _ => {
-                    column_number += 1;
+                    column_number += if c > 0xFFFF { 2 } else { 1 };
                 }
             }
 

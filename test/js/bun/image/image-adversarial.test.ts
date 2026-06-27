@@ -149,6 +149,33 @@ const tinyAvif = Buffer.from(
   "base64",
 );
 
+// libavif is dlopen'd at runtime (libavif.so.16). Where it's absent, flipping
+// bytes of an AVIF fixture only exercises the dlopen-miss rejection 305 times
+// — no AV1-parser hardening value, and the extra concurrent decode load
+// destabilises the timing-sensitive leak tests below. Probe once (same logic
+// as avifProbeAvailable in image.test.ts) and run the AVIF fuzz only where
+// libavif can actually decode.
+const avifFuzzAvailable =
+  process.platform === "linux" &&
+  (() => {
+    try {
+      const proc = Bun.spawnSync({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const b = Buffer.from(${JSON.stringify(tinyAvif.toString("base64"))}, "base64");` +
+            `new Bun.Image(b).metadata().then(() => process.exit(0), e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1));`,
+        ],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      return proc.exitCode !== 2;
+    } catch {
+      return false;
+    }
+  })();
+
 /** Assert the promise either rejects or resolves — never aborts/hangs. */
 async function survives(p: Promise<unknown>): Promise<"rejected" | "resolved"> {
   try {
@@ -1449,15 +1476,15 @@ describe("random-byte fuzz", () => {
 
   // Mutate one byte of each known-good fixture at every offset — catches
   // codec parsers that trust a length/type byte without bounds-checking.
-  // The AVIF fixture is Linux-only — on mac/win the same bytes go through
-  // the ImageIO/WIC decoder, which has its own hardening surface and isn't
-  // what this file's meant to exercise.
+  // AVIF is included only where libavif can decode (see avifFuzzAvailable):
+  // mac/win route these bytes through ImageIO/WIC, which this file doesn't
+  // target, and a libavif-less host would just re-test the dlopen-miss path.
   const fuzzFormats: Array<readonly [string, Uint8Array]> = [
     ["png", tinyPng],
     ["jpeg", tinyJpeg],
     ["webp-lossless", tinyWebpLossless],
   ];
-  if (process.platform === "linux") fuzzFormats.push(["avif", tinyAvif]);
+  if (avifFuzzAvailable) fuzzFormats.push(["avif", tinyAvif]);
   for (const [name, fixture] of fuzzFormats) {
     // Raise the per-test timeout for AVIF: a handful of flips end up producing
     // bytes that still decode (some mdat corruption doesn't reach the bit

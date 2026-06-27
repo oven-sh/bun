@@ -385,7 +385,7 @@ impl<'a> CopyFile<'a> {
     /// Copy at most `limit` bytes from `source_fd` (current position) to
     /// `destination_fd`. Used when the source is sliced and the destination
     /// may not be truncatable (stdout, a pipe, a socket).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn do_copy_bounded(&mut self, limit: u64) -> Result<u64, bun_core::Error> {
         let mut buf = [0u8; 64 * 1024];
         let mut written: u64 = 0;
@@ -1064,32 +1064,41 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(target_os = "freebsd")]
             {
-                let mut total_written: u64 = 0;
-                match node_fs::NodeFS::copy_file_using_read_write_loop(
-                    bun_core::ZStr::EMPTY,
-                    bun_core::ZStr::EMPTY,
-                    self.source_fd,
-                    self.destination_fd,
-                    0,
-                    &mut total_written,
-                ) {
-                    bun_sys::Result::Err(err) => {
-                        self.system_error = Some(err.to_system_error());
-                        self.do_close();
-                        return;
-                    }
-                    bun_sys::Result::Ok(()) => {}
-                }
-                if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                {
-                    let _ = bun_sys::ftruncate(
-                        self.destination_fd,
-                        i64::try_from(self.max_length).expect("int cast"),
-                    );
-                    self.read_len = total_written.min(self.max_length as u64) as SizeType;
+                let stat_size = if stat.st_size > 0 {
+                    SizeType::try_from(stat.st_size).expect("int cast")
                 } else {
-                    self.read_len = total_written as SizeType;
+                    0
+                };
+                let is_sliced = self.offset > 0 || (stat_size > 0 && self.max_length < stat_size);
+                if is_sliced {
+                    match self.do_copy_bounded(self.max_length as u64) {
+                        Err(_) => {
+                            self.do_close();
+                            return;
+                        }
+                        Ok(written) => {
+                            self.read_len = written as SizeType;
+                        }
+                    }
+                } else {
+                    let mut total_written: u64 = 0;
+                    match node_fs::NodeFS::copy_file_using_read_write_loop(
+                        bun_core::ZStr::EMPTY,
+                        bun_core::ZStr::EMPTY,
+                        self.source_fd,
+                        self.destination_fd,
+                        0,
+                        &mut total_written,
+                    ) {
+                        bun_sys::Result::Err(err) => {
+                            self.system_error = Some(err.to_system_error());
+                            self.do_close();
+                            return;
+                        }
+                        bun_sys::Result::Ok(()) => {
+                            self.read_len = total_written as SizeType;
+                        }
+                    }
                 }
                 self.do_close();
                 return;

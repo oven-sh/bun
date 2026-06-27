@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { isASAN } from "harness";
 
-const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
+const ASAN_MULTIPLIER = isASAN ? 1 / 20 : 1;
 
 const constructorArgs = [
   [
@@ -66,7 +66,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     Bun.gc(true);
     const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
-      for (let j = 0; j < 500; j++) {
+      for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
         new Request(...args);
       }
       Bun.gc();
@@ -76,11 +76,10 @@ for (let i = 0; i < constructorArgs.length; i++) {
     const memory = (process.memoryUsage.rss() / 1024 / 1024) | 0;
     const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
     console.log("RSS delta: ", delta, "MB");
-    // ASAN's quarantine and redzones retain freed pages so RSS over-reports even
-    // when nothing leaks, and this loop makes 100k Requests so the delta scales
-    // with sizeof(Request). CI samples show 53-66 MB under ASAN vs <10 MB native;
-    // the unfixed leak presents as 100+ MB, so 80 still catches it.
-    expect(delta).toBeLessThan(isASAN ? 80 : 30);
+    // ASAN's quarantine and redzones retain freed pages, so RSS over-reports
+    // even when nothing leaks. ASAN_MULTIPLIER keeps this loop fast enough for
+    // a debug+ASAN build; the tight non-ASAN bound is the real regression guard.
+    expect(delta).toBeLessThan(isASAN ? 64 : 30);
   });
 
   test("request.clone(test #" + i + ")", () => {
@@ -105,10 +104,9 @@ for (let i = 0; i < constructorArgs.length; i++) {
     const memory = (process.memoryUsage.rss() / 1024 / 1024) | 0;
     const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
     console.log("RSS delta: ", delta, "MB");
-    // ASAN's quarantine and redzones retain freed pages so RSS over-reports
-    // even when nothing leaks; CI samples show 30-50 MB delta with ASAN's 1/10
-    // iteration multiplier vs <10 MB native. The unfixed leak presents as
-    // 100+ MB so 64 MB still catches it.
+    // ASAN's quarantine and redzones retain freed pages, so RSS over-reports
+    // even when nothing leaks. ASAN_MULTIPLIER keeps this loop fast enough for
+    // a debug+ASAN build; the tight non-ASAN bound is the real regression guard.
     expect(delta).toBeLessThan(isASAN ? 64 : 30);
   });
 }

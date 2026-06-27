@@ -25,9 +25,10 @@ function wrong(algo: "sha256" | "sha384" | "sha512"): string {
   return sri(algo, "not the body");
 }
 
-// Resolved by the /slow handler once its first chunk has been enqueued, so the
-// abort test can await a real condition instead of a timer.
-let slowBodyStarted = Promise.withResolvers<void>();
+// Resolved by the /slow handler with its stream controller once the first
+// chunk has been enqueued, so the abort test can await a real condition
+// instead of a timer and can finish the server-side stream afterward.
+let slowBodyStarted = Promise.withResolvers<ReadableStreamDefaultController>();
 
 const server = Bun.serve({
   port: 0,
@@ -45,12 +46,12 @@ const server = Bun.serve({
       case "/redirect":
         return new Response(null, { status: 302, headers: { location: "/body" } });
       case "/slow":
-        // First chunk goes out, then the stream stays open until cancelled.
+        // First chunk goes out, then the stream stays open until the test ends it.
         return new Response(
           new ReadableStream({
             start(controller) {
               controller.enqueue(new TextEncoder().encode("first chunk"));
-              slowBodyStarted.resolve();
+              slowBodyStarted.resolve(controller);
             },
           }),
         );
@@ -147,7 +148,7 @@ describe("fetch() integrity", () => {
   });
 
   test("aborting while the body is buffering rejects instead of hanging", async () => {
-    const started = (slowBodyStarted = Promise.withResolvers<void>());
+    const started = (slowBodyStarted = Promise.withResolvers<ReadableStreamDefaultController>());
     const controller = new AbortController();
     const promise = fetch(url("/slow"), { integrity: wrong("sha256"), signal: controller.signal });
     // If the fetch settles before the server has even started the body (a
@@ -158,9 +159,16 @@ describe("fetch() integrity", () => {
     );
     // The response never completes on its own; abort once the first chunk is
     // on the wire so the fetch is genuinely mid-buffering.
-    await started.promise;
+    const stream = await started.promise;
     controller.abort();
     await expect(promise).rejects.toThrow(/abort/i);
+    // Finish the server-side stream: without this, afterAll's server.stop(true)
+    // can hang on the open-ended response (a pre-existing race, reproducible on
+    // main without `integrity`). close() throws if the client's abort already
+    // cancelled the stream, which achieves the same thing.
+    try {
+      stream.close();
+    } catch {}
   });
 });
 

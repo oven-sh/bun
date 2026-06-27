@@ -292,6 +292,9 @@ private:
              * may be dispatched either (it would be misattributed). */
             if (httpResponseData->state & (HttpResponseData<SSL>::HTTP_RESPONSE_PENDING | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE)) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                /* getHeaders already set this for the dropped request; it must
+                 * not leak into the in-flight response's handling. */
+                httpResponseData->isConnectRequest = false;
                 return s;
             }
 

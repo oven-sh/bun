@@ -1426,10 +1426,7 @@ function _writeHead(statusCode, reason, obj, response) {
       response._hasBody &&
       (response.chunkedEncoding === true ||
         (te !== undefined && chunkExpression.test(te)) ||
-        (te === undefined &&
-          !hasContentLength &&
-          response.useChunkedEncodingByDefault &&
-          !response._removedTE));
+        (te === undefined && !hasContentLength && response.useChunkedEncodingByDefault && !response._removedTE));
     if (!willBeChunked) {
       if (hasContentLength) {
         response.removeHeader("trailer");

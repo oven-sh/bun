@@ -827,7 +827,7 @@ impl BuildCommand {
                     log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                         Output::error_writer(),
                     ))?;
-                    Global::exit(1);
+                    exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                 }
 
                 print_summary(

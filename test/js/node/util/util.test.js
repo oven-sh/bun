@@ -379,6 +379,50 @@ describe("util", () => {
     assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
   });
 
+  describe("inspect numericSeparator", () => {
+    const sep = { numericSeparator: true };
+
+    it("does not corrupt numbers whose string form uses exponent notation", () => {
+      expect(util.inspect(1.23456e-7, sep)).toBe("1.23456e-7");
+      expect(util.inspect(-1.23456e-7, sep)).toBe("-1.23456e-7");
+      expect(util.inspect(1.23456789e-7, sep)).toBe("1.23456789e-7");
+      expect(util.inspect(1e-7, sep)).toBe("1e-7");
+      expect(util.inspect(1.5e21, sep)).toBe("1.5e+21");
+      expect(util.inspect(1e21, sep)).toBe("1e+21");
+    });
+
+    it("formats plain decimal numbers with separators", () => {
+      expect(util.inspect(123456789, sep)).toBe("123_456_789");
+      expect(util.inspect(-123456789, sep)).toBe("-123_456_789");
+      expect(util.inspect(1234.5678, sep)).toBe("1_234.567_8");
+      expect(util.inspect(123456789.12345678, sep)).toBe("123_456_789.123_456_78");
+      expect(util.inspect(-123456789.12345678, sep)).toBe("-123_456_789.123_456_78");
+      expect(util.inspect(123456789n, sep)).toBe("123_456_789n");
+    });
+
+    it("preserves -0", () => {
+      expect(util.inspect(-0, sep)).toBe("-0");
+      expect(util.inspect(-0)).toBe("-0");
+    });
+
+    it("preserves non-finite values", () => {
+      expect(util.inspect(NaN, sep)).toBe("NaN");
+      expect(util.inspect(Infinity, sep)).toBe("Infinity");
+      expect(util.inspect(-Infinity, sep)).toBe("-Infinity");
+    });
+
+    it("round-trips after removing separators", () => {
+      const cases = [1.23456e-7, -1.23456e-7, 1e-7, 1.5e21, 1e21, 1234.5678, -1234.5678, -0, 0, 123456789, -123456789];
+      const out = cases.map(n => util.inspect(n, sep));
+      expect(out.map(s => s.replaceAll("_", "")).map(Number)).toEqual(cases);
+    });
+
+    it("applies to util.format %d", () => {
+      expect(util.formatWithOptions(sep, "%d", 1.23456e-7)).toBe("1.23456e-7");
+      expect(util.formatWithOptions(sep, "%d", 123456789)).toBe("123_456_789");
+    });
+  });
+
   describe("getSystemErrorName", () => {
     for (const item of ["test", {}, []]) {
       it(`throws when passing: ${item}`, () => {

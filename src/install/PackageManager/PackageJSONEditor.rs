@@ -135,7 +135,9 @@ fn rewrite_catalog_constraint(
     if catalog_obj
         .get(name)
         .and_then(|e| e.data.e_string())
-        .is_some_and(|s| strings::trim(s.data.slice(), &strings::WHITESPACE_CHARS).starts_with(b"npm:"))
+        .is_some_and(|s| {
+            strings::trim(s.data.slice(), &strings::WHITESPACE_CHARS).starts_with(b"npm:")
+        })
     {
         return Ok(());
     }

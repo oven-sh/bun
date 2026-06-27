@@ -428,7 +428,8 @@ void JSBroadcastChannel::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     // Set once in the BroadcastChannel constructor (before this wrapper
-    // exists) and never mutated afterwards, so no output constraint is needed.
+    // exists) and only ever cleared afterwards (on close()), so it can never
+    // acquire a new value post-marking: no output constraint is needed.
     thisObject->wrapped().creationAsyncContext().visit(visitor);
 }
 

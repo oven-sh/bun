@@ -312,7 +312,10 @@ describe("Bun.build", () => {
     expect(map.size).toBeGreaterThan(1);
     expect(path.relative(outdir, map.path)).toBe("index.js.map");
     expect(map.hash).toBeTruthy();
-    expect(map.hash).toMatchSnapshot("hash index.js.map");
+    // The sourcemap `sources` array contains paths relative to outdir (a temp
+    // dir), so the exact hash varies by machine and can't be snapshotted.
+    expect(map.hash).toMatch(/^[0-9a-z]{8}$/);
+    expect(map.hash).not.toBe("00000000");
     expect(map.kind).toBe("sourcemap");
     expect(map.loader).toBe("file");
     expect(map.sourcemap).toBe(null);

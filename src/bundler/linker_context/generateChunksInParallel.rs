@@ -799,12 +799,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         chunk.final_rel_path.as_ref()
                     };
 
+                    let source_map_hash = ContentHasher::run(&output_source_map);
                     Some(output_files.insert_for_sourcemap_or_bytecode(
                         options::OutputFile::init(options::OutputFileInit {
                             data: options::OutputFileData::Buffer {
                                 data: output_source_map,
                             },
-                            hash: None,
+                            hash: Some(source_map_hash),
                             loader: Loader::Json,
                             input_loader: Loader::File,
                             output_path: source_map_final_rel_path.into_boxed_slice(),
@@ -952,12 +953,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         code_result.buffer = buf.into_boxed_slice();
                     }
 
+                    let source_map_hash = ContentHasher::run(&output_source_map);
                     sourcemap_output_file =
                         Some(options::OutputFile::init(options::OutputFileInit {
                             data: options::OutputFileData::Buffer {
                                 data: output_source_map,
                             },
-                            hash: None,
+                            hash: Some(source_map_hash),
                             loader: Loader::Json,
                             input_loader: Loader::File,
                             output_path: source_map_final_rel_path.into_boxed_slice(),

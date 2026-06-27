@@ -572,3 +572,89 @@ describe("hostnames containing NUL bytes", () => {
     expect(["127.0.0.1", "::1"]).toContain(address);
   });
 });
+
+describe("empty hostname", () => {
+  // Node.js passes "" through to c-ares; it is a string so ERR_INVALID_ARG_TYPE
+  // is wrong, and a promise-returning API must reject rather than throw.
+  const resolverOptions = { timeout: 250, tries: 1 };
+  const unreachable = ["127.0.0.1:1"];
+
+  const promiseMethods = [
+    "resolve",
+    "resolve4",
+    "resolve6",
+    "resolveAny",
+    "resolveCaa",
+    "resolveCname",
+    "resolveMx",
+    "resolveNaptr",
+    "resolvePtr",
+    "resolveSrv",
+    "resolveTxt",
+  ];
+
+  it.each(promiseMethods)("dns.promises.Resolver#%s('') rejects asynchronously", async method => {
+    const resolver = new dns_promises.Resolver(resolverOptions);
+    resolver.setServers(unreachable);
+
+    let returned;
+    expect(() => {
+      returned = resolver[method]("");
+    }).not.toThrow();
+    expect(returned).toBeInstanceOf(Promise);
+
+    let rejection;
+    await returned.then(
+      () => {},
+      err => {
+        rejection = err;
+      },
+    );
+    expect(rejection).toBeInstanceOf(Error);
+    expect(rejection).not.toBeInstanceOf(TypeError);
+    expect(rejection.code).not.toBe("ERR_INVALID_ARG_TYPE");
+  });
+
+  it.each(promiseMethods)("dns.promises.%s('') does not throw synchronously", method => {
+    // Module-level functions use the system resolver; the result of the
+    // root-zone query depends on the environment, so only assert that the
+    // call returns a Promise instead of throwing ERR_INVALID_ARG_TYPE.
+    let returned;
+    expect(() => {
+      returned = dns_promises[method]("");
+    }).not.toThrow();
+    expect(returned).toBeInstanceOf(Promise);
+    returned.catch(() => {});
+  });
+
+  it.each(promiseMethods)("dns.%s('') does not throw synchronously", method => {
+    expect(() => {
+      dns[method]("", () => {});
+    }).not.toThrow();
+  });
+
+  it.each(promiseMethods)("dns.Resolver#%s('') invokes the callback", async method => {
+    const resolver = new dns.Resolver(resolverOptions);
+    resolver.setServers(unreachable);
+
+    const { promise, resolve } = Promise.withResolvers();
+    expect(() => {
+      resolver[method]("", (err, result) => resolve({ err, result }));
+    }).not.toThrow();
+
+    const { err } = await promise;
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(TypeError);
+    expect(err.code).not.toBe("ERR_INVALID_ARG_TYPE");
+  });
+
+  it("non-string hostname still throws ERR_INVALID_ARG_TYPE synchronously", () => {
+    const resolver = new dns_promises.Resolver(resolverOptions);
+    expect(() => resolver.resolve4(123)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => dns.resolve4(123, () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+});

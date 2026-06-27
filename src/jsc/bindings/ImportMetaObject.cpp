@@ -627,14 +627,11 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotDispose, (JSC::JSGlobalObject * js
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotAccept, (JSC::JSGlobalObject*, JSC::CallFrame*))
-{
-    // `bun --hot` re-evaluates every module on each reload, so the full
-    // Vite accept() graph semantics don't apply; accept() is a no-op.
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotDecline, (JSC::JSGlobalObject*, JSC::CallFrame*))
+// `bun --hot` re-evaluates every module on each reload, so the full
+// Vite accept() graph / event semantics don't apply; accept()/decline()/
+// on()/off()/prune()/invalidate()/send() are all no-ops. They exist so
+// Vite-flavoured code guarded by `if (import.meta.hot)` does not throw.
+JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotNoop, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
     return JSValue::encode(jsUndefined());
 }
@@ -852,8 +849,13 @@ void ImportMetaObject::finishCreation(VM& vm)
         auto* hot = JSC::constructEmptyObject(globalObject);
         hot->putDirect(vm, Identifier::fromString(vm, "data"_s), data, 0);
         hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "dispose"_s), 1, functionImportMetaHotDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
-        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "accept"_s), 0, functionImportMetaHotAccept, ImplementationVisibility::Public, NoIntrinsic, 0);
-        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "decline"_s), 0, functionImportMetaHotDecline, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "accept"_s), 0, functionImportMetaHotNoop, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "decline"_s), 0, functionImportMetaHotNoop, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "on"_s), 2, functionImportMetaHotNoop, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "off"_s), 2, functionImportMetaHotNoop, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "prune"_s), 1, functionImportMetaHotNoop, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "invalidate"_s), 0, functionImportMetaHotNoop, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "send"_s), 1, functionImportMetaHotNoop, ImplementationVisibility::Public, NoIntrinsic, 0);
         init.set(hot);
     });
 }

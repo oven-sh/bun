@@ -506,12 +506,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc,
                             });
                         }
-                        // For `bun build` we fold `import.meta.hot` to `undefined`
-                        // so calls like `import.meta.hot.dispose(...)` dead-code
-                        // eliminate. For the runtime transpiler (`bun run`), leave
-                        // it as a property access so the runtime can expose its own
-                        // `import.meta.hot` under `bun --hot`.
-                        if p.options.bundle {
+                        // Under `bun --hot`, leave `import.meta.hot` as a runtime
+                        // property access so the runtime can expose its own
+                        // dispose/data API. Everywhere else (plain `bun run`,
+                        // `bun build`, `Bun.Transpiler`), fold to `undefined` so
+                        // `import.meta.hot.dispose(...)` dead-code eliminates.
+                        if !p.options.features.runtime_hot {
                             return Some(Expr {
                                 data: js_ast::ExprData::ESpecial(E::Special::HotDisabled),
                                 loc,

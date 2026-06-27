@@ -768,7 +768,7 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
 );
 
 describe("import.meta.hot", () => {
-  it("is undefined without --hot", async () => {
+  it("is undefined and unguarded calls are no-ops without --hot", async () => {
     await using proc = spawn({
       cmd: [
         bunExe(),
@@ -776,6 +776,11 @@ describe("import.meta.hot", () => {
         `
           if (import.meta.hot !== undefined) throw new Error("expected undefined, got " + typeof import.meta.hot);
           if (typeof import.meta.hot?.dispose !== "undefined") throw new Error("optional chain");
+          // Unguarded calls to the HMR API must not throw at runtime; outside
+          // --hot the transpiler folds these away.
+          import.meta.hot.dispose(() => { throw new Error("should not run"); });
+          import.meta.hot.accept();
+          import.meta.hot.on("bun:beforeUpdate", () => {});
           console.log("ok");
         `,
       ],
@@ -813,6 +818,7 @@ describe("import.meta.hot", () => {
           globalThis.__disposed = { gen, data: { ...data } };
         });
 
+        const noopNames = ["accept", "decline", "on", "off", "prune", "invalidate", "send"];
         console.log(JSON.stringify({
           gen,
           hasHot: true,
@@ -821,8 +827,7 @@ describe("import.meta.hot", () => {
           listenerCount: process.listenerCount("beforeExit"),
           liveIntervals: intervalsAtStart.size,
           disposed: globalThis.__disposed ?? null,
-          accept: typeof hot.accept === "function" && hot.accept() === undefined,
-          decline: typeof hot.decline === "function" && hot.decline() === undefined,
+          noops: noopNames.filter(n => typeof hot[n] === "function" && hot[n]() === undefined),
         }));
       `;
       writeFileSync(root, source);
@@ -866,40 +871,39 @@ describe("import.meta.hot", () => {
       await runner.exited;
       await stderrDone;
 
+      const keys = ["accept", "data", "decline", "dispose", "invalidate", "off", "on", "prune", "send"];
+      const noops = ["accept", "decline", "on", "off", "prune", "invalidate", "send"];
       try {
         expect(lines).toEqual([
           {
             gen: 1,
             hasHot: true,
-            keys: ["accept", "data", "decline", "dispose"],
+            keys,
             prevGen: null,
             listenerCount: 1,
             liveIntervals: 1,
             disposed: null,
-            accept: true,
-            decline: true,
+            noops,
           },
           {
             gen: 2,
             hasHot: true,
-            keys: ["accept", "data", "decline", "dispose"],
+            keys,
             prevGen: 1,
             listenerCount: 1,
             liveIntervals: 1,
             disposed: { gen: 1, data: { prevGen: 1 } },
-            accept: true,
-            decline: true,
+            noops,
           },
           {
             gen: 3,
             hasHot: true,
-            keys: ["accept", "data", "decline", "dispose"],
+            keys,
             prevGen: 2,
             listenerCount: 1,
             liveIntervals: 1,
             disposed: { gen: 2, data: { prevGen: 2 } },
-            accept: true,
-            decline: true,
+            noops,
           },
         ]);
       } catch (e) {

@@ -104,7 +104,7 @@ globalThis.count++;
 const interval = setInterval(function () {}, 1000000);
 
 // clear the interval from the previous evaluation before the next one starts
-import.meta.hot?.dispose(() => clearInterval(interval));
+import.meta.hot.dispose(() => clearInterval(interval));
 ```
 
 If you run this file with `bun --hot server.ts`, you'll see the reload count increment every time you save the file. Because `--hot` does not restart the process, resources like timers and event listeners created at the top level will otherwise accumulate across reloads; use `import.meta.hot.dispose()` to release them.
@@ -156,9 +156,10 @@ import.meta.hot.dispose(data => {
 | `data`      | A plain object that is persisted across reloads for the same module. Use it to pass state between runs. |
 | `dispose()` | Register a callback that runs just before this module is replaced. The callback receives `data`.        |
 | `accept()`  | No-op. Under `bun --hot` every module is re-evaluated on each change, so all modules implicitly accept. |
-| `decline()` | No-op, provided for compatibility.                                                                      |
 
-When not running under `--hot`, `import.meta.hot` is `undefined`, so guard accesses with `import.meta.hot?.dispose(...)` or `if (import.meta.hot) { ... }`.
+The remaining Vite HMR methods (`decline`, `on`, `off`, `prune`, `invalidate`, `send`) exist as no-ops for compatibility with code written for Vite or Bun's bundler dev server.
+
+When not running under `--hot`, `import.meta.hot` is `undefined`, and direct calls like `import.meta.hot.dispose(cb)` are compiled away so that the same source runs either way. Guard with `if (import.meta.hot) { ... }` if you need the distinction at runtime.
 
 <Note>
   The bundler's dev server exposes a fuller `import.meta.hot` API with module-level accept boundaries; see [Hot

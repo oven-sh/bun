@@ -2491,17 +2491,9 @@ pub mod __gated_printer {
             has_rest_arg: bool,
             is_arrow: bool,
         ) {
-            // When minifying, drop the parentheses around an arrow function's
-            // single simple identifier parameter: `(x) => …` becomes `x => …`.
-            // Only safe when there's exactly one argument, it's a plain
-            // identifier binding (not destructuring), no default value, no
-            // rest/spread, and no decorators.
-            //
-            // Gated on minify_whitespace (matches esbuild): the bun runtime
-            // transpiler enables minify_syntax silently to get tree-shaking
-            // and inlining, but that path must not alter `Function.prototype
-            // .toString()` output that user code may parse. Whitespace-level
-            // minification is opt-in via `--minify`/`--minify-whitespace`.
+            // Gated on minify_whitespace (matches esbuild): the runtime
+            // transpiler enables minify_syntax silently, and dropping the
+            // parens there would change `Function.prototype.toString()` output.
             let wrap = 'wrap: {
                 if !is_arrow {
                     break 'wrap true;

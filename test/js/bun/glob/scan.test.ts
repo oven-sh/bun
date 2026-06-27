@@ -1066,9 +1066,7 @@ describe("literal path segment through a symlinked directory", () => {
     }
     // `top` is reached literally; the `loop -> .` symlink inside is only ever
     // reached via `**`, which must not follow it with followSymlinks:false.
-    const result = norm(
-      Array.from(new Glob("top/**/*.txt").scanSync({ cwd: String(dir), followSymlinks: false })),
-    );
+    const result = norm(Array.from(new Glob("top/**/*.txt").scanSync({ cwd: String(dir), followSymlinks: false })));
     expect(result).toEqual(["top/file.txt"]);
   });
 

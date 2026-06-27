@@ -1596,6 +1596,7 @@ impl<'a> Transpiler<'a> {
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
+                    lower_import_meta_env_to_process_env: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
                 };

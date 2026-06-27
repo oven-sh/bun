@@ -79,6 +79,13 @@ pub mod debug {
         bun_core::return_address()
     }
 
+    /// Re-export for the `segfaultInFramelessLeaf` test hook, which
+    /// synthesises a `TraceSeed::Fault` under ASAN.
+    #[inline(always)]
+    pub fn frame_address() -> usize {
+        bun_core::debug::frame_address()
+    }
+
     /// Thin re-export of the canonical safe
     /// wrapper in bun_core so this crate's internal callers don't churn.
     #[inline]
@@ -852,8 +859,10 @@ mod draft {
     pub enum TraceSeed<'a> {
         /// Signal/exception handler saved the fault register context: walk frame
         /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`
-        /// becomes frame 0.
-        Fault { pc: usize, fp: usize },
+        /// becomes frame 0. `lr` is the return-into-caller address (aarch64 x30,
+        /// x86_64 `[rsp]`) recovered from the context so a frameless leaf's
+        /// immediate caller isn't dropped; 0 when unavailable.
+        Fault { pc: usize, fp: usize, lr: usize },
         /// A trace was already captured upstream.
         ErrorReturn(&'a StackTrace<'a>),
         /// Walk the current stack and trim the capture machinery above this PC.
@@ -1119,8 +1128,8 @@ mod draft {
                             // `SA_ONSTACK` altstack, so its own frame chain is
                             // disjoint from the faulting thread's, and release builds
                             // strip the unwind tables a CFI-based capture would need.
-                            TraceSeed::Fault { pc, fp } => {
-                                bun_core::debug::capture_from_context(pc, fp, &mut addr_buf)
+                            TraceSeed::Fault { pc, fp, lr } => {
+                                bun_core::debug::capture_from_context(pc, fp, lr, &mut addr_buf)
                             }
                             TraceSeed::BeginAddr(addr) => {
                                 debug::capture_stack_trace(addr, &mut addr_buf)
@@ -1604,12 +1613,20 @@ mod draft {
         },
     );
 
-    /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
+    /// Extract `(pc, fp, lr)` from the `ucontext_t` the kernel hands the signal
     /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
     /// `None` on arch/OS combos we don't have register offsets for (the caller
     /// then falls back to a current-stack capture).
+    ///
+    /// `lr` is the return-into-caller address at the fault: on aarch64 this is
+    /// x30 straight from the register file; on x86_64 it is `[rsp]` (the word
+    /// `call` pushed). When the fault is inside a frameless leaf (machine
+    /// outliner, intrinsics, ICF-folded thunks) `fp` still belongs to the
+    /// caller's frame, so the fp-walk's first hop yields the *caller's* return
+    /// address and the immediate caller is lost. `lr` is the only place that
+    /// frame survives.
     #[cfg(unix)]
-    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize)> {
+    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize, usize)> {
         debug_assert!(!ctx.is_null());
         let uc = ctx.cast::<libc::ucontext_t>().cast_const();
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -1618,13 +1635,14 @@ mod draft {
             let mc = &(*uc).uc_mcontext;
             let pc = mc.gregs[libc::REG_RIP as usize] as usize;
             let fp = mc.gregs[libc::REG_RBP as usize] as usize;
-            Some((pc, fp))
+            let sp = mc.gregs[libc::REG_RSP as usize] as usize;
+            Some((pc, fp, bun_core::debug::load_return_address_at(sp)))
         }
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            Some((mc.pc as usize, mc.regs[29] as usize))
+            Some((mc.pc as usize, mc.regs[29] as usize, mc.regs[30] as usize))
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1633,7 +1651,12 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+            let sp = (*mc).__ss.__rsp as usize;
+            Some((
+                (*mc).__ss.__rip as usize,
+                (*mc).__ss.__rbp as usize,
+                bun_core::debug::load_return_address_at(sp),
+            ))
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1642,7 +1665,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+            Some((
+                (*mc).__ss.__pc as usize,
+                (*mc).__ss.__fp as usize,
+                (*mc).__ss.__lr as usize,
+            ))
         }
         #[cfg(not(any(
             all(target_os = "linux", target_arch = "x86_64"),
@@ -1672,7 +1699,7 @@ mod draft {
                 _ => unreachable!(),
             },
             match fault_context_from_ucontext(ctx) {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+                Some((pc, fp, lr)) => TraceSeed::Fault { pc, fp, lr },
                 None => TraceSeed::None,
             },
         );
@@ -2062,7 +2089,7 @@ mod draft {
         let pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
         // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
         // by `pc`; the frame-pointer slot is unused.
-        crash_handler(reason, TraceSeed::Fault { pc, fp: 0 });
+        crash_handler(reason, TraceSeed::Fault { pc, fp: 0, lr: 0 });
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]

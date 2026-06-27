@@ -1402,6 +1402,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             let mut ext_it = strings::trim(ext_str, b" \t").split(|b| *b == b';');
                             let ext_name = strings::trim(ext_it.next().unwrap_or(b""), b" \t");
                             if ext_name == b"permessage-deflate" {
+                                // RFC 7692 §5: the response must not list
+                                // permessage-deflate more than once (whether in
+                                // one header value or across several headers).
+                                if deflate_result.enabled {
+                                    // SAFETY: no `&mut Self` is live across this call.
+                                    unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                                    return;
+                                }
                                 deflate_result.enabled = true;
                                 for param_str in ext_it {
                                     let mut param_it =

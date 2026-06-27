@@ -291,6 +291,22 @@ describe("WebSocket strict RFC 6455 extension handling", () => {
     await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
   });
 
+  // RFC 7692 §5: the response must not list permessage-deflate more than once.
+  it("should reject a duplicate permessage-deflate in one header", async () => {
+    await using server = await createTestServer([
+      "Sec-WebSocket-Extensions: permessage-deflate; server_max_window_bits=12, permessage-deflate; server_max_window_bits=10",
+    ]);
+    await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
+  });
+
+  it("should reject permessage-deflate repeated across two Sec-WebSocket-Extensions headers", async () => {
+    await using server = await createTestServer([
+      "Sec-WebSocket-Extensions: permessage-deflate",
+      "Sec-WebSocket-Extensions: permessage-deflate",
+    ]);
+    await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
+  });
+
   it("should still accept a plain permessage-deflate response", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Extensions: permessage-deflate"]);
     const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers();

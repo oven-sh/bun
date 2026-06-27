@@ -47,7 +47,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 
-const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
+const { UV_EALREADY, UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
@@ -1278,11 +1278,18 @@ function kConnectPipe(self, req, address) {
 }
 
 function kConnectDispatch(self, req, opts) {
+  const handle = self._handle;
+  // libuv's uv_tcp_connect rejects a handle whose connect_req is already in
+  // flight. readyState 2 is that state natively; without this, doConnect
+  // tears the in-flight attempt down and silently starts over.
+  if (handle.readyState === 2) {
+    return UV_EALREADY;
+  }
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; doConnect instead fires connectError inside this call. Bracket
   // it so connectError hands the errno back here instead of re-entering.
   req.dispatching = true;
-  const promise = doConnect(self._handle, opts);
+  const promise = doConnect(handle, opts);
   req.dispatching = false;
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection

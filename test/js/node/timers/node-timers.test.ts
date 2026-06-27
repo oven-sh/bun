@@ -265,7 +265,11 @@ process.on("exit", () => console.log(JSON.stringify(order)));
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: '["immediate","fs"]', exitCode: 0 });
+  expect({
+    stdout: stdout.trim(),
+    stderr: /error|panic|assert|abort/i.test(stderr) ? stderr : "",
+    exitCode,
+  }).toEqual({ stdout: '["immediate","fs"]', stderr: "", exitCode: 0 });
 });
 
 // Same ordering one level down: an immediate that queues another immediate and
@@ -289,5 +293,9 @@ process.on("exit", () => console.log(JSON.stringify(order)));
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: '["immediate","fs"]', exitCode: 0 });
+  expect({
+    stdout: stdout.trim(),
+    stderr: /error|panic|assert|abort/i.test(stderr) ? stderr : "",
+    exitCode,
+  }).toEqual({ stdout: '["immediate","fs"]', stderr: "", exitCode: 0 });
 });

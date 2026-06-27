@@ -370,6 +370,10 @@ let priorityDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
+// Marks a stream the inbound engine created as native context before user code was handed it (a
+// peer-initiated request, or a push, whose 'stream' event has not fired yet). Cleared at that
+// handoff; until then nothing can listen to the stream, so its teardown must stay silent.
+const kUndelivered = Symbol("undelivered");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -2102,6 +2106,7 @@ class Http2Stream extends Duplex {
   #sentTrailers: any;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
+  [kUndelivered]: boolean = false;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
@@ -2362,11 +2367,17 @@ class Http2Stream extends Duplex {
     // node closes the stream from inside _destroy, so the close channel publish observes
     // closed === true and destroyed === true with the final rstCode.
     markStreamClosed(this);
-    // RST code 8 not emitted as an error as its used by clients to signify
-    // abort and is already covered by aborted event, also allows more
-    // seamless compatibility with http1
-    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL)
+    if (this[kUndelivered]) {
+      // User code was never handed this stream, so it cannot have an 'error' listener: any error
+      // given to the Duplex teardown becomes an unhandled 'error' that aborts the process. Node
+      // never creates a stream before its header block decodes, so it surfaces nothing here.
+      err = null;
+    } else if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL) {
+      // RST code 8 not emitted as an error as its used by clients to signify
+      // abort and is already covered by aborted event, also allows more
+      // seamless compatibility with http1
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
+    }
 
     this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
@@ -2798,6 +2809,7 @@ class ServerHttp2Stream extends Http2Stream {
       process.nextTick(callback, err);
       return;
     }
+    if (pushedStream) pushedStream[kUndelivered] = false;
     process.nextTick(callback, null, pushedStream, headers);
   }
 
@@ -3475,6 +3487,7 @@ class ServerHttp2Session extends Http2Session {
       self.#connections++;
       if (stream_id % 2 === 1) self.#peerInitiatedStreams++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
+      stream[kUndelivered] = true;
       // Returned to the native caller, which stores it as the stream context — no
       // setStreamContext host call needed.
       return stream;
@@ -3581,6 +3594,7 @@ class ServerHttp2Session extends Http2Session {
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
         stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+        stream[kUndelivered] = false;
         if (onServerStreamCreatedChannel.hasSubscribers) {
           onServerStreamCreatedChannel.publish({ stream, headers });
         }
@@ -4161,6 +4175,7 @@ class ClientHttp2Session extends Http2Session {
         // A pushed (even-id) stream announced by the server: its context object must be a stream,
         // not a session. Returned to the native caller, which stores it as the stream context.
         const stream = new ClientHttp2Stream(stream_id, self, null);
+        stream[kUndelivered] = true;
         return stream;
       }
     },

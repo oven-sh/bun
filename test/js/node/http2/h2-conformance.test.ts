@@ -4,11 +4,13 @@
 // assert spec-mandated behavior at the wire level — the cases Node's own suite under-covers.
 // Item numbers reference docs/http2-rewrite/03-spec-conformance-checklist.md.
 //
-// Connection-level cases only here (no HPACK required): preface, SETTINGS handshake/ack, PING,
-// WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
+// Mostly connection-level cases (preface, SETTINGS handshake/ack, PING, WINDOW_UPDATE,
+// frame-size and stream-id rules), plus the malformed-header-block suite at the bottom,
+// which runs the server in a child process to assert that a bad peer cannot kill it.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { once } from "node:events";
+import { bunEnv, bunExe, tempDir } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 
@@ -585,5 +587,138 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
       client.destroy();
       raw.close();
     }
+  });
+});
+
+// ── Malformed header blocks (RFC 9113 §4.3/§6.10, RFC 7541 §6) ──
+//
+// A header block that fails to decode is a connection error. The stream it arrived on was never
+// delivered to user code (its 'stream' event never fired), so its teardown has nowhere to put a
+// stream 'error' and must not emit one: an 'error' with no listener aborts the process. These
+// run the server in a child so the property under test is literally "the server process
+// survives a malformed peer", which an in-process server cannot express.
+
+const MALFORMED_PEER_SERVER = `
+  const http2 = require("node:http2");
+  // A realistic server: it observes session errors, but has no process-level
+  // "uncaughtException" handler. Surviving a bad peer must not require one.
+  const server = http2.createServer();
+  server.on("sessionError", err => process.send({ sessionError: err.code }));
+  server.on("stream", (stream, headers) => {
+    process.send({ stream: headers[":path"] });
+    stream.respond({ ":status": 200 });
+    stream.end("served");
+  });
+  server.listen(0, "127.0.0.1", () => process.send({ port: server.address().port }));
+`;
+
+type ServerMessage = { port?: number; sessionError?: string; stream?: string };
+
+/** Spawn MALFORMED_PEER_SERVER in a child process, exposing its IPC messages. */
+function spawnH2Server(cwd: string) {
+  const received: ServerMessage[] = [];
+  const waiters: Array<{ pred: (m: ServerMessage) => boolean; resolve: (m: ServerMessage) => void }> = [];
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    ipc(message: ServerMessage) {
+      received.push(message);
+      const idx = waiters.findIndex(w => w.pred(message));
+      if (idx !== -1) waiters.splice(idx, 1)[0].resolve(message);
+    },
+  });
+  /** The first IPC message matching `pred`; rejects if the server process exits instead. */
+  function message(pred: (m: ServerMessage) => boolean): Promise<ServerMessage> {
+    const existing = received.find(pred);
+    if (existing) return Promise.resolve(existing);
+    return Promise.race([
+      new Promise<ServerMessage>(resolve => waiters.push({ pred, resolve })),
+      proc.exited.then(code => Promise.reject(new Error(`the server process exited with code ${code}`))),
+    ]);
+  }
+  return { proc, received, message };
+}
+
+/** A fresh, well-formed session against the same process, proving it is still serving. */
+async function probe(port: number, proc: Bun.Subprocess): Promise<{ status: number; body: string }> {
+  const client = http2.connect(`http://127.0.0.1:${port}`);
+  try {
+    return await Promise.race([
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        client.on("error", reject);
+        const req = client.request({ ":path": "/probe" });
+        req.on("error", reject);
+        let status = 0;
+        req.on("response", headers => (status = headers[":status"] as number));
+        const chunks: Buffer[] = [];
+        req.on("data", (d: Buffer) => chunks.push(d));
+        req.on("end", () => resolve({ status, body: Buffer.concat(chunks).toString() }));
+        req.end();
+      }),
+      proc.exited.then(code => Promise.reject(new Error(`the server process exited with code ${code}`))),
+    ]);
+  } finally {
+    client.destroy();
+  }
+}
+
+describe("malformed header blocks error the session, never the process (§4.3)", () => {
+  const headers = (flags: number, block: number[]) => encodeFrame(FrameType.HEADERS, flags, 1, Buffer.from(block));
+  const END_STREAM = 0x1;
+  const END_HEADERS = 0x4;
+
+  // Each case opens stream 1 and then makes the connection fail while that stream's header
+  // block has not (and never will be) delivered to user code.
+  const cases: Array<[name: string, frames: Buffer[], goawayCode: number]> = [
+    [
+      "an indexed header field with index 0 (RFC 7541 §6.1)",
+      [headers(END_HEADERS | END_STREAM, [0x80])],
+      ErrorCode.COMPRESSION_ERROR,
+    ],
+    [
+      "a literal whose declared name length exceeds the block (RFC 7541 §5.2)",
+      [headers(END_HEADERS | END_STREAM, [0x00, 0x05, 0x61])],
+      ErrorCode.COMPRESSION_ERROR,
+    ],
+    [
+      "a dynamic table size update above the advertised table size (RFC 7541 §6.3)",
+      [headers(END_HEADERS | END_STREAM, [0x3f, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f])],
+      ErrorCode.COMPRESSION_ERROR,
+    ],
+    [
+      "a PING interleaved into an unfinished header block (RFC 9113 §6.10)",
+      [headers(END_STREAM, [0x82, 0x84]), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))],
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+  ];
+
+  test.each(cases)("%s", async (_name, frames, goawayCode) => {
+    using dir = tempDir("h2-malformed-peer", { "server.js": MALFORMED_PEER_SERVER });
+    const server = spawnH2Server(String(dir));
+    await using proc = server.proc;
+    const { port } = await server.message(m => "port" in m);
+
+    const c = await RawH2.connect(port!);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      for (const frame of frames) c.send(frame);
+      const goaway = await c.waitForGoaway();
+      expect(goawayErrorCode(goaway)).toBe(goawayCode);
+    } finally {
+      c.destroy();
+    }
+
+    // The session error is still observable on the server object.
+    const { sessionError } = await server.message(m => "sessionError" in m);
+    expect(sessionError).toBe("ERR_HTTP2_SESSION_ERROR");
+
+    // The process is alive and a new, well-formed session gets served by it.
+    expect(await probe(port!, proc)).toEqual({ status: 200, body: "served" });
+    // The stream whose header block never decoded was never surfaced to user code.
+    expect(server.received.filter(m => "stream" in m)).toEqual([{ stream: "/probe" }]);
   });
 });

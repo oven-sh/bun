@@ -609,3 +609,41 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
 });
+
+// For fd 0-2, "ignore" opens /dev/null. For fd >= 3, Node leaves the fd
+// closed; Bun used to open /dev/null on the slot, so children probing
+// "is fd N open?" observed a different answer than under Node.
+it.if(!isWindows)("stdio[i] = 'ignore' for i >= 3 leaves the fd closed in the child", async () => {
+  // Portable open/closed probe via shell redirection: redirecting a closed
+  // fd fails with EBADF. Uses "true" (not ":") because redirection errors on
+  // POSIX special built-ins abort the shell.
+  const probe = `
+for fd in 0 3 4 5; do
+  if { true >&$fd; } 2>/dev/null || { true <&$fd; } 2>/dev/null; then
+    echo "fd$fd=OPEN"
+  else
+    echo "fd$fd=CLOSED"
+  fi
+done
+`;
+
+  // fd 3 and 4 are ignored; fd 5 is a pipe so the close-range floor is
+  // above the ignored slots and cannot mask the bug.
+  const stdio = ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe"] as const;
+  const expected = ["fd0=OPEN", "fd3=CLOSED", "fd4=CLOSED", "fd5=OPEN"];
+
+  const sync = spawnSync("sh", ["-c", probe], { stdio: [...stdio], env: bunEnv });
+  expect(sync.stderr?.toString()).toBe("");
+  expect(sync.stdout?.toString().trim().split("\n")).toEqual(expected);
+  expect(sync.status).toBe(0);
+
+  // Async spawn goes through the same native path.
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const child = spawn("sh", ["-c", probe], { stdio: [...stdio], env: bunEnv });
+  let out = "";
+  child.stdout!.on("data", d => (out += d));
+  child.on("error", reject);
+  child.on("close", () => resolve(out));
+  const asyncOut = await promise;
+  expect(asyncOut.trim().split("\n")).toEqual(expected);
+});

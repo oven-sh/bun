@@ -1539,7 +1539,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
             let where_ = if p.esm_export_keyword.len > 0 {
                 p.esm_export_keyword
-            } else if p.top_level_await_keyword.len > 0 {
+            } else if p.top_level_await_keyword.len > 0 && p.options.features.top_level_await {
+                // `top_level_await_keyword` may be populated from a
+                // dead-branch parse-time discovery in CJS targets where
+                // TLA isn't supported. Only treat it as an ESM signal
+                // when the feature is actually on — otherwise a dead
+                // `if (false) { await ... }` plus a top-level `return`
+                // would wrongly be rejected.
                 p.top_level_await_keyword
             } else {
                 bun_ast::Range::NONE
@@ -1929,6 +1935,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::ForOf,
     ) -> Result<(), Error> {
+        // A `for await (... of ...)` loop counts as a top-level `await`
+        // for the purposes of CJS-TLA error reporting. Mark it as live
+        // when we reach it in reachable control flow at module scope so
+        // we don't silently drop the diagnostic for loops whose body
+        // happens not to contain any `await` expressions. Overwrite
+        // `top_level_await_keyword` with the range parse captured for
+        // this loop so the post-visit diagnostic points at the live
+        // `for await` keyword, not at some later-parsed dead `await`
+        // that the parse pass last wrote.
+        if data.is_await
+            && !p.is_control_flow_dead
+            && p.fn_or_arrow_data_visit.is_outside_fn_or_arrow
+            && !p.has_live_top_level_await
+        {
+            if data.await_range.len > 0 {
+                p.top_level_await_keyword = data.await_range;
+            }
+            p.has_live_top_level_await = true;
+        }
+
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
         let _ = p.visit_for_loop_init(data.init, true);

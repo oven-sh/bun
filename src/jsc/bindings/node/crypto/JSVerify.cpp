@@ -411,10 +411,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     if (keyPtr.isRsaVariant()) {
         std::optional<int> effective_salt_len = saltLen;
 
-        // For PSS padding without explicit salt length for verification,
-        // we don't need to calculate - use RSA_PSS_SALTLEN_AUTO (-2) to auto-detect
-        // This matches Node.js behavior for verification
-        if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value()) {
+        // For PSS padding without explicit salt length for verification, use
+        // RSA_PSS_SALTLEN_AUTO (-2) to auto-detect, matching Node.js. An
+        // id-RSASSA-PSS key rejects any override; keep its restriction.
+        if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value() && keyPtr.id() != EVP_PKEY_RSA_PSS) {
             effective_salt_len = RSA_PSS_SALTLEN_AUTO;
         }
 

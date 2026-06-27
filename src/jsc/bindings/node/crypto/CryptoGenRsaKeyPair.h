@@ -48,6 +48,9 @@ public:
 
     void deinit();
     ncrypto::EVPKeyCtxPointer setup();
+    // Shadows KeyPairJobCtx::runTask so the RSA_PSS variant can re-encode the
+    // generated plain RSA key as id-RSASSA-PSS (see setup for why).
+    void runTask(JSC::JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& ctx);
     static std::optional<RsaKeyPairJobCtx> fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& config);
 
     RsaKeyVariant m_variant;

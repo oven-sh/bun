@@ -266,3 +266,54 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   expect(carolSecret.length).toBeGreaterThan(0);
   expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
 });
+
+// X9.62 hybrid point encoding (leading byte 0x06/0x07). BoringSSL rejects the
+// form; the runtime translates to and from the equivalent uncompressed form.
+// Fixed private keys keep the tests deterministic; the hybrid/uncompressed
+// encodings and the shared secret below were produced by Node.js 26.
+const hybridAPrivate = "0102030405060708091011121314151617181920212223242526272829303132";
+const hybridBPrivate = "a1a2a3a4a5a6a7a8a9b0b1b2b3b4b5b6b7b8b9c0c1c2c3c4c5c6c7c8c9d0d1d2";
+const hybridBPublic =
+  "0712816f4996db7bc8113aafc3ceb879b964ec3d7e09da487da8cce96e445724a0d466fa5c9d33ecd008a52afc072d9bea08f95e8ae9ce039b2a962b962e8d5ac9";
+const uncompressedBPublic =
+  "0412816f4996db7bc8113aafc3ceb879b964ec3d7e09da487da8cce96e445724a0d466fa5c9d33ecd008a52afc072d9bea08f95e8ae9ce039b2a962b962e8d5ac9";
+const hybridSharedSecret = "bef9b84e7feb8c32e33c2ee7ded4237ae21a801ea087776a0ad1bf15958125d3";
+
+test("ECDH hybrid: getPublicKey produces the hybrid encoding", () => {
+  const b = createECDH("prime256v1");
+  b.setPrivateKey(hybridBPrivate, "hex");
+  expect(b.getPublicKey("hex", "hybrid")).toBe(hybridBPublic);
+  expect(b.getPublicKey("hex", "uncompressed")).toBe(uncompressedBPublic);
+});
+
+test("ECDH hybrid: convertKey round-trips through the hybrid encoding", () => {
+  expect(ECDH.convertKey(uncompressedBPublic, "prime256v1", "hex", "hex", "hybrid")).toBe(hybridBPublic);
+  expect(ECDH.convertKey(hybridBPublic, "prime256v1", "hex", "hex", "uncompressed")).toBe(uncompressedBPublic);
+  expect(ECDH.convertKey(hybridBPublic, "prime256v1", "hex", "hex", "compressed")).toBe(
+    ECDH.convertKey(uncompressedBPublic, "prime256v1", "hex", "hex", "compressed"),
+  );
+});
+
+test("ECDH hybrid: computeSecret accepts a hybrid-encoded peer key", () => {
+  const a = createECDH("prime256v1");
+  a.setPrivateKey(hybridAPrivate, "hex");
+  expect(a.computeSecret(hybridBPublic, "hex", "hex")).toBe(hybridSharedSecret);
+  expect(a.computeSecret(uncompressedBPublic, "hex", "hex")).toBe(hybridSharedSecret);
+});
+
+test("ECDH hybrid: a parity bit that contradicts Y is rejected", () => {
+  // hybridBPublic starts with 0x07 (Y is odd); 0x06 claims Y is even.
+  const badParity = "06" + hybridBPublic.slice(2);
+  const a = createECDH("prime256v1");
+  a.setPrivateKey(hybridAPrivate, "hex");
+  let thrown;
+  try {
+    a.computeSecret(badParity, "hex", "hex");
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown?.code).toBe("ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY");
+  expect(() => ECDH.convertKey(badParity, "prime256v1", "hex", "hex", "uncompressed")).toThrow(
+    "Failed to convert Buffer to EC_POINT",
+  );
+});

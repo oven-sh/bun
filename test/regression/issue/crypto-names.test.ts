@@ -68,6 +68,17 @@ test("getHashes", () => {
       expect(nodeHashes).not.toInclude(bunHash.toUpperCase());
     }
   }
+
+  // BoringSSL's digest enumerator skips the BLAKE2b EVP_MDs (they have no
+  // NID), but createHash, createHmac, hkdf, and pbkdf2 all accept them.
+  // blake2b256 is a BoringSSL extension with no Node.js counterpart.
+  expect(bunHashes).toContain("blake2b512");
+  expect(bunHashes).toContain("blake2b256");
+
+  // Every name getHashes() reports must work with createHash().
+  for (const name of bunHashes) {
+    expect(crypto.createHash(name).update("x").digest()).toBeInstanceOf(Buffer);
+  }
 });
 
 test("getCurves", () => {

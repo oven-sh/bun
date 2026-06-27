@@ -1212,6 +1212,14 @@ mod _impl {
         let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
             CaseInsensitiveAsciiStringArrayHashMap::new();
 
+        // BoringSSL's enumerator only lists digests that have a NID.
+        // EVP_blake2b256 and EVP_blake2b512 have NID_undef, so it skips them
+        // even though every digest-taking API accepts them. They sort first.
+        const UNENUMERATED: [&[u8]; 2] = [b"blake2b256", b"blake2b512"];
+        for name in UNENUMERATED {
+            bun_core::handle_oom(hashes.put(name, ()));
+        }
+
         // Perf idea (dylan-conway): cache the names
         // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
         // for the duration of the call.

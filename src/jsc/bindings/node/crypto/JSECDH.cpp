@@ -69,7 +69,7 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
     }
 
     // Calculate the length needed for the result
-    size_t bufLen = EC_POINT_point2oct(group, pubKey, form, nullptr, 0, nullptr);
+    size_t bufLen = ncrypto::ECPointPointer::point2oct(group, pubKey, form, nullptr, 0);
     if (bufLen == 0) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to determine size for public key encoding"_s);
         return {};
@@ -83,7 +83,7 @@ EncodedJSValue JSECDH::getPublicKey(JSGlobalObject* globalObject, ThrowScope& sc
     }
 
     // Encode the point to the buffer
-    if (EC_POINT_point2oct(group, pubKey, form, static_cast<unsigned char*>(result->data()), bufLen, nullptr) == 0) {
+    if (ncrypto::ECPointPointer::point2oct(group, pubKey, form, static_cast<unsigned char*>(result->data()), bufLen) == 0) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to encode public key"_s);
         return {};
     }

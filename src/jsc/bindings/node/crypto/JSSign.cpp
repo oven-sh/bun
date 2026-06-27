@@ -354,9 +354,9 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
         std::optional<int> effective_salt_len = salt_len;
 
         // For PSS padding without explicit salt length, use RSA_PSS_SALTLEN_AUTO
-        // BoringSSL changed the default from AUTO to DIGEST in commit b01d7bbf7 (June 2025)
-        // for FIPS compliance, but Node.js expects the old AUTO behavior
-        if (padding == RSA_PKCS1_PSS_PADDING && !salt_len.has_value()) {
+        // (BoringSSL commit b01d7bbf7 changed its default to DIGEST; Node expects
+        // AUTO). An id-RSASSA-PSS key rejects any override; keep its restriction.
+        if (padding == RSA_PKCS1_PSS_PADDING && !salt_len.has_value() && pkey.id() != EVP_PKEY_RSA_PSS) {
             effective_salt_len = RSA_PSS_SALTLEN_AUTO;
         }
 

@@ -18,20 +18,9 @@ test("createHmac works with various algorithm names", () => {
     ...Bun.CryptoHasher.algorithms,
   ];
 
-  const toRemove = [
-    "blake2b256",
-    "blake2b512",
-    "blake2s256",
-    "md4",
-    "sha512-224",
-    "sha512-256",
-    "sha3-224",
-    "sha3-256",
-    "sha3-384",
-    "sha3-512",
-    "shake128",
-    "shake256",
-  ];
+  // Hashes Bun.CryptoHasher supports but createHmac does not:
+  // these have no BoringSSL EVP_MD, so there is nothing to hand HMAC_Init_ex.
+  const toRemove = ["blake2s256", "shake128", "shake256"];
   for (const algo of toRemove) {
     algorithms.splice(algorithms.indexOf(algo), 1);
   }

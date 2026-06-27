@@ -6,11 +6,13 @@
 #include "ncrypto.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
+#include <openssl/bytestring.h>
 #include <openssl/dh.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/pkcs12.h>
 #include <openssl/rand.h>
+#include <openssl/rsa.h>
 #include <openssl/x509v3.h>
 #include <algorithm>
 #include <cstring>
@@ -39,6 +41,54 @@ using BignumGenCallbackPointer = DeleteFnPtr<BN_GENCB, BN_GENCB_free>;
 using NetscapeSPKIPointer = DeleteFnPtr<NETSCAPE_SPKI, NETSCAPE_SPKI_free>;
 
 static constexpr int kX509NameFlagsRFC2253WithinUtf8JSON = XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB & ~ASN1_STRFLGS_ESC_CTRL;
+
+// BoringSSL's default SPKI/PKCS#8 parsers reject the id-RSASSA-PSS key type
+// (RFC 4055). It is only reachable by naming these algorithms explicitly; they
+// cover hash == MGF1 hash in {sha256, sha384, sha512} with salt == digest size.
+std::span<const EVP_PKEY_ALG* const> rsaPssAlgorithms()
+{
+    static const EVP_PKEY_ALG* const kAlgorithms[] = {
+        EVP_pkey_rsa_pss_sha256(),
+        EVP_pkey_rsa_pss_sha384(),
+        EVP_pkey_rsa_pss_sha512(),
+    };
+    return kAlgorithms;
+}
+
+// Retries a SubjectPublicKeyInfo parse that the default algorithm list
+// rejected, allowing id-RSASSA-PSS. Drops the default parser's pending error
+// so callers that treat a non-empty error queue as failure see this outcome.
+EVP_PKEY* parseRsaPssSubjectPublicKeyInfo(const unsigned char* data, size_t len)
+{
+    auto algs = rsaPssAlgorithms();
+    ERR_clear_error();
+    EVP_PKEY* key = EVP_PKEY_from_subject_public_key_info(data, len, algs.data(), algs.size());
+    if (key != nullptr) ERR_clear_error();
+    return key;
+}
+
+// Same as parseRsaPssSubjectPublicKeyInfo, for a PKCS#8 PrivateKeyInfo.
+EVP_PKEY* parseRsaPssPrivateKeyInfo(const unsigned char* data, size_t len)
+{
+    auto algs = rsaPssAlgorithms();
+    ERR_clear_error();
+    EVP_PKEY* key = EVP_PKEY_from_private_key_info(data, len, algs.data(), algs.size());
+    if (key != nullptr) ERR_clear_error();
+    return key;
+}
+
+// Extracts a certificate's public key. X509_get_pubkey uses the default
+// algorithm list, which refuses id-RSASSA-PSS keys, so retry those on the
+// certificate's raw SubjectPublicKeyInfo.
+EVP_PKEY* getX509PublicKey(const X509* cert)
+{
+    if (EVP_PKEY* key = X509_get_pubkey(const_cast<X509*>(cert))) return key;
+    unsigned char* spki = nullptr;
+    int spkiLen = i2d_X509_PUBKEY(X509_get_X509_PUBKEY(const_cast<X509*>(cert)), &spki);
+    if (spkiLen <= 0) return nullptr;
+    DataPointer spkiData(spki, static_cast<size_t>(spkiLen));
+    return parseRsaPssSubjectPublicKeyInfo(spki, static_cast<size_t>(spkiLen));
+}
 } // namespace
 
 // ============================================================================
@@ -1219,7 +1269,7 @@ Result<EVPKeyPointer, int> X509View::getPublicKey() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return Result<EVPKeyPointer, int>(EVPKeyPointer {});
-    auto pkey = EVPKeyPointer(X509_get_pubkey(const_cast<X509*>(cert_)));
+    auto pkey = EVPKeyPointer(getX509PublicKey(cert_));
     if (!pkey) return Result<EVPKeyPointer, int>(ERR_get_error());
     return pkey;
 }
@@ -1980,6 +2030,15 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
     //     return EVP_ripemd160();
     // }
 
+    // BoringSSL defines these EVP_MDs but gives them NID_undef, so
+    // EVP_get_digestbyname cannot find them. (There is no BLAKE2s EVP_MD.)
+    if (WTF::equalIgnoringASCIICase(name, "blake2b512"_s)) {
+        return EVP_blake2b512();
+    }
+    if (WTF::equalIgnoringASCIICase(name, "blake2b256"_s)) {
+        return EVP_blake2b256();
+    }
+
     auto nameUtf8 = name.utf8();
     return EVP_get_digestbyname(nameUtf8.data());
 }
@@ -2186,6 +2245,67 @@ EVPKeyPointer EVPKeyPointer::NewRSA(RSAPointer&& rsa)
         rsa.release();
     }
     return key;
+}
+
+EVPKeyPointer EVPKeyPointer::NewRsaPss(const EVPKeyPointer& rsaKey, const EVP_MD* md)
+{
+    if (!rsaKey || rsaKey.id() != EVP_PKEY_RSA || md == nullptr) return {};
+
+    // The matching opt-in algorithm decides whether BoringSSL can represent
+    // this restriction; there is no EVP_PKEY_RSA_PSS keygen or assign path.
+    const EVP_PKEY_ALG* alg = nullptr;
+    switch (EVP_MD_type(md)) {
+    case NID_sha256:
+        alg = EVP_pkey_rsa_pss_sha256();
+        break;
+    case NID_sha384:
+        alg = EVP_pkey_rsa_pss_sha384();
+        break;
+    case NID_sha512:
+        alg = EVP_pkey_rsa_pss_sha512();
+        break;
+    default:
+        return {};
+    }
+
+    const RSA* rsa = EVP_PKEY_get0_RSA(rsaKey.get());
+    if (rsa == nullptr) return {};
+
+    // id-RSASSA-PSS (RFC 4055, 1.2.840.113549.1.1.10) and
+    // id-mgf1 (RFC 4055, 1.2.840.113549.1.1.8).
+    static const uint8_t kRsassaPssOid[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a };
+    static const uint8_t kMgf1Oid[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08 };
+
+    // Build a PKCS#8 PrivateKeyInfo whose AlgorithmIdentifier is id-RSASSA-PSS
+    // with the RSASSA-PSS-params for `md`. The trailerField is 1 (the DEFAULT)
+    // and must be omitted in DER per RFC 4055, Section 3.1.
+    CBB cbb;
+    CBB pki, algId, params, hashWrap, mgfWrap, mgfAlg, saltWrap, keyOct;
+    if (!CBB_init(&cbb, 1024)) return {};
+    uint8_t* der = nullptr;
+    size_t derLen = 0;
+    if (!CBB_add_asn1(&cbb, &pki, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1_uint64(&pki, 0)
+        || !CBB_add_asn1(&pki, &algId, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1_element(&algId, CBS_ASN1_OBJECT, kRsassaPssOid, sizeof(kRsassaPssOid))
+        || !CBB_add_asn1(&algId, &params, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1(&params, &hashWrap, CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 0)
+        || !EVP_marshal_digest_algorithm(&hashWrap, md)
+        || !CBB_add_asn1(&params, &mgfWrap, CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 1)
+        || !CBB_add_asn1(&mgfWrap, &mgfAlg, CBS_ASN1_SEQUENCE)
+        || !CBB_add_asn1_element(&mgfAlg, CBS_ASN1_OBJECT, kMgf1Oid, sizeof(kMgf1Oid))
+        || !EVP_marshal_digest_algorithm(&mgfAlg, md)
+        || !CBB_add_asn1(&params, &saltWrap, CBS_ASN1_CONSTRUCTED | CBS_ASN1_CONTEXT_SPECIFIC | 2)
+        || !CBB_add_asn1_uint64(&saltWrap, EVP_MD_size(md))
+        || !CBB_add_asn1(&pki, &keyOct, CBS_ASN1_OCTETSTRING)
+        || !RSA_marshal_private_key(&keyOct, rsa)
+        || !CBB_finish(&cbb, &der, &derLen)) {
+        CBB_cleanup(&cbb);
+        return {};
+    }
+
+    DataPointer derData(der, derLen);
+    return EVPKeyPointer(EVP_PKEY_from_private_key_info(der, derLen, &alg, 1));
 }
 
 EVPKeyPointer::EVPKeyPointer(EVP_PKEY* pkey)
@@ -2421,8 +2541,11 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
     if (auto ret = TryParsePublicKeyInner(
             bp,
             "PUBLIC KEY",
-            [](const unsigned char** p, long l) { // NOLINT(runtime/int)
-                return d2i_PUBKEY(nullptr, p, l);
+            [](const unsigned char** p, long l) -> EVP_PKEY* { // NOLINT(runtime/int)
+                // d2i_PUBKEY may advance *p even on failure; snapshot first.
+                const unsigned char* der = *p;
+                if (EVP_PKEY* key = d2i_PUBKEY(nullptr, p, l)) return key;
+                return parseRsaPssSubjectPublicKeyInfo(der, static_cast<size_t>(l));
             })) {
         return ret;
     }
@@ -2441,9 +2564,9 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
     if (auto ret = TryParsePublicKeyInner(
             bp,
             "CERTIFICATE",
-            [](const unsigned char** p, long l) { // NOLINT(runtime/int)
+            [](const unsigned char** p, long l) -> EVP_PKEY* { // NOLINT(runtime/int)
                 X509Pointer x509(d2i_X509(nullptr, p, l));
-                return x509 ? X509_get_pubkey(x509.get()) : nullptr;
+                return x509 ? getX509PublicKey(x509.get()) : nullptr;
             })) {
         return ret;
     };
@@ -2471,8 +2594,13 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKey(
         return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
     }
 
-    if (config.type == PKEncodingType::SPKI && (key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
-        return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+    if (config.type == PKEncodingType::SPKI) {
+        if ((key = d2i_PUBKEY(nullptr, &start, buffer.len)) != nullptr) {
+            return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+        }
+        if ((key = parseRsaPssSubjectPublicKeyInfo(buffer.data, buffer.len)) != nullptr) {
+            return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+        }
     }
 
     return ParseKeyResult(PKParseError::FAILED);
@@ -2526,11 +2654,24 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
     auto passphrase = GetPassphrase(config);
 
     if (config.format == PKFormatType::PEM) {
-        auto key = PEM_read_bio_PrivateKey(
+        EVP_PKEY* key = PEM_read_bio_PrivateKey(
             bio.get(),
             nullptr,
             PasswordCallback,
             config.passphrase.has_value() ? &passphrase : nullptr);
+        if (key == nullptr) {
+            // BoringSSL rejects id-RSASSA-PSS keys; an unencrypted
+            // "PRIVATE KEY" block carrying one can be retried with the
+            // explicit algorithm list. Encrypted blocks never match here,
+            // so a bad-passphrase failure stays oldest for keyOrError.
+            auto retryBio = BIOPointer::New(buffer);
+            unsigned char* der = nullptr;
+            long derLen = 0; // NOLINT(runtime/int)
+            if (retryBio && PEM_bytes_read_bio(&der, &derLen, nullptr, PEM_STRING_PKCS8INF, retryBio.get(), nullptr, nullptr) == 1) {
+                DataPointer derData(der, static_cast<size_t>(derLen));
+                key = parseRsaPssPrivateKeyInfo(der, static_cast<size_t>(derLen));
+            }
+        }
         return keyOrError(EVPKeyPointer(key), config.passphrase.has_value());
     }
 
@@ -2557,7 +2698,11 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         if (!p8inf) {
             return ParseKeyResult(PKParseError::FAILED, ERR_peek_error());
         }
-        return keyOrError(EVPKeyPointer(EVP_PKCS82PKEY(p8inf.get())));
+        EVP_PKEY* key = EVP_PKCS82PKEY(p8inf.get());
+        if (key == nullptr) {
+            key = parseRsaPssPrivateKeyInfo(buffer.data, buffer.len);
+        }
+        return keyOrError(EVPKeyPointer(key));
     }
     case PKEncodingType::SEC1: {
         auto key = d2i_PrivateKey_bio(bio.get(), nullptr);
@@ -2774,6 +2919,36 @@ bool EVPKeyPointer::isSigVariant() const
 int EVPKeyPointer::getDefaultSignPadding() const
 {
     return id() == EVP_PKEY_RSA_PSS ? RSA_PKCS1_PSS_PADDING : RSA_PKCS1_PADDING;
+}
+
+std::optional<Rsa::PssParams> EVPKeyPointer::getRsaPssParams() const
+{
+    if (!pkey_ || id() != EVP_PKEY_RSA_PSS) return std::nullopt;
+
+    // BoringSSL does not implement RSA_get0_pss_params. A fresh context is
+    // seeded with the key's RSASSA-PSS restriction by pkey_rsa_init, and the
+    // standard getters expose it once an operation has been selected.
+    auto ctx = newCtx();
+    if (!ctx || EVP_PKEY_verify_init(ctx.get()) != 1) return std::nullopt;
+
+    const EVP_MD* md = nullptr;
+    if (EVP_PKEY_CTX_get_signature_md(ctx.get(), &md) != 1 || md == nullptr) {
+        // The key carries no restriction.
+        return std::nullopt;
+    }
+    const EVP_MD* mgf1Md = nullptr;
+    if (EVP_PKEY_CTX_get_rsa_mgf1_md(ctx.get(), &mgf1Md) != 1 || mgf1Md == nullptr) {
+        mgf1Md = md;
+    }
+    int saltLength = 0;
+    if (EVP_PKEY_CTX_get_rsa_pss_saltlen(ctx.get(), &saltLength) != 1 || saltLength < 0) {
+        saltLength = EVP_MD_size(md);
+    }
+    return Rsa::PssParams {
+        .digest = WTF::StringView::fromLatin1(OBJ_nid2ln(EVP_MD_type(md))),
+        .mgf1_digest = WTF::StringView::fromLatin1(OBJ_nid2ln(EVP_MD_type(mgf1Md))),
+        .salt_length = saltLength,
+    };
 }
 
 std::optional<uint32_t> EVPKeyPointer::getBytesOfRS() const
@@ -3690,8 +3865,41 @@ bool ECPointPointer::setFromBuffer(const Buffer<const unsigned char>& buffer,
     const EC_GROUP* group)
 {
     if (!point_) return false;
+
+    // BoringSSL rejects the X9.62 hybrid form (leading byte 0x06 or 0x07),
+    // which is the uncompressed encoding with Y's parity folded into the
+    // leading byte. Normalize it to 0x04 and verify the encoded parity.
+    if (buffer.len > 1 && (buffer.data[0] | 1) == (POINT_CONVERSION_HYBRID | 1)) {
+        WTF::Vector<unsigned char> copy;
+        if (!copy.tryGrow(buffer.len)) return false;
+        memcpy(copy.begin(), buffer.data, buffer.len);
+        copy[0] = POINT_CONVERSION_UNCOMPRESSED;
+        if (!EC_POINT_oct2point(group, point_.get(), copy.begin(), copy.size(), nullptr)) {
+            return false;
+        }
+        // A successful uncompressed decode guarantees copy is z || X || Y, so
+        // the last byte is Y's least-significant byte.
+        return (copy.last() & 1) == (buffer.data[0] & 1);
+    }
+
     return EC_POINT_oct2point(
         group, point_.get(), buffer.data, buffer.len, nullptr);
+}
+
+size_t ECPointPointer::point2oct(const EC_GROUP* group, const EC_POINT* point,
+    point_conversion_form_t form, unsigned char* out, size_t outLen)
+{
+    if (form != POINT_CONVERSION_HYBRID) {
+        return EC_POINT_point2oct(group, point, form, out, outLen, nullptr);
+    }
+    // BoringSSL rejects POINT_CONVERSION_HYBRID. Encode uncompressed and fold
+    // Y's parity (the last byte of the big-endian Y coordinate) into the
+    // leading byte, per X9.62.
+    size_t written = EC_POINT_point2oct(group, point, POINT_CONVERSION_UNCOMPRESSED, out, outLen, nullptr);
+    if (written != 0 && out != nullptr) {
+        out[0] = POINT_CONVERSION_HYBRID | (out[written - 1] & 1);
+    }
+    return written;
 }
 
 bool ECPointPointer::mul(const EC_GROUP* group, const BIGNUM* priv_key)
@@ -3996,27 +4204,6 @@ bool EVPKeyCtxPointer::setRsaKeygenPubExp(BignumPointer&& e)
     return false;
 }
 
-bool EVPKeyCtxPointer::setRsaPssKeygenMd(const Digest& md)
-{
-    if (!md || !ctx_) return false;
-    // OpenSSL < 3 accepts a void* for the md parameter.
-    const EVP_MD* md_ptr = md;
-    return EVP_PKEY_CTX_set_rsa_pss_keygen_md(ctx_.get(), md_ptr) > 0;
-}
-
-bool EVPKeyCtxPointer::setRsaPssKeygenMgf1Md(const Digest& md)
-{
-    if (!md || !ctx_) return false;
-    const EVP_MD* md_ptr = md;
-    return EVP_PKEY_CTX_set_rsa_pss_keygen_mgf1_md(ctx_.get(), md_ptr) > 0;
-}
-
-bool EVPKeyCtxPointer::setRsaPssSaltlen(int salt_len)
-{
-    if (!ctx_) return false;
-    return EVP_PKEY_CTX_set_rsa_pss_keygen_saltlen(ctx_.get(), salt_len) > 0;
-}
-
 bool EVPKeyCtxPointer::setRsaImplicitRejection()
 {
 #ifndef OPENSSL_IS_BORINGSSL
@@ -4281,42 +4468,6 @@ const Rsa::PrivateKey Rsa::getPrivateKey() const
     RSA_get0_factors(rsa_, &key.p, &key.q);
     RSA_get0_crt_params(rsa_, &key.dp, &key.dq, &key.qi);
     return key;
-}
-
-const std::optional<Rsa::PssParams> Rsa::getPssParams() const
-{
-    if (rsa_ == nullptr) return std::nullopt;
-    const RSA_PSS_PARAMS* params = RSA_get0_pss_params(rsa_);
-    if (params == nullptr) return std::nullopt;
-    Rsa::PssParams ret {
-        .digest = WTF::StringView::fromLatin1(OBJ_nid2ln(NID_sha1)),
-        .mgf1_digest = WTF::StringView::fromLatin1(OBJ_nid2ln(NID_sha1)),
-        .salt_length = 20,
-    };
-
-    if (params->hashAlgorithm != nullptr) {
-        const ASN1_OBJECT* hash_obj;
-        X509_ALGOR_get0(&hash_obj, nullptr, nullptr, params->hashAlgorithm);
-        ret.digest = WTF::StringView::fromLatin1(OBJ_nid2ln(OBJ_obj2nid(hash_obj)));
-    }
-
-    if (params->maskGenAlgorithm != nullptr) {
-        const ASN1_OBJECT* mgf_obj;
-        X509_ALGOR_get0(&mgf_obj, nullptr, nullptr, params->maskGenAlgorithm);
-        int mgf_nid = OBJ_obj2nid(mgf_obj);
-        if (mgf_nid == NID_mgf1) {
-            const ASN1_OBJECT* mgf1_hash_obj;
-            X509_ALGOR_get0(&mgf1_hash_obj, nullptr, nullptr, params->maskHash);
-            ret.mgf1_digest = WTF::StringView::fromLatin1(OBJ_nid2ln(OBJ_obj2nid(mgf1_hash_obj)));
-        }
-    }
-
-    if (params->saltLength != nullptr) {
-        if (ASN1_INTEGER_get_int64(&ret.salt_length, params->saltLength) != 1) {
-            return std::nullopt;
-        }
-    }
-    return ret;
 }
 
 bool Rsa::setPublicKey(BignumPointer&& n, BignumPointer&& e)

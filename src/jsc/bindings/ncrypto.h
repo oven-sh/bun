@@ -446,7 +446,6 @@ public:
 
     const PublicKey getPublicKey() const;
     const PrivateKey getPrivateKey() const;
-    const std::optional<PssParams> getPssParams() const;
 
     bool setPublicKey(BignumPointer&& n, BignumPointer&& e);
     bool setPrivateKey(BignumPointer&& d,
@@ -796,9 +795,6 @@ public:
     bool setRsaPadding(int padding);
     bool setRsaKeygenPubExp(BignumPointer&& e);
     bool setRsaKeygenBits(int bits);
-    bool setRsaPssKeygenMd(const Digest& md);
-    bool setRsaPssKeygenMgf1Md(const Digest& md);
-    bool setRsaPssSaltlen(int salt_len);
     bool setRsaImplicitRejection();
     bool setRsaOaepLabel(DataPointer&& data);
 
@@ -845,6 +841,11 @@ public:
         const Buffer<const unsigned char>& data);
     static EVPKeyPointer NewDH(DHPointer&& dh);
     static EVPKeyPointer NewRSA(RSAPointer&& rsa);
+    // Re-encodes a plain RSA private key as an id-RSASSA-PSS (RFC 4055) key
+    // restricted to `md` for both the message and MGF1 hashes, with a salt
+    // length equal to the digest length. Returns an empty pointer if BoringSSL
+    // cannot represent the parameter set (it only supports sha256/384/512).
+    static EVPKeyPointer NewRsaPss(const EVPKeyPointer& rsaKey, const EVP_MD* md);
 
     enum class PKEncodingType {
         // RSAPublicKey / RSAPrivateKey according to PKCS#1.
@@ -965,6 +966,11 @@ public:
 
     std::optional<uint32_t> getBytesOfRS() const;
     int getDefaultSignPadding() const;
+    // For an EVP_PKEY_RSA_PSS key, returns the RSASSA-PSS restriction it was
+    // parsed or generated with. BoringSSL does not implement
+    // RSA_get0_pss_params, so the restriction is read back off a fresh
+    // EVP_PKEY_CTX, which pkey_rsa_init seeds from the key.
+    std::optional<Rsa::PssParams> getRsaPssParams() const;
     operator Rsa() const;
     operator Dsa() const;
 
@@ -1377,6 +1383,12 @@ public:
     bool mul(const EC_GROUP* group, const BIGNUM* priv_key);
 
     static ECPointPointer New(const EC_GROUP* group);
+    // EC_POINT_point2oct plus support for POINT_CONVERSION_HYBRID, which
+    // BoringSSL rejects. Same contract: with `out == nullptr` returns the
+    // required length, otherwise encodes into `out` and returns the length
+    // written (0 on failure).
+    static size_t point2oct(const EC_GROUP* group, const EC_POINT* point,
+        point_conversion_form_t form, unsigned char* out, size_t outLen);
 
 private:
     DeleteFnPtr<EC_POINT, EC_POINT_free> point_;

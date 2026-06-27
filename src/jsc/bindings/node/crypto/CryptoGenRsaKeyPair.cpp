@@ -53,7 +53,10 @@ void RsaKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJo
 
 ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
 {
-    ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(m_variant == RsaKeyVariant::RSA_PSS ? EVP_PKEY_RSA_PSS : EVP_PKEY_RSA);
+    // BoringSSL cannot generate an EVP_PKEY_RSA_PSS key: its rsa-pss method
+    // has no keygen. The key is generated as a plain RSA key here; for the
+    // RSA_PSS variant runTask re-encodes it as id-RSASSA-PSS.
+    ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_RSA);
     if (!ctx || !ctx.initForKeygen() || !ctx.setRsaKeygenBits(m_modulusLength)) {
         m_opensslError = ERR_get_error();
         return {};
@@ -67,34 +70,24 @@ ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
         }
     }
 
-    if (m_variant == RsaKeyVariant::RSA_PSS) {
-        if (m_md && !ctx.setRsaPssKeygenMd(m_md)) {
-            m_opensslError = ERR_get_error();
-            return {};
-        }
+    return ctx;
+}
 
-        auto& mgf1Md = m_mgfMd;
-        if (!mgf1Md && m_md) {
-            mgf1Md = m_md;
-        }
-
-        if (mgf1Md && !ctx.setRsaPssKeygenMgf1Md(mgf1Md)) {
-            m_opensslError = ERR_get_error();
-            return {};
-        }
-
-        int saltLength = m_saltLength;
-        if (saltLength < 0 && m_md) {
-            saltLength = m_md.size();
-        }
-
-        if (saltLength >= 0 && !ctx.setRsaPssSaltlen(saltLength)) {
-            m_opensslError = ERR_get_error();
-            return {};
-        }
+void RsaKeyPairJobCtx::runTask(JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& keyCtx)
+{
+    KeyPairJobCtx::runTask(globalObject, keyCtx);
+    if (m_variant != RsaKeyVariant::RSA_PSS || !m_keyObj.data()) {
+        return;
     }
 
-    return ctx;
+    // fromJS only admits RSA-PSS parameter sets that NewRsaPss can represent.
+    ncrypto::EVPKeyPointer pssKey = ncrypto::EVPKeyPointer::NewRsaPss(m_keyObj.asymmetricKey(), m_md);
+    if (!pssKey) {
+        m_opensslError = ERR_get_error();
+        m_keyObj = KeyObject();
+        return;
+    }
+    m_keyObj = KeyObject::create(CryptoKeyType::Private, WTF::move(pssKey));
 }
 
 std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& encodingConfig)
@@ -222,6 +215,27 @@ std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJS(JSC::JSGlobalObject* gl
 
     if (saltLength && *saltLength < 0) {
         ERR::OUT_OF_RANGE(scope, globalObject, "salt length is out of range"_s);
+        return std::nullopt;
+    }
+
+    // BoringSSL only represents RSASSA-PSS restrictions where the MGF1 hash
+    // matches the message hash (sha256, sha384, or sha512) and the salt
+    // length equals the digest length; reject everything else up front.
+    if (!md) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "'rsa-pss' key generation requires options.hashAlgorithm to be 'sha256', 'sha384' or 'sha512'"_s);
+        return std::nullopt;
+    }
+    int hashNid = EVP_MD_type(md);
+    if (hashNid != NID_sha256 && hashNid != NID_sha384 && hashNid != NID_sha512) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "options.hashAlgorithm must be 'sha256', 'sha384' or 'sha512' for an 'rsa-pss' key"_s);
+        return std::nullopt;
+    }
+    if (mgf1Md && EVP_MD_type(mgf1Md) != hashNid) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "options.mgf1HashAlgorithm must match options.hashAlgorithm for an 'rsa-pss' key"_s);
+        return std::nullopt;
+    }
+    if (saltLength && static_cast<size_t>(*saltLength) != md.size()) {
+        ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "options.saltLength must equal the digest length of options.hashAlgorithm for an 'rsa-pss' key"_s);
         return std::nullopt;
     }
 

@@ -515,7 +515,7 @@ void KeyObject::getRsaKeyDetails(JSGlobalObject* globalObject, ThrowScope& scope
     result->putDirect(vm, Identifier::fromString(vm, "publicExponent"_s), publicExponent);
 
     if (pkey.id() == EVP_PKEY_RSA_PSS) {
-        auto maybeParams = rsa.getPssParams();
+        auto maybeParams = pkey.getRsaPssParams();
         if (maybeParams.has_value()) {
             auto& params = maybeParams.value();
             result->putDirect(vm, Identifier::fromString(vm, "hashAlgorithm"_s), jsString(vm, params.digest));

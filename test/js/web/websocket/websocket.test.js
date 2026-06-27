@@ -40,7 +40,22 @@ describe.concurrent("WebSocket", () => {
   });
 
   it("should connect over https", async () => {
-    const ws = new WebSocket(TEST_WEBSOCKET_HOST.replaceAll("wss:", "https:"));
+    using server = Bun.serve({
+      port: 0,
+      tls: COMMON_CERT,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Upgrade failed :(", { status: 500 });
+      },
+      websocket: {
+        message() {},
+        open(ws) {},
+      },
+    });
+    // server.url.href is an https:// URL, accepted as an alias for wss://.
+    const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
     await new Promise((resolve, reject) => {
       ws.onopen = resolve;
       ws.onerror = reject;
@@ -420,7 +435,24 @@ describe.concurrent("WebSocket", () => {
   });
 
   it("should send and receive messages", async () => {
-    const ws = new WebSocket(TEST_WEBSOCKET_HOST);
+    using server = Bun.serve({
+      port: 0,
+      tls: COMMON_CERT,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Upgrade failed :(", { status: 500 });
+      },
+      websocket: {
+        message(ws, message) {
+          // echo
+          ws.send(message);
+        },
+        open(ws) {},
+      },
+    });
+    const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
     await new Promise((resolve, reject) => {
       ws.onopen = resolve;
       ws.onerror = reject;

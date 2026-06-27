@@ -491,4 +491,94 @@ describe("bundler", () => {
       stdout: '{"hasMap":true,"same":true}',
     },
   });
+
+  // ============================================================================
+  // Tests for nullish module.exports
+  // A CJS dependency may legitimately set module.exports to null or undefined.
+  // __toESM must not pass a nullish value to Object.getOwnPropertyNames, or the
+  // whole bundle throws at import time. Node and esbuild both handle this.
+  // ============================================================================
+
+  // Test 24: module.exports = null, format=esm
+  itBundled("cjs/__toESM_module_exports_null", {
+    files: {
+      "/entry.js": /* js */ `
+        import z from "./z.cjs";
+        console.log("z is", z);
+      `,
+      "/z.cjs": /* js */ `
+        module.exports = null;
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "z is null",
+    },
+  });
+
+  // Test 25: module.exports = null, format=cjs
+  itBundled("cjs/__toESM_module_exports_null_format_cjs", {
+    files: {
+      "/entry.js": /* js */ `
+        import z from "./z.cjs";
+        console.log("z is", z);
+      `,
+      "/z.cjs": /* js */ `
+        module.exports = null;
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: {
+      stdout: "z is null",
+    },
+  });
+
+  // Test 26: module.exports = undefined
+  itBundled("cjs/__toESM_module_exports_undefined", {
+    files: {
+      "/entry.js": /* js */ `
+        import u from "./u.cjs";
+        console.log("u is", u);
+      `,
+      "/u.cjs": /* js */ `
+        module.exports = undefined;
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "u is undefined",
+    },
+  });
+
+  // ============================================================================
+  // Tests for the __commonJS wrapper function
+  // Node runs every CommonJS module inside a regular function, so a top-level
+  // `arguments` reference is legal. The wrapper passed to __commonJS must be a
+  // regular function (not an arrow) so `arguments` has a binding when the
+  // output format is ESM. esbuild emits a regular function here too.
+  // ============================================================================
+
+  // Test 27: top-level `arguments` inside a CJS module
+  itBundled("cjs/__commonJS_top_level_arguments", {
+    files: {
+      "/entry.js": /* js */ `
+        import tag from "./args.cjs";
+        console.log(tag);
+      `,
+      "/args.cjs": /* js */ `
+        module.exports = Object.prototype.toString.call(arguments);
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "[object Arguments]",
+    },
+  });
 });

@@ -141,7 +141,5 @@ describe.skipIf(isWindows)("Bun.write() mode option", () => {
   });
 }); // end describe.skipIf(isWindows)
 
-// Note: The mode option is fully respected for Bun.file() copy operations (the fix for #25903).
-// For direct string/buffer writes, mode support depends on the write path used internally.
-// The empty file creation path respects mode, but other direct write paths may use
-// the default permission (0o664). The tests above validate the Bun.file() copy path.
+// These tests validate the Bun.file() copy path. The string/buffer/Blob write paths
+// are covered by the "Bun.write mode option" suite in test/js/bun/io/bun-write.test.js.

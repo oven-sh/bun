@@ -595,3 +595,70 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(f.name).toBe(filePath);
   });
 });
+
+describe.skipIf(isWindows)("Bun.write mode option", () => {
+  const modeOf = p => fs.statSync(p).mode & 0o777;
+  const large = Buffer.alloc(512 * 1024, "a").toString();
+
+  for (const [label, data] of [
+    ["small string", "hello"],
+    ["empty string", ""],
+    ["small Uint8Array", new Uint8Array([1, 2, 3])],
+    ["large string (async path)", large],
+    ["large Uint8Array (async path)", new Uint8Array(512 * 1024)],
+    ["Blob", new Blob(["hello"])],
+    ["empty Blob", new Blob([])],
+  ]) {
+    test(`sets permissions on new file for ${label}`, async () => {
+      using dir = tempDir("bun-write-mode", {});
+      const dest = join(String(dir), "out.txt");
+      await Bun.write(dest, data, { mode: 0o600 });
+      expect(modeOf(dest)).toBe(0o600);
+    });
+
+    test(`sets permissions on existing file for ${label}`, async () => {
+      using dir = tempDir("bun-write-mode", { "out.txt": "old" });
+      const dest = join(String(dir), "out.txt");
+      expect(modeOf(dest)).not.toBe(0o600);
+      await Bun.write(dest, data, { mode: 0o600 });
+      expect(modeOf(dest)).toBe(0o600);
+    });
+  }
+
+  test("sets permissions when destination is a Bun.file()", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(Bun.file(dest), "hello", { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("sets permissions when parent directory must be created", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "sub", "out.txt");
+    await Bun.write(dest, "hello", { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("sets permissions when source is a Response body", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(dest, new Response("hello"), { mode: 0o600 });
+    expect(modeOf(dest)).toBe(0o600);
+  });
+
+  test("accepts mode 0", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(dest, "hello", { mode: 0o000 });
+    expect(modeOf(dest)).toBe(0o000);
+  });
+
+  test("omitted mode leaves default permissions", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    const baseline = join(String(dir), "baseline.txt");
+    fs.writeFileSync(baseline, "x");
+    await Bun.write(dest, "hello");
+    expect(modeOf(dest)).toBe(modeOf(baseline));
+  });
+});

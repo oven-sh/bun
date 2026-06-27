@@ -151,17 +151,18 @@ import.meta.hot.dispose(data => {
 });
 ```
 
-| Property    | Description                                                                                               |
-| ----------- | --------------------------------------------------------------------------------------------------------- |
+| Property    | Description                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------- |
 | `data`      | A plain object that is persisted across reloads for the same module. Use it to pass state between runs. |
 | `dispose()` | Register a callback that runs just before this module is replaced. The callback receives `data`.        |
-| `accept()`  | No-op. Under `bun --hot` every module is re-evaluated on each change, so all modules implicitly accept.  |
-| `decline()` | No-op, provided for compatibility.                                                                       |
+| `accept()`  | No-op. Under `bun --hot` every module is re-evaluated on each change, so all modules implicitly accept. |
+| `decline()` | No-op, provided for compatibility.                                                                      |
 
 When not running under `--hot`, `import.meta.hot` is `undefined`, so guard accesses with `import.meta.hot?.dispose(...)` or `if (import.meta.hot) { ... }`.
 
 <Note>
-The bundler's dev server exposes a fuller `import.meta.hot` API with module-level accept boundaries; see [Hot reloading](/bundler/hot-reloading) for that API.
+  The bundler's dev server exposes a fuller `import.meta.hot` API with module-level accept boundaries; see [Hot
+  reloading](/bundler/hot-reloading) for that API.
 </Note>
 
 <Accordion title="Implementation details">

@@ -1068,8 +1068,16 @@ impl ServerConfig {
                     // map entries with `UserOptions.arena`.
                     for condition in &o.conditions {
                         let key = bb::arena_dupe_z(&user_options.arena, condition).as_bytes();
-                        user_options.bundler_options.client.conditions.insert(key, ());
-                        user_options.bundler_options.server.conditions.insert(key, ());
+                        user_options
+                            .bundler_options
+                            .client
+                            .conditions
+                            .insert(key, ());
+                        user_options
+                            .bundler_options
+                            .server
+                            .conditions
+                            .insert(key, ());
                         user_options.bundler_options.ssr.conditions.insert(key, ());
                     }
 

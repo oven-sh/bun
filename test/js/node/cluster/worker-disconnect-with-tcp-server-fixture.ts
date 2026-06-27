@@ -1,9 +1,4 @@
 // https://github.com/oven-sh/bun/issues/20642
-// Worker processes must exit after cluster.worker.disconnect() when they
-// have an active net.Server. Previously the faux round-robin handle's
-// owner_symbol was not shared with net, so Worker#_disconnect could never
-// find the owning server to close, its waitingCount never reached zero,
-// and process.disconnect() was never called.
 import cluster from "cluster";
 import net from "net";
 

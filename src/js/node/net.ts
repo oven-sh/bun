@@ -3643,11 +3643,9 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
-    // In Node.js the cluster faux handle becomes server._handle and inherits
-    // owner_symbol in setupListenHandle. Bun keeps the real Bun.listen() handle
-    // as server._handle, so explicitly link the faux handle to the server here
-    // so cluster's Worker#_disconnect can find the owning server to close, and
-    // so closing the server tears down the faux handle (unref + notify primary).
+    // Unlike Node.js, Bun keeps the real Bun.listen() handle as server._handle
+    // rather than the cluster faux handle, so link them here: Worker#_disconnect
+    // finds the server via owner_symbol, and closing the server closes the faux handle.
     if (handle) {
       handle[owner_symbol] = server;
       server.once("close", () => handle.close());

@@ -2095,7 +2095,15 @@ impl Function {
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
         let ffi_wrapper = unsafe { Bun__createFFICallbackFunction(js_context, js_function) };
-        self.print_callback_source_code(Some(js_context), Some(ffi_wrapper), &mut source_code)?;
+        // Heap-allocated wrapper with two JSC::Strong roots. Ownership
+        // transfers to Step::Compiled on success; on every earlier exit
+        // (TCCMissing, Step::Failed) this guard derefs it instead of leaking.
+        let ffi_wrapper = scopeguard::guard(ffi_wrapper, |p| {
+            // SAFETY: p came from Bun__createFFICallbackFunction and was not
+            // stored in Step::Compiled, so we still hold the +1.
+            unsafe { FFICallbackFunctionWrapper_destroy(p) };
+        });
+        self.print_callback_source_code(Some(js_context), Some(*ffi_wrapper), &mut source_code)?;
 
         #[cfg(all(debug_assertions, unix))]
         'debug_write: {
@@ -2222,7 +2230,9 @@ impl Function {
             // dereferenced or written through on the Rust side; stored as
             // NonNull to avoid laundering &T → *mut T provenance.
             js_context: Some(NonNull::from(js_context)),
-            ffi_callback_function_wrapper: NonNull::new(ffi_wrapper),
+            ffi_callback_function_wrapper: NonNull::new(scopeguard::ScopeGuard::into_inner(
+                ffi_wrapper,
+            )),
         });
         Ok(())
     }

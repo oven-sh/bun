@@ -1049,8 +1049,14 @@ static JSC::ErrorInstance* createErrorWithCode(JSC::VM& vm, JSC::JSGlobalObject*
 // used to implement napi_throw_*_error
 static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, const char* msg_utf8, JSC::ErrorType type)
 {
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
+    if (env->isFinishingFinalizers()) {
+        return napi_set_last_error(env, env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
+    }
 
     if (!msg_utf8) {
         return napi_set_last_error(env, napi_invalid_arg);
@@ -1060,6 +1066,7 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
     WTF::String message = WTF::String::fromUTF8(msg_utf8);
 
     JSC::ErrorInstance* error = createErrorWithCode(vm, globalObject, code, message, type);
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     env->scheduleException(error);
     return napi_set_last_error(env, napi_ok);
 }
@@ -1344,11 +1351,11 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else if (std::optional<JSValue> pending = env->pendingException()) {
         *result = toNapi(pending.value(), globalObject);
-        env->clearPendingException();
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
     }
     (void)scope.tryClearException();
+    env->clearPendingException();
 
     return napi_set_last_error(env, napi_ok);
 }

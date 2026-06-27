@@ -390,6 +390,111 @@ static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static const char *throw_pending_status_name(napi_status s) {
+  switch (s) {
+  case napi_ok:
+    return "ok";
+  case napi_pending_exception:
+    return "pending_exception";
+  case napi_invalid_arg:
+    return "invalid_arg";
+  default:
+    return "other";
+  }
+}
+
+static void throw_pending_report(napi_env env, const char *label,
+                                  napi_status s1, napi_status s2) {
+  bool pending_before = false;
+  napi_is_exception_pending(env, &pending_before);
+
+  napi_value exc = nullptr;
+  napi_status get_status = napi_get_and_clear_last_exception(env, &exc);
+
+  bool pending_after = false;
+  napi_is_exception_pending(env, &pending_after);
+
+  char kept[64] = {0};
+  if (exc != nullptr) {
+    napi_value msg = nullptr;
+    if (napi_get_named_property(env, exc, "message", &msg) == napi_ok) {
+      size_t got = 0;
+      napi_get_value_string_utf8(env, msg, kept, sizeof(kept), &got);
+    }
+  }
+
+  printf("%s: throw1=%s throw2=%s pending=%d get_and_clear=%s "
+         "pending_after_clear=%d kept=%s\n",
+         label, throw_pending_status_name(s1), throw_pending_status_name(s2),
+         (int)pending_before, throw_pending_status_name(get_status),
+         (int)pending_after, kept);
+}
+
+// napi_throw_error (and the _type_error / _range_error / syntax_error
+// variants) called while an exception is already pending must return
+// napi_pending_exception and preserve the first exception. Returning napi_ok
+// and overwriting the pending exception would make the original (root cause)
+// error disappear when cleanup code throws on top of it.
+static napi_value
+test_napi_throw_with_pending_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  using ThrowFunction =
+      napi_status (*)(napi_env, const char *code, const char *msg);
+  struct {
+    const char *name;
+    ThrowFunction fn;
+  } variants[] = {
+      {"napi_throw_error", napi_throw_error},
+      {"napi_throw_type_error", napi_throw_type_error},
+      {"napi_throw_range_error", napi_throw_range_error},
+      {"node_api_throw_syntax_error", node_api_throw_syntax_error},
+  };
+
+  for (const auto &variant : variants) {
+    napi_status s1 = variant.fn(env, "E1", "first");
+    napi_status s2 = variant.fn(env, "E2", "second");
+    throw_pending_report(env, variant.name, s1, s2);
+  }
+
+  // napi_throw with an already-created error value
+  {
+    napi_value err1 = nullptr, err2 = nullptr;
+    napi_value msg1 = nullptr, msg2 = nullptr;
+    napi_create_string_utf8(env, "first", NAPI_AUTO_LENGTH, &msg1);
+    napi_create_string_utf8(env, "second", NAPI_AUTO_LENGTH, &msg2);
+    napi_create_error(env, nullptr, msg1, &err1);
+    napi_create_error(env, nullptr, msg2, &err2);
+    napi_status s1 = napi_throw(env, err1);
+    napi_status s2 = napi_throw(env, err2);
+    throw_pending_report(env, "napi_throw", s1, s2);
+  }
+
+  // Second throw attempted after another call has observed the first
+  // pending exception: the second throw must still fail with
+  // napi_pending_exception and a single napi_get_and_clear_last_exception
+  // must leave the env clean so nothing escapes back to JavaScript.
+  {
+    napi_status s1 = napi_throw_error(env, "E1", "first");
+    napi_value undef = nullptr;
+    napi_get_undefined(env, &undef);
+    napi_value unused = nullptr;
+    napi_call_function(env, undef, info[0], 0, nullptr, &unused);
+    napi_status s2 = napi_throw_error(env, "E2", "second");
+    throw_pending_report(env, "throw_call_throw", s1, s2);
+  }
+
+  bool final_pending = false;
+  napi_is_exception_pending(env, &final_pending);
+  printf("final_pending=%d\n", (int)final_pending);
+
+  return ok(env);
+}
+
 // Call Node-API functions in ways that result in different error handling
 // (erroneous call, valid call, or valid call while an exception is pending) and
 // log information from napi_get_last_error_info
@@ -2403,6 +2508,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
+  REGISTER_FUNCTION(env, exports, test_napi_throw_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
   REGISTER_FUNCTION(env, exports, bigint_to_u64);

@@ -455,6 +455,22 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("does not throw with nullptr", async () => {
       await checkSameOutput("test_napi_throw_with_nullptr", []);
     });
+
+    it("returns napi_pending_exception and preserves the first exception when one is already pending", async () => {
+      const result = await checkSameOutput("test_napi_throw_with_pending_exception", []);
+      // the first throw wins for every variant; nothing escapes the native call
+      expect(result).toContain("napi_throw_error: throw1=ok throw2=pending_exception");
+      expect(result).toContain("napi_throw_type_error: throw1=ok throw2=pending_exception");
+      expect(result).toContain("napi_throw_range_error: throw1=ok throw2=pending_exception");
+      expect(result).toContain("node_api_throw_syntax_error: throw1=ok throw2=pending_exception");
+      expect(result).toContain("napi_throw: throw1=ok throw2=pending_exception");
+      expect(result).toContain("throw_call_throw: throw1=ok throw2=pending_exception");
+      expect(result).toContain("kept=first");
+      expect(result).toContain("pending_after_clear=0");
+      expect(result).toContain("final_pending=0");
+      expect(result).not.toContain("kept=second");
+      expect(result).not.toContain("synchronously threw");
+    });
   });
   describe("napi_create_error functions", () => {
     it("has the right code and message", async () => {

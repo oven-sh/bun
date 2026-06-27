@@ -175,7 +175,9 @@ function strictContentLength(response) {
 function checkStrictContentLength(strictCL, handle, chunk, encoding, fromEnd) {
   if (strictCL === undefined) return;
   const len = chunk ? (typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength) : 0;
-  const written = handle.getBytesWritten() + len;
+  // Optional chain: the http2 allowHTTP1 fallback installs a JS shim handle
+  // (http2.ts createHttp1FallbackResponseHandle) without getBytesWritten.
+  const written = (handle.getBytesWritten?.() ?? 0) + len;
   if (fromEnd ? written !== strictCL : written > strictCL) {
     throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(
       `Response body's content-length of ${written} byte(s) does not match the content-length of ${strictCL} byte(s) set in header`,

@@ -465,10 +465,62 @@ it("spawnSync(does-not-exist)", () => {
   const x = spawnSync("does-not-exist");
   expect(x.error?.code).toEqual("ENOENT");
   expect(x.error.path).toEqual("does-not-exist");
-  expect(x.signal).toEqual(null);
-  expect(x.output).toEqual([null, null, null]);
-  expect(x.stdout).toEqual(null);
-  expect(x.stderr).toEqual(null);
+  expect(x.error.syscall).toEqual("spawnSync does-not-exist");
+  expect(x.error.spawnargs).toEqual([]);
+  // Node.js sets status/signal to null, output to null, pid to 0, and
+  // stdout/stderr to undefined when the spawn itself fails.
+  expect({
+    status: x.status,
+    signal: x.signal,
+    output: x.output,
+    pid: x.pid,
+    stdout: x.stdout,
+    stderr: x.stderr,
+  }).toStrictEqual({
+    status: null,
+    signal: null,
+    output: null,
+    pid: 0,
+    stdout: undefined,
+    stderr: undefined,
+  });
+  expect("status" in x).toBe(true);
+  expect("stdout" in x).toBe(true);
+});
+
+it("spawnSync(does-not-exist) status is strictly null", () => {
+  // `r.status === null` is the documented way to detect that no exit code
+  // exists; user code commonly does `process.exit(r.status)`.
+  const r = spawnSync("definitely-not-a-real-binary-xyz");
+  expect(r.status === null).toBe(true);
+  expect(r.status === undefined).toBe(false);
+  expect(typeof r.pid).toBe("number");
+});
+
+it("execFileSync(does-not-exist) error carries spawnSync result shape", () => {
+  let err: any;
+  try {
+    execFileSync("does-not-exist");
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeDefined();
+  expect(err.code).toBe("ENOENT");
+  expect({
+    status: err.status,
+    signal: err.signal,
+    output: err.output,
+    pid: err.pid,
+    stdout: err.stdout,
+    stderr: err.stderr,
+  }).toStrictEqual({
+    status: null,
+    signal: null,
+    output: null,
+    pid: 0,
+    stdout: undefined,
+    stderr: undefined,
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/32067

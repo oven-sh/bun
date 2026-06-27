@@ -507,13 +507,13 @@ function spawnSync(file, args, options) {
     );
     error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
     return {
-      signal: null,
-      status: null,
-      output: [null, null, null],
-      pid: 0,
-      stdout: null,
-      stderr: null,
       error,
+      status: null,
+      signal: null,
+      output: null,
+      pid: 0,
+      stdout: undefined,
+      stderr: undefined,
     };
   }
 
@@ -546,6 +546,7 @@ function spawnSync(file, args, options) {
   }
 
   var error;
+  var result;
   try {
     var {
       stdout = null,
@@ -573,39 +574,39 @@ function spawnSync(file, args, options) {
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
     });
+
+    // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
+    // instead of the actual output. We should treat this as no output available.
+    const outputStdout = typeof stdout === "number" ? null : stdout;
+    const outputStderr = typeof stderr === "number" ? null : stderr;
+
+    result = {
+      status: exitCode ?? null,
+      signal: signalCode ?? null,
+      // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
+      output: [null, outputStdout, outputStderr],
+      pid,
+    };
   } catch (err) {
     error = err;
-    stdout = null;
-    stderr = null;
+    result = {
+      error: err,
+      status: null,
+      signal: null,
+      output: null,
+      pid: 0,
+    };
   }
 
-  // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
-  // instead of the actual output. We should treat this as no output available.
-  const outputStdout = typeof stdout === "number" ? null : stdout;
-  const outputStderr = typeof stderr === "number" ? null : stderr;
-
-  const result = {
-    signal: signalCode ?? null,
-    status: exitCode,
-    // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, outputStdout, outputStderr],
-    pid,
-  };
-
-  if (error) {
-    result.error = error;
+  if (result.output && encoding && encoding !== "buffer") {
+    for (let i = 0; i < result.output.length; i++) {
+      if (!result.output[i]) continue;
+      result.output[i] = result.output[i].toString(encoding);
+    }
   }
 
-  if (outputStdout && encoding && encoding !== "buffer") {
-    result.output[1] = result.output[1]?.toString(encoding);
-  }
-
-  if (outputStderr && encoding && encoding !== "buffer") {
-    result.output[2] = result.output[2]?.toString(encoding);
-  }
-
-  result.stdout = result.output[1];
-  result.stderr = result.output[2];
+  result.stdout = result.output?.[1];
+  result.stderr = result.output?.[2];
 
   if (exitedDueToTimeout && error == null) {
     result.error = new SystemError(

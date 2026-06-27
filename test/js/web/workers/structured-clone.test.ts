@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
 import { join } from "path";
@@ -460,8 +460,6 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
   for (const [label, expr] of [
     ["ArrayBuffer", "new ArrayBuffer(2 ** 31)"],
     ["resizable ArrayBuffer", "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
-    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)"],
-    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
     ["Uint8Array", "new Uint8Array(2 ** 31)"],
   ] as const) {
     test(label, async () => {
@@ -488,6 +486,38 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(["DataCloneError", "SKIP"]).toContain(stdout.trim());
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // A SharedArrayBuffer is never copied into the serialization buffer: the clone maps the
+  // same data block (see the "structuredClone of SharedArrayBuffer" suite). So the 2GiB
+  // cap does not apply and cloning one at or above that size succeeds.
+  for (const [label, expr] of [
+    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)"],
+    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
+  ] as const) {
+    test(`${label} is shared, not copied`, async () => {
+      const script = `
+        let buf;
+        try {
+          buf = ${expr};
+        } catch {
+          console.log("SKIP");
+          process.exit(0);
+        }
+        const clone = structuredClone(buf);
+        new Uint8Array(buf)[0] = 7;
+        console.log(clone instanceof SharedArrayBuffer && new Uint8Array(clone)[0] === 7 ? "SHARED" : "BAD");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(["SHARED", "SKIP"]).toContain(stdout.trim());
       expect(exitCode).toBe(0);
     });
   }
@@ -701,5 +731,128 @@ describe("structuredClone(Object.prototype)", () => {
   test("bun:jsc serialize/deserialize round-trips it too", () => {
     const cloned = deserialize(serialize(Object.prototype));
     expect(cloned).toEqual({});
+  });
+});
+
+// https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+// Serializing a SharedArrayBuffer (not for storage) yields a SharedArrayBuffer over the
+// same data block, never a plain ArrayBuffer deep copy.
+describe("structuredClone of SharedArrayBuffer", () => {
+  test("returns a SharedArrayBuffer mapping the same memory block", () => {
+    const src = new SharedArrayBuffer(8);
+    const clone = structuredClone(src);
+    expect(clone).toBeInstanceOf(SharedArrayBuffer);
+    expect(clone).not.toBe(src);
+    // writes through either object are visible through the other
+    new Uint8Array(src)[0] = 42;
+    new Uint8Array(clone)[1] = 7;
+    expect(Array.from(new Uint8Array(clone))).toEqual([42, 7, 0, 0, 0, 0, 0, 0]);
+    expect(Array.from(new Uint8Array(src))).toEqual([42, 7, 0, 0, 0, 0, 0, 0]);
+  });
+
+  test("Atomics on the clone are visible through the original", () => {
+    const src = new SharedArrayBuffer(8);
+    const clone = structuredClone(src);
+    Atomics.add(new Int32Array(clone), 0, 5);
+    expect(Atomics.load(new Int32Array(src), 0)).toBe(5);
+  });
+
+  test("a growable SharedArrayBuffer stays growable and tracks growth of the original", () => {
+    const src = new SharedArrayBuffer(8, { maxByteLength: 16 });
+    const clone = structuredClone(src);
+    expect(clone).toBeInstanceOf(SharedArrayBuffer);
+    expect(clone.growable).toBe(true);
+    expect(clone.maxByteLength).toBe(16);
+    src.grow(16);
+    expect(clone.byteLength).toBe(16);
+  });
+
+  test("a typed array viewing a SharedArrayBuffer clones with a shared buffer", () => {
+    const src = new SharedArrayBuffer(8);
+    const view = new Uint8Array(src, 2, 4);
+    const clone = structuredClone(view);
+    expect(clone.buffer).toBeInstanceOf(SharedArrayBuffer);
+    expect(clone.byteOffset).toBe(2);
+    expect(clone.length).toBe(4);
+    new Uint8Array(src)[2] = 9;
+    expect(clone[0]).toBe(9);
+  });
+
+  test("the same SharedArrayBuffer referenced twice deduplicates to one clone", () => {
+    const src = new SharedArrayBuffer(4);
+    const clone = structuredClone({ a: src, b: src });
+    expect(clone.a).toBeInstanceOf(SharedArrayBuffer);
+    expect(clone.a).toBe(clone.b);
+  });
+
+  test("shares alongside a transferred ArrayBuffer in the same graph", () => {
+    const sab = new SharedArrayBuffer(4);
+    const ab = new ArrayBuffer(4);
+    const clone = structuredClone({ sab, ab }, { transfer: [ab] });
+    expect(clone.sab).toBeInstanceOf(SharedArrayBuffer);
+    new Uint8Array(sab)[0] = 3;
+    expect(new Uint8Array(clone.sab)[0]).toBe(3);
+    expect(ab.byteLength).toBe(0);
+  });
+
+  test("a SharedArrayBuffer in the transfer list still throws DataCloneError", () => {
+    const sab = new SharedArrayBuffer(4);
+    expect(() => structuredClone(sab, { transfer: [sab] })).toThrow(
+      expect.objectContaining({ name: "DataCloneError" }),
+    );
+  });
+
+  // Shared contents travel out of band on the SerializedScriptValue, never in the wire
+  // bytes, so the two wire-bytes-only paths must keep producing an independent deep copy.
+  test("bun:jsc serialize across a process still deep-copies", () => {
+    const src = new SharedArrayBuffer(4);
+    new Uint8Array(src)[0] = 11;
+    const clone = jscSerializeRoundtripCrossProcess(src);
+    expect(clone).toBeInstanceOf(ArrayBuffer);
+    expect(clone).not.toBeInstanceOf(SharedArrayBuffer);
+    expect(new Uint8Array(clone)[0]).toBe(11);
+    new Uint8Array(src)[1] = 1;
+    expect(new Uint8Array(clone)[1]).toBe(0);
+  });
+
+  test("child_process IPC with advanced serialization still deep-copies", async () => {
+    using dir = tempDir("sab-ipc", {
+      "child.js": `
+        process.on("message", m => {
+          process.send({
+            isSAB: m.sab instanceof SharedArrayBuffer,
+            isAB: m.sab instanceof ArrayBuffer,
+            byte0: new Uint8Array(m.sab)[0],
+          });
+        });
+      `,
+      "parent.js": `
+        const { fork } = require("node:child_process");
+        const { join } = require("node:path");
+        const child = fork(join(__dirname, "child.js"), [], {
+          serialization: "advanced",
+          stdio: ["inherit", "inherit", "inherit", "ipc"],
+        });
+        child.on("error", e => { console.error(e); process.exit(1); });
+        child.on("exit", code => { if (code !== null && code !== 0) process.exit(1); });
+        const sab = new SharedArrayBuffer(4);
+        new Uint8Array(sab)[0] = 7;
+        child.on("message", reply => {
+          console.log(JSON.stringify(reply));
+          child.kill();
+        });
+        child.send({ sab });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ isSAB: false, isAB: true, byte0: 7 });
+    expect(exitCode).toBe(0);
   });
 });

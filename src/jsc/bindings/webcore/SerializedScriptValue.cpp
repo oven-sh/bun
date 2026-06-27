@@ -1812,8 +1812,10 @@ private:
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
 
-                if (arrayBuffer->isShared() && m_context == SerializationContext::WorkerPostMessage) {
-                    // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+                // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+                // Shared contents travel out of band (m_sharedBuffers), so wire-bytes-only consumers keep the
+                // deep-copy below: node:v8/bun:jsc serialize sets ForStorage, IPC sets ForCrossProcessTransfer.
+                if (arrayBuffer->isShared() && m_forStorage == SerializationForStorage::No && m_forTransfer == SerializationForCrossProcessTransfer::No) {
                     if (!JSC::Options::useSharedArrayBuffer()) {
                         code = SerializationReturnCode::DataCloneError;
                         return true;
@@ -6515,9 +6517,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     // #endif
     //             ));
     scope.releaseAssertNoException();
-    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
+    // The serializer alone decides whether m_sharedBuffers has entries; always hand them over
+    // so the attach condition cannot drift out of sync with the SharedArrayBufferTag gate.
+    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), WTF::move(sharedBuffers)
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        ,
+                                                                                                                            ,
         WTF::move(detachedCanvases)
 #endif
 #if ENABLE(WEB_RTC)

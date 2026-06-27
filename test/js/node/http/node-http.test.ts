@@ -3075,6 +3075,43 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
       server.close();
     }
   });
+
+  it("target followed by CRLF with no HTTP version surfaces to JS", async () => {
+    // Node's llhttp accepts this as HTTP/0.9 and fires 'request'; Bun's parser
+    // rejects it and fires 'clientError'. Either is observable. The bug was
+    // that the parser returned short-read here and the connection sat idle.
+    const events: string[] = [];
+    const { promise: surfaced, resolve: onSurfaced } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      events.push("request");
+      res.end("ok");
+      onSurfaced();
+    });
+    server.on("connection", () => events.push("connection"));
+    server.on("clientError", (err: any, s) => {
+      events.push("clientError");
+      s.destroy();
+      onSurfaced();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GET /\r\nHost: localhost\r\n\r\n");
+
+      await surfaced;
+      expect(events[0]).toBe("connection");
+      expect(["request", "clientError"]).toContain(events[1]);
+      socket.destroy();
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  });
 });
 
 it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () => {

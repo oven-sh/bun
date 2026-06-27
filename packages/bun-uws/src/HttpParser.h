@@ -640,11 +640,8 @@ namespace uWS
                             /*Indicates that the request line is ancient HTTP*/
                             return ConsumeRequestLineResult::success(nextPosition, true, isConnect);
                         }
-                        /* If we stand at the post padded CR, we have fragmented input so try again later */
-                        if (data[0] == '\r') {
-                            return ConsumeRequestLineResult::shortRead(false, isConnect);
-                        }
-                        /* This is an error */
+                        /* nextPosition < end here, so data < end: any CR is real input, not the
+                         * post-padding sentinel. Fall through to the version error. */
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                     }
                 }

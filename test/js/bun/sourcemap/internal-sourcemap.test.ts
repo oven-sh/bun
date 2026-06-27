@@ -84,6 +84,33 @@ describe("InternalSourceMap", () => {
     expect(exited).toBe(0);
   });
 
+  // Source-map columns count UTF-16 code units. A non-ASCII character earlier
+  // on the line (Latin-1, astral, CJK) must not shift the remapped columns of
+  // the tokens that follow it.
+  test("columns after a non-ASCII character on the same line remap exactly", async () => {
+    const lines = [
+      `const za = "e"; function a1() { return new Error("A").stack!; }`,
+      `const zb = "é"; function b1() { return new Error("B").stack!; }`,
+      `const zc = "🎉"; function c1() { return new Error("C").stack!; }`,
+      `const zd = "汉字 héllo wörld"; function d1() { return new Error("D").stack!; }`,
+      `console.log(a1());`,
+      `console.log(b1());`,
+      `console.log(c1());`,
+      `console.log(d1());`,
+    ];
+
+    const { stdout, stderr, exited } = await run({ "index.ts": lines.join("\n") + "\n" });
+
+    expect(stderr).toBe("");
+    // Each frame must point at its line's `Error` in 1-based UTF-16 columns,
+    // `a1` being the all-ASCII control.
+    const frames = [...stdout.matchAll(/at ([a-d]1) \(.*index\.ts:(\d+):(\d+)\)/g)].map(
+      m => `${m[1]} ${m[2]}:${m[3]}`,
+    );
+    expect(frames).toEqual(["a1", "b1", "c1", "d1"].map((fn, i) => `${fn} ${i + 1}:${lines[i].indexOf("Error(") + 1}`));
+    expect(exited).toBe(0);
+  });
+
   // Minified-shape: a single ~12KB line with thousands of mappings forces the
   // bit-packed `gc_w` lane wide and the absolute SyncEntry.gen_col into the
   // thousands, while `gl_mask` is all-zeros. Stack column must still remap to

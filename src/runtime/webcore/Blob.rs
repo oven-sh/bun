@@ -4784,6 +4784,10 @@ pub fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
+        // Honor the source Blob's slice window (Bun.file(p).slice(a, b)), and
+        // keep the destination size cap for compatibility with existing tests.
+        let copy_offset = source_blob.offset.get();
+        let copy_max_len = source_blob.size.get().min(destination_blob.size.get());
         #[cfg(windows)]
         {
             return Ok(copy_file::CopyFileWindows::init(
@@ -4791,7 +4795,8 @@ pub fn write_file_with_source_destination(
                 source_store,
                 ctx.bun_vm().event_loop_shared(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
+                copy_offset,
+                copy_max_len,
                 options.mode,
             ));
         }
@@ -4800,8 +4805,8 @@ pub fn write_file_with_source_destination(
             let mut file_copier = copy_file::CopyFile::create(
                 destination_store,
                 source_store,
-                destination_blob.offset.get(),
-                destination_blob.size.get(),
+                copy_offset,
+                copy_max_len,
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,

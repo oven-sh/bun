@@ -58,7 +58,6 @@ pub struct CopyFile<'a> {
     pub system_error: Option<SystemError>,
 
     pub read_len: SizeType,
-    pub read_off: SizeType,
 
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
     // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
@@ -121,7 +120,6 @@ impl<'a> CopyFile<'a> {
             source_fd: Fd::INVALID,
             system_error: None,
             read_len: 0,
-            read_off: 0,
         });
         CopyFilePromiseTask::create_on_js_thread(global_this, read_file)
     }
@@ -314,8 +312,6 @@ impl<'a> CopyFile<'a> {
         &mut self,
     ) -> Result<(), bun_core::Error> {
         use bun_sys::linux;
-
-        self.read_off += self.offset;
 
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;
@@ -801,11 +797,8 @@ impl<'a> CopyFile<'a> {
             }
 
             if stat.st_size != 0 {
-                self.max_length = (SizeType::try_from(stat.st_size)
-                    .expect("int cast")
-                    .min(self.max_length))
-                .max(self.offset)
-                    - self.offset;
+                let stat_size = SizeType::try_from(stat.st_size).expect("int cast");
+                self.max_length = self.max_length.min(stat_size.saturating_sub(self.offset));
                 if self.max_length == 0 {
                     self.do_close();
                     return;
@@ -822,6 +815,11 @@ impl<'a> CopyFile<'a> {
                         self.max_length as i64,
                     );
                 }
+            }
+
+            if self.offset > 0 {
+                // We ignore errors because it should continue to work even if it's a pipe.
+                let _ = bun_sys::set_file_offset(self.source_fd, self.offset);
             }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -880,16 +878,18 @@ impl<'a> CopyFile<'a> {
                     self.do_close();
                     return;
                 }
-                if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
-                {
-                    // SAFETY: `destination_fd` is open; libc ftruncate(2).
-                    let _ = unsafe {
-                        bun_sys::darwin::ftruncate(
-                            self.destination_fd.native(),
-                            i64::try_from(self.max_length).expect("int cast"),
-                        )
-                    };
+                if stat.st_size != 0 {
+                    let stat_size = SizeType::try_from(stat.st_size).expect("int cast");
+                    if stat_size.saturating_sub(self.offset) > self.max_length {
+                        // SAFETY: `destination_fd` is open; libc ftruncate(2).
+                        let _ = unsafe {
+                            bun_sys::darwin::ftruncate(
+                                self.destination_fd.native(),
+                                i64::try_from(self.max_length).expect("int cast"),
+                            )
+                        };
+                    }
+                    self.read_len = self.max_length;
                 }
 
                 self.do_close();
@@ -996,6 +996,7 @@ pub struct CopyFileWindows<'a> {
     // likely should be *const jsc::EventLoop.
     pub event_loop: &'a jsc::event_loop::EventLoop,
 
+    pub offset: SizeType,
     pub size: SizeType,
 
     /// Bytes written, stored for use after async chmod completes
@@ -1052,7 +1053,11 @@ impl<'a> CopyFileWindows<'a> {
     fn read_write_loop_read(&mut self) -> bun_sys::Result<()> {
         self.read_write_loop.read_buf.clear();
         // reshaped for borrowck — use the full capacity slice.
-        let cap = self.read_write_loop.read_buf.capacity();
+        let mut cap = self.read_write_loop.read_buf.capacity();
+        if self.size != MAX_SIZE {
+            let remaining = (self.size as usize).saturating_sub(self.read_write_loop.written);
+            cap = cap.min(remaining);
+        }
         self.read_write_loop.uv_buf = libuv::uv_buf_t {
             len: cap as libuv::ULONG,
             base: self.read_write_loop.read_buf.as_mut_ptr(),
@@ -1289,6 +1294,7 @@ impl<'a> CopyFileWindows<'a> {
         source_file_store: StoreRef,
         event_loop: &'a jsc::event_loop::EventLoop,
         mkdirp_if_not_exists: bool,
+        offset_: SizeType,
         size_: SizeType,
         destination_mode: Option<Mode>,
     ) -> JSValue {
@@ -1303,6 +1309,7 @@ impl<'a> CopyFileWindows<'a> {
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
+            offset: offset_,
             size: size_,
             written_bytes: 0,
             err: None,
@@ -1396,6 +1403,11 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
+        if self.offset > 0 {
+            // We ignore errors because it should continue to work even if it's a pipe.
+            let _ = bun_sys::set_file_offset(self.read_write_loop.source_fd, self.offset);
+        }
+
         match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => {
                 self.throw(err);
@@ -1407,10 +1419,13 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn copyfile(&mut self) {
-        // This is for making it easier for us to test this code path
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
-            .get()
-            .unwrap_or(false)
+        // uv_fs_copyfile copies the whole file; a nonzero source offset
+        // (Bun.file(p).slice(a, b)) needs the seek+read/write loop instead.
+        // This is also for making it easier for us to test this code path.
+        if self.offset > 0
+            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE
+                .get()
+                .unwrap_or(false)
         {
             self.prepare_read_write_loop();
             return;
@@ -1577,7 +1592,7 @@ impl<'a> CopyFileWindows<'a> {
 
     pub fn on_complete(&mut self, written_actual: usize) {
         let mut written = written_actual;
-        if written != usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
+        if self.size != MAX_SIZE && written > usize::try_from(self.size).expect("int cast") {
             self.truncate();
             written = usize::try_from(self.size).expect("int cast");
         }

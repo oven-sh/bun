@@ -186,6 +186,45 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  describe("Bun.write honors source Bun.file().slice()", () => {
+    async function check({ offset, end, destIsBunFile, destExists }) {
+      using dir = tempDir("bun-write-file-slice", {
+        "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        ...(destExists ? { "out.txt": "pre-existing contents that should be truncated" } : {}),
+      });
+      const srcPath = join(String(dir), "src.txt");
+      const outPath = join(String(dir), "out.txt");
+
+      const part = Bun.file(srcPath).slice(offset, end);
+      const expected = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".slice(offset, end);
+      // Sanity: the read path already handles the slice correctly.
+      expect(await part.text()).toBe(expected);
+
+      const dest = destIsBunFile ? Bun.file(outPath) : outPath;
+      const written = await Bun.write(dest, part);
+      const got = fs.readFileSync(outPath, "utf8");
+      expect({ written, got }).toEqual({ written: expected.length, got: expected });
+    }
+
+    for (const destIsBunFile of [false, true]) {
+      for (const destExists of [false, true]) {
+        const suffix = `dest=${destIsBunFile ? "Bun.file" : "path"}, ${destExists ? "overwrite" : "create"}`;
+        it(`slice(10, 20) -> ${suffix}`, async () => {
+          await check({ offset: 10, end: 20, destIsBunFile, destExists });
+        });
+        it(`slice(0, 10) -> ${suffix}`, async () => {
+          await check({ offset: 0, end: 10, destIsBunFile, destExists });
+        });
+        it(`slice(10) past EOF -> ${suffix}`, async () => {
+          await check({ offset: 10, end: 1000, destIsBunFile, destExists });
+        });
+        it(`slice(0) whole file -> ${suffix}`, async () => {
+          await check({ offset: 0, end: 1000, destIsBunFile, destExists });
+        });
+      }
+    }
+  });
+
   it("Bun.file", async () => {
     const file = path.join(import.meta.dir, "fetch.js.txt");
     await gcTick();

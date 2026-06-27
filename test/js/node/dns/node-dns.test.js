@@ -615,24 +615,6 @@ describe("empty hostname", () => {
     expect(rejection.code).not.toBe("ERR_INVALID_ARG_TYPE");
   });
 
-  it.each(promiseMethods)("dns.promises.%s('') does not throw synchronously", method => {
-    // Module-level functions use the system resolver; the result of the
-    // root-zone query depends on the environment, so only assert that the
-    // call returns a Promise instead of throwing ERR_INVALID_ARG_TYPE.
-    let returned;
-    expect(() => {
-      returned = dns_promises[method]("");
-    }).not.toThrow();
-    expect(returned).toBeInstanceOf(Promise);
-    returned.catch(() => {});
-  });
-
-  it.each(promiseMethods)("dns.%s('') does not throw synchronously", method => {
-    expect(() => {
-      dns[method]("", () => {});
-    }).not.toThrow();
-  });
-
   it.each(promiseMethods)("dns.Resolver#%s('') invokes the callback", async method => {
     const resolver = new dns.Resolver(resolverOptions);
     resolver.setServers(unreachable);

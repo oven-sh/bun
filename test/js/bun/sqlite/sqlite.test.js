@@ -108,8 +108,43 @@ describe("safeIntegers", () => {
     const query = db.query("INSERT INTO test (value) VALUES ($value)");
 
     expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
+    // safeIntegers only controls how integers are returned. An out-of-range
+    // BigInt parameter is always rejected instead of being wrapped modulo 2^64.
     query.safeIntegers(false);
-    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).not.toThrow(RangeError);
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
+  });
+
+  it("rejects BigInt parameters outside the signed 64-bit range in both modes", () => {
+    const outOfRange = [
+      2n ** 63n, // INT64_MAX + 1
+      -(2n ** 63n) - 1n, // INT64_MIN - 1
+      2n ** 64n + 5n, // previously wrapped to 5
+      -(2n ** 64n) - 5n, // previously wrapped to -5
+    ];
+    for (const safeIntegers of [false, true]) {
+      using db = new Database(":memory:", { safeIntegers });
+      const q = db.query("SELECT ? AS v");
+      for (const value of outOfRange) {
+        expect(() => q.get(value)).toThrow(RangeError);
+        expect(() => q.get(value)).toThrow(`BigInt value '${value}' is out of range`);
+      }
+    }
+  });
+
+  it("binds BigInt values at the signed 64-bit boundaries exactly in both modes", () => {
+    const inRange = [
+      [0n, "0"],
+      [2n ** 62n, "4611686018427387904"],
+      [2n ** 63n - 1n, "9223372036854775807"], // INT64_MAX
+      [-(2n ** 63n), "-9223372036854775808"], // INT64_MIN
+    ];
+    for (const safeIntegers of [false, true]) {
+      using db = new Database(":memory:", { safeIntegers });
+      for (const [value, text] of inRange) {
+        // CAST(... AS TEXT) reads the stored value back without Number precision loss.
+        expect(db.query("SELECT CAST(? AS TEXT) AS t").get(value)).toEqual({ t: text });
+      }
+    }
   });
 });
 
@@ -1840,15 +1875,14 @@ it("decodes non-UTF-8 column names leniently instead of dropping the column", ()
   db.close();
 });
 
-it("expands bound non-UTF-8 values in Statement#toString instead of returning an empty string", () => {
+it("expands bound values in Statement#toString instead of returning an empty string", () => {
   const db = new Database(":memory:");
   const stmt = db.prepare("SELECT ? AS x");
 
-  // A lone surrogate binds via sqlite3_bind_text16 and is stored by SQLite as
-  // invalid UTF-8. sqlite3_expanded_sql() then returns those bytes, which the
-  // strict decoder turned into a null string -> the whole toString() became "".
+  // A lone surrogate is sanitized to a single U+FFFD before it reaches SQLite,
+  // so the expanded SQL contains exactly one replacement character, never "".
   stmt.get("\uD800");
-  expect(String(stmt)).toBe("SELECT '\uFFFD\uFFFD\uFFFD' AS x");
+  expect(String(stmt)).toBe("SELECT '\uFFFD' AS x");
 
   // Valid values still round-trip.
   stmt.get("ok");
@@ -1886,6 +1920,121 @@ it("decodes declared types leniently and accepts single-character declared types
   s.all();
   expect(s.declaredTypes).toEqual(["INT\uFFFDGER"]);
   db.close();
+});
+
+describe("string parameters are encoded as well-formed UTF-8", () => {
+  // A lone surrogate must be replaced with U+FFFD, exactly like TextEncoder,
+  // node:sqlite, and better-sqlite3. The bind path must never hand raw UTF-16
+  // to SQLite: its decoder pairs a lone high surrogate with whatever code unit
+  // follows (consuming it) and stores trailing ones as ill-formed 3-byte runs.
+  const cases = [
+    ["lone high surrogate followed by a non-surrogate", "a\uD800b"],
+    ["trailing lone high surrogate", "a\uD800"],
+    ["lone low surrogate followed by a non-surrogate", "a\uDC00b"],
+    ["trailing lone low surrogate", "a\uDC00"],
+    ["only a lone high surrogate", "\uD800"],
+    ["well-formed surrogate pair", "a\uD83D\uDE00b"],
+    ["Latin-1 non-ASCII", "caf\u00E9"],
+    ["BMP non-Latin-1", "\u65E5\u672C\u8A9E"],
+  ];
+  const expectedHex = s => Buffer.from(new TextEncoder().encode(s)).toString("hex").toUpperCase();
+
+  it.each(cases)("%s, positional parameter", (_desc, input) => {
+    using db = new Database(":memory:");
+    expect(db.query("SELECT hex(CAST(? AS BLOB)) AS h, ? AS v").get(input, input)).toEqual({
+      h: expectedHex(input),
+      v: input.toWellFormed(),
+    });
+  });
+
+  it.each(cases)("%s, named parameter", (_desc, input) => {
+    using db = new Database(":memory:");
+    expect(db.query("SELECT hex(CAST($x AS BLOB)) AS h, $x AS v").get({ $x: input })).toEqual({
+      h: expectedHex(input),
+      v: input.toWellFormed(),
+    });
+  });
+
+  it.each(cases)("%s, db.run() exec path", (_desc, input) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (s TEXT)");
+    db.run("INSERT INTO t VALUES (?)", [input]);
+    expect(db.query("SELECT hex(CAST(s AS BLOB)) AS h, s AS v FROM t").get()).toEqual({
+      h: expectedHex(input),
+      v: input.toWellFormed(),
+    });
+  });
+
+  it("never writes bytes the database cannot round-trip as UTF-8", () => {
+    using db = new Database(":memory:");
+    // A lone high surrogate followed by "b" must NOT become U+10062 (the
+    // surrogate paired with the "b"), and a trailing one must NOT become the
+    // ill-formed CESU-8 bytes ED A0 80.
+    const h = s => db.query("SELECT hex(CAST(? AS BLOB)) AS h").get(s).h;
+    expect(h("a\uD800b")).toBe("61EFBFBD62");
+    expect(h("a\uD800")).toBe("61EFBFBD");
+  });
+});
+
+describe("prepared statements refresh cached column names after a schema change", () => {
+  // SQLite transparently re-prepares a statement when the schema changes. The
+  // cached column names and result object shape must be rebuilt to match.
+  it("ALTER TABLE ADD COLUMN issued through db.run()", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT)");
+    db.run("INSERT INTO t VALUES (1)");
+    const q = db.query("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 1 });
+
+    db.run("ALTER TABLE t ADD COLUMN b INT DEFAULT 42");
+    expect(q.get()).toEqual({ a: 1, b: 42 });
+    expect(q.all()).toEqual([{ a: 1, b: 42 }]);
+    expect(q.values()).toEqual([[1, 42]]);
+    expect(q.columnNames).toEqual(["a", "b"]);
+  });
+
+  it("DROP + CREATE with a renamed column does not mis-key the row", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT)");
+    db.run("INSERT INTO t VALUES (111)");
+    const q = db.query("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 111 });
+
+    // Same column count, different name. The new column's value must not be
+    // returned under the old column's name.
+    db.run("DROP TABLE t");
+    db.run("CREATE TABLE t (zzz TEXT)");
+    db.run("INSERT INTO t VALUES ('boom')");
+    expect(q.get()).toEqual({ zzz: "boom" });
+    expect(q.columnNames).toEqual(["zzz"]);
+  });
+
+  it("ALTER TABLE issued through a prepared statement", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (a INT)");
+    db.run("INSERT INTO t VALUES (1)");
+    const q = db.query("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 1 });
+
+    using alter = db.prepare("ALTER TABLE t ADD COLUMN b INT DEFAULT 7");
+    alter.run();
+    expect(q.get()).toEqual({ a: 1, b: 7 });
+  });
+
+  it("schema change made by a second connection to the same file", () => {
+    const file = tmpbase + `sqlite-reprepare-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+    using a = new Database(file, { create: true });
+    a.run("CREATE TABLE t (a INT)");
+    a.run("INSERT INTO t VALUES (1)");
+    const q = a.query("SELECT * FROM t");
+    expect(q.get()).toEqual({ a: 1 });
+
+    {
+      using b = new Database(file);
+      b.run("ALTER TABLE t ADD COLUMN c TEXT DEFAULT 'x'");
+    }
+    expect(q.get()).toEqual({ a: 1, c: "x" });
+  });
 });
 
 // The process-global SQLite database registry is shared by every Worker

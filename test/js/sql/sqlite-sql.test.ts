@@ -5140,30 +5140,10 @@ describe("Unicode & Encoding Fuzzing Tests", () => {
       const result = await sql`SELECT text_data, description FROM unicode_fuzz WHERE id = ${i}`;
       expect(result).toHaveLength(1);
 
-      // SQLite's actual behavior with problematic Unicode:
-      // - Lone surrogates (\uD800, \uDFFF) bind via sqlite3_bind_text16 and are
-      //   stored by SQLite as invalid UTF-8 (WTF-8, e.g. ED A0 80). On read-back
-      //   those invalid bytes decode leniently to U+FFFD, matching node:sqlite.
-      // - BOM inverse (\uFFFE) is dropped by SQLite itself (stored as 0 bytes),
-      //   so it reads back as an empty string.
-      // - Null characters are preserved (not truncated).
-      const lenientlyReplaced: Record<string, string> = {
-        // 3 invalid bytes -> 3 replacement characters (maximal-subpart replacement)
-        "High surrogate (invalid alone)": "\uFFFD\uFFFD\uFFFD",
-        "Low surrogate (invalid alone)": "\uFFFD\uFFFD\uFFFD",
-      };
-      const droppedBySqlite = ["Byte order mark inverse"];
-
-      if (desc in lenientlyReplaced) {
-        // Invalid UTF-8 bytes decode leniently to U+FFFD rather than dropping the field.
-        expect(result[0].text_data).toBe(lenientlyReplaced[desc]);
-      } else if (droppedBySqlite.includes(desc)) {
-        // SQLite stores nothing for these, so they come back empty.
-        expect(result[0].text_data).toBe("");
-      } else {
-        // All other characters should be preserved exactly, including null bytes
-        expect(result[0].text_data).toBe(text);
-      }
+      // Strings are encoded to well-formed UTF-8 before binding (lone surrogates
+      // become U+FFFD, like TextEncoder), so everything else round-trips exactly,
+      // including embedded null bytes and the noncharacter U+FFFE.
+      expect(result[0].text_data).toBe(text.toWellFormed());
       expect(result[0].description).toBe(desc);
     }
 

@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -627,4 +627,40 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   // and Set entries deserialized to the same single instance
   expect(fh.fd).toBe(-1);
   expect(message).toEqual({ sameInstance: true, text: "hello" });
+});
+
+// terminate() on a worker that already exited with code 0 hung forever: the
+// clean exit code 0 is falsy, so the truthiness guard in terminate() fell
+// through and waited on a 'close' event that had already fired. Surfaced by
+// https://github.com/oven-sh/bun/issues/32828 (the repro's terminate() cleanup).
+test("terminate() resolves for a worker that already exited with code 0", async () => {
+  using dir = tempDir("worker-terminate-after-exit", {
+    "index.mjs": `
+      import { Worker } from "node:worker_threads";
+      import { once } from "node:events";
+      const worker = new Worker("process.exit(0);", { eval: true });
+      const [code] = await once(worker, "exit");
+      console.log("EXITCODE:" + code);
+      const result = await Promise.race([
+        worker.terminate().then(v => "TERM:" + v),
+        new Promise(r => setTimeout(() => r("HANG"), 3000).unref()),
+      ]);
+      console.log(result);
+      process.exit(result === "TERM:0" ? 0 : 1);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr kept in the object so it surfaces on failure; toMatchObject does not
+  // assert on it (debug/ASAN lanes can emit benign warnings).
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+    stdout: "EXITCODE:0\nTERM:0",
+    exitCode: 0,
+  });
 });

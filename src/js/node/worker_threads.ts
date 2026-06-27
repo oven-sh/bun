@@ -570,8 +570,11 @@ class Worker extends EventEmitter {
       this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
     }
 
+    // Presence check, not truthiness: a clean exit sets #onExitPromise to the
+    // numeric code 0, which is falsy. Treating that as "not yet exited" would
+    // wait for a second 'close' event that already fired and hang forever.
     const onExitPromise = this.#onExitPromise;
-    if (onExitPromise) {
+    if (onExitPromise !== undefined) {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(onExitPromise);
     }
 

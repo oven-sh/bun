@@ -1,0 +1,104 @@
+ares_hosts_file_add merges a parsed /etc/hosts line into the cached entry
+set by consulting the IP hash before the hostname hash. When a later line's
+address already belongs to another entry (127.0.0.1 always does, via
+localhost), the match is ARES_MATCH_IPADDR, so that line's address is never
+recorded on the hostname's own entry. A forward lookup of the hostname then
+only sees the first line's address family:
+
+    2001:db8::1 pinned.example
+    127.0.0.1   pinned.example
+
+ares_getaddrinfo(pinned.example, AF_UNSPEC) returns only the AAAA, and
+ares_getaddrinfo(pinned.example, AF_INET) finds no matching family in the
+entry, returns ENOTFOUND from file_lookup, and falls through to a real DNS
+query, leaking a name that was meant to be pinned locally.
+
+Fix: match on hostname before IP, so a line is merged into the entry that a
+forward lookup of its hostname resolves to. When moving a line's IPs into
+that entry, only drop an IP that this entry already holds; an IP owned by a
+different entry in iphash keeps that reverse mapping but is still appended
+here so every listed address family is returned.
+
+Upstream: not yet reported.
+
+--- a/src/lib/ares_hosts_file.c
++++ b/src/lib/ares_hosts_file.c
+@@ -232,6 +232,21 @@
+   ARES_MATCH_HOST   = 2
+ } ares_hosts_file_match_t;
+ 
++static ares_bool_t ares_hosts_entry_has_ip(const ares_hosts_entry_t *entry,
++                                           const char               *ipaddr)
++{
++  ares_llist_node_t *node;
++
++  for (node = ares_llist_node_first(entry->ips); node != NULL;
++       node = ares_llist_node_next(node)) {
++    if (ares_strcaseeq(ares_llist_node_val(node), ipaddr)) {
++      return ARES_TRUE;
++    }
++  }
++
++  return ARES_FALSE;
++}
++
+ static ares_status_t ares_hosts_file_merge_entry(
+   const ares_hosts_file_t *hf, ares_hosts_entry_t *existing,
+   ares_hosts_entry_t *entry, ares_hosts_file_match_t matchtype)
+@@ -242,9 +257,21 @@
+    * reason to do anything */
+   if (matchtype != ARES_MATCH_IPADDR) {
+     while ((node = ares_llist_node_first(entry->ips)) != NULL) {
+-      const char *ipaddr = ares_llist_node_val(node);
++      const char               *ipaddr = ares_llist_node_val(node);
++      const ares_hosts_entry_t *ipowner =
++        ares_htable_strvp_get_direct(hf->iphash, ipaddr);
+ 
+-      if (ares_htable_strvp_get_direct(hf->iphash, ipaddr) != NULL) {
++      /* Already owned by this entry via iphash. */
++      if (ipowner == existing) {
++        ares_llist_node_destroy(node);
++        continue;
++      }
++
++      /* IP belongs to a different entry in iphash; keep that reverse mapping
++       * but still record the IP on this hostname's entry so forward lookups
++       * return every address family listed for the name. Guard against
++       * adding it twice. */
++      if (ipowner != NULL && ares_hosts_entry_has_ip(existing, ipaddr)) {
+         ares_llist_node_destroy(node);
+         continue;
+       }
+@@ -276,21 +303,24 @@
+   ares_llist_node_t *node;
+   *match = NULL;
+ 
+-  for (node = ares_llist_node_first(entry->ips); node != NULL;
++  /* Prefer matching on hostname so a line's IP is merged into the entry that
++   * forward lookups of that hostname will return. Falling back to the IP
++   * match preserves alias grouping when the hostname is new. */
++  for (node = ares_llist_node_first(entry->hosts); node != NULL;
+        node = ares_llist_node_next(node)) {
+-    const char *ipaddr = ares_llist_node_val(node);
+-    *match             = ares_htable_strvp_get_direct(hf->iphash, ipaddr);
++    const char *host = ares_llist_node_val(node);
++    *match           = ares_htable_strvp_get_direct(hf->hosthash, host);
+     if (*match != NULL) {
+-      return ARES_MATCH_IPADDR;
++      return ARES_MATCH_HOST;
+     }
+   }
+ 
+-  for (node = ares_llist_node_first(entry->hosts); node != NULL;
++  for (node = ares_llist_node_first(entry->ips); node != NULL;
+        node = ares_llist_node_next(node)) {
+-    const char *host = ares_llist_node_val(node);
+-    *match           = ares_htable_strvp_get_direct(hf->hosthash, host);
++    const char *ipaddr = ares_llist_node_val(node);
++    *match             = ares_htable_strvp_get_direct(hf->iphash, ipaddr);
+     if (*match != NULL) {
+-      return ARES_MATCH_HOST;
++      return ARES_MATCH_IPADDR;
+     }
+   }
+ 

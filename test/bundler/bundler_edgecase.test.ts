@@ -240,6 +240,20 @@ describe("bundler", () => {
       backend: "cli",
       capture: ['"staging"'],
     });
+    // https://github.com/oven-sh/bun/issues/20183
+    // https://github.com/oven-sh/bun/issues/22820
+    itBundled("edgecase/NodeEnvNotInlinedAPIEnvDisable_" + target, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.OTHER);
+        `,
+      },
+      target,
+      dotenv: "disable",
+      backend: "api",
+      capture: ["process.env.NODE_ENV", "process.env.OTHER"],
+    });
   }
 
   itBundled("edgecase/StarExternal", {

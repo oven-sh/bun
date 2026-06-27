@@ -864,6 +864,52 @@ describe("Statement.iterate() busy guard", () => {
     expect(Array.from(s.iterate({ $min: 0 }))).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
     db.close();
   });
+
+  it("array destructuring of iterate() (which calls .return()) releases the statement", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    // Destructuring pulls one row then calls .return() on the unfinished iterator.
+    const [first] = s.iterate();
+    expect(first).toEqual({ a: 0 });
+
+    // A leaked cursor would resume at the second row here.
+    expect(Array.from(s.iterate())).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    expect(s.all()).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("iterating the Statement directly via Symbol.iterator enforces the same guard and releases on break", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    for (const row of s) {
+      expect(row).toEqual({ a: 0 });
+      expect(() => s.get()).toThrow(busy);
+      break;
+    }
+
+    // A leaked cursor would resume at the second row here.
+    expect(Array.from(s)).toEqual([{ a: 0 }, { a: 1 }, { a: 2 }]);
+    db.close();
+  });
+
+  it("finalize() inside the loop body ends the iteration without crashing", () => {
+    const db = makeDb();
+    const s = db.prepare("SELECT a FROM t ORDER BY a");
+
+    const seen = [];
+    expect(() => {
+      for (const row of s.iterate()) {
+        seen.push(row.a);
+        s.finalize();
+      }
+    }).toThrow("Statement has finalized");
+
+    // The one row stepped before the statement went away was still yielded.
+    expect(seen).toEqual([0]);
+    db.close();
+  });
 });
 
 it("db.run()", () => {

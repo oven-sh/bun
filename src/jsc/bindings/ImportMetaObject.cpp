@@ -593,12 +593,73 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGloba
     return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotDispose, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = jsGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
+
+    JSValue callback = callFrame->argument(0);
+    if (!callback.isCallable()) [[unlikely]] {
+        return Bun::throwError(jsGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "import.meta.hot.dispose() expects a function"_s);
+    }
+
+    JSValue data = jsUndefined();
+    JSValue thisValue = callFrame->thisValue();
+    if (auto* hotObject = thisValue.getObject()) {
+        JSValue maybeData = hotObject->getDirect(vm, Identifier::fromString(vm, "data"_s));
+        if (maybeData)
+            data = maybeData;
+    }
+
+    auto* list = globalObject->importMetaHotDisposeList();
+    if (!list) [[unlikely]] {
+        return throwVMError(jsGlobalObject, scope, createOutOfMemoryError(jsGlobalObject));
+    }
+    auto* entry = JSC::constructEmptyArray(jsGlobalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
+    entry->putDirectIndex(jsGlobalObject, 0, callback);
+    RETURN_IF_EXCEPTION(scope, {});
+    entry->putDirectIndex(jsGlobalObject, 1, data);
+    RETURN_IF_EXCEPTION(scope, {});
+    list->push(jsGlobalObject, entry);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotAccept, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    // `bun --hot` re-evaluates every module on each reload, so the full
+    // Vite accept() graph semantics don't apply; accept() is a no-op.
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotDecline, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_hot, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
+    // Only expose import.meta.hot under `bun --hot` (HOT_RELOAD_HOT == 1).
+    if (Bun__VirtualMachine__hotReloadMode(globalObject->bunVM()) != 1)
+        return JSValue::encode(jsUndefined());
+
+    ImportMetaObject* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    return JSValue::encode(thisObject->hotProperty.getInitializedOnMainThread(thisObject));
+}
+
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
+    { "hot"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_hot, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
     { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
@@ -772,6 +833,29 @@ void ImportMetaObject::finishCreation(VM& vm)
             init.set(jsString(init.vm, url.path()));
         }
     });
+    this->hotProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSObject>::Initializer& init) {
+        auto& vm = init.vm;
+        ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
+        auto* globalObject = defaultGlobalObject(meta->globalObject());
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* urlString = meta->urlProperty.getInitializedOnMainThread(meta);
+        auto* dataMap = globalObject->importMetaHotDataMap();
+        JSValue data = dataMap->get(globalObject, urlString);
+        RETURN_IF_EXCEPTION(scope, );
+        if (data.isUndefined()) {
+            data = JSC::constructEmptyObject(globalObject);
+            dataMap->set(globalObject, urlString, data);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+
+        auto* hot = JSC::constructEmptyObject(globalObject);
+        hot->putDirect(vm, Identifier::fromString(vm, "data"_s), data, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "dispose"_s), 1, functionImportMetaHotDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "accept"_s), 0, functionImportMetaHotAccept, ImplementationVisibility::Public, NoIntrinsic, 0);
+        hot->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "decline"_s), 0, functionImportMetaHotDecline, ImplementationVisibility::Public, NoIntrinsic, 0);
+        init.set(hot);
+    });
 }
 
 template<typename Visitor>
@@ -786,6 +870,7 @@ void ImportMetaObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     fn->dirProperty.visit(visitor);
     fn->fileProperty.visit(visitor);
     fn->pathProperty.visit(visitor);
+    fn->hotProperty.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(ImportMetaObject);

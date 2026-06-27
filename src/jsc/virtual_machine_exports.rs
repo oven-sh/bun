@@ -31,6 +31,11 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
+// HOST_EXPORT(Bun__VirtualMachine__hotReloadMode, c)
+pub fn hot_reload_mode(this: &VirtualMachine) -> u8 {
+    this.hot_reload
+}
+
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()

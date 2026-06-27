@@ -598,22 +598,23 @@ impl<'a> Run<'a> {
             T::Double => self.coerce(T::Double, value),
             T::String => self.coerce(T::String, value),
             T::Promise => self.coerce(T::Promise, value),
-            _ => {
-                let name = value.get_class_info_name().unwrap_or(b"unknown");
-
-                self.log.add_error_fmt(
-                    Some(self.source),
-                    self.caller.loc,
-                    // `JSType` derives `Debug` (not `IntoStaticStr`).
-                    format_args!(
-                        "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
-                        bstr::BStr::new(name),
-                        value.js_type(),
-                    ),
-                );
-                Err(MacroError::MacroFailed)
-            }
+            _ => Err(self.unsupported_value_error(value)),
         }
+    }
+
+    fn unsupported_value_error(&mut self, value: JSValue) -> MacroError {
+        let name = value.get_class_info_name().unwrap_or(b"unknown");
+        self.log.add_error_fmt(
+            Some(self.source),
+            self.caller.loc,
+            // `JSType` derives `Debug` (not `IntoStaticStr`).
+            format_args!(
+                "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
+                bstr::BStr::new(name),
+                value.js_type(),
+            ),
+        );
+        MacroError::MacroFailed
     }
 
     // Runtime `tag` param — every call site in `run` already matches once.
@@ -678,7 +679,7 @@ impl<'a> Run<'a> {
                         .map_err(|_| MacroError::MacroFailed);
                 }
 
-                return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));
+                return Err(self.unsupported_value_error(value));
             }
 
             T::Boolean => {
@@ -875,16 +876,7 @@ impl<'a> Run<'a> {
             _ => {}
         }
 
-        self.log.add_error_fmt(
-            Some(self.source),
-            self.caller.loc,
-            // `JSType` derives `Debug` (not `IntoStaticStr`).
-            format_args!(
-                "cannot coerce {:?} to Bun's AST. Please return a simpler type",
-                value.js_type(),
-            ),
-        );
-        Err(MacroError::MacroFailed)
+        Err(self.unsupported_value_error(value))
     }
 }
 

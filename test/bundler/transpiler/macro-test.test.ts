@@ -133,6 +133,33 @@ test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
 
+// Platform objects other than Response/Request/Blob have no AST representation, so returning
+// one from a macro must fail the build. It used to silently inline "" at every call site.
+test.concurrent.each([
+  ["Headers", `new Headers({ "x-bun": "1" })`, "Headers"],
+  ["FormData", `new FormData()`, "FormData"],
+  ["an object with nested Headers", `{ list: [new Headers({ "x-bun": "1" })] }`, "Headers"],
+])("macro returning %s is a build error", async (_label, expression, className) => {
+  using dir = tempDir("macro-platform-object", {
+    "macro.ts": `export function getValue() {\n  return ${expression};\n}\n`,
+    "index.ts": `import { getValue } from "./macro.ts" with { type: "macro" };\nconsole.log(JSON.stringify(getValue()));\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stderr: expect.stringContaining(`cannot coerce ${className}`),
+    exitCode: 1,
+  });
+  // The bundle must not be emitted with the macro call replaced by an empty string.
+  expect(stdout).not.toContain('""');
+});
+
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
 // JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
 // an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.

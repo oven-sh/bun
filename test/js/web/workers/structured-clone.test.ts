@@ -1,10 +1,32 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv, tls } from "harness";
-import { bunExe } from "js/bun/shell/test_builder";
-import { X509Certificate } from "node:crypto";
+import { bunEnv, bunExe, tls } from "harness";
+import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
 import { join } from "path";
+
+// Terminal object types that were never entered into the structured clone object
+// reference pool, so duplicated references to them came back as distinct copies.
+// `[label, make, expected constructor]`.
+const identityCases: [string, () => object, Function][] = [
+  ["Date", () => new Date(5), Date],
+  ["RegExp", () => /abc/gi, RegExp],
+  ["Error", () => new Error("boom"), Error],
+  ["EvalError", () => new EvalError("boom"), EvalError],
+  ["RangeError", () => new RangeError("boom"), RangeError],
+  ["ReferenceError", () => new ReferenceError("boom"), ReferenceError],
+  ["SyntaxError", () => new SyntaxError("boom"), SyntaxError],
+  ["TypeError", () => new TypeError("boom"), TypeError],
+  ["URIError", () => new URIError("boom"), URIError],
+  ["DOMException", () => new DOMException("boom", "NotFoundError"), DOMException],
+  ["Blob", () => new Blob(["hi"], { type: "text/plain" }), Blob],
+  ["File", () => new File(["hi"], "a.txt", { type: "text/plain" }), File],
+  ["X509Certificate", () => new X509Certificate(tls.cert), X509Certificate],
+  ["secret KeyObject", () => createSecretKey(Buffer.from("0123456789abcdef")), KeyObject],
+  ["public KeyObject", () => createPublicKey(tls.key), KeyObject],
+  ["private KeyObject", () => createPrivateKey(tls.key), KeyObject],
+];
+
 function jscSerializeRoundtrip(value: any) {
   const serialized = serialize(value);
   const cloned = deserialize(serialized);
@@ -164,6 +186,69 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         expect(cloned.has(value)).toBe(true);
       }
     });
+
+    // The cross-process transport only adds a process hop over the in-process byte round
+    // trip; it is covered once for the whole matrix outside this loop instead of here.
+    if (structuredCloneFn !== jscSerializeRoundtripCrossProcess) {
+      // Two references to the same object must deserialize to the same object:
+      // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+      describe("duplicated references preserve identity", () => {
+        test.each(identityCases)("%s", (_label, make, ctor) => {
+          const value = make();
+          const cloned = structuredCloneFn([value, value]);
+          expect(cloned[0]).toBeInstanceOf(ctor);
+          expect(cloned[0]).not.toBe(value);
+          expect(cloned[0]).toBe(cloned[1]);
+        });
+
+        test("CryptoKey", async () => {
+          const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+          const cloned = structuredCloneFn([key, key]);
+          expect(cloned[0]).toBeInstanceOf(CryptoKey);
+          expect(cloned[0]).not.toBe(key);
+          expect(cloned[0]).toBe(cloned[1]);
+        });
+
+        test("same object reachable through object, array, Map, and Set paths", () => {
+          const d = new Date(7);
+          const e = new TypeError("boom");
+          const cloned = structuredCloneFn({ a: { d, e }, b: [d, e], map: new Map([["d", d]]), set: new Set([e]) });
+          expect(cloned.a.d).toBe(cloned.b[0]);
+          expect(cloned.a.e).toBe(cloned.b[1]);
+          expect(cloned.map.get("d")).toBe(cloned.a.d);
+          expect(cloned.set.has(cloned.a.e)).toBe(true);
+        });
+
+        // Types that already preserved identity must keep doing so.
+        test("control: already-pooled types", () => {
+          const obj = { x: 1 };
+          const arr = [1];
+          const map = new Map();
+          const set = new Set();
+          const buffer = new ArrayBuffer(4);
+          const view = new Uint8Array(buffer);
+          const num = Object(1);
+          const str = Object("s");
+          const bool = Object(true);
+          const bigint = Object(123n);
+          const cloned = structuredCloneFn([
+            [obj, obj],
+            [arr, arr],
+            [map, map],
+            [set, set],
+            [buffer, buffer],
+            [view, view],
+            [num, num],
+            [str, str],
+            [bool, bool],
+            [bigint, bigint],
+          ]);
+          for (const [first, second] of cloned) {
+            expect(first).toBe(second);
+          }
+        });
+      });
+    }
 
     describe("bun blobs work", () => {
       test("simple", async () => {
@@ -515,3 +600,53 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
     });
   });
 }
+
+describe("reference pool survives a process boundary", () => {
+  // One subprocess hop covering the whole identity matrix.
+  test("duplicated references preserve identity for every type", () => {
+    const values = identityCases.map(([, make]) => make());
+    const cloned = jscSerializeRoundtripCrossProcess(values.map(value => [value, value]));
+    for (let i = 0; i < identityCases.length; i++) {
+      expect(cloned[i][0]).toBeInstanceOf(identityCases[i][2]);
+      expect(cloned[i][0]).toBe(cloned[i][1]);
+    }
+  });
+});
+
+// Version 13 payloads were written before Date, RegExp, Error, and the other terminal
+// types were entered into the object reference pool. The deserializer must not pool
+// them for version < 14 or its indices stop matching what the writer counted.
+describe("deserializing a version 13 payload", () => {
+  const version13 = (base64: string) => {
+    const bytes = Buffer.from(base64, "base64");
+    // Sanity: the first four bytes of a payload are its little-endian version.
+    expect(bytes.readUint32LE(0)).toBe(13);
+    return deserialize(bytes);
+  };
+
+  // serialize([new Date(5), { tag: "first" }, { tag: "second" }, <ref first>, <ref second>])
+  // written by Bun 1.4.0. Pooling the Date unconditionally would shift the two
+  // back-references onto the Date and `first`.
+  test("back-references after a Date are not shifted by the version 14 behavior", () => {
+    const cloned = version13(
+      "DQAAAAEFAAAAAAAAAAsAAAAAAAAUQAEAAAACAwAAgHRhZxAFAACAZmlyc3T/////AgAAAAL+////ABAGAACAc2Vjb25k/////wMAAAATAQQAAAATAv////8=",
+    );
+    expect(cloned[0]).toBeInstanceOf(Date);
+    expect(+cloned[0]).toBe(5);
+    expect(cloned[1]).toEqual({ tag: "first" });
+    expect(cloned[2]).toEqual({ tag: "second" });
+    expect(cloned[3]).toBe(cloned[1]);
+    expect(cloned[4]).toBe(cloned[2]);
+  });
+
+  // serialize([new Date(5), new Date(5)]) written by Bun 1.4.0. The identity relationship
+  // was never in the version 13 payload, so it cannot be recovered.
+  test("duplicated Date references in old payloads stay distinct", () => {
+    const cloned = version13("DQAAAAECAAAAAAAAAAsAAAAAAAAUQAEAAAALAAAAAAAAFED/////");
+    expect(cloned[0]).toBeInstanceOf(Date);
+    expect(cloned[1]).toBeInstanceOf(Date);
+    expect(+cloned[0]).toBe(5);
+    expect(+cloned[1]).toBe(5);
+    expect(cloned[0]).not.toBe(cloned[1]);
+  });
+});

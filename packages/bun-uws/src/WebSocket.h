@@ -391,12 +391,14 @@ public:
         /* Publish as sender, does not receive its own messages even if subscribed to relevant topics */
         if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
             SendStatus worst = SUCCESS;
-            bool had = webSocketContextData->topicTree->publishBig(webSocketData->subscriber, topic, {message, opCode, compress}, [&worst](Subscriber *s, TopicTreeBigMessage &message) {
+            bool hasReceivers = false;
+            webSocketContextData->topicTree->publishBig(webSocketData->subscriber, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
+                hasReceivers = true;
                 auto *ws = (WebSocket<SSL, true, int> *) s->user;
 
                 worst = worseStatus(worst, (SendStatus) ws->send(message.message, (OpCode)message.opCode, message.compress));
             });
-            return had ? worst : DROPPED;
+            return hasReceivers ? worst : DROPPED;
         } else {
             Topic *t = webSocketContextData->topicTree->lookupTopic(topic);
             if (!t) {

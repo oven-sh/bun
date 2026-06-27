@@ -225,13 +225,15 @@ public:
         /* Anything big bypasses corking efforts */
         if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
             PublishStatus worst = PublishStatus::SUCCESS;
-            bool had = topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [&worst](Subscriber *s, TopicTreeBigMessage &message) {
+            bool hasReceivers = false;
+            topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
+                hasReceivers = true;
                 auto *ws = (WebSocket<SSL, true, int> *) s->user;
 
                 /* Send will drain if needed */
                 worst = WebSocket<SSL, true, int>::worseStatus(worst, (PublishStatus) ws->send(message.message, (OpCode)message.opCode, message.compress));
             });
-            return had ? worst : PublishStatus::DROPPED;
+            return hasReceivers ? worst : PublishStatus::DROPPED;
         } else {
             Topic *t = topicTree->lookupTopic(topic);
             if (!t) {

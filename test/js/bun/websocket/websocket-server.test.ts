@@ -1309,6 +1309,19 @@ describe("publish() return value reflects subscriber backpressure", () => {
     });
   });
 
+  it("ws.publish() returns 0 when the sender is the sole subscriber", async () => {
+    await withSlowSubscriber(({ sender }) => {
+      // "self" only has the sender subscribed; ws.publish() excludes the
+      // sender, so there are zero receivers on both the batched and direct
+      // send paths.
+      sender.subscribe("self");
+      expect({
+        small: sender.publish("self", Buffer.alloc(8000, "x").toString()),
+        big: sender.publish("self", Buffer.alloc(20000, "x").toString()),
+      }).toEqual({ small: 0, big: 0 });
+    });
+  });
+
   for (const [label, size] of [
     ["batched (<16KB)", 8000],
     ["direct (>=16KB)", 20000],

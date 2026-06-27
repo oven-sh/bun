@@ -37,7 +37,7 @@ use crate::webcore::{
     AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure,
 };
 
-use super::sri::IntegrityMetadata;
+use super::sri::{self, IntegrityMetadata};
 
 use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
@@ -1302,9 +1302,7 @@ impl FetchTasklet {
         }
 
         if fail == err!("IntegrityMismatch") {
-            return BodyValueError::TypeError(BunString::static_(
-                "Integrity check failed: the response body does not match the digest in the request's 'integrity' option",
-            ));
+            return BodyValueError::TypeError(BunString::static_(sri::MISMATCH_MESSAGE));
         }
 
         // some times we don't have metadata so we also check http.url
@@ -1884,10 +1882,7 @@ impl FetchTasklet {
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,
-            integrity: fetch_options
-                .integrity
-                .as_deref()
-                .and_then(IntegrityMetadata::parse),
+            integrity: fetch_options.integrity,
             is_waiting_body: false,
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
@@ -2578,8 +2573,8 @@ pub struct FetchOptions {
     pub global_this: Option<GlobalRef>,
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
-    /// Raw subresource-integrity metadata string from the `integrity` option.
-    pub integrity: Option<Box<[u8]>>,
+    /// Parsed subresource-integrity metadata from the `integrity` option.
+    pub integrity: Option<IntegrityMetadata>,
     pub check_server_identity: StrongOptional,
     pub unix_socket_path: ZigStringSlice,
     pub ssl_config: Option<http::ssl_config::SharedPtr>,

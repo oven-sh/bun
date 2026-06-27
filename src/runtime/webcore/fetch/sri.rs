@@ -4,6 +4,11 @@
 
 use bun_install::integrity::{Integrity, Tag};
 
+/// The `TypeError` message for a subresource-integrity mismatch. Shared by
+/// every response path that can fail the check (the `FetchTasklet` HTTP path
+/// and the `data:` URL fast path) so the two are observably identical.
+pub const MISMATCH_MESSAGE: &str = "Integrity check failed: the response body does not match the digest in the request's 'integrity' option";
+
 /// The parsed `integrity` request option: the digests of the strongest
 /// recognized algorithm group. Per spec, the response body matches when
 /// *any* digest in that group matches.

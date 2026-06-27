@@ -147,14 +147,40 @@ describe("fetch() integrity", () => {
   });
 
   test("aborting while the body is buffering rejects instead of hanging", async () => {
-    slowBodyStarted = Promise.withResolvers<void>();
+    const started = (slowBodyStarted = Promise.withResolvers<void>());
     const controller = new AbortController();
     const promise = fetch(url("/slow"), { integrity: wrong("sha256"), signal: controller.signal });
+    // If the fetch settles before the server has even started the body (a
+    // regression in option parsing, say), surface that instead of hanging.
+    promise.then(
+      () => started.reject(new Error("fetch resolved before the body started buffering")),
+      err => started.reject(err),
+    );
     // The response never completes on its own; abort once the first chunk is
     // on the wire so the fetch is genuinely mid-buffering.
-    await slowBodyStarted.promise;
+    await started.promise;
     controller.abort();
     await expect(promise).rejects.toThrow(/abort/i);
+  });
+});
+
+// WHATWG fetch, main fetch step 22 is scheme-agnostic; node rejects these too.
+describe("data: URL integrity", () => {
+  const dataUrl = `data:text/plain,${BODY}`;
+
+  test("a matching digest resolves", async () => {
+    const res = await fetch(dataUrl, { integrity: sri("sha256", BODY) });
+    expect(await res.text()).toBe(BODY);
+  });
+
+  test("a mismatched digest rejects", async () => {
+    await expectIntegrityRejection(fetch(dataUrl, { integrity: wrong("sha256") }));
+    await expectIntegrityRejection(fetch(new Request(dataUrl, { integrity: wrong("sha512") })));
+  });
+
+  test("an empty or unrecognized integrity option performs no check", async () => {
+    expect(await fetch(dataUrl, { integrity: "" }).then(r => r.text())).toBe(BODY);
+    expect(await fetch(dataUrl, { integrity: "md5-AAAA" }).then(r => r.text())).toBe(BODY);
   });
 });
 
@@ -162,6 +188,16 @@ describe("Request integrity", () => {
   test("the integrity option is reflected by the getter", () => {
     expect(new Request(url("/body")).integrity).toBe("");
     expect(new Request(url("/body"), { integrity: "sha256-abc" }).integrity).toBe("sha256-abc");
+  });
+
+  test("a present non-string integrity is stringified (WebIDL DOMString)", async () => {
+    expect(new Request(url("/body"), { integrity: 123 as any }).integrity).toBe("123");
+    expect(new Request(url("/body"), { integrity: null as any }).integrity).toBe("null");
+    // A present init member replaces the base Request's value even when it
+    // is not a string; "123" parses to no recognized algorithm, so no check.
+    const bad = new Request(url("/body"), { integrity: wrong("sha256") });
+    expect(new Request(bad, { integrity: 123 as any }).integrity).toBe("123");
+    expect(await fetch(bad, { integrity: 123 as any }).then(r => r.text())).toBe(BODY);
   });
 
   test("integrity survives clone() and Request-from-Request construction", () => {

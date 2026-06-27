@@ -1494,18 +1494,17 @@ impl Request {
                 }
             }
 
-            // Extract integrity option
+            // Extract integrity option (WebIDL DOMString: any present value is
+            // stringified; absent / undefined inherits from the base Request)
             if !fields.contains(Fields::Integrity) {
                 match value.get(global_this, "integrity") {
                     Ok(Some(integrity_value)) => {
-                        if integrity_value.is_string() {
-                            match BunString::from_js(integrity_value, global_this) {
-                                Ok(s) => {
-                                    req.integrity.set(s);
-                                    fields.insert(Fields::Integrity);
-                                }
-                                Err(e) => bail!(Err(e)),
+                        match BunString::from_js(integrity_value, global_this) {
+                            Ok(s) => {
+                                req.integrity.set(s);
+                                fields.insert(Fields::Integrity);
                             }
+                            Err(e) => bail!(Err(e)),
                         }
                     }
                     Ok(None) => {}

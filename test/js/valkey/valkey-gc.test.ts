@@ -209,28 +209,13 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
   }
 });
 
-// Fuzzer found a debug assertion failure (and, in release builds, a client
-// whose JS wrapper is only weakly referenced while a live socket still drives
-// it):
-//
-//   panic: assertion failed: self.this_value.get().is_strong()
-//     on_valkey_connect <- handle_hello_response <- handle_response <- on_data
-//
-// The auto-reconnect timer armed by a connection loss stays armed when an
-// explicit connect() starts a new connection. When it fired, reconnect()
-// called connect() again, which overwrote `client.socket` and orphaned the
-// in-flight socket. The orphan's late open/data callbacks then ran against a
-// client that had already moved on (status Disconnected, wrapper downgraded
-// to weak), re-sent HELLO, and blew up on the reply.
-//
-// The fixture is a scripted in-process RESP3 server that holds the HELLO
-// reply of the explicitly reconnected socket past the reconnect timer
-// deadline. On broken builds that always produces a 4th connection (the
-// orphaning one) and usually the assertion failure above.
-test.concurrent(
-  "explicit connect() while the auto-reconnect timer is armed does not orphan the in-flight socket",
-  async () => {
-    const src = `
+// A stale auto-reconnect timer must not start a competing socket while an
+// explicit connect() is in flight: the orphaned socket's late callbacks drove
+// a client whose JS wrapper was already weak ("assertion failed:
+// self.this_value.get().is_strong()" in on_valkey_connect). Timing-sensitive,
+// so this one is not concurrent.
+test("explicit connect() while the auto-reconnect timer is armed does not orphan the in-flight socket", async () => {
+  const src = `
     const ATTEMPTS = 3;
 
     async function attempt() {
@@ -314,14 +299,6 @@ test.concurrent(
 
       // Explicit connect() while that timer is still armed.
       const reconnected = c.connect();
-      reconnected.then(
-        () => {
-          try {
-            c.close();
-          } catch {}
-        },
-        () => {},
-      );
       await helloHeld.promise;
 
       // Release the held reply just before the reconnect timer deadline.
@@ -332,6 +309,11 @@ test.concurrent(
         } catch {}
       }, lead);
 
+      // The reconnect must succeed. Close right after it resolves, in the
+      // same microtask turn as the HELLO reply that completed it.
+      await reconnected;
+      c.close();
+
       await Bun.sleep(150);
       // If an orphan is still attached in place of a closed socket, poke it.
       try {
@@ -339,9 +321,6 @@ test.concurrent(
       } catch {}
       await Bun.sleep(100);
 
-      try {
-        c.close();
-      } catch {}
       ctrl.end();
       listener.stop(true);
       return accepted;
@@ -359,20 +338,19 @@ test.concurrent(
     console.log("OK");
   `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("OK");
-    expect(proc.signalCode).toBeNull();
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
 
 // Buffer-mode replies (`getBuffer` and friends) adopt the RESP parser's
 // payload allocation as the Buffer backing store instead of copying it. The

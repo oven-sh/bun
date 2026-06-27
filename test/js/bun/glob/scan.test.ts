@@ -766,6 +766,78 @@ describe("glob scan should not escape cwd boundary", () => {
   });
 });
 
+describe("glob.scan dot:false with explicit leading dot in pattern", () => {
+  // `dot:false` only stops *wildcards* from matching a leading `.`; a pattern
+  // segment that itself begins with a literal `.` must still match dotfiles
+  // and dot-directories. This matches bash, fast-glob and node-glob.
+  const files = {
+    ".hidden": "x",
+    ".dotdir": {
+      "inner.txt": "x",
+      "foo": { "bar.txt": "x" },
+      "sub": { ".dotdir": { "inner.txt": "x" } },
+    },
+    "a": { ".dotdir": { "inner.txt": "x" } },
+    "visible.txt": "x",
+  };
+
+  const scan = (cwd: string, pattern: string, opts: GlobScanOptions = {}) =>
+    Array.from(new Glob(pattern).scanSync({ cwd, onlyFiles: true, ...opts })).sort();
+
+  test.each([
+    // [pattern, expected with dot:false]
+    [".hidden", [".hidden"]],
+    [".*", [".hidden"]],
+    [".dotdir/inner.txt", [`.dotdir${path.sep}inner.txt`]],
+    ["**/.hidden", [".hidden"]],
+    ["a/.dotdir/inner.txt", [`a${path.sep}.dotdir${path.sep}inner.txt`]],
+    [".dotdir/*.txt", [`.dotdir${path.sep}inner.txt`]],
+    [".dotdir/**", [`.dotdir${path.sep}foo${path.sep}bar.txt`, `.dotdir${path.sep}inner.txt`]],
+    [".dotdir/**/*.txt", [`.dotdir${path.sep}foo${path.sep}bar.txt`, `.dotdir${path.sep}inner.txt`]],
+    // `**` finds `.dotdir` at each depth it reaches via non-dot dirs, but does
+    // not itself recurse through dot-dirs, so the nested `.dotdir/sub/.dotdir`
+    // is excluded.
+    ["**/.dotdir/inner.txt", [`.dotdir${path.sep}inner.txt`, `a${path.sep}.dotdir${path.sep}inner.txt`]],
+    // `[` at the start also names the dot explicitly (fast-glob parity).
+    ["[.]hidden", [".hidden"]],
+  ])("pattern %j matches explicitly-named dot entries", (pattern, expected) => {
+    using dir = tempDir("glob-scan-literal-dot", files);
+    expect(scan(String(dir), pattern)).toEqual(expected.sort());
+  });
+
+  test.each([
+    // wildcards still do NOT match leading `.` with dot:false
+    ["*", ["visible.txt"]],
+    ["**", ["visible.txt"]],
+    ["**/*.txt", ["visible.txt"]],
+    ["?hidden", []],
+    ["*hidden", []],
+    ["*.txt", ["visible.txt"]],
+  ])("pattern %j wildcards still skip dot entries", (pattern, expected) => {
+    using dir = tempDir("glob-scan-literal-dot-neg", files);
+    expect(scan(String(dir), pattern)).toEqual(expected.sort());
+  });
+
+  test("dot:true still matches everything", () => {
+    using dir = tempDir("glob-scan-literal-dot-true", files);
+    expect(scan(String(dir), "**/.dotdir/inner.txt", { dot: true })).toEqual(
+      [
+        `.dotdir${path.sep}inner.txt`,
+        `.dotdir${path.sep}sub${path.sep}.dotdir${path.sep}inner.txt`,
+        `a${path.sep}.dotdir${path.sep}inner.txt`,
+      ].sort(),
+    );
+    expect(scan(String(dir), "*", { dot: true, onlyFiles: true })).toEqual([".hidden", "visible.txt"]);
+  });
+
+  test("onlyFiles:false matches dot directories named explicitly", () => {
+    using dir = tempDir("glob-scan-literal-dot-dirs", files);
+    expect(scan(String(dir), "**/.dotdir", { onlyFiles: false })).toEqual(
+      [".dotdir", `a${path.sep}.dotdir`].sort(),
+    );
+  });
+});
+
 describe("glob.scan wildcard fast path", async () => {
   test("works", async () => {
     const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", {

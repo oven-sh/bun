@@ -1601,12 +1601,14 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         is_last: bool,
         add: &mut bool,
     ) -> Option<u32> {
-        if !self.dot && Self::starts_with_dot(entry_name) {
-            return None;
-        }
         if (self.is_ignored)(entry_name) {
             return None;
         }
+
+        // `dot:false` only stops wildcards from matching a leading `.`.
+        // `**` never names a dot so its own recursion is gated below; the
+        // next-component check goes through match_pattern_impl per-component.
+        let hide_dot = !self.dot && Self::starts_with_dot(entry_name);
 
         // Handle double wildcard `**`, this could possibly
         // propagate the `**` to the directory's children
@@ -1622,7 +1624,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 // children
                 if (component_idx + 1) as usize == self.pattern_components.len() - 1 {
                     *add = true;
-                    return Some(0);
+                    return if hide_dot { None } else { Some(0) };
                 }
 
                 // In the normal case skip over the next pattern
@@ -1632,6 +1634,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 //  AFTER: src/**/node_modules/**/*.js
                 //                             ^
                 return Some(2);
+            }
+
+            if hide_dot {
+                return None;
             }
 
             if is_last {
@@ -1688,7 +1694,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn match_pattern_impl(&self, pattern_component: &Component, filepath: &[u8]) -> bool {
         log!("matchPatternImpl: {}", bstr::BStr::new(filepath));
-        if !self.dot && Self::starts_with_dot(filepath) {
+        if !self.dot
+            && Self::starts_with_dot(filepath)
+            && Self::component_starts_with_wildcard(pattern_component, &self.pattern)
+        {
             return false;
         }
         if (self.is_ignored)(filepath) {
@@ -1752,7 +1761,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 child.set(self.normalize_idx(idx + bump) as usize);
                 // At `**/X` boundaries, keep the outer `**` alive unless
                 // idx+2 is itself `**` (whose recursion already covers it).
-                if bump == 2 && comps[(idx + 2) as usize].syntax_hint != SyntaxHint::Double {
+                // Skip when descending into a dot-dir via an explicit `X`:
+                // the `**` itself must not traverse dot-dirs with `dot:false`.
+                if bump == 2
+                    && comps[(idx + 2) as usize].syntax_hint != SyntaxHint::Double
+                    && (self.dot || !Self::starts_with_dot(entry_name))
+                {
                     child.set(idx as usize);
                 }
             }
@@ -1861,6 +1875,17 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     #[inline]
     fn starts_with_dot(filepath: &[u8]) -> bool {
         !filepath.is_empty() && filepath[0] == b'.'
+    }
+
+    /// Whether the component's first token is `*` or `?`. With `dot:false`
+    /// only these are barred from matching a leading `.`; a literal `.`,
+    /// `[`, `\`, `{` etc. name the dot explicitly (bash/fast-glob semantics).
+    #[inline]
+    fn component_starts_with_wildcard(pattern_component: &Component, pattern: &[u8]) -> bool {
+        matches!(
+            pattern_component.pattern_slice(pattern).first(),
+            Some(b'*' | b'?')
+        )
     }
 
     const SYNTAX_TOKENS: &'static [u8] = b"*[{?!";

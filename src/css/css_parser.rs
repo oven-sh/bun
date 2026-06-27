@@ -4323,17 +4323,17 @@ pub mod nth {
             }
             Token::Ident(value) => {
                 let value = *value;
-                if strings::eql_case_insensitive_ascii_ignore_length(value, b"even") {
+                if strings::eql_case_insensitive_asciii_check_length(value, b"even") {
                     return Ok((2, 0));
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"odd") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"odd") {
                     return Ok((2, 1));
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"n") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"n") {
                     return parse_b(input, 1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"-n") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
                     return parse_b(input, -1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"n-") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"n-") {
                     return parse_signless_b(input, 1, -1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"-n-") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n-") {
                     return parse_signless_b(input, -1, -1);
                 } else {
                     let (slice, a): (&[u8], i32) = if value.first() == Some(&b'-') {
@@ -4347,13 +4347,15 @@ pub mod nth {
                     return Err(input.new_unexpected_token_error(Token::Ident(value)));
                 }
             }
-            Token::Delim(_) => {
+            // Only `'+'` may precede the `n...` ident; a leading `-` is part of
+            // the ident itself (`-n`, `-n-3`) and is handled by the Ident arm.
+            Token::Delim(d) if *d == u32::from(b'+') => {
                 let next_tok = input.next_including_whitespace()?;
                 if let Token::Ident(value) = next_tok {
                     let value = *value;
                     if strings::eql_case_insensitive_asciii_check_length(value, b"n") {
                         return parse_b(input, 1);
-                    } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
+                    } else if strings::eql_case_insensitive_asciii_check_length(value, b"n-") {
                         return parse_signless_b(input, 1, -1);
                     } else {
                         if let Ok(b) = parse_n_dash_digits(arena, value) {

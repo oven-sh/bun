@@ -22,6 +22,35 @@ test("An+B idents longer than the keyword literals parse deterministically", () 
   expect(() => minifyTest(":nth-child(NN) {width: 20px}", "")).toThrow("Unexpected token");
 });
 
+// The `even`/`odd`/`n`/... keyword checks must be exact-length, not prefix
+// matches: `e` is not `even`, `o` is not `odd`.
+test("An+B idents shorter than a keyword are rejected, not prefix-matched", () => {
+  for (const sel of ["e", "ev", "eve", "o", "od"]) {
+    expect(() => minifyTest(`:nth-child(${sel}) {width: 20px}`, "")).toThrow("Unexpected token");
+  }
+  // Exact matches (any case) still work.
+  expect(minifyTest(":nth-child(EVEN) {width: 20px}", ":nth-child(2n){width:20px}")).toBe(
+    ":nth-child(2n){width:20px}",
+  );
+  expect(minifyTest(":nth-child(ODD) {width: 20px}", ":nth-child(odd){width:20px}")).toBe(
+    ":nth-child(odd){width:20px}",
+  );
+});
+
+// Only `'+'` may precede the `n...` ident in An+B. Any other leading delimiter
+// is a parse error, and after `+` the `n-` form (not `-n`) takes a signless B.
+test("An+B explicit leading sign is '+' only", () => {
+  expect(() => minifyTest(":nth-child(*n-3) {width: 20px}", "")).toThrow("Unexpected token");
+  expect(() => minifyTest(":nth-child(~n) {width: 20px}", "")).toThrow("Unexpected token");
+  // `+ -n 5` is two consecutive signs: invalid.
+  expect(() => minifyTest(":nth-child(+-n 5) {width: 20px}", "")).toThrow("Unexpected token");
+  // `+n- 5` is the `'+'? n- <signless-integer>` production: valid, equals n-5.
+  expect(minifyTest(":nth-child(+n- 5) {width: 20px}", ":nth-child(n-5){width:20px}")).toBe(
+    ":nth-child(n-5){width:20px}",
+  );
+  expect(minifyTest(":nth-child(+n) {width: 20px}", ":nth-child(n){width:20px}")).toBe(":nth-child(n){width:20px}");
+});
+
 // `parse_number_saturate` builds a temporary Parser to tokenize the `-B` part
 // of `An-B`. That Parser must borrow the outer parser's arena, not create a
 // fresh mimalloc heap per selector. The counter is debug-only.

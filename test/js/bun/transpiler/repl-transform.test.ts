@@ -439,17 +439,26 @@ describe("Bun.Transpiler replMode", () => {
         expect(code).not.toContain("var x = foo");
       });
 
-      test("pure-annotated IIFEs are not serialized", async () => {
-        // The call runs the arrow body eagerly (here it reads `a`, which is
-        // not replayable); bodies are not analyzed, so the call is rejected.
+      test("pure-annotated calls are never serialized", async () => {
+        // A call runs a body that is not analyzed: the IIFE and `f()` both
+        // read `a`, which is not replayable, so neither `x` nor `y` can be.
         const ctx = vm.createContext({ effect: () => 41 });
         const code = transpiler.transformSync(
-          "let a = effect(); const x = /* @__PURE__ */ (() => a)(); const ok = 1; x",
+          "let a = effect(); function f() { return a } " +
+            "const x = /* @__PURE__ */ (() => a)(); const y = /* @__PURE__ */ f(); const ok = 1; x",
         );
         const result = await vm.runInContext(code, ctx);
         expect(result.value).toBe(41);
+        expect(result.functions).toContain("function f()");
         expect(result.functions).toContain("var ok = 1");
         expect(result.functions).not.toContain("var x");
+        expect(result.functions).not.toContain("var y");
+
+        // Defining `f` is safe even though calling it in a fresh context is
+        // not; the string itself must evaluate cleanly.
+        const fresh = vm.createContext({});
+        vm.runInContext(result.functions, fresh);
+        expect(vm.runInContext("ok", fresh)).toBe(1);
       });
 
       test("using declarations are never serialized", () => {

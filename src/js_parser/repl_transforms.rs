@@ -1100,32 +1100,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 self.repl_eager_refs_are_admitted(&ex.left, admitted)
                     && self.repl_eager_refs_are_admitted(&ex.right, admitted)
             }
-            // `/* @__PURE__ */ f(x)`: the target and arguments are still
-            // evaluated when the declaration runs. A pure-annotated IIFE also
-            // runs its (unanalyzed) body eagerly, so inline function targets
-            // are rejected outright.
-            ExprData::ECall(ex) => {
-                !matches!(
-                    ex.target.data,
-                    ExprData::EArrow(_) | ExprData::EFunction(_)
-                ) && self.repl_eager_refs_are_admitted(&ex.target, admitted)
-                    && ex
-                        .args
-                        .slice()
-                        .iter()
-                        .all(|arg| self.repl_eager_refs_are_admitted(arg, admitted))
-            }
-            ExprData::ENew(ex) => {
-                !matches!(
-                    ex.target.data,
-                    ExprData::EArrow(_) | ExprData::EFunction(_)
-                ) && self.repl_eager_refs_are_admitted(&ex.target, admitted)
-                    && ex
-                        .args
-                        .slice()
-                        .iter()
-                        .all(|arg| self.repl_eager_refs_are_admitted(arg, admitted))
-            }
+            // A `/* @__PURE__ */` call or `new` (the only kind that passes the
+            // purity gate) still runs a callee body that is never analyzed, so
+            // it can read bindings the serialized source does not declare.
+            ExprData::ECall(_) | ExprData::ENew(_) => false,
             _ => false,
         }
     }

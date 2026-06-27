@@ -2506,10 +2506,10 @@ declare module "bun" {
      *   - `functions`: printed source of the snippet's replayable declarations: function
      *     declarations, plus only those classes and `var`/`let`/`const` declarations that have no
      *     side effects when evaluated and only read bindings the string itself declares.
-     *     Everything is re-declared as `var`, so evaluating the string in a fresh `node:vm`
-     *     context re-creates them (for resuming a session on a new VM). Function bodies are not
-     *     analyzed: a replayed function that closed over non-replayable state throws when called,
-     *     not when defined.
+     *     Function declarations are printed as-is; classes and `let`/`const` are re-declared as
+     *     `var`, so evaluating the string in a fresh `node:vm` context re-creates all of them
+     *     (for resuming a session on a new VM). Function bodies are not analyzed: a replayed
+     *     function that closed over non-replayable state throws when called, not when defined.
      *
      * @example
      * ```js

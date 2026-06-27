@@ -104,9 +104,7 @@ describe("InternalSourceMap", () => {
     expect(stderr).toBe("");
     // Each frame must point at its line's `Error` in 1-based UTF-16 columns,
     // `a1` being the all-ASCII control.
-    const frames = [...stdout.matchAll(/at ([a-d]1) \(.*index\.ts:(\d+):(\d+)\)/g)].map(
-      m => `${m[1]} ${m[2]}:${m[3]}`,
-    );
+    const frames = [...stdout.matchAll(/at ([a-d]1) \(.*index\.ts:(\d+):(\d+)\)/g)].map(m => `${m[1]} ${m[2]}:${m[3]}`);
     expect(frames).toEqual(["a1", "b1", "c1", "d1"].map((fn, i) => `${fn} ${i + 1}:${lines[i].indexOf("Error(") + 1}`));
     expect(exited).toBe(0);
   });

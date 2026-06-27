@@ -3033,7 +3033,9 @@ pub mod internal {
         let len = input.get_length(global_this)? as u32;
         let mut entries: Vec<ResultEntry> = Vec::with_capacity(len as usize);
         for i in 0..len {
-            let fam = input.get_index(global_this, i)?.coerce_to_i32(global_this)?;
+            let fam = input
+                .get_index(global_this, i)?
+                .coerce_to_i32(global_this)?;
             let mut info: AddrInfo = bun_core::ffi::zeroed();
             info.ai_family = if fam == 6 {
                 netc::AF_INET6

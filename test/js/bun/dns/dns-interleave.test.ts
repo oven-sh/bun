@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { dnsInternals } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
 
 // When fetch()/Bun.connect() resolves a dual-stack hostname, the internal DNS
 // cache (used by the usockets connect path) packs the getaddrinfo result into

@@ -112,11 +112,9 @@ public:
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        /* A no-body status carries neither a Content-Length header (RFC 9110
-         * 8.6) nor any body bytes: RFC 9112 6.3 terminates the message at the
-         * blank line after the header fields regardless of what follows. end()
-         * already short-circuits on noBodyStatus; tryEnd() reaches here
-         * directly, so drop both the framing and the data. */
+        /* A no-body status carries no Content-Length (RFC 9110 8.6) and no body
+         * bytes (RFC 9112 6.3 terminates it at the blank line). end() already
+         * short-circuits on noBodyStatus; tryEnd() reaches here directly. */
         if (httpResponseData->noBodyStatus) {
             allowContentLength = false;
             data = {};
@@ -429,12 +427,9 @@ public:
             return this;
         }
 
-        /* RFC 9110 8.6: a server MUST NOT send Content-Length in a response
-         * with a 1xx or 204 status, and such a response never has a body. The
-         * status line is the one point every response passes through, so
-         * record that here rather than at each caller. 304 also has no body
-         * but MAY carry a Content-Length; callers that want it suppressed for
-         * 304 (node:http) set noBodyStatus themselves. */
+        /* RFC 9110 8.6: a 1xx/204 MUST NOT carry Content-Length and has no
+         * body; record that at the one point every response passes through.
+         * 304 MAY carry one, so node:http sets noBodyStatus for it itself. */
         if (status.length() >= 3 && (status.length() == 3 || status[3] == ' ')
             && (status[0] == '1' || (status[0] == '2' && status[1] == '0' && status[2] == '4'))) {
             httpResponseData->noBodyStatus = true;

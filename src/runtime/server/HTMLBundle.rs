@@ -621,10 +621,8 @@ impl Route {
                         _ => unreachable!(),
                     };
                     headers.append(b"Content-Type", content_type);
-                    // Do not apply etags to html.
-                    if output_files[i].loader != Loader::Html
-                        && matches!(output_files[i].value, OutputFileValue::Buffer { .. })
-                    {
+                    let is_html = output_files[i].loader == Loader::Html;
+                    if matches!(output_files[i].value, OutputFileValue::Buffer { .. }) {
                         // Source maps don't carry a precomputed chunk hash; hash
                         // their bytes so every served file gets a unique ETag.
                         let hash = match output_files[i].hash {
@@ -641,7 +639,16 @@ impl Route {
                         };
                         headers.append(b"ETag", &hashbuf[..n]);
                         if !server.config().is_development() {
-                            headers.append(b"Cache-Control", b"public, max-age=31536000");
+                            // Non-HTML outputs are served at content-hashed paths, so they
+                            // can be cached forever. HTML must be revalidated each request.
+                            headers.append(
+                                b"Cache-Control",
+                                if is_html {
+                                    b"no-cache"
+                                } else {
+                                    b"public, max-age=31536000, immutable"
+                                },
+                            );
                         }
                     }
 

@@ -929,13 +929,16 @@ describe("production headers and import.meta.env", () => {
         import index from "./index.html";
         const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
         const base = server.url.href;
-        const html = await (await fetch(base)).text();
+        const htmlRes = await fetch(base);
+        const html = await htmlRes.text();
+        const htmlETag = htmlRes.headers.get("etag");
         const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
         const cssPath = html.match(/href="([^"]+\\.css)"/)[1];
         const jsRes = await fetch(new URL(jsPath, base));
         const js = await jsRes.text();
         const cssRes = await fetch(new URL(cssPath, base));
         const mapRes = await fetch(new URL(jsPath + ".map", base));
+        const conditional = await fetch(base, { headers: { "If-None-Match": htmlETag ?? "missing" } });
         // Evaluate the bundle as a browser module would (no import.meta.env in scope).
         let evalError = null;
         try { new Function(js.replace(/^\\/\\/# (sourceMappingURL|debugId)=.*$/gm, ""))(); }
@@ -944,6 +947,9 @@ describe("production headers and import.meta.env", () => {
           jsContainsImportMetaEnv: js.includes("import.meta.env"),
           evalError,
           result: globalThis.result ?? null,
+          htmlETag,
+          htmlCacheControl: htmlRes.headers.get("cache-control"),
+          htmlConditionalStatus: conditional.status,
           jsETag: jsRes.headers.get("etag"),
           jsCacheControl: jsRes.headers.get("cache-control"),
           cssETag: cssRes.headers.get("etag"),
@@ -971,6 +977,9 @@ describe("production headers and import.meta.env", () => {
       jsContainsImportMetaEnv: boolean;
       evalError: string | null;
       result: Record<string, unknown> | null;
+      htmlETag: string | null;
+      htmlCacheControl: string | null;
+      htmlConditionalStatus: number;
       jsETag: string | null;
       jsCacheControl: string | null;
       cssETag: string | null;
@@ -991,6 +1000,7 @@ describe("production headers and import.meta.env", () => {
     expect(out.result).toEqual({ MODE: "production", DEV: false, PROD: true, SSR: false });
 
     // ETags must be RFC 9110 quoted strings, content-derived (not all zeros).
+    expect(out.htmlETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.cssETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.mapStatus).toBe(200);
@@ -998,10 +1008,21 @@ describe("production headers and import.meta.env", () => {
     expect(out.mapETag).not.toBe('"0000000000000000"');
     expect(out.mapETag).not.toBe(out.jsETag);
 
-    // Production promises Cache-Control on bundled assets.
-    expect(out.jsCacheControl).toBe("public, max-age=31536000");
-    expect(out.cssCacheControl).toBe("public, max-age=31536000");
-    expect(out.mapCacheControl).toBe("public, max-age=31536000");
+    // Production: HTML revalidates via ETag; content-hashed assets cache forever.
+    expect({
+      html: out.htmlCacheControl,
+      js: out.jsCacheControl,
+      css: out.cssCacheControl,
+      map: out.mapCacheControl,
+    }).toEqual({
+      html: "no-cache",
+      js: "public, max-age=31536000, immutable",
+      css: "public, max-age=31536000, immutable",
+      map: "public, max-age=31536000, immutable",
+    });
+
+    // A conditional request with the HTML ETag returns 304.
+    expect(out.htmlConditionalStatus).toBe(304);
   });
 
   test("development: { hmr: false } inlines import.meta.env.* and quotes ETags", async () => {
@@ -1011,11 +1032,13 @@ describe("production headers and import.meta.env", () => {
     expect(out.evalError).toBeNull();
     expect(out.result).toEqual({ MODE: "development", DEV: true, PROD: false, SSR: false });
 
+    expect(out.htmlETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
     expect(out.mapETag).not.toBe('"0000000000000000"');
 
     // Dev mode should not set aggressive Cache-Control.
+    expect(out.htmlCacheControl).toBeNull();
     expect(out.jsCacheControl).toBeNull();
   });
 

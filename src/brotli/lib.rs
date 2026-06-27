@@ -10,9 +10,64 @@ use bun_core::{Error, err};
 // ──────────────────────────────────────────────────────────────────────────
 
 #[allow(non_snake_case)]
+#[cfg(not(target_env = "ohos"))]
 pub mod BrotliAllocator {
     bun_alloc::c_thunks_for_zone!("brotli");
     pub use malloc_size as alloc;
+}
+
+#[allow(non_snake_case)]
+#[cfg(target_env = "ohos")]
+pub mod BrotliAllocator {
+    // On OHOS, mimalloc overrides the `malloc` symbol globally
+    // (MI_MALLOC_OVERRIDE), so libc::malloc would route through
+    // mimalloc. Brotli + mimalloc produce corrupted output on OHOS
+    // musl, so we bypass ALL allocators and use mmap directly.
+    // Brotli's allocations are dominated by large ring buffers
+    // (128K-4M), so mmap page overhead is negligible.
+    use core::ffi::c_void;
+    use core::ptr;
+
+    const HEADER: usize = size_of::<usize>();
+
+    /// Round up to the host page size so munmap has a valid length.
+    fn page_align(size: usize) -> usize {
+        let page = 4096usize;
+        (size + page - 1) & !(page - 1)
+    }
+
+    pub extern "C" fn alloc(_: *mut c_void, len: usize) -> *mut c_void {
+        let map_size = page_align(len + HEADER);
+        // SAFETY: mmap has no preconditions beyond valid args.
+        let ptr = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                map_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1i32,
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            bun_alloc::out_of_memory();
+        }
+        // Store the mapped size at the page start so free() knows
+        // how much to munmap.
+        unsafe { ptr::write(ptr as *mut usize, map_size) };
+        // Return pointer after the header.
+        unsafe { (ptr as *mut u8).add(HEADER) as *mut c_void }
+    }
+
+    pub unsafe extern "C" fn free(_: *mut c_void, p: *mut c_void) {
+        if p.is_null() {
+            return;
+        }
+        let real = unsafe { (p as *mut u8).sub(HEADER) as *mut c_void };
+        let map_size = unsafe { ptr::read(real as *const usize) };
+        // SAFETY: real was allocated by the `alloc` above.
+        unsafe { libc::munmap(real, map_size) };
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

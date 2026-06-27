@@ -110,12 +110,19 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
 
     let source_count = sources_paths.items.len_u32() as usize;
 
-    // Copy source paths out of the arena into owned storage.
+    // Copy source paths out of the arena into owned storage. A `sources[i]`
+    // longer than `MAX_PATH_BYTES` is rejected (the whole map falls back):
+    // the name is resolved against the intermediate's dir via the
+    // fixed-size path buffers in `bun_paths`, which would otherwise panic
+    // on an oversized entry from an adversarial inline map.
     let mut source_paths_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
     for item in sources_paths.items.slice() {
         let estr = item.data.as_e_string().ok_or(InvalidSourceMap)?;
         // handle_oom — fatal if OOM
         let s = estr.string(&arena).expect("OOM");
+        if s.len() > bun_paths::MAX_PATH_BYTES {
+            return Err(InvalidSourceMap);
+        }
         source_paths_slice.push(Box::<[u8]>::from(s));
     }
 

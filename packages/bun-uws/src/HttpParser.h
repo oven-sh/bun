@@ -326,6 +326,12 @@ namespace uWS
         {
             std::string_view url = getUrl();
             if (url.length() && url[0] != '/') {
+                /* Asterisk-form routes as the root: HttpRouter assumes a leading "/"
+                 * and strips the first byte, so a verbatim "*foo" would alias a
+                 * static "/foo" route. getFullUrl() still exposes the target verbatim. */
+                if (url[0] == '*') {
+                    return "/";
+                }
                 size_t schemeLength = 0;
                 if (url.length() >= 7 && strncasecmp(url.data(), "http://", 7) == 0) {
                     schemeLength = 7;
@@ -595,14 +601,15 @@ namespace uWS
             }
 
 
-            /* RFC 9112 3: exactly one SP separates method and request-target. Accept
-             * origin-form ("/...") and asterisk-form ("*", RFC 9112 3.2.4); like
-             * Node (llhttp), any method may carry asterisk-form, delivered verbatim. */
-            bool isOriginOrAsteriskForm = (__builtin_expect(data[0] == 32 && (data[1] == '/' || data[1] == '*'), 1));
-            bool isConnect = !isOriginOrAsteriskForm && ((data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0);
+            /* RFC 9112 3: exactly one SP separates method and request-target. Beyond
+             * origin-form ("/..."), accept asterisk-form ("*", RFC 9112 3.2.4); like
+             * Node (llhttp), any method may carry it and it is delivered verbatim. */
+            bool isOriginForm = (__builtin_expect(data[0] == 32 && data[1] == '/', 1));
+            bool isConnect = !isOriginForm && ((data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0);
+            bool isAsteriskForm = !isOriginForm && !isConnect && data[0] == 32 && data[1] == '*';
             /* Also accept proxy-style absolute URLs (http://... or https://...) as valid request targets */
-            bool isProxyStyleURL = !isOriginOrAsteriskForm && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
-            if (isOriginOrAsteriskForm || isConnect || isProxyStyleURL) [[likely]] {
+            bool isProxyStyleURL = !isOriginForm && !isConnect && !isAsteriskForm && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
+            if (isOriginForm || isConnect || isAsteriskForm || isProxyStyleURL) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
                 if(!isValidMethod(header.key, useStrictMethodValidation)) {

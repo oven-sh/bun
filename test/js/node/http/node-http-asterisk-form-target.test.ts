@@ -53,6 +53,42 @@ describe("node:http server", () => {
     expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
     expect(await handled).toBe("*?a=1");
   });
+
+  test("delivers `CONNECT * HTTP/1.1` as a tunnel, not as pipelined HTTP", async () => {
+    const { promise: connected, resolve } = Promise.withResolvers<{ url: string; tunneled: Promise<string> }>();
+    await using server = http.createServer();
+    server.on("connect", (req, socket) => {
+      const { promise: tunneled, resolve: gotBytes } = Promise.withResolvers<string>();
+      socket.on("data", chunk => {
+        gotBytes(chunk.toString());
+        socket.end();
+      });
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      resolve({ url: req.url!, tunneled });
+    });
+    await once(server.listen(0), "listening");
+
+    const client = net.connect((server.address() as net.AddressInfo).port);
+    try {
+      client.on("error", () => {});
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => chunks.push(chunk));
+      const closed = once(client, "close");
+      client.write("CONNECT * HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+      const { url, tunneled } = await connected;
+      expect(url).toBe("*");
+
+      // These bytes must be delivered on the tunnel. If CONNECT lost tunnel
+      // mode they would be fed back into the HTTP parser as a second request.
+      client.write("raw tunnel payload\r\n");
+      expect(await tunneled).toBe("raw tunnel payload\r\n");
+      await closed;
+      expect(Buffer.concat(chunks).toString()).toBe("HTTP/1.1 200 Connection Established\r\n\r\n");
+    } finally {
+      client.destroy();
+    }
+  });
 });
 
 describe("Bun.serve", () => {
@@ -70,5 +106,28 @@ describe("Bun.serve", () => {
     const wire = await writeAndCollect(server.port, "OPTIONS * HTTP/1.1");
     expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
     expect(await handled).toBe("OPTIONS");
+  });
+
+  // HttpRouter assumes an origin-form target and strips the leading byte, so
+  // an asterisk-form target must route as the root: a verbatim "*admin" would
+  // otherwise segment identically to "/admin" and invoke the static route.
+  test("an asterisk-form target cannot alias a static route", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/admin": () => new Response("admin") },
+      fetch: () => new Response("fallback"),
+    });
+
+    // Precondition: the static route exists and origin-form reaches it.
+    expect(await writeAndCollect(server.port, "GET /admin HTTP/1.1")).toEndWith("\r\n\r\nadmin");
+
+    for (const target of ["*", "*admin", "*/admin"]) {
+      const wire = await writeAndCollect(server.port, `GET ${target} HTTP/1.1`);
+      expect({ target, status: wire.split("\r\n")[0], body: wire.split("\r\n\r\n")[1] }).toEqual({
+        target,
+        status: "HTTP/1.1 200 OK",
+        body: "fallback",
+      });
+    }
   });
 });

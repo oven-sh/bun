@@ -243,7 +243,7 @@ You can pass any of the following ACLs:
 
 ### Expiring URLs
 
-To set an expiration time for a presigned URL, pass the `expiresIn` option.
+To set an expiration time for a presigned URL, pass the `expiresIn` option. AWS Signature v4 limits presigned URLs to 7 days, so the value must be between 1 and 604800 seconds; anything else throws a `RangeError`.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 const url = s3file.presign({

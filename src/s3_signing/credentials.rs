@@ -1076,6 +1076,13 @@ pub struct SignQueryOptions {
     pub expires: usize,
 }
 
+impl SignQueryOptions {
+    /// SigV4 caps `X-Amz-Expires` at 7 days; S3 rejects every use of a URL
+    /// signed with a larger value (`AuthorizationQueryParametersError`).
+    /// See <https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html>.
+    pub const MAX_EXPIRES_SECONDS: usize = 7 * 24 * 60 * 60;
+}
+
 impl Default for SignQueryOptions {
     fn default() -> Self {
         Self { expires: 86400 }

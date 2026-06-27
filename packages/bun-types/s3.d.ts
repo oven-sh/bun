@@ -377,6 +377,10 @@ declare module "bun" {
     /**
      * Number of seconds until the presigned URL expires.
      * - Default: 86400 (1 day)
+     * - Minimum: 1
+     * - Maximum: 604800 (7 days), the limit AWS Signature v4 allows
+     *
+     * Values outside that range throw a `RangeError` at presign time.
      *
      * @example
      *     // Short-lived URL

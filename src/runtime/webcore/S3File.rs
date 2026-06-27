@@ -7,7 +7,9 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult, RangeErrorOptions,
+};
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
@@ -752,10 +754,18 @@ pub(crate) fn get_presign_url_from(
                 };
             }
             if let Some(expires_) = options.get_optional_int::<i32>(global, "expiresIn")? {
-                if expires_ <= 0 {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "expiresIn must be greather than 0"
-                    )));
+                const MAX_EXPIRES: i32 =
+                    bun_s3_signing::SignQueryOptions::MAX_EXPIRES_SECONDS as i32;
+                if !(1..=MAX_EXPIRES).contains(&expires_) {
+                    return Err(global.throw_range_error(
+                        i64::from(expires_),
+                        RangeErrorOptions {
+                            min: 1,
+                            max: i64::from(MAX_EXPIRES),
+                            field_name: b"expiresIn",
+                            ..Default::default()
+                        },
+                    ));
                 }
                 expires = expires_ as usize;
             }

@@ -2453,7 +2453,9 @@ static void external_cleanup(napi_env env, void* data, void* hint)
 {
     auto* external = reinterpret_cast<Bun::NapiExternal*>(data);
     ASSERT(external->m_boundCleanup != nullptr);
+    external->m_boundCleanup->deactivate(*env);
     external->m_boundCleanup = nullptr;
+    // The user callback may do anything, so detach all state from the external first.
     Bun::NapiFinalizer finalizer = external->m_finalizer;
     external->m_finalizer.clear();
     finalizer.call(env, external->m_value, true);

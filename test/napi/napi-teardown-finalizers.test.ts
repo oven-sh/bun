@@ -1,25 +1,36 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, expect, it } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
 import { bunEnv, bunExe, canBuildNodeAddons } from "harness";
 import { join } from "path";
 
-const addonPath = join(__dirname, "napi-app/build/Debug/test_teardown_finalizers.node");
+const addonDir = join(__dirname, "napi-app");
+const addonSource = join(addonDir, "test_teardown_finalizers.c");
+const addonPath = join(addonDir, "build/Debug/test_teardown_finalizers.node");
+
+// Printed by the fixture after the gc_* finalizers have been observed, so the
+// test can prove they ran during Bun.gc(), not only at env teardown.
+const GC_BARRIER = "--gc-barrier--";
 
 beforeAll(() => {
   if (!canBuildNodeAddons()) return;
   // Build the native addons in napi-app, but only if the one this test needs
-  // is missing (napi.test.ts or a previous run usually has built it already).
-  // The addon doesn't link against bun, so an existing binary stays valid
-  // across bun builds; skipping the install avoids re-running the node-gyp
-  // rebuild, which is slow and occasionally flaky under resource pressure.
+  // is missing or older than its inputs (napi.test.ts or a previous run
+  // usually has built it already). The addon doesn't link against bun, so an
+  // existing binary stays valid across bun builds; skipping the install avoids
+  // re-running the node-gyp rebuild, which is slow and occasionally flaky
+  // under resource pressure.
   if (existsSync(addonPath)) {
-    return;
+    const built = statSync(addonPath).mtimeMs;
+    const inputs = [addonSource, join(addonDir, "binding.gyp")];
+    if (inputs.every(f => statSync(f).mtimeMs <= built)) {
+      return;
+    }
   }
   for (let attempt = 0; ; attempt++) {
     const install = spawnSync({
       cmd: [bunExe(), "install", "--verbose"],
-      cwd: join(__dirname, "napi-app"),
+      cwd: addonDir,
       stderr: "inherit",
       env: bunEnv,
       stdout: "inherit",
@@ -42,12 +53,10 @@ async function runFixture(code: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const finalized = stderr
-    .split("\n")
-    .filter(l => l.startsWith("finalize: "))
-    .map(l => l.slice("finalize: ".length))
-    .sort();
-  return { stdout, stderr, exitCode, finalized };
+  // On Windows the C runtime writes \r\n, so split on either line ending.
+  const lines = stderr.split(/\r?\n/).filter(l => l.startsWith("finalize: ") || l === GC_BARRIER);
+  const names = (ls: string[]) => ls.map(l => l.slice("finalize: ".length)).sort();
+  return { stdout, stderr, exitCode, lines, names, finalized: names(lines.filter(l => l !== GC_BARRIER)) };
 }
 
 it.skipIf(!canBuildNodeAddons())(
@@ -74,24 +83,61 @@ it.skipIf(!canBuildNodeAddons())(
 it.skipIf(!canBuildNodeAddons())(
   "a finalizer already run by GC does not run again at env teardown",
   async () => {
-    // "gc_*" objects become garbage and are finalized by Bun.gc(); "exit_*"
-    // objects stay rooted until teardown. Each name must appear exactly once:
-    // a duplicate would be a double-invocation (double free in a real addon),
-    // a missing "gc_*" would mean GC-time finalization regressed.
-    const { stdout, exitCode, finalized } = await runFixture(`
+    // The gc_* objects become garbage; the fixture forces GC until their
+    // finalizers have observably run (the addon defers them to the event loop,
+    // so it polls a native counter rather than assuming Bun.gc is synchronous),
+    // then prints the barrier and registers the exit_* objects, which stay
+    // rooted until teardown. Asserting the two groups land on opposite sides of
+    // the barrier, each exactly once, proves both that GC-time finalization
+    // still works and that teardown does not re-run a finalizer GC already ran.
+    const { stdout, exitCode, lines, names } = await runFixture(`
       function makeGarbage() {
         addon.addFinalizer({}, "gc_add_finalizer", false);
         addon.createExternal("gc_external");
       }
       makeGarbage();
-      Bun.gc(true);
-      Bun.gc(true);
+      for (let i = 0; addon.finalizeCount() < 2; i++) {
+        if (i > 500) throw new Error("gc-time finalizers never ran; count=" + addon.finalizeCount());
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.error(${JSON.stringify(GC_BARRIER)});
       const kept = {};
       addon.addFinalizer(kept, "exit_add_finalizer", false);
       globalThis.__keep = [kept, addon.createExternal("exit_external")];
     `);
     expect(stdout).toBe("");
-    expect(finalized).toEqual(["exit_add_finalizer", "exit_external", "gc_add_finalizer", "gc_external"]);
+    const barrier = lines.indexOf(GC_BARRIER);
+    expect(barrier).not.toBe(-1);
+    expect({
+      beforeGcBarrier: names(lines.slice(0, barrier)),
+      afterGcBarrier: names(lines.slice(barrier + 1)),
+    }).toEqual({
+      beforeGcBarrier: ["gc_add_finalizer", "gc_external"],
+      afterGcBarrier: ["exit_add_finalizer", "exit_external"],
+    });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+it.skipIf(!canBuildNodeAddons())(
+  "finalizers registered by a teardown finalizer also run in the same teardown",
+  async () => {
+    // nesting_finalize runs during env teardown and registers two more
+    // finalizers (napi_create_external + napi_add_finalizer) while the env is
+    // already draining its finalizer list. Bun accepts those calls there, so
+    // it must drain the entries they append: a single reverse pass followed by
+    // a bulk free of the list never ran them, and freeing them left the
+    // still-live NapiExternal / NapiRef holding a dangling pointer to its list
+    // entry (a use-after-free on the next sweep).
+    const { stdout, exitCode, finalized } = await runFixture(`
+      const o = {};
+      addon.wrapNesting(o, "outer", "nested_external", "nested_add_finalizer");
+      globalThis.__keep = [o];
+    `);
+    expect(stdout).toBe("");
+    expect(finalized).toEqual(["nested_add_finalizer", "nested_external", "outer"]);
     expect(exitCode).toBe(0);
   },
   30_000,

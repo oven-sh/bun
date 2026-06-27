@@ -287,7 +287,7 @@ impl ServerWebSocket {
     }
 
     /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical
-    /// arg-count guard, closed short-circuit, string-type guard, UTF-8 slice,
+    /// arg-count guard, closed short-circuit, string-type guard, WTF-8 slice,
     /// non-empty guard, then dispatch to the uWS topic op. Only the JS-visible
     /// name, the closed-socket return value, and the terminal op differ.
     #[inline]

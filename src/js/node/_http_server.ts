@@ -1349,7 +1349,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
-  let hasContentLength = response.hasHeader("content-length");
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(format("%s", originalStatusCode));
@@ -1383,16 +1382,6 @@ function _writeHead(statusCode, reason, obj, response) {
         if (length % 2 !== 0) {
           throw $ERR_INVALID_ARG_VALUE("headers", obj);
         }
-        // Test non-chunked message does not have trailer header set,
-        // message will be terminated by the first empty line after the
-        // header fields, regardless of the header fields present in the
-        // message, and thus cannot contain a message body or 'trailers'.
-        if (
-          (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
-          (response._trailer || response.hasHeader("trailer"))
-        ) {
-          throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
-        }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any
         // existing conflicts, then use appendHeader.
@@ -1417,11 +1406,30 @@ function _writeHead(statusCode, reason, obj, response) {
         if (k) response.setHeader(k, obj[k]);
       }
     }
-    if (
-      (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
-      (response._trailer || response.hasHeader("trailer"))
-    ) {
-      // remove the invalid content-length or trailer header
+  }
+
+  updateHasBody(response, statusCode);
+
+  // Test non-chunked message does not have trailer header set,
+  // message will be terminated by the first empty line after the
+  // header fields, regardless of the header fields present in the
+  // message, and thus cannot contain a message body or 'trailers'.
+  // Mirrors the framing decision in Node.js's _storeHeader(): the response
+  // is chunked unless a Content-Length is present, the response carries no
+  // body (204/304/1xx/HEAD), chunked encoding is not the default, or the
+  // user removed Transfer-Encoding.
+  if (response._trailer || response.hasHeader("trailer")) {
+    const hasContentLength = response.hasHeader("content-length");
+    const te = response.getHeader("transfer-encoding");
+    const willBeChunked =
+      response.chunkedEncoding === true ||
+      (te !== undefined && chunkExpression.test(te)) ||
+      (te === undefined &&
+        !hasContentLength &&
+        response._hasBody &&
+        response.useChunkedEncodingByDefault &&
+        !response._removedTE);
+    if (!willBeChunked) {
       if (hasContentLength) {
         response.removeHeader("trailer");
       } else {
@@ -1430,8 +1438,6 @@ function _writeHead(statusCode, reason, obj, response) {
       throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
   }
-
-  updateHasBody(response, statusCode);
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
@@ -1572,7 +1578,10 @@ function renderNativeHeaders(res) {
     } else if (res._removedTE) {
       closeDelimited = true;
       res[kMustCloseConnection] = true;
-    } else if (res._removedContLen) {
+    } else if (res._removedContLen || res._trailer || res[kOutHeaders]?.["trailer"] !== undefined) {
+      // Node's _storeHeader: a Trailer header (`state.trailer`) suppresses the
+      // auto Content-Length and selects chunked framing so the trailer can be
+      // emitted after the terminating chunk.
       forceChunked = true;
     }
   }
@@ -2004,6 +2013,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // and will not throw or emit an error
     return true;
   }
+  const trailer = this._trailer;
   if (headerState !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       handle.writeHead(
@@ -2017,13 +2027,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
       // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-      this._contentLength = handle.end(chunk, encoding, undefined, strictContentLength(this));
+      this._contentLength = handle.end(chunk, encoding, undefined, strictContentLength(this), trailer);
     });
   } else {
     // If there's no data but you already called end, then you're done.
     // We can ignore it in that case.
     if (!(!chunk && handle.ended) && !handle.aborted) {
-      handle.end(chunk, encoding, undefined, strictContentLength(this));
+      handle.end(chunk, encoding, undefined, strictContentLength(this), trailer);
     }
   }
   this._header = " ";

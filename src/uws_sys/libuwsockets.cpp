@@ -1183,6 +1183,46 @@ extern "C"
     }
   }
 
+  void uws_res_end_with_trailer(int ssl, uws_res_r res, const char *data, size_t length,
+                                const char *trailer, size_t trailer_length,
+                                bool close_connection)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->clearOnWritableAndAborted();
+      uwsRes->end(stringViewFromC(data, length), close_connection,
+                  stringViewFromC(trailer, trailer_length));
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->clearOnWritableAndAborted();
+      uwsRes->end(stringViewFromC(data, length), close_connection,
+                  stringViewFromC(trailer, trailer_length));
+    }
+  }
+
+  void uws_res_end_stream_with_trailer(int ssl, uws_res_r res,
+                                       const char *trailer, size_t trailer_length,
+                                       bool close_connection)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->clearOnWritableAndAborted();
+      uwsRes->sendTerminatingChunk(close_connection,
+                                   stringViewFromC(trailer, trailer_length));
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->clearOnWritableAndAborted();
+      uwsRes->sendTerminatingChunk(close_connection,
+                                   stringViewFromC(trailer, trailer_length));
+    }
+  }
+
   void uws_res_pause(int ssl, uws_res_r res)
   {
     if (ssl)

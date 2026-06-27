@@ -1461,6 +1461,18 @@ impl NodeHTTPResponse {
             break 'brk None;
         };
 
+        let mut trailer = crate::node::StringOrBuffer::EMPTY;
+        if IS_END && arguments.len() > 4 && arguments[4].is_string() {
+            if !crate::node::StringOrBuffer::from_js_with_encoding_into(
+                &mut trailer,
+                global_object,
+                arguments[4],
+                crate::node::Encoding::Latin1,
+            )? {
+                trailer = crate::node::StringOrBuffer::EMPTY;
+            }
+        }
+
         // Construct in place — returning
         // `JsResult<Option<StringOrBuffer>>` by value here lowered to ~128B of
         // `vmovups` stack copies per `res.end()`; the `_into` out-param form
@@ -1568,10 +1580,18 @@ impl NodeHTTPResponse {
             raw_response.clear_timeout();
             self.update_flags(|f| f.insert(Flags::ENDED));
             let raw_response = self.raw_response.get().unwrap();
+            let trailer_bytes = trailer.slice();
+            let close = state.is_http_connection_close();
             if !state.is_http_write_called() || !bytes.is_empty() {
-                raw_response.end(bytes, state.is_http_connection_close());
+                if trailer_bytes.is_empty() {
+                    raw_response.end(bytes, close);
+                } else {
+                    raw_response.end_with_trailer(bytes, trailer_bytes, close);
+                }
+            } else if trailer_bytes.is_empty() {
+                raw_response.end_stream(close);
             } else {
-                raw_response.end_stream(state.is_http_connection_close());
+                raw_response.end_stream_with_trailer(trailer_bytes, close);
             }
             self.on_request_complete();
 

@@ -100,8 +100,10 @@ public:
      * Will start timeout if stream reaches totalSize or write failure.
      * keepCorked: if true, skip the trailing uncork so the caller can batch
      * more writes (used by upgrade() to batch the handshake with the first
-     * WebSocket frames). */
-    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false, bool keepCorked = false) {
+     * WebSocket frames).
+     * trailer: pre-rendered "Name: value\r\n..." lines written between the
+     * terminating 0-chunk and the final CRLF (chunked responses only). */
+    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false, bool keepCorked = false, std::string_view trailer = {}) {
         /* Write status if not already done */
         writeStatus(HTTP_200_OK);
 
@@ -140,8 +142,14 @@ public:
             this->write(data, nullptr);
 
 
-            /* Terminating 0 chunk */
-            Super::write("0\r\n\r\n", 5);
+            /* Terminating 0 chunk (with trailer fields when provided) */
+            if (trailer.empty()) {
+                Super::write("0\r\n\r\n", 5);
+            } else {
+                Super::write("0\r\n", 3);
+                Super::write(trailer.data(), trailer.length());
+                Super::write("\r\n", 2);
+            }
             httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
@@ -459,7 +467,7 @@ public:
     }
 
     /* End the response with an optional data chunk. Always starts a timeout. */
-    void end(std::string_view data = {}, bool closeConnection = false) {
+    void end(std::string_view data = {}, bool closeConnection = false, std::string_view trailer = {}) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         /* 204/304 responses carry no body framing at all: no Content-Length,
@@ -497,7 +505,7 @@ public:
         /* Do not auto-write a Content-Length header when the user already wrote
          * a Content-Length or an explicit Transfer-Encoding header (a message
          * must not carry both, see RFC 9112 §6.2). */
-        internalEnd(data, data.length(), false, !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)), closeConnection);
+        internalEnd(data, data.length(), false, !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)), closeConnection, false, trailer);
     }
 
     /* Try and end the response. Returns [true, true] on success.
@@ -508,7 +516,7 @@ public:
     }
 
     /* Write the end of chunked encoded stream */
-    bool sendTerminatingChunk(bool closeConnection = false) {
+    bool sendTerminatingChunk(bool closeConnection = false, std::string_view trailer = {}) {
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
@@ -525,7 +533,7 @@ public:
         /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
         /* Super::write("\r\n0\r\n\r\n", 7); */
 
-        return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
+        return internalEnd({nullptr, 0}, 0, false, false, closeConnection, false, trailer);
     }
 
     void flushHeaders(bool flushImmediately = false) {

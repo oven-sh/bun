@@ -123,6 +123,21 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    pub fn end_with_trailer(&mut self, data: &[u8], trailer: &[u8], close_connection: bool) {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_end_with_trailer(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.as_ptr(),
+                data.len(),
+                trailer.as_ptr(),
+                trailer.len(),
+                close_connection,
+            );
+        }
+    }
+
     pub fn try_end(&mut self, data: &[u8], total: usize, close_: bool) -> bool {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -517,6 +532,19 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_stream(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
+    pub fn end_stream_with_trailer(&mut self, trailer: &[u8], close_connection: bool) {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_end_stream_with_trailer(
+                Self::ssl_flag(),
+                self.downcast(),
+                trailer.as_ptr(),
+                trailer.len(),
+                close_connection,
+            );
+        }
+    }
+
     /// Run `handler` while the response is corked.
     pub fn corked<F: FnOnce()>(&mut self, f: F) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
@@ -787,6 +815,19 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end(data, close_connection))
     }
 
+    pub fn end_with_trailer(self, data: &[u8], trailer: &[u8], close_connection: bool) {
+        match self {
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).end_with_trailer(data, trailer, close_connection)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).end_with_trailer(data, trailer, close_connection)
+            }
+            // HTTP/1.1 chunked trailers do not apply to H3 body framing.
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).end(data, close_connection),
+        }
+    }
+
     pub fn should_close_connection(self) -> bool {
         any_dispatch!(self, |r| r.should_close_connection())
     }
@@ -901,6 +942,18 @@ impl AnyResponse {
 
     pub fn end_stream(self, close_connection: bool) {
         any_dispatch!(self, |r| r.end_stream(close_connection))
+    }
+
+    pub fn end_stream_with_trailer(self, trailer: &[u8], close_connection: bool) {
+        match self {
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).end_stream_with_trailer(trailer, close_connection)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).end_stream_with_trailer(trailer, close_connection)
+            }
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).end_stream(close_connection),
+        }
     }
 
     pub fn corked<F: FnOnce()>(self, f: F) {
@@ -1050,6 +1103,22 @@ pub mod c {
             res: *mut uws_res,
             data: *const u8,
             length: usize,
+            close_connection: bool,
+        );
+        pub(crate) fn uws_res_end_with_trailer(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+            trailer: *const u8,
+            trailer_length: usize,
+            close_connection: bool,
+        );
+        pub(crate) fn uws_res_end_stream_with_trailer(
+            ssl: i32,
+            res: *mut uws_res,
+            trailer: *const u8,
+            trailer_length: usize,
             close_connection: bool,
         );
         pub(crate) safe fn uws_res_flush_headers(

@@ -3749,3 +3749,96 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
 });
+
+describe("ServerResponse trailers", () => {
+  async function rawGet(port: number): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let wire = "";
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", reject);
+    socket.on("connect", () => {
+      socket.write("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+    });
+    socket.on("data", d => {
+      wire += d.toString("latin1");
+    });
+    socket.on("close", () => resolve(wire));
+    return promise;
+  }
+
+  it("writeHead with a Trailer header on a chunked response does not throw", async () => {
+    let serverError: unknown;
+    const server = createServer((req, res) => {
+      req.resume();
+      try {
+        res.writeHead(200, { Trailer: "x-t" });
+        res.write("body");
+        res.addTrailers({ "x-t": "tv" });
+        res.end();
+      } catch (e) {
+        serverError = e;
+        res.destroy();
+      }
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const wire = await rawGet((server.address() as AddressInfo).port);
+      expect(serverError).toBeUndefined();
+      // Trailer header is advertised and the response is chunked.
+      expect(wire).toContain("Trailer: x-t\r\n");
+      expect(wire).toContain("Transfer-Encoding: chunked\r\n");
+      expect(wire).not.toContain("Content-Length:");
+      // Body chunk, terminating 0-chunk, trailer field, final CRLF.
+      expect(wire).toContain("\r\n4\r\nbody\r\n0\r\nx-t: tv\r\n\r\n");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("addTrailers followed by a one-shot end() emits a chunked response with the trailer", async () => {
+    let serverError: unknown;
+    const server = createServer((req, res) => {
+      req.resume();
+      try {
+        res.writeHead(200, { Trailer: "x-t" });
+        res.addTrailers({ "x-t": "tv" });
+        res.end("body");
+      } catch (e) {
+        serverError = e;
+        res.destroy();
+      }
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const wire = await rawGet((server.address() as AddressInfo).port);
+      expect(serverError).toBeUndefined();
+      // A Trailer header forces chunked framing even for a one-shot end().
+      expect(wire).toContain("Transfer-Encoding: chunked\r\n");
+      expect(wire).not.toContain("Content-Length:");
+      expect(wire).toContain("\r\n4\r\nbody\r\n0\r\nx-t: tv\r\n\r\n");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("writeHead with Trailer and Content-Length throws ERR_HTTP_TRAILER_INVALID", async () => {
+    let thrown: unknown;
+    const server = createServer((req, res) => {
+      req.resume();
+      try {
+        res.writeHead(200, { "Trailer": "x-t", "Content-Length": "4" });
+      } catch (e) {
+        thrown = e;
+      }
+      res.removeHeader("Trailer");
+      res.end("body");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      await rawGet((server.address() as AddressInfo).port);
+      expect((thrown as NodeJS.ErrnoException)?.code).toBe("ERR_HTTP_TRAILER_INVALID");
+    } finally {
+      server.close();
+    }
+  });
+});

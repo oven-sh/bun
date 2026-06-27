@@ -595,12 +595,15 @@ namespace uWS
             }
 
 
-            /* RFC 9112 3: exactly one SP separates method and request-target */
-            bool isHTTPMethod = (__builtin_expect(data[0] == 32 && data[1] == '/', 1));
-            bool isConnect = !isHTTPMethod && ((data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0);
+            /* RFC 9112 3: exactly one SP separates method and request-target.
+             * Accept origin-form ("/...") and asterisk-form ("*", RFC 9112 3.2.4,
+             * e.g. `OPTIONS * HTTP/1.1`). Like Node.js (llhttp), any method may
+             * carry an asterisk-form target and it is delivered verbatim. */
+            bool isOriginOrAsteriskForm = (__builtin_expect(data[0] == 32 && (data[1] == '/' || data[1] == '*'), 1));
+            bool isConnect = !isOriginOrAsteriskForm && ((data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0);
             /* Also accept proxy-style absolute URLs (http://... or https://...) as valid request targets */
-            bool isProxyStyleURL = !isHTTPMethod && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
-            if (isHTTPMethod || isConnect || isProxyStyleURL) [[likely]] {
+            bool isProxyStyleURL = !isOriginOrAsteriskForm && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
+            if (isOriginOrAsteriskForm || isConnect || isProxyStyleURL) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
                 if(!isValidMethod(header.key, useStrictMethodValidation)) {

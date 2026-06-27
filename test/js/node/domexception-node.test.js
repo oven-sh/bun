@@ -137,6 +137,23 @@ describe("DOMException in Node.js environment", () => {
     expect(typeof clone.stack).toBe("string");
   });
 
+  it("works with Error.captureStackTrace", () => {
+    function frameName() {
+      const error = new DOMException("boom", "NetworkError");
+      Error.captureStackTrace(error);
+      return error;
+    }
+    const error = frameName();
+    expect(typeof error.stack).toBe("string");
+    expect(error.stack).toStartWith("NetworkError: boom");
+    expect(error.stack).toContain("frameName");
+  });
+
+  it("stack header omits the separator when the message is empty", () => {
+    expect(new DOMException().stack.split("\n")[0]).toBe("Error");
+    expect(new DOMException("", "AbortError").stack.split("\n")[0]).toBe("AbortError");
+  });
+
   it("util.inspect shows the error name and message", () => {
     const error = new DOMException("boom", "AbortError");
     const inspected = inspect(error);

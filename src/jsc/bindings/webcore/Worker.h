@@ -27,7 +27,6 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
-#include "JSValueInWrappedObject.h"
 #include "MessageWithMessagePorts.h"
 #include "WorkerOptions.h"
 #include <JavaScriptCore/RuntimeFlags.h>
@@ -130,8 +129,6 @@ public:
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }
 
-    const JSValueInWrappedObject& creationAsyncContext() const { return m_creationAsyncContext; }
-
     // -- Worker-thread entry points (each posts to m_parentContextId) --------
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
@@ -181,8 +178,8 @@ private:
 
     // The async context active at `new Worker()`. Every parent-side event
     // dispatch (message, open, error, close) runs from a posted task and
-    // restores this around it. See AsyncContextFrameScope.
-    JSValueInWrappedObject m_creationAsyncContext;
+    // restores this around it. See AsyncContextFrame::captureCurrentContext.
+    JSC::Strong<JSC::Unknown> m_creationAsyncContext;
 
     // Messages posted before the worker reaches Running are queued here and
     // flushed by fireEarlyMessages(). The Pending→Running transition happens

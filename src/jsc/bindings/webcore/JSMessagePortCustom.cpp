@@ -34,7 +34,6 @@ using namespace JSC;
 template<typename Visitor>
 void JSMessagePort::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().creationAsyncContext().visit(visitor);
     // If we have a locally entangled port, we can directly mark it as reachable. Ports that are remotely entangled are marked in-use by markActiveObjectsForContext().
     if (auto* port = wrapped().locallyEntangledPort()) {
         visitor.addOpaqueRoot(port);

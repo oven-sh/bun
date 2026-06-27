@@ -68,7 +68,7 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
     // Message delivery happens from a posted task, not from a JS caller, so
     // snapshot the creator's async context now (Node's AsyncWrap does the same).
     if (auto* globalObject = context.jsGlobalObject())
-        m_creationAsyncContext.setWeakly(AsyncContextFrame::currentContext(globalObject));
+        AsyncContextFrame::captureCurrentContext(globalObject, m_creationAsyncContext);
 }
 
 MessagePort::~MessagePort()
@@ -372,7 +372,7 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     // Listeners observe the async context that was active when this port was
     // created. entanglePorts() above stays outside: Node deserializes a
     // message's transferred ports before restoring the receiver's context.
-    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.get());
     dispatchEvent(event.event);
 }
 

@@ -111,7 +111,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     // caller, so snapshot the creator's async context now (Node's AsyncWrap
     // does the same for its Worker/MessagePort handles).
     if (auto* globalObject = context.jsGlobalObject())
-        m_creationAsyncContext.setWeakly(AsyncContextFrame::currentContext(globalObject));
+        AsyncContextFrame::captureCurrentContext(globalObject, m_creationAsyncContext);
 }
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
@@ -366,7 +366,7 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         // Listeners observe the async context that was active at new Worker().
         // drainInbox's entanglePorts() stays outside: Node deserializes a
         // message's transferred ports before restoring the receiver's context.
-        AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
+        AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.get());
         dispatchEvent(event);
     });
     if (reschedule) {
@@ -477,7 +477,7 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         if (protectedThis->hasEventListeners(eventNames().openEvent)) {
             auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
-            AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.getValue());
+            AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.get());
             protectedThis->dispatchEvent(event);
         }
     });
@@ -535,7 +535,7 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
         init.message = message;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
-        AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.getValue());
+        AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.get());
         protectedThis->dispatchEvent(event);
     });
 }
@@ -582,7 +582,7 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
         init.error = deserialized;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
-        AsyncContextFrameScope asyncContextScope(globalObject, protectedThis->m_creationAsyncContext.getValue());
+        AsyncContextFrameScope asyncContextScope(globalObject, protectedThis->m_creationAsyncContext.get());
         protectedThis->dispatchEvent(event);
     });
 }
@@ -638,7 +638,7 @@ bool Worker::dispatchExit(int32_t exitCode)
 
             if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
                 auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
-                AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.getValue());
+                AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.get());
                 protectedThis->EventTargetWithInlineData::dispatchEvent(event);
             }
 

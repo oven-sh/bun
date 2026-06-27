@@ -71,7 +71,7 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     // the caller's async context now. Node does the equivalent through the
     // setTimeout() that backs its AbortSignal.timeout().
     if (auto* globalObject = context.jsGlobalObject())
-        signal->m_timeoutAsyncContext.setWeakly(AsyncContextFrame::currentContext(globalObject));
+        AsyncContextFrame::captureCurrentContext(globalObject, signal->m_timeoutAsyncContext);
     signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
     ASSERT(signal->m_timeout);
     signal->ref();
@@ -230,7 +230,7 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     // fires from the event loop with no active AsyncLocalStorage context.
     // Undefined (and so a no-op) for every other abort path.
     auto* context = scriptExecutionContext();
-    AsyncContextFrameScope asyncContextScope(context ? context->jsGlobalObject() : nullptr, m_timeoutAsyncContext.getValue());
+    AsyncContextFrameScope asyncContextScope(context ? context->jsGlobalObject() : nullptr, m_timeoutAsyncContext.get());
 
     // 2. Set signal’s abort reason to reason if it is given; otherwise to a new "AbortError" DOMException.
     markAborted(reason);

@@ -3,6 +3,7 @@
 #include "root.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/Strong.h>
 #include <wtf/Noncopyable.h>
 
 class AsyncContextFrame : public JSC::JSNonFinalObject {
@@ -18,9 +19,16 @@ public:
     // When given a JSFunction that you want to call later, wrap it with this function
     static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
 
-    // The async context value AsyncLocalStorage is currently running with, or
-    // `undefined` when none is active. Pair with AsyncContextFrameScope.
-    static JSC::JSValue currentContext(JSC::JSGlobalObject* globalObject);
+    // Snapshots the currently-active async context (the value AsyncLocalStorage
+    // is running with) into `slot`, for AsyncContextFrameScope to restore later.
+    // No-op when there is none, so `slot` never allocates a GC handle for it.
+    //
+    // `slot` must be a Strong: the value has to stay alive for as long as the
+    // owner can still dispatch, and the owner's JS wrapper is not a reliable
+    // root for that (a MessageChannel's ports have no wrapper until .port1 is
+    // first read, and an AbortSignal.any() timeout source's wrapper can be
+    // collected while its timer is still pending).
+    static void captureCurrentContext(JSC::JSGlobalObject* globalObject, JSC::Strong<JSC::Unknown>& slot);
 
     // The following is JSC::call but
     // - it unwraps AsyncContextFrame
@@ -75,8 +83,8 @@ public:
 //
 // Use this around an event dispatch that happens asynchronously (from an
 // event-loop task) on behalf of a resource created earlier, passing the
-// AsyncContextFrame::currentContext() snapshot taken when the resource was
-// created. For a single callback, prefer withAsyncContextIfNeeded + call.
+// snapshot AsyncContextFrame::captureCurrentContext() took when the resource
+// was created. For a single callback, prefer withAsyncContextIfNeeded + call.
 //
 // A no-op when `context` is empty or undefined, mirroring
 // withAsyncContextIfNeeded's "no async context, no snapshot".

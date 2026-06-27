@@ -41,9 +41,9 @@
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
-#include "JSValueInWrappedObject.h"
 #include "MessagePortPipe.h"
 #include "MessageWithMessagePorts.h"
+#include <JavaScriptCore/Strong.h>
 #include <wtf/WeakPtr.h>
 
 namespace JSC {
@@ -116,8 +116,6 @@ public:
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
-    const JSValueInWrappedObject& creationAsyncContext() const { return m_creationAsyncContext; }
-
 private:
     MessagePort(ScriptExecutionContext&, Ref<MessagePortPipe>&&, uint8_t side);
 
@@ -144,8 +142,8 @@ private:
     const uint8_t m_side { 0 };
 
     // The async context active when the port was created, restored around
-    // dispatchOneMessage(). See AsyncContextFrameScope.
-    JSValueInWrappedObject m_creationAsyncContext;
+    // dispatchOneMessage(). See AsyncContextFrame::captureCurrentContext.
+    JSC::Strong<JSC::Unknown> m_creationAsyncContext;
 
     bool m_started { false };
     bool m_isDetached { false };

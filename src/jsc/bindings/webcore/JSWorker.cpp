@@ -944,19 +944,6 @@ JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForWorker = std::forward<decltype(space)>(space); });
 }
 
-template<typename Visitor>
-void JSWorker::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSWorker>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    // Set once in the Worker constructor (before this wrapper exists) and
-    // never mutated afterwards, so no output constraint is needed for it.
-    thisObject->wrapped().creationAsyncContext().visit(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSWorker);
-
 void JSWorker::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSWorker>(cell);

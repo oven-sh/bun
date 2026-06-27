@@ -49,7 +49,7 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
     // dispatchMessage() runs from a posted task, not from a JS caller, so
     // snapshot the creator's async context now (Node's AsyncWrap does the same).
     if (auto* globalObject = context.jsGlobalObject())
-        m_creationAsyncContext.setWeakly(AsyncContextFrame::currentContext(globalObject));
+        AsyncContextFrame::captureCurrentContext(globalObject, m_creationAsyncContext);
     BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
     jsRef(context.jsGlobalObject());
 }
@@ -96,7 +96,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     }
     // Listeners observe the async context that was active when this channel
     // was created.
-    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.get());
     dispatchEvent(event.event);
 }
 

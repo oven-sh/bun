@@ -106,7 +106,7 @@ impl MemoryAccessor {
                     address as u64,
                     buf.len() as u64,
                     buf.as_mut_ptr() as u64,
-                    &mut out,
+                    &raw mut out,
                 )
             };
             return kr == 0 && out == buf.len() as u64;
@@ -205,7 +205,7 @@ impl MemoryAccessor {
             return false;
         }
         #[cfg(target_arch = "aarch64")]
-        if address % 4 != 0 {
+        if !address.is_multiple_of(4) {
             return false;
         }
         let mut probe = [0u8; 1];
@@ -481,7 +481,7 @@ pub fn capture_from_context(pc: usize, fp: usize, lr: usize, out: &mut [usize]) 
 /// the read fails or `sp` is null.
 #[cfg_attr(not(all(unix, target_arch = "x86_64")), allow(dead_code))]
 pub fn load_return_address_at(sp: usize) -> usize {
-    if sp == 0 || sp % core::mem::align_of::<usize>() != 0 {
+    if sp == 0 || !sp.is_multiple_of(core::mem::align_of::<usize>()) {
         return 0;
     }
     let mut ma = MemoryAccessor::INIT;

@@ -1272,6 +1272,121 @@ it("you can call server.subscriberCount() when its not a websocket server", asyn
   expect(server.subscriberCount("boop")).toBe(0);
 });
 
+it("pub/sub topic names with different lone surrogates are distinct topics", async () => {
+  const TA = "a\uD800b"; // lone high surrogate
+  const TB = "a\uDC00b"; // lone low surrogate
+  const TC = "a\uFFFDb"; // actual U+FFFD
+  const TD = "a\uDFFFb"; // another lone low surrogate
+  const emoji = "a😶b"; // valid surrogate pair (must still work)
+
+  expect(TA).not.toBe(TB);
+  expect(TA).not.toBe(TC);
+  expect(TA).not.toBe(TD);
+  expect(TB).not.toBe(TC);
+  expect(TB).not.toBe(TD);
+  expect(TC).not.toBe(TD);
+
+  let stats: unknown;
+  const received: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+  using server = serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("no", { status: 400 });
+    },
+    websocket: {
+      publishToSelf: true,
+      open(ws) {
+        ws.subscribe(TA);
+        ws.subscribe(emoji);
+
+        stats = {
+          subscriptions: ws.subscriptions.sort(),
+          counts: {
+            TA: server.subscriberCount(TA),
+            TB: server.subscriberCount(TB),
+            TC: server.subscriberCount(TC),
+            TD: server.subscriberCount(TD),
+            emoji: server.subscriberCount(emoji),
+          },
+          subscribed: {
+            TA: ws.isSubscribed(TA),
+            TB: ws.isSubscribed(TB),
+            TC: ws.isSubscribed(TC),
+            TD: ws.isSubscribed(TD),
+            emoji: ws.isSubscribed(emoji),
+          },
+          unsubscribed: {
+            TB: ws.unsubscribe(TB),
+            TC: ws.unsubscribe(TC),
+            TD: ws.unsubscribe(TD),
+          },
+          afterUnsub: {
+            TA: ws.isSubscribed(TA),
+            emoji: ws.isSubscribed(emoji),
+          },
+        };
+        // Re-assert subscription so the publish phase runs to completion
+        // regardless of whether the unsubscribe calls above aliased onto TA.
+        ws.subscribe(TA);
+        ws.subscribe(emoji);
+      },
+      message(ws, m) {
+        if (m !== "go") return;
+        // Publish to every other topic via every entry point. None of these
+        // should reach the client, which is only subscribed to TA and emoji.
+        server.publish(TB, "srv-TB");
+        server.publish(TC, "srv-TC");
+        server.publish(TD, "srv-TD");
+        ws.publish(TB, "ws-TB");
+        ws.publish(TC, "ws-TC");
+        ws.publish(TD, "ws-TD");
+        ws.publishText(TB, "wsText-TB");
+        ws.publishText(TC, "wsText-TC");
+        ws.publishText(TD, "wsText-TD");
+        ws.publishBinary(TB, new TextEncoder().encode("wsBin-TB"));
+        ws.publishBinary(TC, new TextEncoder().encode("wsBin-TC"));
+        ws.publishBinary(TD, new TextEncoder().encode("wsBin-TD"));
+        // Sentinels on the topics the client is actually subscribed to. These
+        // are queued after everything above, so receiving both proves the
+        // publishes above were not delivered.
+        server.publish(emoji, "ok-emoji");
+        server.publish(TA, "ok-TA");
+        ws.publish(TA, "done");
+      },
+    },
+  });
+
+  const client = new WebSocket(`ws://${server.hostname}:${server.port}`);
+  client.binaryType = "arraybuffer";
+  client.onerror = e => reject(e);
+  client.onclose = () => reject(new Error("closed before done"));
+  client.onmessage = ev => {
+    const data = typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data);
+    received.push(data);
+    if (data === "done") resolve();
+  };
+  client.onopen = () => client.send("go");
+
+  try {
+    await promise;
+  } finally {
+    client.onerror = client.onclose = null;
+    client.close();
+  }
+
+  expect(stats).toEqual({
+    subscriptions: [TA, emoji].sort(),
+    counts: { TA: 1, TB: 0, TC: 0, TD: 0, emoji: 1 },
+    subscribed: { TA: true, TB: false, TC: false, TD: false, emoji: true },
+    unsubscribed: { TB: false, TC: false, TD: false },
+    afterUnsub: { TA: true, emoji: true },
+  });
+  expect(received).toEqual(["ok-emoji", "ok-TA", "done"]);
+});
+
 // Regression: onUpgrade stored the ZigString returned by FetchHeaders.fastGet()
 // (which borrows directly from the header map entry's WTF::StringImpl) and then
 // called fastRemove(), which frees that StringImpl when the map holds the only

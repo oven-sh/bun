@@ -894,6 +894,15 @@ impl JSValue {
         let s = bun_core::OwnedString::new(self.to_bun_string(global)?);
         Ok(s.to_utf8())
     }
+    /// Like [`to_slice`] but encodes unpaired surrogates as 3-byte WTF-8
+    /// instead of U+FFFD. Use when the bytes are a lookup key and distinct
+    /// JS strings must map to distinct byte strings.
+    ///
+    /// [`to_slice`]: Self::to_slice
+    pub fn to_slice_wtf8(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
+        let s = bun_core::OwnedString::new(self.to_bun_string(global)?);
+        Ok(s.to_wtf8())
+    }
     /// Call `toString()` on the JSValue and clone the result.
     /// On exception or out of memory, this returns a `JsError`.
     ///

@@ -167,6 +167,22 @@ function strictContentLength(response) {
   }
 }
 
+// Like Node's write_(), validate strictContentLength before the native
+// handle.writeHead() puts bytes on the wire: the native write/end check runs
+// after writeHead has already emitted the status line + headers (without the
+// terminating CRLF), so a throw there leaves the client with a syntactically
+// incomplete message it will block on forever.
+function checkStrictContentLength(strictCL, handle, chunk, encoding, fromEnd) {
+  if (strictCL === undefined) return;
+  const len = chunk ? (typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength) : 0;
+  const written = handle.getBytesWritten() + len;
+  if (fromEnd ? written !== strictCL : written > strictCL) {
+    throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(
+      `Response body's content-length of ${written} byte(s) does not match the content-length of ${strictCL} byte(s) set in header`,
+    );
+  }
+}
+
 const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback) {
   if ($isCallable(encoding)) {
     callback = encoding;
@@ -2004,7 +2020,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // and will not throw or emit an error
     return true;
   }
+  const strictCL = strictContentLength(this);
   if (headerState !== NodeHTTPHeaderState.sent) {
+    checkStrictContentLength(strictCL, handle, chunk, encoding, true);
     handle.cork(() => {
       handle.writeHead(
         this[kSnapshotStatusCode] ?? this.statusCode,
@@ -2017,13 +2035,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
       // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-      this._contentLength = handle.end(chunk, encoding, undefined, strictContentLength(this));
+      this._contentLength = handle.end(chunk, encoding, undefined, strictCL);
     });
   } else {
     // If there's no data but you already called end, then you're done.
     // We can ignore it in that case.
     if (!(!chunk && handle.ended) && !handle.aborted) {
-      handle.end(chunk, encoding, undefined, strictContentLength(this));
+      handle.end(chunk, encoding, undefined, strictCL);
     }
   }
   this._header = " ";
@@ -2141,7 +2159,9 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
+  const strictCL = strictContentLength(this);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+    checkStrictContentLength(strictCL, handle, chunk, encoding, false);
     handle.cork(() => {
       handle.writeHead(
         this[kSnapshotStatusCode] ?? this.statusCode,
@@ -2152,10 +2172,10 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictCL);
     });
   } else {
-    result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+    result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictCL);
   }
 
   if (result < 0) {
@@ -2308,7 +2328,9 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
+  const strictCL = strictContentLength(this);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+    checkStrictContentLength(strictCL, handle, data, encoding, false);
     handle.cork(() => {
       handle.writeHead(
         this[kSnapshotStatusCode] ?? this.statusCode,
@@ -2316,10 +2338,10 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
         renderNativeHeaders(this),
       );
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.write(data, encoding, callback, strictContentLength(this));
+      handle.write(data, encoding, callback, strictCL);
     });
   } else {
-    handle.write(data, encoding, callback, strictContentLength(this));
+    handle.write(data, encoding, callback, strictCL);
   }
 };
 

@@ -120,7 +120,7 @@ describe("Glob.match", () => {
     expect(glob.match("foobuzz")).toBeTrue();
     expect(glob.match("foobarz")).toBeTrue();
 
-    glob = new Glob("{a}/{b}/");
+    glob = new Glob("{a,}/{b,}/");
     expect(glob.match("a/b/")).toBeTrue();
 
     glob = new Glob("{a,b}/c/{d,e}/**/*est.ts");
@@ -306,15 +306,18 @@ describe("Glob.match", () => {
     expect(glob.match("b")).toBeTrue();
     expect(glob.match("c")).toBeTrue();
 
-    // Empty nested group
+    // Inner group with no comma is literal (bash/picomatch/minimatch)
     glob = new Glob("{a,b{}}");
     expect(glob.match("a")).toBeTrue();
-    expect(glob.match("b")).toBeTrue();
+    expect(glob.match("b")).toBeFalse();
+    expect(glob.match("b{}")).toBeTrue();
 
     // Empty nested group with tail
     glob = new Glob("{a,b{,c{{}}}}d");
     expect(glob.match("ad")).toBeTrue();
-    expect(glob.match("bcd")).toBeTrue();
+    expect(glob.match("bd")).toBeTrue();
+    expect(glob.match("bcd")).toBeFalse();
+    expect(glob.match("bc{{}}d")).toBeTrue();
 
     // Leading nested group
     glob = new Glob("{{a,b},c}");
@@ -322,11 +325,113 @@ describe("Glob.match", () => {
     expect(glob.match("b")).toBeTrue();
     expect(glob.match("c")).toBeTrue();
 
-    // Empty nested group in middle
+    // Inner group with no comma is literal
     glob = new Glob("{a,b{c,d{}}}e");
     expect(glob.match("ae")).toBeTrue();
     expect(glob.match("bce")).toBeTrue();
-    expect(glob.match("bde")).toBeTrue();
+    expect(glob.match("bde")).toBeFalse();
+    expect(glob.match("bd{}e")).toBeTrue();
+  });
+
+  test("brace groups without a comma are literal", () => {
+    let glob: Glob;
+
+    // A `{...}` group with no top-level comma is not an expansion; the braces
+    // are matched literally. bash, picomatch, and minimatch all agree.
+    glob = new Glob("{a}");
+    expect(glob.match("{a}")).toBeTrue();
+    expect(glob.match("a")).toBeFalse();
+
+    glob = new Glob("{a}.ts");
+    expect(glob.match("{a}.ts")).toBeTrue();
+    expect(glob.match("a.ts")).toBeFalse();
+
+    glob = new Glob("{}");
+    expect(glob.match("{}")).toBeTrue();
+    expect(glob.match("")).toBeFalse();
+
+    glob = new Glob("x{}y");
+    expect(glob.match("x{}y")).toBeTrue();
+    expect(glob.match("xy")).toBeFalse();
+
+    // `{1..3}` has no comma and Bun does not implement range expansion, so
+    // it is literal.
+    glob = new Glob("{1..3}");
+    expect(glob.match("{1..3}")).toBeTrue();
+    expect(glob.match("1..3")).toBeFalse();
+    expect(glob.match("2")).toBeFalse();
+
+    // Unclosed `{` is literal.
+    glob = new Glob("{abc");
+    expect(glob.match("{abc")).toBeTrue();
+    expect(glob.match("abc")).toBeFalse();
+
+    glob = new Glob("{a,b");
+    expect(glob.match("{a,b")).toBeTrue();
+    expect(glob.match("a")).toBeFalse();
+
+    // Escaped comma does not make the group an expansion.
+    glob = new Glob("{a\\,b}");
+    expect(glob.match("{a,b}")).toBeTrue();
+    expect(glob.match("a")).toBeFalse();
+    expect(glob.match("b")).toBeFalse();
+
+    // A comma inside a `[...]` class does not make the group an expansion.
+    glob = new Glob("{[,]}");
+    expect(glob.match("{,}")).toBeTrue();
+    expect(glob.match(",")).toBeFalse();
+
+    // Outer group has no top-level comma (literal), inner group does (expands).
+    glob = new Glob("{a{b,c}}");
+    expect(glob.match("{ab}")).toBeTrue();
+    expect(glob.match("{ac}")).toBeTrue();
+    expect(glob.match("ab")).toBeFalse();
+    expect(glob.match("ac")).toBeFalse();
+
+    glob = new Glob("{{a,b}}");
+    expect(glob.match("{a}")).toBeTrue();
+    expect(glob.match("{b}")).toBeTrue();
+    expect(glob.match("a")).toBeFalse();
+
+    // Literal group nested between two expanding groups.
+    glob = new Glob("{x,{a{b,c}}}");
+    expect(glob.match("x")).toBeTrue();
+    expect(glob.match("{ab}")).toBeTrue();
+    expect(glob.match("{ac}")).toBeTrue();
+    expect(glob.match("ab")).toBeFalse();
+
+    // Literal group followed by a valid expansion.
+    glob = new Glob("{a}.{ts,js}");
+    expect(glob.match("{a}.ts")).toBeTrue();
+    expect(glob.match("{a}.js")).toBeTrue();
+    expect(glob.match("a.ts")).toBeFalse();
+
+    // Wildcard interacting with a literal group.
+    glob = new Glob("*{a}");
+    expect(glob.match("x{a}")).toBeTrue();
+    expect(glob.match("{a}")).toBeTrue();
+    expect(glob.match("xa")).toBeFalse();
+
+    // Negation with a literal group.
+    glob = new Glob("!{a}");
+    expect(glob.match("{a}")).toBeFalse();
+    expect(glob.match("a")).toBeTrue();
+
+    // Groups with a comma still expand as before.
+    glob = new Glob("{a,b}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("b")).toBeTrue();
+    expect(glob.match("{a,b}")).toBeFalse();
+
+    glob = new Glob("{,a}");
+    expect(glob.match("")).toBeTrue();
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("{,a}")).toBeFalse();
+
+    // Already-escaped braces still work.
+    glob = new Glob("\\{a\\}");
+    expect(glob.match("{a}")).toBeTrue();
+    expect(glob.match("a")).toBeFalse();
   });
 
   test("deeply nested braces do not overflow depth counters", () => {
@@ -353,11 +458,11 @@ describe("Glob.match", () => {
     glob = new Glob("*{a," + opens + closes + "}");
     expect(glob.match("za")).toBeTrue();
 
-    // >32767 consecutive `{` overflows match_brace's group pre-scan counter.
-    // The group never closes, so nothing matches.
+    // >32767 consecutive `{` with no closing brace: every `{` is literal.
     glob = new Glob(Buffer.alloc(40_000, "{").toString());
     expect(glob.match("a")).toBeFalse();
     expect(glob.match("{")).toBeFalse();
+    expect(glob.match(Buffer.alloc(40_000, "{").toString())).toBeTrue();
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the

@@ -370,10 +370,11 @@ impl Glob {
             )));
         }
 
-        let pat_str: Box<[u8]> = pat_arg
-            .to_slice_clone(global_this)?
-            .into_vec()
-            .into_boxed_slice();
+        let pat_str = pat_arg.to_slice_clone(global_this)?.into_vec();
+        let pat_str: Box<[u8]> = match bun_glob::escape_literal_braces(&pat_str) {
+            Some(escaped) => escaped.into_boxed_slice(),
+            None => pat_str.into_boxed_slice(),
+        };
 
         Ok(Box::new(Glob {
             pattern: pat_str,
@@ -501,7 +502,7 @@ impl Glob {
         // `str` drops at scope exit.
 
         Ok(JSValue::from(
-            bun_glob::r#match(&self.pattern, str.slice()).matches(),
+            bun_glob::match_preprocessed(&self.pattern, str.slice()).matches(),
         ))
     }
 }

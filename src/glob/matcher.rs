@@ -23,6 +23,7 @@
 // THE SOFTWARE.
 
 use bun_collections::BoundedArray;
+use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
 
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
@@ -107,6 +108,63 @@ struct Wildcard {
     brace_depth: u8,
 }
 
+/// Brace groups only expand when they contain at least one unescaped top-level
+/// comma; `{a}`, `{}`, and unclosed `{...` are taken literally, matching bash,
+/// picomatch, and minimatch. Returns a rewritten pattern with each such `{`/`}`
+/// escaped, or `None` if every brace group already has a comma.
+pub fn escape_literal_braces(glob: &[u8]) -> Option<Vec<u8>> {
+    if strings::index_of_char(glob, b'{').is_none() {
+        return None;
+    }
+
+    let mut stack: SmallVec<[(u32, bool); 8]> = SmallVec::new();
+    let mut literal: SmallVec<[u32; 8]> = SmallVec::new();
+    let mut in_brackets = false;
+    let mut i: usize = 0;
+    while i < glob.len() {
+        match glob[i] {
+            b'{' if !in_brackets => stack.push((i as u32, false)),
+            b'}' if !in_brackets => {
+                if let Some((open, has_comma)) = stack.pop() {
+                    if !has_comma {
+                        literal.push(open);
+                        literal.push(i as u32);
+                    }
+                }
+            }
+            b',' if !in_brackets => {
+                if let Some(top) = stack.last_mut() {
+                    top.1 = true;
+                }
+            }
+            b'[' if !in_brackets => in_brackets = true,
+            b']' => in_brackets = false,
+            b'\\' => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    for (open, _) in stack.drain(..) {
+        literal.push(open);
+    }
+
+    if literal.is_empty() {
+        return None;
+    }
+
+    literal.sort_unstable();
+    let mut out = Vec::with_capacity(glob.len() + literal.len());
+    let mut prev: usize = 0;
+    for &pos in literal.iter() {
+        let pos = pos as usize;
+        out.extend_from_slice(&glob[prev..pos]);
+        out.push(b'\\');
+        prev = pos;
+    }
+    out.extend_from_slice(&glob[prev..]);
+    Some(out)
+}
+
 /// This function checks returns a boolean value if the pathname `path` matches
 /// the pattern `glob`.
 ///
@@ -137,6 +195,17 @@ struct Wildcard {
 // TODO: consider just taking arena and resetting to initial state,
 // all usages of this function pass in Arena.arena()
 pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
+    match escape_literal_braces(glob) {
+        Some(escaped) => match_preprocessed(&escaped, path),
+        None => match_preprocessed(glob, path),
+    }
+}
+
+/// Like `r#match`, but assumes every `{...}` in `glob` is a valid brace
+/// expansion (contains a top-level comma). Callers that retain a pattern
+/// across many matches should call `escape_literal_braces` once up front
+/// and pass the result here to avoid rescanning on every call.
+pub fn match_preprocessed(glob: &[u8], path: &[u8]) -> MatchResult {
     let mut state = State::default();
 
     let mut negated = false;

@@ -1784,7 +1784,9 @@ private:
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
                 if (arrayBuffer->isDetached()) {
-                    code = SerializationReturnCode::ValidationError;
+                    // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+                    // IsDetachedBuffer(value) => throw a "DataCloneError" DOMException (not a TypeError).
+                    code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
                 auto index = m_transferredArrayBuffers.find(obj);

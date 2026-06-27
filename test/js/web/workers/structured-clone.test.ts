@@ -269,6 +269,25 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(buffer, { transfer: [buffer] });
           }).toThrow(DOMException);
         });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+        // Serializing (not transferring) a detached ArrayBuffer must throw a
+        // "DataCloneError" DOMException, not a TypeError.
+        test("Serializing a detached ArrayBuffer throws DataCloneError", () => {
+          const buffer = new ArrayBuffer(8);
+          structuredCloneFn(buffer, { transfer: [buffer] }); // detach it
+          expect(buffer.byteLength).toBe(0);
+          for (const value of [buffer, { buffer }, [buffer], new Map([["k", buffer]])]) {
+            let error: unknown;
+            try {
+              structuredCloneFn(value);
+            } catch (e) {
+              error = e;
+            }
+            expect(error).toBeInstanceOf(DOMException);
+            expect((error as DOMException).name).toBe("DataCloneError");
+            expect((error as DOMException).code).toBe(DOMException.DATA_CLONE_ERR);
+          }
+        });
         test("Transferring a non-transferable platform object fails", () => {
           const blob = new Blob();
           expect(() => {

@@ -1656,21 +1656,10 @@ impl Expect {
             )));
         }
 
-        let expected_assertions: f64 = expected.to_number(global_this)?;
-        if expected_assertions.round() != expected_assertions
-            || expected_assertions.is_infinite()
-            || expected_assertions.is_nan()
-            || expected_assertions < 0.0
-            || expected_assertions > u32::MAX as f64
-        {
-            let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw(format_args!(
-                "Expected value must be a non-negative integer: {}",
-                expected.to_fmt(&mut fmt),
-            )));
-        }
-
-        let unsigned_expected_assertions: u32 = expected_assertions as u32;
+        // Jest records any numeric argument verbatim and compares it at end-of-test, so a
+        // bogus count (negative, non-integer, NaN, Infinity) fails the test there instead
+        // of throwing here, where a try/catch in the test body would swallow it.
+        let expected_assertions: f64 = expected.as_number();
 
         let Some(buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
@@ -1680,7 +1669,7 @@ impl Expect {
         let Some(execution) = state_data.sequence(buntest) else {
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
-        execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
+        execution.expect_assertions = ExpectAssertions::Exact(expected_assertions);
 
         Ok(JSValue::UNDEFINED)
     }

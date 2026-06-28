@@ -266,7 +266,7 @@ private:
 
         /* Mark that we are inside the parser now */
         httpContextData->flags.isParsingHttp = true;
-        httpContextData->parsingHttpSocket = s;
+        httpResponseData->isParsingHttp = true;
         httpResponseData->isIdle = false;
 
         // clients need to know the cursor after http parse, not servers!
@@ -302,9 +302,9 @@ private:
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
 
-            /* Mark this response as connectionClose if ancient (HTTP/1.0) or the
-             * request carries a "close" connection option (RFC 9112 9.6). */
-            if (httpRequest->isAncient() || httpRequest->hasConnectionToken("close")) {
+            /* The parser latched this before dispatching the request: the
+             * request is HTTP/1.0 or carries a "close" connection option. */
+            if (httpResponseData->sawConnectionClose) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             }
 
@@ -413,7 +413,7 @@ private:
 
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
-        httpContextData->parsingHttpSocket = nullptr;
+        httpResponseData->isParsingHttp = false;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             if(httpContextData->onClientError) {

@@ -349,6 +349,7 @@ namespace uWS
             return te;
         }
 
+
         std::string_view getUrl()
         {
             return std::string_view(headers->value.data(), querySeparator);
@@ -450,15 +451,15 @@ namespace uWS
 
     struct HttpParser
     {
+    public:
+        /* Latches the final request for RFC 9112 9.6 so bytes after
+         * Connection: close or HTTP/1.0 are discarded, not pipelined. */
+        bool sawConnectionClose = false;
 
     private:
         std::string fallback;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
-
-        /* Latches the final request for RFC 9112 9.6 so bytes after
-         * Connection: close or HTTP/1.0 are discarded, not pipelined. */
-        bool sawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 

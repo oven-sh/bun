@@ -709,6 +709,9 @@ static void NodeHTTPServer__writeHead(
     // res.sendDate / removeHeader("date") in JS), so never let uWS write its
     // own Date header for these responses.
     response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+    // It owns the Connection header the same way (_storeHeader always decides
+    // and writes one), so never append uWS's own Connection: close after it.
+    response->getHttpResponseData()->wroteConnectionHeader = true;
 
     // 204/304 responses must not carry any body framing, even when the user
     // explicitly set a Transfer-Encoding header (Node.js suppresses the

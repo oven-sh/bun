@@ -62,10 +62,6 @@ private:
     /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;
     void *upgradedWebSocket = nullptr;
-    /* The socket onData is currently parsing, set alongside flags.isParsingHttp.
-     * A response ending on THIS socket must not close it (the parser still has
-     * its body to consume); a response on any other socket may. */
-    void *parsingHttpSocket = nullptr;
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnSocketDrainCallback onSocketDrain = nullptr;

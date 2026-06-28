@@ -118,6 +118,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
     bool fromAncientRequest = false;
     bool isConnectRequest = false;
+    /* onData is currently parsing this socket; set/cleared around the parser. */
+    bool isParsingHttp = false;
     /* When set, the response carries no body framing at all: no Content-Length,
      * no chunked encoding, no terminating chunk. writeStatus() sets it for 1xx
      * and 204 (RFC 9110 8.6); node:http additionally sets it for 304. */

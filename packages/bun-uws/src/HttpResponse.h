@@ -107,10 +107,7 @@ public:
             this->uncork();
         }
 
-        /* Per-socket, not flags.isParsingHttp: a response that ends inside a
-         * different socket's handler (its promise drained there) has no onData
-         * tail of its own to close it, so it must close here. */
-        if (HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->parsingHttpSocket == (void *) this) {
+        if (httpResponseData->isParsingHttp) {
             return false;
         }
 
@@ -450,12 +447,6 @@ public:
     /* Write an HTTP header with string value */
     HttpResponse *writeHeader(std::string_view key, std::string_view value) {
         writeStatus(HTTP_200_OK);
-
-        /* Remember that a Connection header was written so a closing response
-         * does not append a second, possibly contradicting one (see internalEnd). */
-        if (key.length() == 10 && !strncasecmp(key.data(), "connection", 10)) [[unlikely]] {
-            getHttpResponseData()->wroteConnectionHeader = true;
-        }
 
         Super::write(key.data(), (int) key.length());
         Super::write(": ", 2);

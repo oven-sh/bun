@@ -2995,6 +2995,7 @@ describe("'connection' socket emits disconnect events", () => {
     const ev: string[] = [];
     const closed = Promise.withResolvers<void>();
     const requestServed = Promise.withResolvers<void>();
+    const responseReceived = Promise.withResolvers<void>();
     const server = createServer((req, res) => {
       req.resume();
       res.on("finish", requestServed.resolve);
@@ -3014,10 +3015,21 @@ describe("'connection' socket emits disconnect events", () => {
       await once(server, "listening");
       const { port } = server.address() as AddressInfo;
 
-      const responseReceived = Promise.withResolvers<void>();
+      // Before `disconnecting` flips, a client error or early close is a
+      // setup failure, not the behaviour under test: reject instead of
+      // letting the awaits below time out.
+      let disconnecting = false;
+      const fail = (why: string) => (e?: unknown) => {
+        if (disconnecting) return;
+        const err = new Error(why + (e instanceof Error ? ": " + e.message : ""));
+        requestServed.reject(err);
+        responseReceived.reject(err);
+        closed.reject(err);
+      };
       const client = connect(port, "127.0.0.1");
       client.setNoDelay(true);
-      client.on("error", () => {});
+      client.on("error", fail("client errored during setup"));
+      client.on("close", fail("client closed before the response was read"));
       client.on("connect", () => client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
       let buf = "";
       client.on("data", chunk => {
@@ -3027,6 +3039,7 @@ describe("'connection' socket emits disconnect events", () => {
       // Wait for the response to be fully sent and received so the server
       // socket is in keep-alive idle state when the client disconnects.
       await Promise.all([requestServed.promise, responseReceived.promise]);
+      disconnecting = true;
       if (rst) {
         client.resetAndDestroy();
       } else {

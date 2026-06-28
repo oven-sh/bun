@@ -61,12 +61,28 @@ test.concurrent("WebSocket upgrade should unref poll_ref from response", async (
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("RST on a ws-upgraded connection emits 'error' ECONNRESET then 'close' on the socket", async () => {
+// Not test.concurrent: the "unref poll_ref" test above spawns a debug
+// subprocess that already runs close to the per-test budget, and an extra
+// concurrent sibling starves it past the timeout.
+test("RST on a ws-upgraded connection emits 'error' ECONNRESET then 'close' on the socket", async () => {
   const events: string[] = [];
   const closed = Promise.withResolvers<void>();
   const upgraded = Promise.withResolvers<void>();
+  const handshake = Promise.withResolvers<void>();
+  // Before `disconnecting` flips, a client/wss error or early client close is
+  // a setup failure, not the behaviour under test: reject instead of letting
+  // the awaits below time out.
+  let disconnecting = false;
+  const fail = (why: string) => (e?: unknown) => {
+    if (disconnecting) return;
+    const err = new Error(why + (e instanceof Error ? ": " + e.message : ""));
+    handshake.reject(err);
+    upgraded.reject(err);
+    closed.reject(err);
+  };
   const server = http.createServer();
   const wss = new WebSocketServer({ server });
+  wss.on("error", fail("ws server errored during setup"));
   wss.on("connection", ws => {
     ws.on("error", () => {});
     upgraded.resolve();
@@ -87,7 +103,8 @@ test.concurrent("RST on a ws-upgraded connection emits 'error' ECONNRESET then '
 
     const client = net.connect(port, "127.0.0.1");
     client.setNoDelay(true);
-    client.on("error", () => {});
+    client.on("error", fail("client errored during setup"));
+    client.on("close", fail("client closed before the upgrade completed"));
     client.on("connect", () => {
       client.write(
         `GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n` +
@@ -95,7 +112,6 @@ test.concurrent("RST on a ws-upgraded connection emits 'error' ECONNRESET then '
       );
     });
     let buf = "";
-    const handshake = Promise.withResolvers<void>();
     client.on("data", chunk => {
       buf += chunk.toString("latin1");
       if (buf.includes("\r\n\r\n")) handshake.resolve();
@@ -105,6 +121,7 @@ test.concurrent("RST on a ws-upgraded connection emits 'error' ECONNRESET then '
     // The ws server has adopted the socket: the RST below exercises the
     // WebSocketContext onClose path, not the plain HTTP one.
     await upgraded.promise;
+    disconnecting = true;
     client.resetAndDestroy();
     await closed.promise;
     expect(events).toEqual(["connection", "socket-error ECONNRESET", "socket-close"]);

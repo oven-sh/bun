@@ -408,9 +408,8 @@ describe("Bun.CookieMap percent-decoding", () => {
     expect(Object.fromEntries(map)).toEqual({ a: "50%", b: "%zz", c: "x%" });
   });
 
-  // The old parser routed every value through an ASCII-only decoder as soon
-  // as any value in the header contained a "%", which misread non-ASCII
-  // values as Latin-1. Run in a subprocess: the unfixed debug build asserts.
+  // Run in a subprocess so a native assertion surfaces as an isolated
+  // child-process failure instead of aborting the whole test runner.
   test("non-ASCII values are preserved alongside percent-encoded siblings", async () => {
     await using proc = Bun.spawn({
       cmd: [

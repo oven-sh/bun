@@ -16,10 +16,10 @@ use bun_boringssl_sys as boringssl_sys;
 pub mod ffi {
     pub use bun_boringssl_sys::{
         ENGINE, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
-        EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
-        EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384,
-        EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224,
-        EVP_sha512_256, HMAC,
+        EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_blake2s256,
+        EVP_md4, EVP_md5, EVP_md5_sha1, EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256,
+        EVP_sha3_384, EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512,
+        EVP_sha512_224, EVP_sha512_256, HMAC,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
@@ -244,12 +244,6 @@ pub mod evp {
         Shake256,
     }
 
-    unsafe extern "C" {
-        // BoringSSL has no BLAKE2s; this EVP_MD lives in Bun's
-        // src/jsc/bindings/ncrypto.cpp.
-        safe fn Bun__EVP_blake2s256() -> *const ffi::EVP_MD;
-    }
-
     impl Algorithm {
         pub fn md(self) -> Option<*const ffi::EVP_MD> {
             // BoringSSL EVP_* md getters are `safe fn` returning a static const
@@ -257,7 +251,7 @@ pub mod evp {
             match self {
                 Algorithm::Blake2b256 => Some(ffi::EVP_blake2b256()),
                 Algorithm::Blake2b512 => Some(ffi::EVP_blake2b512()),
-                Algorithm::Blake2s256 => Some(Bun__EVP_blake2s256()),
+                Algorithm::Blake2s256 => Some(ffi::EVP_blake2s256()),
                 Algorithm::Md4 => Some(ffi::EVP_md4()),
                 Algorithm::Md5 => Some(ffi::EVP_md5()),
                 Algorithm::Ripemd160 => Some(ffi::EVP_ripemd160()),

@@ -326,6 +326,7 @@ unsafe extern "C" {
     pub safe fn EVP_sha3_512() -> *const EVP_MD;
     pub safe fn EVP_blake2b256() -> *const EVP_MD;
     pub safe fn EVP_blake2b512() -> *const EVP_MD;
+    pub safe fn EVP_blake2s256() -> *const EVP_MD;
 
     // ── EVP digest ctx ───────────────────────────────────────────────────
     // POD context by exclusive reference: BoringSSL only zero-initialises the

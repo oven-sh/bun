@@ -237,6 +237,29 @@ describe("HTMLRewriter", () => {
         expect(() => rewriter().transform(res)).toThrow(connectionError);
       });
     });
+
+    it("transform() of an aborted body throws the abort reason", async () => {
+      // An abort reason is a DOMException, not a JSC ErrorInstance. transform()
+      // must still throw it rather than returning it in place of the Response.
+      await withPartialBodyServer(async url => {
+        const controller = new AbortController();
+        const res = await fetch(url, { signal: controller.signal });
+        // The body is mid-stream (the server is stalled until release()).
+        const text = res.text();
+        controller.abort();
+        await expect(text).rejects.toThrow();
+        let thrown;
+        try {
+          rewriter().transform(res);
+        } catch (e) {
+          thrown = e;
+        }
+        expect({ name: thrown?.name, threw: thrown !== undefined }).toEqual({
+          name: "AbortError",
+          threw: true,
+        });
+      });
+    });
   });
 
   it("HTMLRewriter: async replacement using fetch + Bun.serve", async () => {

@@ -943,7 +943,10 @@ impl BufferOutputSink {
         if !captured.is_empty() {
             captured.ensure_still_alive();
             captured.unprotect();
-            return Ok(captured);
+            // Throw directly: the callers gate on `JSValue::to_error()`, which
+            // only recognises `ErrorInstance`/`Exception`, so an abort reason
+            // (a DOMException or any user value) would be returned instead.
+            return Err(global.throw_value(captured));
         }
 
         response_js_value.ensure_still_alive();

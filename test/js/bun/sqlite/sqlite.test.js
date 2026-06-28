@@ -910,6 +910,49 @@ describe("Statement.iterate() busy guard", () => {
     expect(seen).toEqual([0]);
     db.close();
   });
+
+  // For a write statement abandoned after SQLITE_ROW, the sqlite3_reset() that releases the
+  // iterator is what commits the implicit transaction, and SQLite documents that it can fail
+  // even though every prior sqlite3_step() succeeded: https://www.sqlite.org/c3ref/reset.html
+  it("breaking out of an iterated INSERT ... RETURNING surfaces the commit failure", () => {
+    const db = new Database(":memory:");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec("CREATE TABLE parent (id INTEGER PRIMARY KEY)");
+    db.exec(
+      "CREATE TABLE child (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)",
+    );
+
+    // No parent 999 exists, but the FK is deferred, so the first step still yields the row.
+    const s = db.prepare("INSERT INTO child (id, pid) VALUES (1, 999) RETURNING id");
+
+    const seen = [];
+    let err = null;
+    try {
+      for (const row of s.iterate()) {
+        seen.push(row);
+        break;
+      }
+    } catch (e) {
+      err = e;
+    }
+
+    // iterate() already handed back the "inserted" row...
+    expect(seen).toEqual([{ id: 1 }]);
+    // ...but the commit failed and must be reported, not swallowed: the row is not there.
+    expect(err).toBeInstanceOf(SQLiteError);
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "SQLITE_CONSTRAINT_FOREIGNKEY",
+      message: "FOREIGN KEY constraint failed",
+    });
+    expect(db.prepare("SELECT * FROM child").all()).toEqual([]);
+
+    // The failed commit released the cursor rather than bricking the statement: once the
+    // parent row exists, the same statement runs to completion.
+    db.exec("INSERT INTO parent (id) VALUES (999)");
+    expect(s.get()).toEqual({ id: 1 });
+    expect(db.prepare("SELECT id, pid FROM child").all()).toEqual([{ id: 1, pid: 999 }]);
+    db.close();
+  });
 });
 
 it("db.run()", () => {

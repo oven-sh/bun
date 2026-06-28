@@ -399,7 +399,7 @@ for (const row of query) {
 
 While the iterator is running, the statement's cursor belongs to it. Calling `.get()`, `.all()`, `.values()`, `.raw()`, `.run()`, or `.iterate()` on the same `Statement` before the loop finishes (or reading its `.columnTypes`) throws `TypeError: This statement is busy executing a query`. To run another query inside the loop body, prepare a second statement:
 
-```ts db.ts icon="/icons/typescript.svg" highlight={2-3}
+```ts db.ts icon="/icons/typescript.svg" highlight={2, 4}
 const outer = db.prepare("SELECT * FROM foo");
 const inner = db.prepare("SELECT * FROM bar WHERE foo_id = ?");
 for (const row of outer.iterate()) {

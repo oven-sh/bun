@@ -2219,7 +2219,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionIterateEnd, (JSC::JSGlobalObject 
     // .return()), so a later get()/all()/iterate() starts from the first row again.
     castedThis->isIterating = false;
     if (castedThis->stmt) {
-        sqlite3_reset(castedThis->stmt);
+        // For a write statement abandoned after SQLITE_ROW (INSERT ... RETURNING with an
+        // early break), this reset is what commits the change, and it can fail.
+        int statusCode = sqlite3_reset(castedThis->stmt);
+        if (statusCode != SQLITE_OK) [[unlikely]] {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
+            return {};
+        }
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));

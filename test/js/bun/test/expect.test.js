@@ -981,6 +981,10 @@ describe("expect()", () => {
     // ...and therefore they do satisfy .not.toThrow().
     await expect(Promise.reject("r")).rejects.not.toThrow();
     await expect(Promise.reject({ message: "r" })).rejects.not.toThrow("r");
+    // https://github.com/oven-sh/bun/issues/9687
+    await expect((async () => {})()).resolves.not.toThrow();
+    // https://github.com/oven-sh/bun/issues/14076
+    await expect(Promise.resolve("hello world")).resolves.not.toThrow();
 
     // Error-like settled values still count as thrown.
     await expect(Promise.reject(new Error("r"))).rejects.toThrow("r");
@@ -989,6 +993,11 @@ describe("expect()", () => {
     await expect(Promise.reject(new AggregateError([], "agg"))).rejects.toThrow("agg");
     await expect(Promise.reject(new DOMException("dom"))).rejects.toThrow("dom");
     await expect(Promise.reject({ [Symbol.toStringTag]: "Error", message: "tagged" })).rejects.toThrow("tagged");
+    // The snapshot matchers use the same gate, so a value that counts as thrown
+    // without being an ErrorInstance snapshots its message, not `undefined`.
+    await expect(
+      Promise.reject({ [Symbol.toStringTag]: "Error", message: "tagged snapshot" }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`"tagged snapshot"`);
     const inheritsErrorPrototype = Object.create(Error.prototype);
     inheritsErrorPrototype.message = "proto";
     await expect(Promise.reject(inheritsErrorPrototype)).rejects.toThrow("proto");

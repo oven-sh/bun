@@ -351,7 +351,10 @@ mod advanced {
         // json decoder's `idx == u32::MAX` guard and the serializer's refusal
         // to emit a frame this large.
         if message_len > u32::MAX - HEADER_LENGTH_U32 {
-            log!("Advanced IPC frame of len {} exceeds the 4 GiB limit", message_len);
+            log!(
+                "Advanced IPC frame of len {} exceeds the 4 GiB limit",
+                message_len
+            );
             return Err(IPCDecodeError::InvalidFormat);
         }
 

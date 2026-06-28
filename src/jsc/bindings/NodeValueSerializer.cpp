@@ -641,13 +641,9 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         writeTag(V8Tag::kError);
-        // V8 picks the prototype tag by string-comparing `error.name` (a
-        // prototype-walking GetProperty followed by ToString), NOT by the
-        // object's internal error type. So `Object.assign(new Error(m),
-        // {name: "TypeError"})` arrives as a TypeError, while a TypeError
-        // subclass whose constructor sets `this.name = "CustomError"`
-        // arrives as a plain Error. Any name outside the six built-ins gets
-        // no prototype tag.
+        // V8 picks the prototype tag by string-comparing `error.name` after
+        // ToString, not by the internal error type, so a renamed Error travels
+        // as the named type; an unrecognized name gets no prototype tag.
         JSValue nameValue = err->get(m_globalObject, m_vm.propertyNames->name);
         RETURN_IF_EXCEPTION(scope, false);
         String name = nameValue.toWTFString(m_globalObject);
@@ -664,16 +660,9 @@ private:
             writeByte(static_cast<uint8_t>(V8ErrorTag::kTypeErrorPrototype));
         else if (name == "URIError"_s)
             writeByte(static_cast<uint8_t>(V8ErrorTag::kUriErrorPrototype));
-        // Sub-tag order must match V8's WriteJSError exactly: message, stack,
-        // then cause LAST. V8's reader is order-strict (it walks these
-        // linearly, not in a loop) and rejects cause-before-stack, and it
-        // constructs the Error after the stack so a self-referential cause
-        // can resolve to it.
-        //
-        // V8 emits kMessage for ANY own data `message` and ToStrings it
-        // (`e.message = 42` arrives as "42"); only an own accessor or a
-        // missing own property is skipped. `stack` below differs: V8 gates
-        // it on IsString with no coercion.
+        // Sub-tag order is fixed (message, stack, then cause LAST); V8's
+        // reader is order-strict. kMessage covers any own DATA `message`
+        // after ToString; `stack` below is IsString-gated with no coercion.
         JSValue messageValue = err->getDirect(m_vm, m_vm.propertyNames->message);
         if (messageValue && !messageValue.isGetterSetter() && !messageValue.isCustomGetterSetter()) {
             writeByte(static_cast<uint8_t>(V8ErrorTag::kMessage));
@@ -689,12 +678,11 @@ private:
                 return false;
             RETURN_IF_EXCEPTION(scope, false);
         }
-        // V8 gates kCause on HasOwnProperty, so an inherited
-        // Error.prototype.cause is never emitted (but an own
-        // `cause: undefined` is serialized as kCause kUndefined).
-        JSValue causeValue = getOwnProperty(err, m_vm.propertyNames->cause);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (causeValue) {
+        // V8 gates kCause on an own DATA property, so an own accessor is
+        // skipped without invoking its getter (matching `message` above) and
+        // an inherited `cause` is never emitted; an own undefined still is.
+        JSValue causeValue = err->getDirect(m_vm, m_vm.propertyNames->cause);
+        if (causeValue && !causeValue.isGetterSetter() && !causeValue.isCustomGetterSetter()) {
             writeByte(static_cast<uint8_t>(V8ErrorTag::kCause));
             bool ok = writeValue(causeValue);
             RETURN_IF_EXCEPTION(scope, false);

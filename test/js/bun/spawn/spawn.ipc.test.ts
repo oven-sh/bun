@@ -781,6 +781,27 @@ describe("ipc mode advanced structured clone", () => {
     expect(got.e.cause).toBe(got.e);
   });
 
+  // V8 gates kCause on an own DATA property, exactly like `message`: an own
+  // accessor is skipped without ever invoking its getter (verified against
+  // node, which emits bytes identical to the no-cause case for it).
+  it("an own accessor Error cause is never invoked and never serialized", async () => {
+    using dir = tempDir("ipc-adv-err-cause-get", { "echo.cjs": ECHO_CHILD });
+    let getterCalls = 0;
+    const e = new TypeError("has accessor cause");
+    Object.defineProperty(e, "cause", {
+      get() {
+        getterCalls++;
+        return 99;
+      },
+    });
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), bunExe(), { e, done: true });
+
+    expect({ getterCalls, hasOwnCause: Object.hasOwn(got.e, "cause") }).toEqual({
+      getterCalls: 0,
+      hasOwnCause: false,
+    });
+  });
+
   // V8 refuses to clone these; falling through to the plain-object path would
   // silently deliver the traps' output (Proxy) or `{}` (the rest) instead of
   // throwing at the sender. The array-target Proxy is the load-bearing case:
@@ -808,6 +829,91 @@ describe("ipc mode advanced structured clone", () => {
       ]) {
         expect(() => child.send(value as any)).toThrow("could not be cloned");
       }
+    } finally {
+      child.kill();
+    }
+  });
+});
+
+// Node reserves a string `cmd` longer than and starting with "NODE_" for its
+// internals (`isInternal` in lib/internal/child_process.js); advanced mode has
+// no wire-level flag, so the receiver classifies on that exact predicate.
+describe("ipc mode advanced internal message routing", () => {
+  function forkBun(dir: string, script: string) {
+    return fork(path.join(dir, script), [], {
+      execPath: bunExe(),
+      execArgv: [],
+      serialization: "advanced",
+      stdio: "ignore",
+    });
+  }
+
+  it('a "cmd" beginning with NODE_ is reserved and never emitted as a message', async () => {
+    using dir = tempDir("ipc-adv-node-prefix", {
+      "collect.cjs": /* js */ `
+        const got = [];
+        process.on("message", m => {
+          got.push(m);
+          if (m && m.flush) process.send(got);
+        });
+      `,
+    });
+    const child = forkBun(String(dir), "collect.cjs");
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    child.on("message", resolve);
+    child.on("error", reject);
+    child.on("exit", (code, signal) => reject(new Error(`child exited (${code}, ${signal}) before flushing`)));
+    try {
+      // Reserved (> 5 chars, NODE_ prefix): swallowed. Everything else, down
+      // to the exact 5-character boundary "NODE_", is an ordinary message.
+      child.send({ cmd: "NODE_RESERVED" });
+      child.send({ cmd: "NODE_" });
+      child.send({ cmd: "node_lowercase" });
+      child.send({ cmd: 123 });
+      child.send({ flush: true });
+      expect(await promise).toEqual([{ cmd: "NODE_" }, { cmd: "node_lowercase" }, { cmd: 123 }, { flush: true }]);
+    } finally {
+      child.kill();
+    }
+  });
+
+  // Node's cluster `internal()` wrapper drops any internal message whose cmd is
+  // not exactly "NODE_CLUSTER". Without that gate, a child that never loads
+  // node:cluster Strong-roots every reserved message it receives forever.
+  it("a non-cluster NODE_* message is dropped, not retained by the cluster queue", async () => {
+    using dir = tempDir("ipc-adv-node-leak", {
+      // setImmediate lets the decoder's I/O callback fully unwind before the
+      // GC runs, so dropped message graphs aren't conservatively stack-pinned.
+      "probe.cjs": /* js */ `
+        const { heapStats } = require("bun:jsc");
+        process.on("message", m => {
+          if (m && m.probe) setImmediate(() => {
+            Bun.gc(true);
+            process.send({ errors: heapStats().objectTypeCounts.Error || 0 });
+          });
+        });
+      `,
+    });
+    const child = forkBun(String(dir), "probe.cjs");
+    const failed = Promise.withResolvers<never>();
+    failed.promise.catch(() => {});
+    child.on("error", failed.reject);
+    child.on("exit", (code, signal) =>
+      failed.reject(new Error(`child exited (${code}, ${signal}) before the probe replied`)),
+    );
+    function probe(): Promise<number> {
+      const reply = Promise.withResolvers<any>();
+      child.once("message", reply.resolve);
+      child.send({ probe: true });
+      return Promise.race([reply.promise, failed.promise]).then(m => m.errors);
+    }
+    try {
+      const baseline = await probe();
+      // IPC is ordered, so the second probe only replies after every reserved
+      // message has been decoded, classified, and (correctly) discarded.
+      for (let i = 0; i < 200; i++) child.send({ cmd: "NODE_LEAKPROBE", e: new Error("retained") });
+      const after = await probe();
+      expect(after - baseline).toBeLessThan(50);
     } finally {
       child.kill();
     }

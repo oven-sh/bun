@@ -6,7 +6,8 @@
 
 use bun_core::String as BunString;
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
+use bun_jsc::{BuiltinName, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::StrongOptional;
 
 use crate::api::bun::subprocess::Subprocess;
 
@@ -161,12 +162,32 @@ pub(crate) fn on_internal_message_child(
     Ok(JSValue::UNDEFINED)
 }
 
+/// Node's cluster `internal()` wrapper drops any internal message whose `cmd`
+/// is not exactly "NODE_CLUSTER"; without this gate a non-cluster `NODE_*`
+/// message would be enqueued forever by a child that never loads node:cluster.
+fn is_node_cluster_message(global: &JSGlobalObject, message: JSValue) -> JsResult<bool> {
+    if !message.is_object() {
+        return Ok(false);
+    }
+    let Some(cmd) = message.fast_get(global, BuiltinName::cmd)? else {
+        return Ok(false);
+    };
+    if !cmd.is_string() {
+        return Ok(false);
+    }
+    let s = bun_core::OwnedString::new(BunString::from_js(cmd, global)?);
+    Ok(s.eql_comptime(b"NODE_CLUSTER"))
+}
+
 pub(crate) fn handle_internal_message_child(
     global: &JSGlobalObject,
     message: JSValue,
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
-
+    let is_cluster = is_node_cluster_message(global, message)?;
+    if !is_cluster {
+        return Ok(());
+    }
     child_singleton().dispatch(message, global)
 }
 
@@ -266,6 +287,12 @@ pub(crate) fn handle_internal_message_primary(
     subprocess: &Subprocess<'_>,
     message: JSValue,
 ) -> JsResult<()> {
+    // Same `cmd === "NODE_CLUSTER"` gate as the child side.
+    let is_cluster = is_node_cluster_message(global, message)?;
+    if !is_cluster {
+        return Ok(());
+    }
+
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };

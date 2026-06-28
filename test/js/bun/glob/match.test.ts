@@ -393,9 +393,9 @@ describe("Glob.match", () => {
     expect(glob.match("{,}")).toBeTrue();
     expect(glob.match(",")).toBeFalse();
 
-    // An unclosed `[` is a literal `[`, not the start of a bracket class, so
-    // it does not hide the group's `}`: the group still has a top-level comma
-    // and still expands (bash, picomatch, and minimatch agree).
+    // An unclosed `[` is a literal `[`, not a bracket class, so it cannot hide
+    // the group's `}` and the first branch still matches. The `[` branch is a
+    // separate pre-existing gap in match_brace's own unclosed-`[` handling.
     glob = new Glob("{a,[}");
     expect(glob.match("a")).toBeTrue();
 

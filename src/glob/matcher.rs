@@ -110,8 +110,10 @@ struct Wildcard {
 
 /// Whether the `[` at `glob[open]` has an unescaped `]` later in the pattern.
 /// An unclosed `[` is a literal byte, not the start of a bracket class, so it
-/// must not hide a following `}` or `,` from `escape_literal_braces`'s scan:
-/// bash, picomatch, and minimatch all expand `{a,[}` to `a` and `[`.
+/// must not hide a following `}` or `,` from `escape_literal_braces`'s scan;
+/// bash, picomatch, and minimatch all keep `{a,[}` an expansion. This only
+/// decides the escaping: whether the `[` branch itself can match is up to
+/// `match_brace`, whose own unclosed-`[` handling is unchanged.
 fn bracket_has_closing(glob: &[u8], open: usize) -> bool {
     let mut j = open + 1;
     while j < glob.len() {
@@ -141,6 +143,10 @@ pub fn escape_literal_braces(glob: &[u8]) -> Option<Vec<u8>> {
     let mut stack: SmallVec<[(u32, bool); 8]> = SmallVec::new();
     let mut literal: SmallVec<[u32; 8]> = SmallVec::new();
     let mut in_brackets = false;
+    // `bracket_has_closing` walks the same escape-aware path this loop does,
+    // so once it finds no `]` after one `[` there is none after any later `[`
+    // either; remembering that keeps a long run of unclosed `[` linear.
+    let mut no_closing_bracket = false;
     let mut i: usize = 0;
     while i < glob.len() {
         match glob[i] {
@@ -158,7 +164,13 @@ pub fn escape_literal_braces(glob: &[u8]) -> Option<Vec<u8>> {
                     top.1 = true;
                 }
             }
-            b'[' if !in_brackets && bracket_has_closing(glob, i) => in_brackets = true,
+            b'[' if !in_brackets && !no_closing_bracket => {
+                if bracket_has_closing(glob, i) {
+                    in_brackets = true;
+                } else {
+                    no_closing_bracket = true;
+                }
+            }
             b']' => in_brackets = false,
             b'\\' => i += 1,
             _ => {}

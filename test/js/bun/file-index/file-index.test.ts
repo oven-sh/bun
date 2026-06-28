@@ -314,6 +314,66 @@ describe("Bun.FileIndex", () => {
     });
   });
 
+  describe("progressive initial crawl", () => {
+    // Design requirement 1: the initial crawl streams partial batches into
+    // the store as directories complete, so `size` / `glob()` / `complete()`
+    // work on partial data DURING the first index. `ready` means
+    // "complete", not "usable".
+    test("size grows and queries answer on partial data before ready", async () => {
+      // The shape matters: `wide/` alone overflows the crawl's batch target
+      // (4096), so its entries are delivered (and applied) while the rest
+      // of the crawl is still enumerating `chain/` — a 1300-deep directory
+      // chain whose tasks are serialized parent → child, which the event
+      // loop's batch application cannot outrun.
+      const files: Record<string, string> = {};
+      const wide = 4300;
+      const depth = 1300;
+      for (let f = 0; f < wide; f++) files[`wide/f${f}.txt`] = "x";
+      const chain = `chain/${Buffer.alloc(depth * 2 - 1, "d/")
+        .toString()
+        .slice(0, depth * 2 - 1)}`;
+      files[`${chain}/leaf.txt`] = "x";
+      // wide/* + wide + chain dirs (chain, chain/d, …) + leaf.txt
+      const total = wide + 1 + (depth + 1) + 1;
+      using dir = tempDir("file-index-progressive", files);
+      using index = new Bun.FileIndex(String(dir));
+      expect(index.size).toBe(0);
+      let settled = false;
+      const ready = index.ready.finally(() => (settled = true));
+      // Sample between event-loop turns; capture the first non-empty state.
+      let during: { size: number; glob: string[]; complete: string[] } | null = null;
+      while (!settled) {
+        const size = index.size;
+        if (size > 0 && during === null) {
+          during = {
+            size,
+            glob: index.glob("**/*.txt"),
+            complete: index.complete("txt", { limit: 1 << 30 }).map(m => m.path),
+          };
+        }
+        await Bun.sleep(0);
+      }
+      await ready;
+      const finalSize = index.size;
+      expect(finalSize).toBe(total);
+      // At least one batch was applied (and observable) before the crawl
+      // completed, and everything it answered is a strict subset of the
+      // final answer.
+      expect(during).not.toBeNull();
+      expect(during!.size).toBeGreaterThan(0);
+      expect(during!.size).toBeLessThan(finalSize);
+      const finalGlob = new Set(index.glob("**/*.txt"));
+      expect(during!.glob.length).toBeGreaterThan(0);
+      expect(during!.glob.length).toBeLessThan(finalGlob.size);
+      expect(during!.glob.every(p => finalGlob.has(p))).toBe(true);
+      const finalComplete = new Set(index.complete("txt", { limit: 1 << 30 }).map(m => m.path));
+      expect(finalComplete.size).toBe(wide + 1);
+      expect(during!.complete.length).toBeGreaterThan(0);
+      expect(during!.complete.length).toBeLessThan(finalComplete.size);
+      expect(during!.complete.every(p => finalComplete.has(p))).toBe(true);
+    });
+  });
+
   describe("glob() / has() / stat()", () => {
     test("matches indexed paths with no I/O", async () => {
       using dir = tempDir("file-index-glob", {
@@ -343,6 +403,35 @@ describe("Bun.FileIndex", () => {
       expect(typeof st.mode).toBe("number");
       expect(index.stat("src")?.kind).toBe("dir");
       expect(index.stat("missing.ts")).toBeNull();
+    });
+
+    // Design requirement 5: the crawl is enumeration-only (the dirent gives
+    // the kind, nothing else), so an entry's stat is filled by ONE lstat the
+    // first time it is asked for and cached from then on.
+    test("stat() is lazy: filled at first ask, then cached", async () => {
+      using dir = tempDir("file-index-lazy-stat", {
+        "a.txt": "1234",
+        "gone.txt": "x",
+        "src/b.txt": "y",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      // Grown AFTER `ready` and BEFORE the first stat(): the answer is the
+      // file's current size, because the crawl recorded none to go stale.
+      fs.writeFileSync(join(String(dir), "a.txt"), "123456789");
+      expect(index.stat("a.txt")).toMatchObject({ size: 9, kind: "file" });
+      // The first answer is cached; without a watcher nothing invalidates
+      // it (requirement 4: the watcher, not re-statting, keeps it true).
+      fs.writeFileSync(join(String(dir), "a.txt"), "12");
+      expect(index.stat("a.txt")).toMatchObject({ size: 9 });
+      // An indexed entry that vanished before its first stat() has nothing
+      // truthful to report; the entry itself is the watcher's to remove.
+      fs.rmSync(join(String(dir), "gone.txt"));
+      expect(index.has("gone.txt")).toBe(true);
+      expect(index.stat("gone.txt")).toBeNull();
+      expect(index.stat("gone.txt")).toBeNull();
+      // The kind needs no stat at all.
+      expect(index.stat("src")).toMatchObject({ kind: "dir" });
     });
   });
 
@@ -531,12 +620,25 @@ describe("Bun.FileIndex", () => {
       });
       using index = new Bun.FileIndex(String(dir));
       await index.ready;
-      for (const options of [undefined, { context: 1 }, { limit: 2 }, { cwd: "sub" }, { glob: "**/*.txt" }]) {
-        const literal = await collect(index.grep("needle", options));
-        const regexp = await collect(index.grep(/needle/, options));
-        expect(regexp, JSON.stringify(options)).toEqual(literal);
+      // `maxFileSize: 24` splits this tree: both paths must enforce it from
+      // the file's size at open time (the index has no crawl-time sizes).
+      const options: Parameters<typeof index.grep>[1][] = [
+        undefined,
+        { context: 1 },
+        { limit: 2 },
+        { cwd: "sub" },
+        { glob: "**/*.txt" },
+        { maxFileSize: 24 },
+      ];
+      for (const opts of options) {
+        const literal = await collect(index.grep("needle", opts));
+        const regexp = await collect(index.grep(/needle/, opts));
+        expect(regexp, JSON.stringify(opts)).toEqual(literal);
         expect(literal.length).toBeGreaterThan(0);
       }
+      // "a needle, a needle" is two hits in multi.txt.
+      const cappedPaths = (await collect(index.grep("needle", { maxFileSize: 24 }))).map(h => h.path).sort();
+      expect(cappedPaths).toEqual(["multi.txt", "multi.txt", "notrail.txt", "sub/deep.ts"]);
     });
 
     test("a fresh global copy is used: lastIndex is neither read nor written", async () => {

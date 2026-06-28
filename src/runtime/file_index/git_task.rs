@@ -24,7 +24,8 @@ use bun_git::{
 };
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
-    JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated, StringJsc as _, SysErrorJsc as _,
+    JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated, StringJsc as _, Strong,
+    SysErrorJsc as _,
 };
 use bun_sys::{E, Fd, File};
 
@@ -46,21 +47,49 @@ pub type GitDiffTask<'a> = ConcurrentPromiseTask<'a, GitDiffJob<'a>>;
 
 /// `index.gitStatus()`. Snapshots the store's non-directory entries (sorted,
 /// root-relative) on the JS thread and resolves with the marshalled status.
-pub(crate) fn start_status(index: &FileIndex, global: &JSGlobalObject) -> JSValue {
-    let worktree: Vec<(Box<[u8]>, Meta)> = {
+///
+/// Per design requirement 4 (git's `core.fsmonitor` model), a candidate's
+/// cached stat is handed to the worker ONLY if the watcher has kept it
+/// valid; every other candidate is `lstat`ed by the worker itself, on the
+/// pool, and the fresh data is written back into the store's stat cache so
+/// the *next* `gitStatus()` of a watching index re-stats nothing but what
+/// changed. An unwatched index never trusts the cache (it has nothing
+/// keeping it true), so its status is always computed from fresh stats.
+pub(crate) fn start_status(
+    index: &FileIndex,
+    global: &JSGlobalObject,
+    this_value: JSValue,
+) -> JSValue {
+    let watching = index.is_watching();
+    let (generation, worktree) = {
         let store = index.store();
-        store
+        let worktree: Vec<(Box<[u8]>, Option<Meta>)> = store
             .iter_sorted()
-            .filter(|&id| store.meta(id).kind != EntryKind::Dir)
-            .map(|id| (Box::from(store.path(id)), *store.meta(id)))
-            .collect()
+            .filter(|&id| store.kind(id) != EntryKind::Dir)
+            .map(|id| {
+                let cached = if watching {
+                    store.stat(id).copied()
+                } else {
+                    None
+                };
+                (Box::from(store.path(id)), cached)
+            })
+            .collect();
+        (store.generation(), worktree)
     };
     schedule(
         global,
         Box::new(GitStatusJob {
             global,
+            // Created and consumed on the JS thread only (`then`/destroy);
+            // the box's address crosses to the pool inert, exactly like
+            // `CrawlTask::this_strong`. Keeps the index alive so the
+            // write-back below has somewhere to land.
+            this_strong: Strong::create(this_value, global),
             root: Box::from(index.root_bytes()),
             worktree,
+            generation,
+            fresh: Vec::new(),
             result: Ok(None),
         }),
     )
@@ -106,10 +135,20 @@ fn git_error_js(global: &JSGlobalObject, err: GitError) -> JSValue {
 
 pub struct GitStatusJob<'a> {
     global: &'a JSGlobalObject,
+    /// The `FileIndex` wrapper, pinned for the task's lifetime (JS-thread
+    /// handle; see [`start_status`]).
+    this_strong: Strong,
     root: Box<[u8]>,
-    /// Root-relative path + crawl-time `lstat` data of every indexed
-    /// non-directory, in store (path-sorted) order.
-    worktree: Vec<(Box<[u8]>, Meta)>,
+    /// Every indexed non-directory (root-relative, store order) and, only
+    /// when the watcher has kept it valid, its cached stat. `None` entries
+    /// are `lstat`ed by [`compute_status`] on the work pool.
+    worktree: Vec<(Box<[u8]>, Option<Meta>)>,
+    /// [`bun_file_index::Store::generation`] at snapshot time; the
+    /// write-back is dropped if the store mutated under the task.
+    generation: u64,
+    /// What the worker `lstat`ed: the fresh stat to cache, or `None` for a
+    /// candidate that is no longer statable.
+    fresh: Vec<(Box<[u8]>, Option<Meta>)>,
     result: Result<Option<StatusOut>, GitError>,
 }
 
@@ -126,11 +165,17 @@ impl ConcurrentPromiseTaskContext for GitStatusJob<'_> {
     const TASK_TAG: TaskTag = bun_event_loop::task_tag::FileIndexGitStatusTask;
 
     fn run(&mut self) {
-        self.result = compute_status(&self.root, &self.worktree);
+        self.result = compute_status(&self.root, &self.worktree, &mut self.fresh);
     }
 
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
         let global = self.global;
+        // Cache the worker's lstat results before marshalling (JS thread).
+        if !self.fresh.is_empty()
+            && let Some(index) = self.this_strong.get().as_class_ref::<FileIndex>()
+        {
+            index.absorb_fresh_stats(self.generation, core::mem::take(&mut self.fresh));
+        }
         match core::mem::replace(&mut self.result, Ok(None)) {
             Err(err) => promise.reject(global, Ok(git_error_js(global, err))),
             Ok(None) => promise.resolve(global, JSValue::NULL),
@@ -169,7 +214,8 @@ impl StatusOut {
 
 fn compute_status(
     root: &[u8],
-    snapshot: &[(Box<[u8]>, Meta)],
+    snapshot: &[(Box<[u8]>, Option<Meta>)],
+    fresh: &mut Vec<(Box<[u8]>, Option<Meta>)>,
 ) -> Result<Option<StatusOut>, GitError> {
     let Some(repo) = Repository::discover(root)? else {
         return Ok(None);
@@ -185,10 +231,29 @@ fn compute_status(
     // paths under it.
     let prefix = work_tree_prefix(repo.work_tree(), root);
     let work_tree = repo.work_tree().to_vec();
-    let mut entries: Vec<(Vec<u8>, Meta)> = snapshot
-        .iter()
-        .map(|(path, m)| (join_rel(&prefix, path), *m))
-        .collect();
+    // The stat side of the comparison: a candidate's watcher-fresh cached
+    // stat, or (for the rest) an `lstat` done here, off the JS thread —
+    // recorded in `fresh` so the JS thread can cache it. A candidate that
+    // vanished (or is no longer a file/symlink) is dropped from the listing,
+    // which is exactly what makes git report it deleted.
+    let mut entries: Vec<(Vec<u8>, Meta)> = Vec::with_capacity(snapshot.len());
+    for (path, cached) in snapshot {
+        let meta = match cached {
+            Some(meta) => *meta,
+            None => {
+                let abs = join_abs(root, path);
+                let meta = bun_sys::lstat(zstr(&abs).as_zstr())
+                    .ok()
+                    .and_then(|raw| super::meta_from_stat(&bun_sys::PosixStat::init(&raw)));
+                fresh.push((path.clone(), meta));
+                match meta {
+                    Some(meta) if meta.kind != EntryKind::Dir => meta,
+                    _ => continue,
+                }
+            }
+        };
+        entries.push((join_rel(&prefix, path), meta));
+    }
     // git's tracked set is not subject to ignore rules: a *tracked* path the
     // store excluded (a `.gitignore` rule or a user `ignore:` pattern) is not
     // deleted just because it is unindexed. `lstat` it here so it is

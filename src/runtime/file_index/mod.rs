@@ -15,7 +15,7 @@ use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::ZStr;
-use bun_file_index::{CompleteOptions, CrawlResult, EntryKind, Meta, Store};
+use bun_file_index::{CompleteOptions, CrawlEntry, CrawlResult, EntryKind, Meta, Store};
 use bun_fuzzy::{Scorer, ScorerOptions};
 use bun_ignore::{IgnoreChain, IgnoreFile};
 use bun_io::KeepAlive;
@@ -158,7 +158,7 @@ impl FileIndex {
 
         // The initial crawl. Its completion resolves `ready` with `this`; the
         // promise is also cached in the `readyPromise` slot for the getter.
-        let ready = crawl_task::start(global, this_value, &index);
+        let ready = crawl_task::start_initial(global, this_value, &index);
         js::ready_promise_set_cached(this_value, global, ready);
         Ok(index)
     }
@@ -219,7 +219,7 @@ impl FileIndex {
     }
 
     pub fn get_watching(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(self.watcher.borrow().is_some())
+        JSValue::js_boolean(self.is_watching())
     }
 
     pub fn get_errors(&self, _global: &JSGlobalObject) -> JSValue {
@@ -262,7 +262,7 @@ impl FileIndex {
 
         // Copy the winners out of the store before building any JS value.
         let matches: Vec<(Vec<u8>, i32, Vec<u32>)> = {
-            let store = self.store.borrow();
+            let store = self.store();
             let mut scorer = self.scorer.borrow_mut();
             bun_file_index::complete(
                 &store,
@@ -326,7 +326,7 @@ impl FileIndex {
         }
 
         let paths: Vec<Vec<u8>> = {
-            let store = self.store.borrow();
+            let store = self.store();
             bun_file_index::glob(&store, pattern.slice())
                 .into_iter()
                 .map(|id| store.path(id))
@@ -347,16 +347,36 @@ impl FileIndex {
         ))
     }
 
+    /// `index.stat(path)` — synchronous. The crawl is enumeration-only, so
+    /// the first ask for an entry's stat is the one `lstat` that fills it;
+    /// after that it is served from the store until a watcher event (or a
+    /// `gitStatus()` re-stat) replaces it.
     #[bun_jsc::host_fn(method)]
     pub fn stat(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.check_open(global)?;
         let path = rel_path_arg(global, callframe.argument(0), "FileIndex.stat", "path")?;
-        let meta = {
+        let cached = {
             let store = self.store.borrow();
-            store.get(&path).map(|id| *store.meta(id))
+            match store.get(&path) {
+                None => return Ok(JSValue::NULL),
+                Some(id) => store.stat(id).copied(),
+            }
         };
-        let Some(meta) = meta else {
-            return Ok(JSValue::NULL);
+        let meta = match cached {
+            Some(meta) => meta,
+            None => match self.lstat_rel(&path) {
+                Some(meta) => {
+                    let mut store = self.store.borrow_mut();
+                    if let Some(id) = store.get(&path) {
+                        store.fill_stat(id, meta);
+                    }
+                    meta
+                }
+                // Indexed but no longer statable (it vanished, or became a
+                // fifo/socket/device): nothing truthful to report. Only the
+                // watcher mutates the entry set, never a read.
+                None => return Ok(JSValue::NULL),
+            },
         };
         let obj = JSValue::create_empty_object(global, 4);
         // `size` and `mtimeMs` are doubles, like `fs.Stats`.
@@ -413,7 +433,7 @@ impl FileIndex {
     #[bun_jsc::host_fn(method)]
     pub fn refresh(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.check_open(global)?;
-        Ok(crawl_task::start(global, callframe.this(), self))
+        Ok(crawl_task::start_refresh(global, callframe.this(), self))
     }
 
     /// Native half of `index.grep()` (bound to the `pull` private symbol):
@@ -427,9 +447,10 @@ impl FileIndex {
     }
 
     /// `grep(RegExp)` support (the `paths` private symbol): the same
-    /// glob/cwd/size-admitted candidate snapshot the literal fast path uses,
-    /// as an array of relative path strings, so `src/js/builtins/FileIndex.ts`
-    /// can read and test each candidate on the JS thread.
+    /// glob/cwd-admitted candidate snapshot the literal fast path uses (as
+    /// relative path strings), plus the effective `maxFileSize`, so
+    /// `src/js/builtins/FileIndex.ts` can read and test each candidate on
+    /// the JS thread with the same per-file admission rules.
     #[bun_jsc::host_fn(method)]
     pub fn __grep_candidates(
         &self,
@@ -437,9 +458,7 @@ impl FileIndex {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         self.check_open(global)?;
-        let args = grep_task::parse_grep_options(self, global, callframe.argument(0))?;
-        let paths = grep_task::candidate_paths(self, &args);
-        JSValue::create_array_from_iter(global, paths.into_iter(), |p| utf8_js(global, &p))
+        grep_task::candidates_js(self, global, callframe.argument(0))
     }
 
     /// `close()` observer for the `grep()` async iterator (the
@@ -456,9 +475,9 @@ impl FileIndex {
     /// first: the worktree side comes from the in-memory index (see
     /// [`git_task`]).
     #[bun_jsc::host_fn(method)]
-    pub fn git_status(&self, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn git_status(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.check_open(global)?;
-        Ok(git_task::start_status(self, global))
+        Ok(git_task::start_status(self, global, callframe.this()))
     }
 
     /// `index.gitDiff(path)` — line diff of the worktree file against `HEAD`,
@@ -518,10 +537,10 @@ impl FileIndex {
             return;
         };
         let dirs: Vec<Vec<u8>> = {
-            let store = self.store.borrow();
+            let store = self.store();
             store
                 .iter_sorted()
-                .filter(|&id| store.meta(id).kind == EntryKind::Dir)
+                .filter(|&id| store.kind(id) == EntryKind::Dir)
                 .map(|id| store.path(id).to_vec())
                 .collect()
         };
@@ -544,6 +563,9 @@ impl FileIndex {
         let mut events: Vec<(WatchEventKind, Vec<u8>)> = Vec::new();
         {
             let mut store = self.store.borrow_mut();
+            // The per-path reconcile reads `range_with_prefix`; an initial
+            // crawl batch may have left the order dirty.
+            store.ensure_sorted();
             for batch in batches {
                 recrawl |= batch.recrawl;
                 synced |= batch.synced;
@@ -605,7 +627,7 @@ impl FileIndex {
     /// the difference (paths that appeared / disappeared) as one batch.
     pub(crate) fn apply_recrawl(&self, global: &JSGlobalObject, result: CrawlResult) {
         let old_paths: Vec<Vec<u8>> = {
-            let store = self.store.borrow();
+            let store = self.store();
             store
                 .iter_sorted()
                 .map(|id| store.path(id).to_vec())
@@ -677,20 +699,10 @@ impl FileIndex {
         if path.is_empty() {
             return;
         }
-        let mut abs = Vec::with_capacity(self.root.len() + 1 + path.len() + 1);
-        abs.extend_from_slice(&self.root);
-        abs.push(b'/');
-        abs.extend_from_slice(&path);
-        abs.push(0);
-        let abs_z = ZStr::from_buf(&abs, abs.len() - 1);
-        match bun_sys::lstatat(Fd::cwd(), abs_z) {
-            Ok(st) => {
-                let stat = bun_sys::PosixStat::init(&st);
-                let Some(meta) = meta_from_stat(&stat) else {
-                    // The path now names a socket/fifo/device: not indexable.
-                    self.remove_path(store, &path, events);
-                    return;
-                };
+        match self.lstat_rel(&path) {
+            // A path that now names a socket/fifo/device (or is gone) is
+            // not indexable.
+            Some(meta) => {
                 let existed = store.get(&path).is_some();
                 // A budget failure leaves the entry unindexed; `truncated`
                 // already reports that state.
@@ -704,8 +716,22 @@ impl FileIndex {
                     events.push((kind, path));
                 }
             }
-            Err(_) => self.remove_path(store, &path, events),
+            None => self.remove_path(store, &path, events),
         }
+    }
+
+    /// `lstat(<root>/<rel>)`, as a [`Meta`] (its stat block is real and may
+    /// be fed to [`Store::fill_stat`]). `None` for an unstattable path or a
+    /// kind the index never holds (socket/fifo/device).
+    fn lstat_rel(&self, rel: &[u8]) -> Option<Meta> {
+        let mut abs = Vec::with_capacity(self.root.len() + 1 + rel.len() + 1);
+        abs.extend_from_slice(&self.root);
+        abs.push(b'/');
+        abs.extend_from_slice(rel);
+        abs.push(0);
+        let abs_z = ZStr::from_buf(&abs, abs.len() - 1);
+        let raw = bun_sys::lstatat(Fd::cwd(), abs_z).ok()?;
+        meta_from_stat(&bun_sys::PosixStat::init(&raw))
     }
 
     fn remove_path(
@@ -715,7 +741,7 @@ impl FileIndex {
         events: &mut Vec<(WatchEventKind, Vec<u8>)>,
     ) {
         let Some(id) = store.get(path) else { return };
-        if store.meta(id).kind == EntryKind::Dir {
+        if store.kind(id) == EntryKind::Dir {
             let mut prefix = path.to_vec();
             prefix.push(b'/');
             let descendants: Vec<Vec<u8>> = store
@@ -841,6 +867,10 @@ impl FileIndex {
         self.closed.get()
     }
 
+    pub(crate) fn is_watching(&self) -> bool {
+        self.watcher.borrow().is_some()
+    }
+
     pub(crate) fn root_bytes(&self) -> &[u8] {
         &self.root
     }
@@ -849,8 +879,13 @@ impl FileIndex {
         &self.options
     }
 
-    /// Borrow the store for a synchronous, JS-free read.
+    /// Borrow the store for a synchronous, JS-free read in path order. A
+    /// progressive crawl batch may have left the sorted order dirty; this is
+    /// the one place that re-sorts it (amortized over the batches applied
+    /// since the last ordered read). Must not be called with the store
+    /// already borrowed.
     pub(crate) fn store(&self) -> core::cell::Ref<'_, Store> {
+        self.store.borrow_mut().ensure_sorted();
         self.store.borrow()
     }
 
@@ -897,7 +932,7 @@ impl FileIndex {
                 .map(|id| store.path(id).to_vec())
                 .collect();
             *store = Store::new(self.options.max_memory);
-            store.bulk_load(result.entries);
+            store.bulk_load_enumerated(result.entries);
             // `recent()` is newest-first; replay oldest-first to preserve order.
             for path in touched.iter().rev() {
                 if let Some(id) = store.get(path) {
@@ -909,6 +944,63 @@ impl FileIndex {
         self.crawl_errors.set(result.errors);
         self.report_memory(global);
         self.sync_watcher();
+    }
+
+    /// Apply one progressive batch of the initial crawl to the live store
+    /// as it arrives, so `size` grows and `complete()`/`glob()`/`has()`
+    /// answer on partial data before `ready` resolves. Appends without
+    /// re-sorting; the next ordered read re-sorts once
+    /// ([`FileIndex::store`]). JS thread only.
+    pub(crate) fn apply_crawl_batch(&self, global: &JSGlobalObject, batch: Vec<CrawlEntry>) {
+        if self.closed.get() {
+            return;
+        }
+        self.store.borrow_mut().extend_enumerated(batch);
+        self.report_memory(global);
+    }
+
+    /// Completion of the progressive initial crawl: its entries are already
+    /// in the store ([`FileIndex::apply_crawl_batch`]); record the counters
+    /// and hand the watcher the directory set to register. Registration is
+    /// deliberately not per-batch: `ready` does not resolve until the
+    /// watcher acknowledges this sync ([`FileIndex::defer_until_synced`]),
+    /// so "after `await ready`, changes are tracked" holds either way, and a
+    /// single registration pass is what keeps the watcher's full-replacement
+    /// `sync` O(dirs).
+    pub(crate) fn finish_initial_crawl(&self, global: &JSGlobalObject, result: &CrawlResult) {
+        self.store.borrow_mut().ensure_sorted();
+        self.crawl_truncated.set(result.truncated);
+        self.crawl_errors.set(result.errors);
+        self.report_memory(global);
+        self.sync_watcher();
+    }
+
+    /// Write the status worker's freshly-`lstat`ed candidates back into the
+    /// stat cache (git's `core.fsmonitor` model: the next `gitStatus()` of a
+    /// *watching* index only re-stats what changed since). `None` means the
+    /// candidate could not be stat'ed: a cached stat for it now lies.
+    /// Dropped wholesale if the store mutated under the in-flight task.
+    pub(crate) fn absorb_fresh_stats(
+        &self,
+        generation: u64,
+        fresh: Vec<(Box<[u8]>, Option<Meta>)>,
+    ) {
+        if self.closed.get() {
+            return;
+        }
+        let mut store = self.store.borrow_mut();
+        if store.generation() != generation {
+            return;
+        }
+        for (path, meta) in fresh {
+            // The generation is unchanged, so every snapshotted path is
+            // still present.
+            let Some(id) = store.get(&path) else { continue };
+            match meta {
+                Some(meta) => store.fill_stat(id, meta),
+                None => store.invalidate_stat(id),
+            }
+        }
     }
 }
 

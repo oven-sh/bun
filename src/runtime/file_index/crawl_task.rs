@@ -1,25 +1,44 @@
-//! The initial crawl and `refresh()`: `bun_file_index::crawl` fans the
-//! directory walk out on the work pool; the last worker's completion closure
-//! enqueues this task back to the JS thread, which applies the owned
-//! [`CrawlResult`] to the store and settles the `Promise<FileIndex>`.
+//! The initial crawl, `refresh()`, and watcher re-crawls.
+//!
+//! The initial crawl is **progressive** (`bun_file_index::crawl_batched`):
+//! every batch of enumerated entries is posted to the JS thread as it
+//! arrives and applied to the live (empty) store, so `index.size` grows and
+//! `complete()`/`glob()`/`has()` answer on partial data before `ready`
+//! resolves — `ready` still means "complete". `refresh()` and watcher
+//! re-crawls replace an existing store, so they stay atomic: the buffered
+//! result is applied once, on completion.
+//!
+//! # Ownership across threads
+//!
+//! One heap [`CrawlTask`] per crawl, owned by whoever holds its
+//! [`Completion`] handle. The handle lives in the [`Outbox`] (an `Arc` the
+//! pool-side closures share) while the task is parked, and in the VM's
+//! concurrent queue while a dispatch is in flight — never both, so the same
+//! allocation is safely re-enqueued once per delivery. Its `Strong` pins the
+//! `FileIndex` wrapper for the whole crawl; only the LAST delivery (the one
+//! carrying `done`) consumes the task and releases it.
 
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_file_index::{CrawlOptions, CrawlResult, crawl};
+use bun_file_index::{CrawlEntry, CrawlOptions, CrawlResult, crawl, crawl_batched};
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, JsTerminated, Strong, SysErrorJsc as _};
 use bun_sys::{Dir, O};
+use bun_threading::{GuardedBy, Mutex};
 
 use super::FileIndex;
 
-/// Why a crawl was started; decides what its completion does on the JS
-/// thread.
+/// Why a crawl was started; decides what its deliveries do on the JS thread.
 pub(crate) enum Purpose {
-    /// `new FileIndex()` / `refresh()`: settle the `Promise<FileIndex>`.
-    Api(JSPromiseStrong),
+    /// `new FileIndex()`: progressive — each batch is applied to the live
+    /// store on arrival; completion settles the `Promise<FileIndex>`.
+    Initial(JSPromiseStrong),
+    /// `refresh()`: buffered — the completed result replaces the store.
+    Refresh(JSPromiseStrong),
     /// Watcher-initiated background re-crawl (a `.gitignore` changed, or the
     /// OS event queue overflowed). There is no promise to settle; the diff
     /// between the old and new index is delivered through `onchange`.
@@ -28,31 +47,95 @@ pub(crate) enum Purpose {
 
 /// One in-flight crawl. Heap-allocated on the JS thread; only its address
 /// crosses threads (inside [`Completion`]). The `Strong` keeps the
-/// `FileIndex` wrapper — and therefore the native `FileIndex` the completion
-/// writes back into — alive for exactly as long as the crawl is in flight.
+/// `FileIndex` wrapper — and therefore the native `FileIndex` the deliveries
+/// write back into — alive for exactly as long as the crawl is in flight.
 pub struct CrawlTask {
     this_strong: Strong,
     purpose: Purpose,
-    /// Written only by [`Completion`] (exactly once) before the task is
-    /// enqueued back to the JS thread.
-    result: Result<CrawlResult, bun_sys::Error>,
+    /// `bun_vm_ptr()` has write provenance and is valid for the process
+    /// lifetime (see `Archive::AsyncTask::create`).
     vm: *mut VirtualMachine,
     concurrent_task: ConcurrentTask,
     keep_alive: KeepAlive,
+    outbox: Arc<Outbox>,
 }
 
 impl Taskable for CrawlTask {
     const TAG: TaskTag = task_tag::FileIndexCrawlTask;
 }
 
-/// Start a crawl of `index.root` and return the `Promise<FileIndex>` that its
-/// completion settles. The root is opened here, on the JS thread, so a
-/// nonexistent root rejects with the real syscall error instead of being
-/// indistinguishable from an empty directory.
-pub(crate) fn start(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex) -> JSValue {
+/// Everything the pool side has produced and the JS thread has not yet
+/// consumed, plus the (single) right to enqueue the owning [`CrawlTask`].
+struct Inbox {
+    /// Progressive batches (initial crawl only), in delivery order.
+    batches: Vec<Vec<CrawlEntry>>,
+    /// Set exactly once, by `on_done` (or by `start_with` for a root that
+    /// failed to open).
+    done: Option<Result<CrawlResult, bun_sys::Error>>,
+    /// `Some` while the task is parked (no dispatch in flight). A poster
+    /// that takes it must enqueue it; a poster that finds it absent relies
+    /// on the in-flight dispatch re-checking the inbox before re-parking.
+    /// Once the task is consumed (completion or shutdown release) it is
+    /// never re-armed and stays `None`.
+    handle: Option<Completion>,
+}
+
+/// Shared by the JS thread and the crawl's pool-side closures.
+struct Outbox {
+    inbox: GuardedBy<Inbox, Mutex>,
+}
+
+impl Outbox {
+    /// Record a batch and/or the completed result and, if the task is
+    /// parked, enqueue it. Runs on pool threads (and on the JS thread for a
+    /// root that failed to open).
+    fn post(
+        &self,
+        batch: Option<Vec<CrawlEntry>>,
+        done: Option<Result<CrawlResult, bun_sys::Error>>,
+    ) {
+        let handle = {
+            let mut inbox = self.inbox.lock();
+            if let Some(batch) = batch {
+                inbox.batches.push(batch);
+            }
+            if done.is_some() {
+                debug_assert!(inbox.done.is_none(), "a crawl completes exactly once");
+                inbox.done = done;
+            }
+            inbox.handle.take()
+        };
+        if let Some(handle) = handle {
+            handle.enqueue();
+        }
+    }
+}
+
+/// Start the constructor's progressive crawl of `index.root` and return the
+/// `Promise<FileIndex>` that its completion settles. The root is opened
+/// here, on the JS thread, so a nonexistent root rejects with the real
+/// syscall error instead of being indistinguishable from an empty directory.
+pub(crate) fn start_initial(
+    global: &JSGlobalObject,
+    this_value: JSValue,
+    index: &FileIndex,
+) -> JSValue {
     let promise = JSPromiseStrong::init(global);
     let promise_js = promise.value();
-    start_with(global, this_value, index, Purpose::Api(promise));
+    start_with(global, this_value, index, Purpose::Initial(promise));
+    promise_js
+}
+
+/// Start a `refresh()` re-crawl; resolves with `this` once the completed
+/// result has replaced the store.
+pub(crate) fn start_refresh(
+    global: &JSGlobalObject,
+    this_value: JSValue,
+    index: &FileIndex,
+) -> JSValue {
+    let promise = JSPromiseStrong::init(global);
+    let promise_js = promise.value();
+    start_with(global, this_value, index, Purpose::Refresh(promise));
     promise_js
 }
 
@@ -65,20 +148,22 @@ pub(crate) fn start_recrawl(global: &JSGlobalObject, this_value: JSValue, index:
 
 fn start_with(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex, purpose: Purpose) {
     let root_error = Dir::open_with(index.root_bytes(), O::CLOEXEC).err();
-    let had_root_error = root_error.is_some();
+    let progressive = matches!(purpose, Purpose::Initial(_));
 
+    let outbox = Arc::new(Outbox {
+        inbox: GuardedBy::init(Inbox {
+            batches: Vec::new(),
+            done: None,
+            handle: None,
+        }),
+    });
     let mut task = Box::new(CrawlTask {
         this_strong: Strong::create(this_value, global),
         purpose,
-        result: match root_error {
-            Some(err) => Err(err),
-            None => Ok(CrawlResult::default()),
-        },
-        // `bun_vm_ptr()` has write provenance and is valid for the process
-        // lifetime (see `Archive::AsyncTask::create`).
         vm: global.bun_vm_ptr(),
         concurrent_task: ConcurrentTask::default(),
         keep_alive: KeepAlive::default(),
+        outbox: Arc::clone(&outbox),
     });
     // Keep the event loop alive until `run_from_js` settles the promise.
     task.keep_alive.ref_(bun_io::js_vm_ctx());
@@ -93,45 +178,51 @@ fn start_with(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex, p
         budget: index.options().max_memory,
     };
 
-    let completion = Completion(bun_core::heap::into_raw(task));
-    if had_root_error {
-        completion.enqueue();
+    let handle = Completion(bun_core::heap::into_raw(task));
+    if let Some(err) = root_error {
+        outbox.inbox.lock().done = Some(Err(err));
+        handle.enqueue();
+        return;
+    }
+    outbox.inbox.lock().handle = Some(handle);
+    let root = index.root_bytes().to_vec();
+    let done_outbox = Arc::clone(&outbox);
+    let on_done = move |result: CrawlResult| done_outbox.post(None, Some(Ok(result)));
+    if progressive {
+        let batch_outbox = Arc::clone(&outbox);
+        crawl_batched(
+            &root,
+            options,
+            move |batch| batch_outbox.post(Some(batch), None),
+            on_done,
+        );
     } else {
-        let root = index.root_bytes().to_vec();
-        crawl(&root, options, move |result| completion.complete(result));
+        crawl(&root, options, on_done);
     }
 }
 
-/// The owning handle to an in-flight [`CrawlTask`], moved into the crawl's
-/// `on_done` closure and consumed exactly once.
+/// The owning handle to a parked [`CrawlTask`], moved into the VM's
+/// concurrent queue by [`Completion::enqueue`] exactly once per delivery.
 ///
 /// SAFETY (`Send`): the pointee is the live `heap::into_raw` allocation from
-/// [`start`]. Between `start` returning and the JS-thread dispatch of the
-/// enqueued `ConcurrentTask`, this handle is its sole owner — the JS thread
-/// never touches it — and it only writes the `Send` `result` field and the
-/// intrusive `concurrent_task`/`vm` plumbing (the same cross-thread hand-off
-/// `ConcurrentPromiseTask::on_finish` performs). The `!Send` fields
-/// (`Strong`, `JSPromiseStrong`) are created and consumed on the JS thread
-/// only.
+/// [`start_with`] (or [`CrawlTask::run_from_js`]'s re-park). While parked,
+/// this handle is its sole owner — the JS thread never touches it — and the
+/// only cross-thread writes are the intrusive `concurrent_task`/`vm`
+/// plumbing (the same hand-off `ConcurrentPromiseTask::on_finish` performs).
+/// The `!Send` fields (`Strong`, `JSPromiseStrong`) are created and consumed
+/// on the JS thread only.
 struct Completion(*mut CrawlTask);
 // SAFETY: see the type-level contract above.
 unsafe impl Send for Completion {}
 
 impl Completion {
-    /// May run on any work-pool thread (or synchronously on the JS thread for
-    /// a root that failed to open).
-    fn complete(self, result: CrawlResult) {
-        // SAFETY: sole owner of the live allocation (type-level contract).
-        unsafe { (*self.0).result = Ok(result) };
-        self.enqueue();
-    }
-
     fn enqueue(self) {
         let this = self.0;
-        // SAFETY: `this` is the live allocation from `start`; `from` only
-        // re-initializes the intrusive `concurrent_task` field in place, and
-        // `vm` points to the JS thread's `VirtualMachine`, whose concurrent
-        // queue is the documented cross-thread entry point.
+        // SAFETY: `this` is the live allocation this handle owns; `from`
+        // only re-initializes the intrusive `concurrent_task` field in place
+        // (it is never queued twice concurrently: one handle, one enqueue),
+        // and `vm` points to the JS thread's `VirtualMachine`, whose
+        // concurrent queue is the documented cross-thread entry point.
         unsafe {
             let task = NonNull::from((*this).concurrent_task.from(this, AutoDeinit::ManualDeinit));
             (*(*this).vm).enqueue_task_concurrent(task);
@@ -144,6 +235,8 @@ impl CrawlTask {
     /// past `is_shutting_down` and will never dispatch this task, so reclaim
     /// the box, unref the loop `KeepAlive`, and let `Drop` release the
     /// `Strong`/`JSPromiseStrong` handles (we are before `destructOnExit`).
+    /// Workers still posting into the (refcounted) `Outbox` find no handle
+    /// and never enqueue again.
     // `this` is an opaque token forwarded to `heap::take`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn release_at_shutdown(this: *mut CrawlTask) {
@@ -153,70 +246,123 @@ impl CrawlTask {
         owned.keep_alive.unref(bun_io::js_vm_ctx());
     }
 
-    /// JS-thread dispatch (`task_tag::FileIndexCrawlTask`). Takes ownership of
-    /// the allocation produced by [`start`].
+    /// JS-thread dispatch (`task_tag::FileIndexCrawlTask`). Takes ownership
+    /// of the allocation; a delivery that is not yet `done` parks it again.
     // `this` is an opaque token forwarded to `heap::take`; the deref is inside
     // an `unsafe` block with the ownership contract documented above.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_js(this: *mut CrawlTask) -> Result<(), JsTerminated> {
-        // SAFETY: `this` is the live, exclusively-owned allocation enqueued by
-        // `Completion::enqueue`; the dispatch arm hands it here exactly once.
+        // SAFETY: `this` is the live, exclusively-owned allocation enqueued
+        // by `Completion::enqueue`; the dispatch arm hands it here exactly
+        // once per enqueue, and only one enqueue is ever outstanding.
         let mut owned = unsafe { bun_core::heap::take(this) };
-        owned.keep_alive.unref(bun_io::js_vm_ctx());
+        let (batches, done) = {
+            let mut inbox = owned.outbox.inbox.lock();
+            (core::mem::take(&mut inbox.batches), inbox.done.take())
+        };
 
         let vm = VirtualMachine::get();
         if vm.is_shutting_down() {
+            // Dropping the task here un-parks it forever: later posts find
+            // no handle and the pool side just drops its `Arc<Outbox>`.
+            owned.keep_alive.unref(bun_io::js_vm_ctx());
             return Ok(());
         }
         let global = vm.global();
-        let result = core::mem::replace(&mut owned.result, Ok(CrawlResult::default()));
+        let this_value = owned.this_strong.get();
+
+        if !batches.is_empty()
+            && let Some(index) = this_value.as_class_ref::<FileIndex>()
+        {
+            for batch in batches {
+                index.apply_crawl_batch(global, batch);
+            }
+        }
+        let Some(result) = done else {
+            return Self::park(owned);
+        };
+
+        owned.keep_alive.unref(bun_io::js_vm_ctx());
         match core::mem::replace(&mut owned.purpose, Purpose::WatcherRecrawl) {
-            Purpose::Api(mut promise) => match result {
-                Err(err) => {
-                    let err_js = err.to_js(global);
-                    promise.swap().reject_with_async_stack(global, Ok(err_js))
-                }
-                Ok(result) => {
-                    let this_value = owned.this_strong.get();
-                    if let Some(index) = this_value.as_class_ref::<FileIndex>()
-                        && !index.is_closed()
-                    {
-                        // The probe in `start_with` and the crawl's own root
-                        // open are distinct: a root that vanished in between
-                        // yields an empty `CrawlResult`, indistinguishable
-                        // from a genuinely empty directory. Re-validate the
-                        // root so `ready` rejects with the syscall error
-                        // instead of resolving an empty index.
-                        if result.entries.is_empty()
-                            && let Err(err) = Dir::open_with(index.root_bytes(), O::CLOEXEC)
-                        {
-                            let err_js = err.to_js(global);
-                            return promise.swap().reject_with_async_stack(global, Ok(err_js));
-                        }
-                        index.apply_crawl(global, result);
-                        // A watching index resolves `ready` only once the
-                        // watcher acknowledges this crawl's registrations.
-                        promise = match index.defer_until_synced(promise) {
-                            None => return Ok(()),
-                            Some(promise) => promise,
-                        };
-                    }
-                    promise.swap().resolve(global, this_value)
-                }
-            },
+            Purpose::Initial(promise) => settle_api(global, this_value, promise, result, true),
+            Purpose::Refresh(promise) => settle_api(global, this_value, promise, result, false),
             // A failed background re-crawl (e.g. the root was deleted) keeps
             // the previous index; the watcher keeps reporting what it can.
             Purpose::WatcherRecrawl => {
-                if let Ok(result) = result {
-                    let this_value = owned.this_strong.get();
-                    if let Some(index) = this_value.as_class_ref::<FileIndex>()
-                        && !index.is_closed()
-                    {
-                        index.apply_recrawl(global, result);
-                    }
+                if let Ok(result) = result
+                    && let Some(index) = this_value.as_class_ref::<FileIndex>()
+                    && !index.is_closed()
+                {
+                    index.apply_recrawl(global, result);
                 }
                 Ok(())
             }
         }
     }
+
+    /// Hand the (not yet completed) task back to the pool side. If a batch
+    /// or the result arrived while this dispatch held no handle, re-enqueue
+    /// immediately instead of parking — nothing else will.
+    fn park(owned: Box<CrawlTask>) -> Result<(), JsTerminated> {
+        let outbox = Arc::clone(&owned.outbox);
+        let handle = Completion(bun_core::heap::into_raw(owned));
+        let pending = {
+            let mut inbox = outbox.inbox.lock();
+            if inbox.done.is_some() || !inbox.batches.is_empty() {
+                Some(handle)
+            } else {
+                inbox.handle = Some(handle);
+                None
+            }
+        };
+        if let Some(handle) = pending {
+            handle.enqueue();
+        }
+        Ok(())
+    }
+}
+
+/// Completion of an `Initial`/`Refresh` crawl: apply it to the index (if it
+/// is still open) and settle its `Promise<FileIndex>`.
+fn settle_api(
+    global: &JSGlobalObject,
+    this_value: JSValue,
+    mut promise: JSPromiseStrong,
+    result: Result<CrawlResult, bun_sys::Error>,
+    initial: bool,
+) -> Result<(), JsTerminated> {
+    let result = match result {
+        Err(err) => {
+            let err_js = err.to_js(global);
+            return promise.swap().reject_with_async_stack(global, Ok(err_js));
+        }
+        Ok(result) => result,
+    };
+    if let Some(index) = this_value.as_class_ref::<FileIndex>()
+        && !index.is_closed()
+    {
+        if initial {
+            index.finish_initial_crawl(global, &result);
+        } else {
+            index.apply_crawl(global, result);
+        }
+        // The probe in `start_with` and the crawl's own root open are
+        // distinct: a root that vanished in between yields an empty index,
+        // indistinguishable from a genuinely empty directory. Re-validate
+        // the root so `ready` rejects with the syscall error instead of
+        // resolving an empty index.
+        if index.store().is_empty()
+            && let Err(err) = Dir::open_with(index.root_bytes(), O::CLOEXEC)
+        {
+            let err_js = err.to_js(global);
+            return promise.swap().reject_with_async_stack(global, Ok(err_js));
+        }
+        // A watching index resolves `ready` only once the watcher
+        // acknowledges this crawl's registrations.
+        promise = match index.defer_until_synced(promise) {
+            None => return Ok(()),
+            Some(promise) => promise,
+        };
+    }
+    promise.swap().resolve(global, this_value)
 }

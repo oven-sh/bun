@@ -2,9 +2,10 @@ interface FileIndex {
   readonly root: string;
   $pull(pattern, options): Promise<unknown[]>;
   /** Native candidate snapshot for RegExp grep (see FileIndex.classes.ts). */
-  $paths(options): string[];
+  $paths(options): { paths: string[]; maxFileSize: number };
   /** `true` once `close()` has run. Never throws. */
   $closeRequested(): boolean;
+  stat(path: string): { size: number; kind: string } | null;
 }
 
 export function grep(this: FileIndex, pattern, options) {
@@ -12,7 +13,7 @@ export function grep(this: FileIndex, pattern, options) {
   // Validate (and snapshot the candidate set) synchronously so bad arguments
   // and a closed index throw from `grep()` itself, not from the first `next()`.
   if ($isRegExpObject(pattern)) {
-    const paths: string[] = index.$paths(options);
+    const { paths, maxFileSize } = index.$paths(options);
     const root: string = index.root;
     // `$paths` already range-validated both; `??` only normalizes absence.
     const limit: number = options?.limit ?? Infinity;
@@ -32,6 +33,12 @@ export function grep(this: FileIndex, pattern, options) {
     const BINARY_SNIFF_LEN = 8192;
 
     async function readCandidate(this: string, relPath: string): Promise<string | null> {
+      // `maxFileSize` (and "is it still a regular file") is enforced from a
+      // fresh stat at open time, mirroring the native literal path's
+      // `fstat(fd)` after `open()` — the index has no crawl-time sizes.
+      // `index.stat()` also caches the answer in the index's stat cache.
+      const st = index.stat(relPath);
+      if (st === null || st.kind !== "file" || st.size > maxFileSize) return null;
       // A candidate that vanished (or became unreadable) since the snapshot
       // is simply not searched, exactly like the native literal path.
       try {

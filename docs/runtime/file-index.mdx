@@ -5,7 +5,7 @@ description: Build agent and editor tooling with Bun's in-memory, gitignore-awar
 
 `Bun.FileIndex` is an in-memory, gitignore-aware index of a directory tree, designed for building agent and editor tooling: fuzzy filename autocomplete, glob queries over the indexed paths, content search, file-access history, and in-process git status and diff.
 
-The index crawls a directory once (in parallel, on Bun's thread pool), respecting `.gitignore` semantics exactly the way git does, and keeps only paths and stat metadata in memory. After that, autocomplete and glob queries are synchronous and answer from memory without touching the filesystem.
+The index enumerates a directory once (in parallel, on Bun's thread pool), respecting `.gitignore` semantics exactly the way git does, and keeps only paths and their kind in memory — the crawl never `stat`s entries, so it never faults in the tree's inodes. After that, autocomplete and glob queries are synchronous and answer from memory without touching the filesystem.
 
 All paths accepted and returned by `Bun.FileIndex` are **relative to `root` and `/`-separated on every platform**, including Windows. Two rules apply to every path argument:
 
@@ -49,7 +49,7 @@ for await (const match of index.grep("TODO", { glob: "**/*.ts" })) {
 
 ## Creating an index
 
-`new Bun.FileIndex(root, options?)` starts a background crawl of `root` and returns immediately. The `ready` promise resolves with the index once the crawl finishes:
+`new Bun.FileIndex(root, options?)` starts a background crawl of `root` and returns immediately. The crawl is incremental: directories stream into the index as they are enumerated, so `size` grows and `complete()` / `glob()` / `has()` answer (on whatever has been indexed so far) while it is still running. The `ready` promise resolves with the index once the crawl is **complete**:
 
 ```ts
 const index = new Bun.FileIndex("/path/to/project", {
@@ -128,7 +128,7 @@ const info = index.stat("src/index.ts");
 // { size: 1024, mtimeMs: 1717171717000, mode: 33188, kind: "file" }
 ```
 
-`stat()` reads from the in-memory index, **not** the filesystem. The values reflect the last crawl (or watcher update), not necessarily the file's current state on disk. Use `Bun.file(path).stat()` when you need a fresh `lstat`.
+`stat()` is synchronous and answers from the index's stat cache. The crawl itself records no stat data (it only enumerates), so the **first** `stat()` of an entry performs one `lstat` and caches it; with `watch: true` the watcher keeps that cache true, and `gitStatus()` refreshes it for every candidate it re-stats. On an index that is not watching, later calls return the cached answer even if the file has changed since — use `Bun.file(path).stat()` when you need a guaranteed-fresh `lstat`. A path that is indexed but can no longer be `lstat`ed returns `null`.
 
 ## `grep()` — content search
 
@@ -190,6 +190,8 @@ if (status) {
 ```
 
 `status` is the two-character porcelain `XY` code: the first character is the staged (index) state, the second the working-tree state.
+
+`gitStatus()` uses the same freshness model as git's own `core.fsmonitor`: the worker trusts a candidate's cached stat only if the index is watching (so the watcher has kept it true since it was filled); every other candidate is `lstat`ed on the thread pool at status time, and the fresh results are written back into the index's stat cache. On a watching index the second and later calls therefore only re-stat what actually changed; on a non-watching index every call re-stats its candidates, so the result is always correct — never computed from a stale snapshot.
 
 ### `gitDiff()`
 
@@ -274,7 +276,7 @@ The budget covers paths and metadata only — `grep()` reads file contents from 
 
 ## Performance & threading model
 
-The initial crawl, `refresh()`, `grep()` over a string, `gitStatus()`, and `gitDiff()` all run on Bun's thread pool and never block the event loop; they hand back plain data when they finish. `grep()` over a `RegExp` reads candidate files in JavaScript. Everything else — `complete()`, `glob()`, `has()`, `stat()`, `touch()`, `recent()` — is a synchronous read of the in-memory index on the JavaScript thread, with no locks and no I/O, so it is intended to be cheap enough to call on every keystroke.
+The initial crawl, `refresh()`, `grep()` over a string, `gitStatus()`, and `gitDiff()` all run on Bun's thread pool and never block the event loop; they hand back plain data when they finish. The crawl is enumeration-only — the directory listing already says whether each entry is a file, directory, or symlink, and that is all the index needs — so indexing a tree costs one `getdents` pass and zero per-entry `stat`s. Per-entry stat data is filled lazily, one `lstat` at a time, by `stat()`, the watcher, and `gitStatus()`. `grep()` over a `RegExp` reads candidate files in JavaScript. Everything else — `complete()`, `glob()`, `has()`, `stat()`, `touch()`, `recent()` — is a synchronous read of the in-memory index on the JavaScript thread, with no locks and no I/O, so it is intended to be cheap enough to call on every keystroke.
 
 ## What it is not
 

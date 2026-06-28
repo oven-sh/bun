@@ -241,6 +241,75 @@ describe("Bun.FileIndex gitStatus()", () => {
     expect(await bunStatusFiles(root)).toEqual(await expectStatusMatchesGit(root, "really deleted"));
   });
 
+  // Design requirement 4 (the fsmonitor model): the status worker may only
+  // trust a cached stat the WATCHER kept valid; everything else is lstat'ed
+  // at status time on the work pool. A crawl-time stat snapshot is stale the
+  // moment the file changes, and a stale stat that matches `.git/index`
+  // makes status LIE (the file is reported clean without ever being read).
+  test("an unwatched index reports ' M' for a file modified after `ready`", async () => {
+    using dir = tempDir("file-index-git-stale-stat", {
+      "a.txt": "alpha\n",
+      "b.txt": "bravo\n",
+    });
+    const root = String(dir);
+    // Backdate a.txt so its mtime second is strictly older than the second
+    // `.git/index` is written in: git's racily-clean rule then trusts the
+    // stat cache outright (no content hash), which is exactly the case a
+    // stale in-memory stat gets wrong.
+    const past = new Date(Date.now() - 30_000);
+    fs.utimesSync(join(root, "a.txt"), past, past);
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+    expect(gitStatusFiles(root)).toEqual([]);
+
+    using index = new Bun.FileIndex(root);
+    await index.ready;
+    expect(await index.gitStatus()).toEqual(expect.objectContaining({ files: [] }));
+
+    // Modified AFTER the index was built. Same inode, new mtime + content.
+    fs.writeFileSync(join(root, "a.txt"), "alpha rewritten\n");
+    const files = sortFiles((await index.gitStatus())!.files);
+    expect(files).toEqual([{ path: "a.txt", status: " M" }]);
+    expect(files).toEqual(gitStatusFiles(root));
+  });
+
+  // The watching variant of the test above: here the status worker IS
+  // allowed to trust the cached stat, because the watcher's per-event
+  // re-lstat keeps it true (and the first gitStatus() filled it).
+  // skipIf: the Windows watch backend is not exercised in CI (watch.test.ts).
+  test.skipIf(isWindows)("a watching index reports ' M' for a file modified after `ready`", async () => {
+    using dir = tempDir("file-index-git-stale-stat-watch", {
+      "a.txt": "alpha\n",
+      "b.txt": "bravo\n",
+    });
+    const root = String(dir);
+    const past = new Date(Date.now() - 30_000);
+    fs.utimesSync(join(root, "a.txt"), past, past);
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+
+    const seen = Promise.withResolvers<void>();
+    using index = new Bun.FileIndex(root, {
+      watch: true,
+      onchange: events => {
+        if (events.some(e => e.path === "a.txt" && e.kind === "modify")) seen.resolve();
+      },
+    });
+    await index.ready;
+    // Populates the stat cache for every candidate (none is valid yet: the
+    // crawl is enumeration-only).
+    expect(await index.gitStatus()).toEqual(expect.objectContaining({ files: [] }));
+
+    fs.writeFileSync(join(root, "a.txt"), "alpha rewritten\n");
+    // Once `onchange` fires, the store's stat for a.txt is watcher-fresh.
+    await seen.promise;
+    const files = sortFiles((await index.gitStatus())!.files);
+    expect(files).toEqual([{ path: "a.txt", status: " M" }]);
+    expect(files).toEqual(gitStatusFiles(root));
+  });
+
   test("empty repository with no commits", async () => {
     using dir = tempDir("file-index-git-empty", { "a.txt": "alpha\n" });
     const root = String(dir);

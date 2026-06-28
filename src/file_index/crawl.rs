@@ -17,6 +17,12 @@ use bun_threading::{GuardedBy, Mutex, WorkPool};
 
 use crate::store::{EntryKind, Meta};
 
+/// One enumerated entry: its path relative to the crawl root and the kind
+/// the dirent reported. The crawl never stats regular entries (an lstat per
+/// entry faults in every inode — catastrophic on a cold cache), so there is
+/// deliberately no per-entry stat data here; see [`crate::Store::stat`].
+pub type CrawlEntry = (Vec<u8>, EntryKind);
+
 /// Options for [`crawl`].
 #[derive(Clone)]
 pub struct CrawlOptions {
@@ -48,12 +54,12 @@ impl Default for CrawlOptions {
 }
 
 /// The crawl's owned, inert output: relative `/`-separated paths (no leading
-/// `./`, root not included) and their lstat metadata.
+/// `./`, root not included) and their dirent kinds.
 #[derive(Default)]
 pub struct CrawlResult {
     /// Every recorded entry. [`crawl_batched`] delivers entries through
     /// `on_batch` instead and leaves this empty.
-    pub entries: Vec<(Vec<u8>, Meta)>,
+    pub entries: Vec<CrawlEntry>,
     /// Number of `.gitignore` files parsed.
     pub gitignore_count: usize,
     /// Directories or entries that could not be opened/stat'ed. The crawl
@@ -78,7 +84,7 @@ pub fn crawl(
     options: CrawlOptions,
     on_done: impl FnOnce(CrawlResult) + Send + 'static,
 ) {
-    let acc: Arc<GuardedBy<Vec<(Vec<u8>, Meta)>, Mutex>> = Arc::new(GuardedBy::init(Vec::new()));
+    let acc: Arc<GuardedBy<Vec<CrawlEntry>, Mutex>> = Arc::new(GuardedBy::init(Vec::new()));
     let sink = Arc::clone(&acc);
     crawl_batched(
         root_abs,
@@ -103,7 +109,7 @@ pub fn crawl(
 pub fn crawl_batched(
     root_abs: &[u8],
     options: CrawlOptions,
-    on_batch: impl Fn(Vec<(Vec<u8>, Meta)>) + Send + Sync + 'static,
+    on_batch: impl Fn(Vec<CrawlEntry>) + Send + Sync + 'static,
     on_done: impl FnOnce(CrawlResult) + Send + 'static,
 ) {
     let mut flags = O::CLOEXEC;
@@ -143,7 +149,7 @@ pub fn crawl_batched(
 }
 
 type OnDone = Box<dyn FnOnce(CrawlResult) + Send>;
-type OnBatch = Box<dyn Fn(Vec<(Vec<u8>, Meta)>) + Send + Sync>;
+type OnBatch = Box<dyn Fn(Vec<CrawlEntry>) + Send + Sync>;
 
 /// State shared by every in-flight directory task of one crawl.
 struct Shared {
@@ -160,7 +166,7 @@ struct Shared {
     errors: AtomicUsize,
     truncated: AtomicBool,
     /// Entries accumulated since the last `on_batch` call.
-    batch: GuardedBy<Vec<(Vec<u8>, Meta)>, Mutex>,
+    batch: GuardedBy<Vec<CrawlEntry>, Mutex>,
     on_batch: OnBatch,
     on_done: GuardedBy<Option<OnDone>, Mutex>,
 }
@@ -206,7 +212,7 @@ fn process_dir(shared: &Arc<Shared>, rel: &[u8], mut chain: IgnoreChain) {
         shared.gitignore_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    let mut local: Vec<(Vec<u8>, Meta)> = Vec::new();
+    let mut local: Vec<CrawlEntry> = Vec::new();
     let mut iter = bun_sys::iterate_dir(dir.fd());
     let mut name_buf: Vec<u8> = Vec::new();
     loop {
@@ -223,23 +229,27 @@ fn process_dir(shared: &Arc<Shared>, rel: &[u8], mut chain: IgnoreChain) {
         if name == b".git" {
             continue;
         }
-        // The iterator's name borrow is only valid until the next `next()`;
-        // `lstatat` needs it NUL-terminated.
+        // The iterator's name borrow is only valid until the next `next()`
+        // (and `lstatat` needs it NUL-terminated).
         name_buf.clear();
         name_buf.extend_from_slice(name);
         name_buf.push(0);
-        let name_z = ZStr::from_buf(&name_buf, name_buf.len() - 1);
 
-        let st = match lstatat(dir.fd(), name_z) {
-            Ok(st) => st,
-            Err(_) => {
-                shared.errors.fetch_add(1, Ordering::Relaxed);
-                continue;
+        // Enumeration only: the dirent already carries the kind, and the
+        // crawl needs nothing else. The single lstat below is the fallback
+        // for filesystems that do not fill `d_type` (`DT_UNKNOWN`).
+        let Some(kind) = entry_kind(entry.kind, || {
+            let name_z = ZStr::from_buf(&name_buf, name_buf.len() - 1);
+            match lstatat(dir.fd(), name_z) {
+                Ok(st) => Ok(kind_from_mode(PosixStat::init(&st).mode as bun_core::Mode)),
+                Err(err) => {
+                    shared.errors.fetch_add(1, Ordering::Relaxed);
+                    Err(err)
+                }
             }
-        };
-        let stat = PosixStat::init(&st);
-        let Some(kind) = entry_kind(&stat) else {
-            // Sockets, fifos, devices: not indexable.
+        }) else {
+            // Sockets, fifos, devices (or an unstattable DT_UNKNOWN entry):
+            // not indexable.
             continue;
         };
 
@@ -268,7 +278,7 @@ fn process_dir(shared: &Arc<Shared>, rel: &[u8], mut chain: IgnoreChain) {
                 chain: chain.clone(),
             });
         }
-        local.push((rel_child, meta_from_stat(&stat, kind)));
+        local.push((rel_child, kind));
     }
 
     if !local.is_empty() {
@@ -307,7 +317,7 @@ impl Shared {
     /// Stage a completed directory's entries and hand off a batch once
     /// [`BATCH_TARGET`] is reached. The lock is released before `on_batch`
     /// runs, so batch callbacks never serialize the walkers.
-    fn push_entries(&self, local: &mut Vec<(Vec<u8>, Meta)>) {
+    fn push_entries(&self, local: &mut Vec<CrawlEntry>) {
         let full = {
             let mut batch = self.batch.lock();
             batch.append(local);
@@ -364,7 +374,9 @@ fn read_gitignore(shared: &Arc<Shared>, dir: &Dir, rel: &[u8]) -> Option<IgnoreF
         }
     };
     match fstat(file.fd()) {
-        Ok(st) if entry_kind(&PosixStat::init(&st)) == Some(EntryKind::File) => {}
+        Ok(st)
+            if kind_from_mode(PosixStat::init(&st).mode as bun_core::Mode)
+                == SysEntryKind::File => {}
         Ok(_) => return None,
         Err(_) => {
             shared.errors.fetch_add(1, Ordering::Relaxed);
@@ -380,28 +392,25 @@ fn read_gitignore(shared: &Arc<Shared>, dir: &Dir, rel: &[u8]) -> Option<IgnoreF
     }
 }
 
-fn entry_kind(stat: &PosixStat) -> Option<EntryKind> {
-    match kind_from_mode(stat.mode as bun_core::Mode) {
+/// The indexable kind of a dirent, or `None` for sockets, fifos and devices.
+///
+/// `DT_UNKNOWN` — a filesystem that does not fill `d_type` — falls back to
+/// `lstat_kind` (one `lstat` of that entry). That is the ONLY per-entry stat
+/// the crawl ever performs: everything it indexes carries its kind in the
+/// `getdents` record, so the crawl never faults in regular entries' inodes.
+fn entry_kind(
+    dirent: SysEntryKind,
+    lstat_kind: impl FnOnce() -> Result<SysEntryKind, bun_sys::Error>,
+) -> Option<EntryKind> {
+    let kind = match dirent {
+        SysEntryKind::Unknown => lstat_kind().ok()?,
+        known => known,
+    };
+    match kind {
         SysEntryKind::Directory => Some(EntryKind::Dir),
         SysEntryKind::File => Some(EntryKind::File),
         SysEntryKind::SymLink => Some(EntryKind::Symlink),
         _ => None,
-    }
-}
-
-fn meta_from_stat(stat: &PosixStat, kind: EntryKind) -> Meta {
-    Meta {
-        size: stat.size,
-        mode: stat.mode as u32,
-        mtime_s: stat.mtim.sec,
-        mtime_ns: stat.mtim.nsec as u32,
-        ctime_s: stat.ctim.sec,
-        ctime_ns: stat.ctim.nsec as u32,
-        dev: stat.dev,
-        ino: stat.ino,
-        uid: stat.uid as u32,
-        gid: stat.gid as u32,
-        kind,
     }
 }
 
@@ -535,10 +544,10 @@ mod tests {
     fn run_crawl_batched(
         root: &[u8],
         options: CrawlOptions,
-    ) -> (Vec<Vec<(Vec<u8>, Meta)>>, CrawlResult) {
+    ) -> (Vec<Vec<CrawlEntry>>, CrawlResult) {
         init_test_output();
         struct Done {
-            batches: GuardedBy<Vec<Vec<(Vec<u8>, Meta)>>, Mutex>,
+            batches: GuardedBy<Vec<Vec<CrawlEntry>>, Mutex>,
             result: GuardedBy<Option<CrawlResult>, Mutex>,
             event: ResetEvent,
         }
@@ -580,7 +589,6 @@ mod tests {
             .find(|(p, _)| p == path)
             .unwrap_or_else(|| panic!("missing entry {:?}", path.escape_ascii().to_string()))
             .1
-            .kind
     }
 
     /// One tree exercising nested `.gitignore`s (including a deeper `!`
@@ -638,13 +646,10 @@ mod tests {
         assert_eq!(kind_of(&result, b"a.txt"), EntryKind::File);
         assert_eq!(kind_of(&result, b"linkdir"), EntryKind::Symlink);
         assert_eq!(kind_of(&result, b"danglink"), EntryKind::Symlink);
-        let (_, meta) = result.entries.iter().find(|(p, _)| p == b"a.txt").unwrap();
-        assert_eq!(meta.size, 6);
-        assert!(meta.mtime_s > 0);
 
         // The owned result applies to a Store on the owning thread.
         let mut store = Store::new(1 << 22);
-        store.bulk_load(result.entries);
+        store.bulk_load_enumerated(result.entries);
         assert_eq!(store.len(), expected.len());
         assert!(store.get(b"src/main.rs").is_some());
         assert!(store.get(b"build.log").is_none());
@@ -778,7 +783,7 @@ mod tests {
         assert_eq!(result.errors, 0);
         assert_eq!(result.entries.len(), expected);
         let mut store = Store::new(1 << 24);
-        store.bulk_load(result.entries);
+        store.bulk_load_enumerated(result.entries);
         assert_eq!(store.len(), expected);
         assert_eq!(store.range_with_prefix(b"d3/sub/").count(), 16);
     }

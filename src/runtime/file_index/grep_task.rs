@@ -7,11 +7,12 @@
 //! with the full (capped) match array, which `src/js/builtins/FileIndex.ts`
 //! exposes as an async iterable.
 
+use bun_core::kind_from_mode;
 use bun_event_loop::TaskTag;
 use bun_file_index::{GrepHit, GrepQuery, grep_file};
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated};
-use bun_sys::{Dir, O};
+use bun_sys::{Dir, EntryKind as SysEntryKind, O, PosixStat, fstat};
 
 use super::{FileIndex, utf8_js};
 
@@ -106,13 +107,13 @@ pub(crate) fn parse_grep_options(
 }
 
 /// The store snapshot a grep over `args` searches: glob/cwd filtered, files
-/// only, at most `max_file_size` bytes, in store (path) order.
+/// only, in store (path) order. Admission is by kind alone — the index has
+/// no crawl-time sizes; `maxFileSize` is enforced against the OPEN file
+/// (`fstat`), by the worker for literal queries and by the JS shim for
+/// RegExp ones.
 pub(crate) fn candidate_paths(index: &FileIndex, args: &GrepArgs) -> Vec<Box<[u8]>> {
     let store = index.store();
-    let admits = |id: bun_file_index::FileId| {
-        let meta = store.meta(id);
-        meta.kind == bun_file_index::EntryKind::File && meta.size <= args.max_file_size as u64
-    };
+    let admits = |id: bun_file_index::FileId| GrepQuery::admits(store.kind(id));
     match &args.glob {
         Some(pattern) => bun_file_index::glob(&store, pattern)
             .into_iter()
@@ -125,6 +126,28 @@ pub(crate) fn candidate_paths(index: &FileIndex, args: &GrepArgs) -> Vec<Box<[u8
             .map(|id| Box::from(store.path(id)))
             .collect(),
     }
+}
+
+/// `FileIndex.__grepCandidates(options)`: the RegExp path's snapshot. Same
+/// candidate set as the literal fast path, plus the effective `maxFileSize`
+/// the JS shim must enforce at open time for parity.
+pub(crate) fn candidates_js(
+    index: &FileIndex,
+    global: &JSGlobalObject,
+    options_arg: JSValue,
+) -> JsResult<JSValue> {
+    let args = parse_grep_options(index, global, options_arg)?;
+    let paths = candidate_paths(index, &args);
+    let obj = JSValue::create_empty_object(global, 2);
+    let paths =
+        JSValue::create_array_from_iter(global, paths.into_iter(), |p| utf8_js(global, &p))?;
+    obj.put(global, "paths", paths);
+    obj.put(
+        global,
+        "maxFileSize",
+        JSValue::js_number_from_uint64(args.max_file_size as u64),
+    );
+    Ok(obj)
 }
 
 /// Validate the arguments, snapshot the candidate set, and schedule the task.
@@ -199,10 +222,25 @@ impl ConcurrentPromiseTaskContext for GrepJob<'_> {
                 break;
             }
             // A path that vanished (or was swapped for a symlink) since the
-            // snapshot is simply not searched.
-            let Ok(file) = dir.open_file(path, O::RDONLY | O::NOFOLLOW | O::CLOEXEC, 0) else {
+            // snapshot is simply not searched. `O_NONBLOCK` so a path
+            // swapped for a writer-less FIFO cannot wedge the open.
+            let flags = O::RDONLY | O::NONBLOCK | O::NOFOLLOW | O::CLOEXEC;
+            let Ok(file) = dir.open_file(path, flags, 0) else {
                 continue;
             };
+            // `maxFileSize` (and "still a regular file") is enforced HERE,
+            // on the opened fd: the index carries no sizes (the crawl is
+            // enumeration-only), and only an `fstat` of the very fd being
+            // read is race-free.
+            let Ok(raw) = fstat(file.fd()) else {
+                continue;
+            };
+            let stat = PosixStat::init(&raw);
+            if kind_from_mode(stat.mode as bun_core::Mode) != SysEntryKind::File
+                || stat.size > query.max_file_size() as u64
+            {
+                continue;
+            }
             let Ok(bytes) = file.read_to_end() else {
                 continue;
             };

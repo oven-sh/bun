@@ -9753,10 +9753,12 @@ declare module "bun" {
     /**
      * Get the indexed metadata for `path`, or `null` if it isn't in the index.
      *
-     * Synchronous and reads from the in-memory index, **not** the filesystem —
-     * the values reflect the last crawl (or watcher update), not necessarily
-     * the file's current state on disk. Use `Bun.file(path).stat()` for a
-     * fresh `lstat`.
+     * Synchronous. Answers from the index's stat cache: the first ask for an
+     * entry performs one `lstat` and caches it; a watcher (`watch: true`)
+     * keeps the cache true after that. Without a watcher, later calls keep
+     * returning the cached values even if the file has changed since — use
+     * `Bun.file(path).stat()` for a guaranteed-fresh `lstat`. Resolves to
+     * `null` for an indexed path that can no longer be `lstat`ed.
      *
      * @param path - The path to look up, relative to `root` and `/`-separated.
      *

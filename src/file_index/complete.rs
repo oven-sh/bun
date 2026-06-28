@@ -256,7 +256,7 @@ impl Query<'_, '_> {
     /// frecency bonus → the caller's heap push.
     #[inline]
     fn score_into(&mut self, scorer: &mut Scorer, id: FileId, push: impl FnOnce(i32, FileId)) {
-        if self.opts.dirs_only && self.store.meta(id).kind != EntryKind::Dir {
+        if self.opts.dirs_only && self.store.kind(id) != EntryKind::Dir {
             return;
         }
         let Some(base) = scorer.score(self.store.path(id)) else {
@@ -612,7 +612,7 @@ mod tests {
             if !path.starts_with(opts.cwd_prefix) {
                 continue;
             }
-            if opts.dirs_only && store.meta(id).kind != EntryKind::Dir {
+            if opts.dirs_only && store.kind(id) != EntryKind::Dir {
                 continue;
             }
             let Some(base) = sc.score(path) else {

@@ -33,6 +33,11 @@ pub enum EntryKind {
 
 /// Per-entry metadata (POD). The stat fields are exactly what a
 /// racily-clean comparison against a git index entry needs.
+///
+/// `kind` is always known (the crawl gets it from the dirent). The stat
+/// fields are only meaningful for an entry whose stat block is VALID — read
+/// them through [`Store::stat`], which returns `None` otherwise, never
+/// zeroes that look real.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Meta {
     pub size: u64,
@@ -76,6 +81,11 @@ struct StrRef {
 /// Entry tombstone: the slot's arena/meta storage is retained until the next
 /// [`Store::compact`], but the entry is gone from the map and `sorted`.
 const FLAG_DEAD: u8 = 1 << 0;
+
+/// The entry's stat block holds real `lstat` data ([`Store::stat`] returns
+/// `Some`). Clear for entries the enumeration-only crawl recorded (name +
+/// kind from the dirent, no stat) and after [`Store::invalidate_stat`].
+const FLAG_STAT_VALID: u8 = 1 << 1;
 
 /// Capacity of the access-recency ring (entries, not bytes).
 const TOUCH_RING_CAP: usize = 256;
@@ -178,8 +188,12 @@ pub struct Store {
     flags: Vec<u8>,
     /// `FileId` (as `u32`) keyed by path bytes resolved through the arena.
     by_path: PathMap,
-    /// Live ids ordered by path bytes.
+    /// Live ids ordered by path bytes. Stale while `sorted_dirty` (see
+    /// [`Store::extend_enumerated`] / [`Store::ensure_sorted`]).
     sorted: Vec<u32>,
+    /// A batch was appended without maintaining `sorted`. The next ordered
+    /// read must be preceded by [`Store::ensure_sorted`].
+    sorted_dirty: bool,
     /// Recency ring; `touch_head` is the oldest slot once the ring is full.
     touch: Vec<TouchSlot>,
     touch_head: usize,
@@ -212,6 +226,7 @@ impl Store {
             flags: Vec::new(),
             by_path: PathMap::new(),
             sorted: Vec::new(),
+            sorted_dirty: false,
             touch: Vec::new(),
             touch_head: 0,
             touch_seq: 0,
@@ -224,15 +239,15 @@ impl Store {
         }
     }
 
-    /// Number of live entries.
+    /// Number of live entries. Exact even while the sorted order is dirty.
     #[inline]
     pub fn len(&self) -> usize {
-        self.sorted.len()
+        self.paths.len() - self.dead as usize
     }
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.sorted.is_empty()
+        self.len() == 0
     }
 
     /// Exact bytes retained by the store (vector capacities + the amortized
@@ -281,36 +296,119 @@ impl Store {
         &self.arena[r.off as usize..r.off as usize + r.len as usize]
     }
 
+    /// The entry's kind. Always known — the crawl records it from the dirent.
     #[inline]
-    pub fn meta(&self, id: FileId) -> &Meta {
-        &self.meta[id.index()]
+    pub fn kind(&self, id: FileId) -> EntryKind {
+        self.meta[id.index()].kind
     }
 
-    /// Insert or update. On update the metadata is replaced in place; on
-    /// insert the entry is rejected with [`BudgetExceeded`] if it would push
+    /// The entry's cached `lstat` data, or `None` when no real stat has been
+    /// recorded for it (the enumeration-only crawl records none) or it was
+    /// invalidated. The returned `Meta`'s `kind` always matches
+    /// [`Store::kind`].
+    #[inline]
+    pub fn stat(&self, id: FileId) -> Option<&Meta> {
+        (self.flags[id.index()] & FLAG_STAT_VALID != 0).then(|| &self.meta[id.index()])
+    }
+
+    /// Record fresh `lstat` data for an existing entry (kind included) and
+    /// mark its stat block VALID. Like [`Store::touch`], this changes no
+    /// path and invalidates no id, so it does not bump the generation.
+    #[inline]
+    pub fn fill_stat(&mut self, id: FileId, meta: Meta) {
+        self.meta[id.index()] = meta;
+        self.flags[id.index()] |= FLAG_STAT_VALID;
+    }
+
+    /// Forget the entry's cached stat (its kind is kept).
+    #[inline]
+    pub fn invalidate_stat(&mut self, id: FileId) {
+        self.flags[id.index()] &= !FLAG_STAT_VALID;
+    }
+
+    /// Insert or update with real `lstat` data; the entry's stat block
+    /// becomes VALID. On update the metadata is replaced in place; on insert
+    /// the entry is rejected with [`BudgetExceeded`] if it would push
     /// retained bytes past the budget.
     pub fn upsert(&mut self, path: &[u8], meta: Meta) -> Result<FileId, BudgetExceeded> {
-        self.upsert_inner(path, meta, true)
+        self.upsert_inner(path, meta.kind, Some(meta), true)
     }
 
-    /// Insert many entries; sorts once at the end. Entries that don't fit in
-    /// the budget are dropped (`truncated()` becomes true).
+    /// Insert or update an enumerated entry: kind only, no stat. An existing
+    /// entry of the same kind keeps whatever (possibly newer) stat it has; a
+    /// kind change discards it.
+    pub fn upsert_enumerated(
+        &mut self,
+        path: &[u8],
+        kind: EntryKind,
+    ) -> Result<FileId, BudgetExceeded> {
+        self.upsert_inner(path, kind, None, true)
+    }
+
+    /// Insert many statted entries; sorts once at the end. Entries that
+    /// don't fit in the budget are dropped (`truncated()` becomes true).
     pub fn bulk_load<P, I>(&mut self, entries: I)
     where
         P: AsRef<[u8]>,
         I: IntoIterator<Item = (P, Meta)>,
     {
         for (path, meta) in entries {
-            let _ = self.upsert_inner(path.as_ref(), meta, false);
+            let _ = self.upsert_inner(path.as_ref(), meta.kind, Some(meta), false);
         }
-        self.rebuild_sorted();
+        self.sorted_dirty = true;
         self.bytes = self.recompute_bytes();
+        self.ensure_sorted();
+    }
+
+    /// [`Store::bulk_load`] for enumerated (kind-only, no stat) entries —
+    /// what a crawl produces.
+    pub fn bulk_load_enumerated<P, I>(&mut self, entries: I)
+    where
+        P: AsRef<[u8]>,
+        I: IntoIterator<Item = (P, EntryKind)>,
+    {
+        self.extend_enumerated(entries);
+        self.ensure_sorted();
+    }
+
+    /// Append one enumerated (kind-only) batch *without* re-sorting: the
+    /// path map, the arena prefilter, `len()`, `get()` and `path()` are all
+    /// coherent immediately, but the path-sorted order is left dirty until
+    /// the next [`Store::ensure_sorted`]. This is what makes applying a
+    /// progressive crawl's batches O(batch) instead of O(n log n) each: the
+    /// one re-sort is amortized over however many batches arrive between
+    /// ordered reads.
+    pub fn extend_enumerated<P, I>(&mut self, entries: I)
+    where
+        P: AsRef<[u8]>,
+        I: IntoIterator<Item = (P, EntryKind)>,
+    {
+        for (path, kind) in entries {
+            let _ = self.upsert_inner(path.as_ref(), kind, None, false);
+        }
+        self.sorted_dirty = true;
+        self.bytes = self.recompute_bytes();
+    }
+
+    /// Rebuild the path-sorted order if a batch append left it dirty. Must
+    /// be called before any ordered read ([`Store::iter_sorted`],
+    /// [`Store::range_with_prefix`]); the mutating entry points that depend
+    /// on the order call it themselves.
+    pub fn ensure_sorted(&mut self) {
+        if self.sorted_dirty {
+            self.sorted_dirty = false;
+            self.rebuild_sorted();
+            self.bytes = self.recompute_bytes();
+        }
     }
 
     /// Remove `path`. The slot becomes a tombstone; storage is reclaimed by
     /// the next [`Store::compact`] (triggered automatically once tombstones
     /// outnumber a quarter of the live entries).
     pub fn remove(&mut self, path: &[u8]) -> bool {
+        // The removal below splices the id out of the sorted order by
+        // binary search, which needs that order to be current.
+        self.ensure_sorted();
         let Some(map_idx) = self.lookup_map_index(path) else {
             return false;
         };
@@ -339,6 +437,8 @@ impl Store {
     /// Drop tombstones and rebuild the arena and index with exact capacities.
     /// Invalidates every outstanding [`FileId`].
     pub fn compact(&mut self) {
+        // `sorted` is the live-id source below.
+        self.ensure_sorted();
         let live = self.sorted.len();
         let live_path_bytes: usize = self
             .sorted
@@ -401,8 +501,10 @@ impl Store {
         self.bytes = self.recompute_bytes();
     }
 
-    /// Live ids in path order.
+    /// Live ids in path order. Precondition: the sorted order is not dirty
+    /// (see [`Store::ensure_sorted`]).
     pub fn iter_sorted(&self) -> impl Iterator<Item = FileId> + '_ {
+        debug_assert!(!self.sorted_dirty, "ordered read of a dirty store");
         self.sorted.iter().map(|&id| FileId(id))
     }
 
@@ -422,6 +524,7 @@ impl Store {
     /// still starts with it (any later path without the prefix sorts after
     /// every path with it).
     pub(crate) fn prefix_range(&self, prefix: &[u8]) -> core::ops::Range<usize> {
+        debug_assert!(!self.sorted_dirty, "ordered read of a dirty store");
         if prefix.is_empty() {
             return 0..self.sorted.len();
         }
@@ -574,15 +677,33 @@ impl Store {
             .partition_point(|&id| self.path_bytes(id) < path)
     }
 
+    /// `stat: Some(meta)` records a real lstat (its `kind` equals `kind`)
+    /// and marks the stat block VALID; `None` is an enumerated entry. With
+    /// `maintain_sorted`, a new id is spliced into `sorted` — unless the
+    /// order is already dirty, in which case the pending rebuild covers it.
     fn upsert_inner(
         &mut self,
         path: &[u8],
-        meta: Meta,
+        kind: EntryKind,
+        stat: Option<Meta>,
         maintain_sorted: bool,
     ) -> Result<FileId, BudgetExceeded> {
+        debug_assert!(stat.is_none_or(|m| m.kind == kind));
         if let Some(map_idx) = self.lookup_map_index(path) {
             let id = self.by_path.keys()[map_idx];
-            self.meta[id as usize] = meta;
+            match stat {
+                Some(meta) => self.fill_stat(FileId(id), meta),
+                // An enumerated upsert never downgrades a (newer) cached
+                // stat of the same kind; a kind change makes it stale.
+                None if self.meta[id as usize].kind != kind => {
+                    self.meta[id as usize] = Meta {
+                        kind,
+                        ..Meta::default()
+                    };
+                    self.invalidate_stat(FileId(id));
+                }
+                None => {}
+            }
             self.generation += 1;
             return Ok(FileId(id));
         }
@@ -606,8 +727,12 @@ impl Store {
             off: new_off as u32,
             len: path.len() as u32,
         });
-        self.meta.push(meta);
-        self.flags.push(0);
+        self.meta.push(stat.unwrap_or_else(|| Meta {
+            kind,
+            ..Meta::default()
+        }));
+        self.flags
+            .push(if stat.is_some() { FLAG_STAT_VALID } else { 0 });
 
         {
             let lookup = PathLookup {
@@ -619,7 +744,7 @@ impl Store {
             *gop.key_ptr = id;
         }
 
-        if maintain_sorted {
+        if maintain_sorted && !self.sorted_dirty {
             let pos = self.sorted_position(path);
             self.sorted.insert(pos, id);
         }
@@ -632,7 +757,7 @@ impl Store {
     }
 
     fn should_compact(&self) -> bool {
-        self.dead as usize * 4 > self.sorted.len()
+        self.dead as usize * 4 > self.len()
     }
 
     fn rebuild_sorted(&mut self) {
@@ -663,7 +788,7 @@ impl Store {
     /// `None` when even the exact minimum no longer fits.
     fn plan_growth(&self, path_len: usize) -> Option<GrowthPlan> {
         let n = self.paths.len() + 1;
-        let live = self.sorted.len().max(n - self.dead as usize);
+        let live = n - self.dead as usize;
         let arena_need = self.arena.len() + path_len;
         let map_entries = self.by_path.count() + 1;
         let touch_cap = self.touch.capacity();
@@ -840,7 +965,7 @@ mod tests {
         let mut s = Store::new(1 << 20);
         let id = s.upsert(b"src/main.rs", meta(EntryKind::File, 42)).unwrap();
         assert_eq!(s.path(id), b"src/main.rs");
-        assert_eq!(s.meta(id).size, 42);
+        assert_eq!(s.stat(id).unwrap().size, 42);
         assert_eq!(s.get(b"src/main.rs"), Some(id));
         assert_eq!(s.get(b"src/main.r"), None);
         assert_eq!(s.len(), 1);
@@ -848,7 +973,7 @@ mod tests {
         // Update in place: same id, new meta, no new entry.
         let id2 = s.upsert(b"src/main.rs", meta(EntryKind::File, 7)).unwrap();
         assert_eq!(id2, id);
-        assert_eq!(s.meta(id).size, 7);
+        assert_eq!(s.stat(id).unwrap().size, 7);
         assert_eq!(s.len(), 1);
     }
 
@@ -957,7 +1082,7 @@ mod tests {
         assert_eq!(s.get(b"a"), None);
         let id = s.upsert(b"a", meta(EntryKind::Dir, 9)).unwrap();
         assert_eq!(s.get(b"a"), Some(id));
-        assert_eq!(s.meta(id).kind, EntryKind::Dir);
+        assert_eq!(s.kind(id), EntryKind::Dir);
         assert_eq!(
             paths_of(&s, s.iter_sorted()),
             vec![b"a".to_vec(), b"b".to_vec()]
@@ -978,7 +1103,7 @@ mod tests {
             paths_of(&s, s.iter_sorted()),
             vec![b"a".to_vec(), b"m/n".to_vec(), b"z".to_vec()]
         );
-        assert_eq!(s.meta(s.get(b"a").unwrap()).size, 5);
+        assert_eq!(s.stat(s.get(b"a").unwrap()).unwrap().size, 5);
         // Incremental upserts after a bulk load keep the order sorted.
         s.upsert(b"b", meta(EntryKind::File, 1)).unwrap();
         assert_eq!(
@@ -1241,6 +1366,109 @@ mod tests {
         assert_eq!(s.generation(), g4, "a no-op remove must not bump");
         s.compact();
         assert!(s.generation() > g4, "compact invalidates ids and must bump");
+    }
+
+    #[test]
+    fn stat_validity_is_explicit_and_kind_is_always_known() {
+        let mut s = Store::new(1 << 20);
+        // An enumerated entry has a kind but no stat — nothing to misread.
+        let a = s.upsert_enumerated(b"a", EntryKind::Symlink).unwrap();
+        assert_eq!(s.kind(a), EntryKind::Symlink);
+        assert_eq!(s.stat(a), None);
+        let g_enumerated = s.generation();
+
+        // fill_stat / invalidate_stat flip exactly the validity bit and,
+        // like touch, never bump the generation (no path or id changes).
+        s.fill_stat(a, meta(EntryKind::Symlink, 9));
+        assert_eq!(s.stat(a).map(|m| m.size), Some(9));
+        assert_eq!(s.kind(a), EntryKind::Symlink);
+        s.invalidate_stat(a);
+        assert_eq!(s.stat(a), None);
+        assert_eq!(s.kind(a), EntryKind::Symlink);
+        assert_eq!(s.generation(), g_enumerated);
+
+        // A full upsert (a real lstat) is valid immediately, on insert and
+        // on update of an enumerated entry.
+        let b = s.upsert(b"b", meta(EntryKind::File, 7)).unwrap();
+        assert_eq!(s.stat(b).map(|m| m.size), Some(7));
+        s.fill_stat(a, meta(EntryKind::Symlink, 1));
+        assert_eq!(s.upsert(b"a", meta(EntryKind::File, 3)), Ok(a));
+        assert_eq!(
+            (s.kind(a), s.stat(a).map(|m| m.size)),
+            (EntryKind::File, Some(3))
+        );
+
+        // An enumerated re-upsert never downgrades a same-kind cached stat,
+        // and discards it on a kind change.
+        assert_eq!(s.upsert_enumerated(b"a", EntryKind::File), Ok(a));
+        assert_eq!(s.stat(a).map(|m| m.size), Some(3));
+        assert_eq!(s.upsert_enumerated(b"a", EntryKind::Dir), Ok(a));
+        assert_eq!((s.kind(a), s.stat(a)), (EntryKind::Dir, None));
+
+        // Validity survives a compaction.
+        s.upsert(b"c", meta(EntryKind::File, 5)).unwrap();
+        assert!(s.remove(b"b"));
+        s.compact();
+        let a = s.get(b"a").unwrap();
+        let c = s.get(b"c").unwrap();
+        assert_eq!(s.stat(a), None);
+        assert_eq!(s.stat(c).map(|m| m.size), Some(5));
+        assert_eq!(s.memory_usage(), s.recompute_bytes());
+    }
+
+    #[test]
+    fn extend_enumerated_defers_the_sort_until_ensure_sorted() {
+        let mut s = Store::new(1 << 22);
+        s.extend_enumerated([
+            (b"z/b".as_slice(), EntryKind::File),
+            (b"a".as_slice(), EntryKind::Dir),
+            (b"m".as_slice(), EntryKind::File),
+        ]);
+        // Unordered reads are coherent while the order is dirty…
+        assert_eq!(s.len(), 3);
+        assert!(!s.is_empty());
+        let a = s.get(b"a").unwrap();
+        assert_eq!(
+            (s.kind(a), s.stat(a), s.path(a)),
+            (EntryKind::Dir, None, b"a".as_slice())
+        );
+        let mut hits = Vec::new();
+        s.ids_with_byte(b'z', None, &mut hits);
+        assert_eq!(paths_of(&s, hits), vec![b"z/b".to_vec()]);
+        // …including upserts (which stay out of the stale order)…
+        s.upsert(b"k", meta(EntryKind::File, 1)).unwrap();
+        s.extend_enumerated([(b"a/x".as_slice(), EntryKind::File)]);
+        assert_eq!(s.len(), 5);
+        assert_eq!(s.memory_usage(), s.recompute_bytes());
+        // …and the one deferred re-sort yields the exact path order.
+        s.ensure_sorted();
+        assert_eq!(
+            paths_of(&s, s.iter_sorted()),
+            vec![
+                b"a".to_vec(),
+                b"a/x".to_vec(),
+                b"k".to_vec(),
+                b"m".to_vec(),
+                b"z/b".to_vec()
+            ]
+        );
+        assert_eq!(
+            paths_of(&s, s.range_with_prefix(b"a/")),
+            vec![b"a/x".to_vec()]
+        );
+        // ensure_sorted is idempotent; bulk_load_enumerated sorts itself.
+        s.ensure_sorted();
+        s.bulk_load_enumerated([(b"b".as_slice(), EntryKind::File)]);
+        assert_eq!(s.iter_sorted().nth(2), s.get(b"b"));
+
+        // remove() and compact() self-heal a dirty order.
+        s.extend_enumerated([(b"0".as_slice(), EntryKind::File)]);
+        assert!(s.remove(b"m"));
+        assert_eq!(s.len(), 6);
+        s.extend_enumerated([(b"1".as_slice(), EntryKind::File)]);
+        s.compact();
+        assert_eq!(s.len(), 7);
+        assert_eq!(paths_of(&s, s.iter_sorted()).first(), Some(&b"0".to_vec()));
     }
 
     #[test]

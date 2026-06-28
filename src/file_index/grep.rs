@@ -6,7 +6,7 @@
 //! the file. Regex is intentionally not here (no regex engine outside JSC);
 //! the runtime layer documents string literals as the fast path.
 
-use crate::store::Meta;
+use crate::store::EntryKind;
 
 /// Binary sniff window: a NUL byte in the first 8 KiB marks the file binary
 /// (the same heuristic git's `buffer_is_binary` uses over an 8000-byte
@@ -62,10 +62,14 @@ impl GrepQuery {
         self.max_file_size
     }
 
-    /// Whether `meta` describes a file this query would even open: regular,
-    /// and within the size guard. Lets the caller skip the read entirely.
-    pub fn admits(&self, meta: &Meta) -> bool {
-        meta.kind == crate::store::EntryKind::File && meta.size <= self.max_file_size as u64
+    /// Whether an indexed entry of this kind is even a grep candidate. The
+    /// index has no crawl-time sizes (the crawl is enumeration-only), so
+    /// `max_file_size` and the regular-file check are enforced by the reader
+    /// with `fstat(fd)` after the `open()` it already does, never here.
+    /// Associated, not a method: candidate admission is shared with the
+    /// RegExp path, which has no compiled literal query.
+    pub fn admits(kind: EntryKind) -> bool {
+        kind == EntryKind::File
     }
 }
 
@@ -399,24 +403,12 @@ mod tests {
     }
 
     #[test]
-    fn admits_filters_on_kind_and_size() {
-        use crate::store::{EntryKind, Meta};
-        let query = GrepQuery::literal(b"a", true, 10).unwrap();
-        let file = Meta {
-            size: 10,
-            ..Meta::default()
-        };
-        assert!(query.admits(&file));
-        let big = Meta {
-            size: 11,
-            ..Meta::default()
-        };
-        assert!(!query.admits(&big));
-        let dir = Meta {
-            kind: EntryKind::Dir,
-            ..Meta::default()
-        };
-        assert!(!query.admits(&dir));
+    fn admits_filters_on_kind_only() {
+        // The size limit is enforced by the reader (`fstat` after `open`),
+        // never from the index: the crawl records no sizes.
+        assert!(GrepQuery::admits(EntryKind::File));
+        assert!(!GrepQuery::admits(EntryKind::Dir));
+        assert!(!GrepQuery::admits(EntryKind::Symlink));
     }
 
     #[test]

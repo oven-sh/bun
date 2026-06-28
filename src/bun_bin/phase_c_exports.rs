@@ -191,7 +191,7 @@ pub(crate) extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachi
 // Blob__dupe
 // Blob__deref
 // Blob__setAsFile
-// Blob__getFileNameString
+// Blob__getFormDataEntryName
 // Blob__getDataPtr
 // Blob__getSize
 // Bun__Blob__getSizeForBindings

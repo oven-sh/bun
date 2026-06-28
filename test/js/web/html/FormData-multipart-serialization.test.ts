@@ -41,7 +41,8 @@ describe("multipart serialization (new Response(formData))", () => {
         `--${boundary}\r\n`,
         `Content-Disposition: form-data; name="crlf%0D%0Aname"\r\n\r\nv2\r\n`,
         `--${boundary}\r\n`,
-        `Content-Disposition: form-data; name="untyped-blob"; filename=""\r\n`,
+        // A plain Blob entry becomes a File named "blob" (XHR "create an entry").
+        `Content-Disposition: form-data; name="untyped-blob"; filename="blob"\r\n`,
         `Content-Type: application/octet-stream\r\n\r\nblob-bytes\r\n`,
         `--${boundary}\r\n`,
         `Content-Disposition: form-data; name="named-blob"; filename="file.bin"\r\n`,
@@ -80,7 +81,7 @@ describe("multipart serialization (new Response(formData))", () => {
       ["dup", "first"],
       ["dup", "second"],
       ["unicode name ☺", "ünïcode välue 😊"],
-      ["blob", { file: true, name: undefined, type: "", text: "blob-bytes" }],
+      ["blob", { file: true, name: "blob", type: "", text: "blob-bytes" }],
       ["file", { file: true, name: "日本語ファイル名.html", type: "text/html;charset=utf-8", text: "<p>hi</p>" }],
     ]);
   });

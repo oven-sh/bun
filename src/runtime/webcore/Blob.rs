@@ -4356,20 +4356,17 @@ pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
     )
 }
 
+/// Mark a `FormData` blob entry as a `File` named `entry_name` before it is
+/// handed to JS. The name lives on this entry's own `Blob`, never on the
+/// (possibly shared) `Store`, so the blob the user appended is not renamed.
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
-    this.is_jsdom_file.set(true);
-
-    // This is not 100% correct...
-    if let Some(store) = this.store() {
-        if let store::Data::Bytes(bytes) = &mut store.data_mut() {
-            if bytes.stored_name.is_empty() {
-                // Owned heap slice
-                // owned by `stored_name` (`Box<[u8]>`) and freed by `Bytes::Drop`.
-                bytes.stored_name = path_str.to_owned_slice().into_boxed_slice();
-            }
-        }
+pub extern "C" fn Blob__setAsFile(this: &Blob, entry_name: &BunString) {
+    if !this.is_jsdom_file.replace(true) {
+        // Wrapping a plain `Blob` creates a new `File`: stamp `lastModified`.
+        this.last_modified
+            .set(bun_core::time::milli_timestamp() as f64);
     }
+    this.name.set(entry_name.dupe_ref());
 }
 
 #[unsafe(no_mangle)]
@@ -4377,12 +4374,19 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
     Blob::new(this.dupe_with_content_type(true))
 }
 
+/// Filename for a `FormData` blob entry when `append`/`set` got no explicit
+/// `filename` argument: the blob's own name if it has one, otherwise the spec
+/// default `"blob"` (https://xhr.spec.whatwg.org/#create-an-entry).
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    if let Some(filename) = this.get_file_name() {
-        return BunString::from_bytes(filename);
+pub extern "C" fn Blob__getFormDataEntryName(this: &Blob) -> BunString {
+    if let Some(name) = this.get_name_string() {
+        return name;
     }
-    BunString::empty()
+    if this.is_jsdom_file.get() {
+        // `new File(bits, "")`: keep the explicit empty name.
+        return BunString::empty();
+    }
+    BunString::static_(b"blob")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

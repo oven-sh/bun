@@ -38,7 +38,7 @@ describe("FormData", () => {
     const formData = new FormData();
     formData.append("foo", blob);
     // @ts-expect-error
-    expect(formData.get("foo").name).toBeUndefined();
+    expect(formData.get("foo").name).toBe("blob");
     formData.append("foo2", new File([blob], "foo.txt"));
     // @ts-expect-error
     expect(formData.get("foo2").name).toBe("foo.txt");
@@ -52,15 +52,108 @@ describe("FormData", () => {
 
     let b1 = form.get("foo") as any;
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     form.set("foo", b1, "foo.txt");
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     b1 = form.get("foo") as Blob;
     expect(blob.name).toBeUndefined();
     expect(b1.name).toBe("foo.txt");
+  });
+
+  // https://xhr.spec.whatwg.org/#create-an-entry
+  describe("create an entry", () => {
+    it("wraps a plain Blob into a File named 'blob'", async () => {
+      const blob = new Blob(["bar"], { type: "application/x-test" });
+      const form = new FormData();
+      const before = Date.now();
+      form.append("foo", blob);
+      const entry = form.get("foo") as File;
+      const after = Date.now();
+      expect(entry instanceof File).toBe(true);
+      expect(entry.name).toBe("blob");
+      expect(entry.type).toBe("application/x-test");
+      expect(await entry.text()).toBe("bar");
+      // The wrapping File is new, so it gets a fresh lastModified, and the
+      // entry keeps the same one across gets.
+      expect(entry.lastModified).toBeGreaterThanOrEqual(before);
+      expect(entry.lastModified).toBeLessThanOrEqual(after);
+      expect((form.get("foo") as File).lastModified).toBe(entry.lastModified);
+      // The blob that was appended is untouched.
+      expect(blob instanceof File).toBe(false);
+      expect((blob as any).name).toBeUndefined();
+    });
+
+    it("set() wraps a plain Blob into a File named 'blob'", () => {
+      const form = new FormData();
+      form.set("foo", new Blob(["bar"]));
+      const entry = form.get("foo") as File;
+      expect(entry instanceof File).toBe(true);
+      expect(entry.name).toBe("blob");
+    });
+
+    it("uses the explicit filename without renaming the source blob", () => {
+      const blob = new Blob(["bar"]) as any;
+      const form = new FormData();
+      form.append("foo", blob, "custom.txt");
+      expect((form.get("foo") as File).name).toBe("custom.txt");
+      // Read the source's name for the first time after get() so a cached
+      // earlier `undefined` cannot hide a rename through the shared store.
+      expect(blob.name).toBeUndefined();
+      expect(blob instanceof File).toBe(false);
+    });
+
+    it("keeps a File's own name and lastModified", () => {
+      const file = new File(["bar"], "orig.txt", { type: "application/x-test", lastModified: 1234 });
+      const form = new FormData();
+      form.append("foo", file);
+      const entry = form.get("foo") as File;
+      expect(entry.name).toBe("orig.txt");
+      expect(entry.type).toBe("application/x-test");
+      expect(entry.lastModified).toBe(1234);
+    });
+
+    it("an explicit filename overrides a File's own name without renaming it", () => {
+      const file = new File(["bar"], "orig.txt");
+      const form = new FormData();
+      form.append("foo", file, "override.txt");
+      expect((form.get("foo") as File).name).toBe("override.txt");
+      expect(file.name).toBe("orig.txt");
+    });
+
+    it('an explicit empty filename names the entry ""', () => {
+      const form = new FormData();
+      form.append("foo", new Blob(["bar"]), "");
+      const entry = form.get("foo") as File;
+      expect(entry instanceof File).toBe(true);
+      expect(entry.name).toBe("");
+    });
+
+    it("keeps a Bun.file() entry's path as its name", () => {
+      const path = join(import.meta.dir, "form-data-fixture.txt");
+      const form = new FormData();
+      form.append("foo", Bun.file(path));
+      expect((form.get("foo") as File).name).toBe(path);
+    });
+
+    it("keeps a name assigned to a Blob through the name setter", async () => {
+      const blob = new Blob(["bar"]) as any;
+      blob.name = "named.txt";
+      const form = new FormData();
+      form.append("foo", blob);
+      expect((form.get("foo") as File).name).toBe("named.txt");
+      expect(await new Response(form).text()).toContain('name="foo"; filename="named.txt"\r\n');
+    });
+
+    it('serializes a plain Blob entry with filename="blob"', async () => {
+      const form = new FormData();
+      form.append("foo", new Blob(["bar"], { type: "application/x-test" }));
+      const body = await new Response(form).text();
+      expect(body).toContain('Content-Disposition: form-data; name="foo"; filename="blob"\r\n');
+      expect(body).not.toContain('filename=""');
+    });
   });
 
   const multipartFormDataFixturesRawBody = [

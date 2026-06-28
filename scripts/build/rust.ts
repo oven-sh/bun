@@ -885,6 +885,12 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // fall back to plain `rust_build` and trust whatever toolchain `cfg.cargo`
   // resolves to.
   const useCrossRule = findRustup(cfg) !== undefined && cfg.rustToolchain !== undefined;
+  // Non-`.rs` assets the Rust tree embeds via `include_str!`/`include_bytes!`.
+  // These aren't matched by the `src/**/*.rs` glob in `rustSources`, so ninja
+  // wouldn't re-invoke cargo when only one of them changes and the stale bytes
+  // would stay baked into the binary. `src/runtime.js` is the bundler runtime
+  // embedded by `src/bundler/ParseTask.rs`; it is actively edited.
+  const embeddedAssets = [resolve(cfg.cwd, "src", "runtime.js")];
   n.build({
     outputs: [lib],
     rule: useCrossRule ? "rust_build_cross" : "rust_build",
@@ -895,7 +901,14 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // so depending on those orders the codegen step before cargo without
     // ninja needing to know the `.rs` paths. vendorStamps orders the
     // lol-html source fetch before cargo resolves the path dep.
-    implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps, ...shimInputs],
+    implicitInputs: [
+      cfg.cargo,
+      ...inputs.rustSources,
+      ...embeddedAssets,
+      ...inputs.codegenInputs,
+      ...inputs.vendorStamps,
+      ...shimInputs,
+    ],
     orderOnlyInputs: inputs.codegenOrderOnly,
     vars: {
       cwd: cfg.cwd,

@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tempDir, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { promisify } from "node:util";
@@ -870,5 +870,87 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
     expect(r.error?.code).toBe("ENOTSUP");
+  });
+});
+
+// Memory cannot be shared across processes, so IPC in "advanced" serialization mode
+// must reject a SharedArrayBuffer at send() time like Node.js does, instead of
+// silently delivering a plain ArrayBuffer copy to the other process. A TypedArray
+// view over a SharedArrayBuffer is the one allowed form: Node copies the view's bytes.
+it("fork with advanced serialization rejects a SharedArrayBuffer at send()", async () => {
+  using dir = tempDir("ipc-sab", {
+    "fixture.js": `
+      const cp = require("child_process");
+      if (process.argv[2] === "--child") {
+        process.on("message", m => {
+          if (m === "try-sab") {
+            let result;
+            try {
+              process.send(new SharedArrayBuffer(8));
+              result = "child-send: did not throw";
+            } catch (e) {
+              result = "child-send: " + e.name;
+            }
+            process.send(result);
+            return;
+          }
+          process.send({
+            tag: Object.prototype.toString.call(m),
+            buf: Object.prototype.toString.call(m.buffer),
+            bytes: Array.from(m),
+          });
+        });
+        return;
+      }
+      const child = cp.fork(__filename, ["--child"], { serialization: "advanced" });
+      const out = [];
+      function trySend(label, value) {
+        try {
+          child.send(value);
+          out.push(label + ": sent");
+        } catch (e) {
+          out.push(label + ": " + e.name);
+        }
+      }
+      const sab = new SharedArrayBuffer(8);
+      trySend("direct", sab);
+      trySend("nested", { x: new SharedArrayBuffer(8) });
+      trySend("mixed", [new Uint8Array(sab), sab]);
+      const view = new Uint8Array(new SharedArrayBuffer(4));
+      view.set([1, 2, 3, 4]);
+      trySend("view", view);
+      let replies = 0;
+      child.on("message", reply => {
+        replies++;
+        if (replies === 1) {
+          out.push("reply: " + JSON.stringify(reply));
+          child.send("try-sab");
+          return;
+        }
+        out.push(String(reply));
+        console.log(out.join("\\n"));
+        child.kill();
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+    lines: [
+      "direct: DataCloneError",
+      "nested: DataCloneError",
+      "mixed: DataCloneError",
+      "view: sent",
+      'reply: {"tag":"[object Uint8Array]","buf":"[object ArrayBuffer]","bytes":[1,2,3,4]}',
+      "child-send: DataCloneError",
+    ],
+    stderr: "",
+    exitCode: 0,
   });
 });

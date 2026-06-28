@@ -1,10 +1,6 @@
-// RFC 6455 section 5.2 + RFC 7692 section 6.1: the RSV1 ("per-message
-// compressed") bit is only valid on the first frame of a data message, and a
-// server MUST fail the connection when a control frame or a continuation frame
-// sets it. Bun.serve used to accept such frames and arm the connection-level
-// "next message is compressed" flag, which only data frames consume: one RSV1
-// ping made the next uncompressed data frame get inflated, so the message
-// handler observed bytes the peer never sent.
+// RFC 6455 5.2 + RFC 7692 6.1: RSV1 ("per-message compressed") is only valid on
+// the first frame of a data message. A control or continuation frame setting it
+// must fail the connection, and must not arm the connection's compressed flag.
 import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
 import net from "node:net";
@@ -151,8 +147,7 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
     };
   }
 
-  // An RSV1 ping must fail the connection (RFC 7692 6.1). It used to be
-  // answered with a pong and silently arm the "next message is compressed" flag.
+  // A conforming server neither answers an RSV1 ping nor lets it reach ping().
   it("a ping with RSV1 set fails the connection and is not answered", async () => {
     using raw = await connectDeflated();
     raw.socket.write(frame(0x9, pmdDeflate(Buffer.from("pingy")), { rsv1: true }));
@@ -208,7 +203,7 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
 
   // Control: a genuinely compressed message (RSV1 on the first data frame) is
   // still inflated and delivered, so rejecting the frames above is not
-  // over-rejection.
+  // over-rejection. TEXT and BINARY are the two opcodes that may carry RSV1.
   it("a compressed binary message is still inflated and delivered", async () => {
     using raw = await connectDeflated();
     const original = Buffer.alloc(80, "ab");
@@ -217,10 +212,16 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
     expect(raw.received).toEqual([original.toString("hex")]);
   });
 
-  // A compressed frame needing the 16-bit extended length has an 8 byte header,
-  // but the parser validates a header once 6 bytes arrive and spills the rest.
-  // Re-validating the same header after the spill must not trip the RSV1 check
-  // (arming the compressed flag used to be one-shot, so the second pass failed).
+  it("a compressed text message is still inflated and delivered", async () => {
+    using raw = await connectDeflated();
+    const original = Buffer.from("hello rsv1 text");
+    raw.socket.write(frame(0x1, pmdDeflate(original), { rsv1: true }));
+    expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${original.toString("hex")}`);
+    expect(raw.received).toEqual([original.toString("hex")]);
+  });
+
+  // An extended-length header is validated once its first 6 bytes arrive, then
+  // spilled and validated again whole: the second pass must also accept RSV1.
   it("a compressed frame whose extended-length header is split is still delivered", async () => {
     using raw = await connectDeflated();
     // 256 distinct bytes do not compress, forcing a payload longer than 125.

@@ -4111,13 +4111,15 @@ describe("expect()", () => {
     });
 
     test("rejects non-function expected", () => {
-      expect(() => expect({}).toBeInstanceOf({})).toThrow("Expected value must be a function");
-      expect(() => expect({}).toBeInstanceOf(1)).toThrow("Expected value must be a function");
+      // Jest's matcher error spells it "expected value must be a function".
+      const message = isBun ? "Expected value must be a function" : "value must be a function";
+      expect(() => expect({}).toBeInstanceOf({})).toThrow(message);
+      expect(() => expect({}).toBeInstanceOf(1)).toThrow(message);
       // Jest requires `typeof expected === "function"`, so a plain object with
       // Symbol.hasInstance (a valid `instanceof` RHS) is still rejected.
       const nonCallable = { [Symbol.hasInstance]: () => true };
       expect(1 instanceof nonCallable).toBe(true);
-      expect(() => expect(1).toBeInstanceOf(nonCallable)).toThrow("Expected value must be a function");
+      expect(() => expect(1).toBeInstanceOf(nonCallable)).toThrow(message);
     });
   });
 
@@ -4163,9 +4165,11 @@ describe("expect()", () => {
       expect(1).toEqual(expect.any(F));
       expect("x").not.toEqual(expect.any(F));
 
-      // Bun validates eagerly; Jest's expect.any only rejects undefined.
-      expect(() => expect.any(1)).toThrow("Expected a constructor");
-      expect(() => expect.any({})).toThrow("Expected a constructor");
+      if (isBun) {
+        // Bun validates eagerly; Jest's expect.any only rejects undefined.
+        expect(() => expect.any(1)).toThrow("Expected a constructor");
+        expect(() => expect.any({})).toThrow("Expected a constructor");
+      }
     });
 
     //test('Any.toAsymmetricMatcher()', () => {

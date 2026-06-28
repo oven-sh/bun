@@ -184,10 +184,7 @@ test("Bun.deepEquals with nested self-referential Maps (object keys) does not st
   const inner2 = new Map<unknown, unknown>();
   inner2.set("x", inner2);
   expect(
-    Bun.deepEquals(
-      new Map<unknown, unknown>([[{ k: 1 }, inner1]]),
-      new Map<unknown, unknown>([[{ k: 1 }, inner2]]),
-    ),
+    Bun.deepEquals(new Map<unknown, unknown>([[{ k: 1 }, inner1]]), new Map<unknown, unknown>([[{ k: 1 }, inner2]])),
   ).toBe(true);
 });
 

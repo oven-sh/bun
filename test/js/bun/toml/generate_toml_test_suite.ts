@@ -32,12 +32,18 @@ import { join } from "node:path";
 // ---------------------------------------------------------------------------
 // 1. Locate toml-test
 // ---------------------------------------------------------------------------
+// The upstream commit the suite is generated from; bump deliberately. With no
+// local path, the clone is checked out at this commit so regeneration and
+// --check are stable as upstream advances.
+const PINNED_COMMIT = "4d77658d0f903a13454ece4dbfeafeb7c7f31c9f";
+
 const checkMode = process.argv.includes("--check");
 let suiteDir = process.argv.slice(2).find(a => a !== "--check");
 if (!suiteDir) {
   const tmp = mkdtempSync(join(tmpdir(), "toml-test-"));
   console.log(`Cloning toml-lang/toml-test into ${tmp} ...`);
-  execSync(`git clone --depth 1 https://github.com/toml-lang/toml-test.git ${tmp}`, { stdio: "inherit" });
+  execSync(`git clone https://github.com/toml-lang/toml-test.git ${tmp}`, { stdio: "inherit" });
+  execSync(`git -c advice.detachedHead=false checkout ${PINNED_COMMIT}`, { cwd: tmp, stdio: "inherit" });
   suiteDir = tmp;
 }
 const commit = execSync("git rev-parse HEAD", { cwd: suiteDir }).toString().trim();

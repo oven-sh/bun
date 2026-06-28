@@ -50,7 +50,14 @@ describe("input types", () => {
   });
 
   test("Blob parses synchronously", () => {
-    expect(TOML.parse(new Blob([doc]) as any)).toEqual(expected);
+    expect(TOML.parse(new Blob([doc]))).toEqual(expected);
+  });
+
+  test("DataView over a SharedArrayBuffer", () => {
+    const bytes = new TextEncoder().encode(doc);
+    const sab = new SharedArrayBuffer(bytes.length);
+    new Uint8Array(sab).set(bytes);
+    expect(TOML.parse(new DataView(sab))).toEqual(expected);
   });
 
   test("non-string values are coerced via toString", () => {
@@ -138,6 +145,23 @@ describe("numbers", () => {
     expect(() => TOML.parse("a = -9007199254740992")).toThrow(SyntaxError);
     // Out of even the 64-bit range.
     expect(syntaxError("a = 99999999999999999999").message).toBe(
+      "TOML Parse error: Integer is outside the 64-bit signed range",
+    );
+  });
+
+  test("the 64-bit boundary picks the right diagnostic", () => {
+    // i64::MIN is inside the 64-bit signed range, so it gets the lossless
+    // message; one further is genuinely outside the 64-bit range.
+    expect(syntaxError("a = -9223372036854775808").message).toBe(
+      "TOML Parse error: Integer cannot be losslessly represented as a JavaScript number; it must be within +/-(2^53 - 1)",
+    );
+    expect(syntaxError("a = 9223372036854775807").message).toBe(
+      "TOML Parse error: Integer cannot be losslessly represented as a JavaScript number; it must be within +/-(2^53 - 1)",
+    );
+    expect(syntaxError("a = -9223372036854775809").message).toBe(
+      "TOML Parse error: Integer is outside the 64-bit signed range",
+    );
+    expect(syntaxError("a = 9223372036854775808").message).toBe(
       "TOML Parse error: Integer is outside the 64-bit signed range",
     );
   });
@@ -306,6 +330,19 @@ role = "backend"
   b = { c = 2 },
 }`),
     ).toEqual({ t: { a: 1, b: { c: 2 } } });
+  });
+
+  test("newlines and comments are not allowed between '=' and the value in inline tables", () => {
+    // keyval-sep is `ws %x3D ws`: ws-comment-newline is permitted around
+    // keyvals and commas, but never between '=' and the value.
+    expect(syntaxError("t = { a =\n1 }").message).toBe(
+      "TOML Parse error: Missing value after '='; values must be on the same line",
+    );
+    expect(syntaxError("t = { a = # c\n1 }").message).toBe("TOML Parse error: Expected a value but found '#'");
+    // A newline between the key and '=' is rejected for the same reason.
+    expect(() => TOML.parse("t = { a\n= 1 }")).toThrow(SyntaxError);
+    // The allowed positions (around keyvals and commas) still work.
+    expect(TOML.parse("t = {\na = 1\n,\nb = 2\n}")).toEqual({ t: { a: 1, b: 2 } });
   });
 
   test("array of tables accumulates in order", () => {

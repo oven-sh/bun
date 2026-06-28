@@ -1,12 +1,7 @@
 //! Decodes JavaScript string escape sequences from UTF-8 text into UTF-8
-//! bytes, without round-tripping through UTF-16. Used by the error-report
-//! endpoint to decode stack-trace source lines out of a JSON-encoded payload.
-//!
-//! Ported from the old TOML lexer's `decode_escape_sequences` in single-line
-//! mode, preserving its semantics: unknown escapes pass the character
-//! through, legacy octal decodes, an out-of-range `\u{...}` stops decoding
-//! successfully, and bad hex digits / unterminated escapes / line
-//! continuations fail.
+//! bytes for the error-report endpoint. Ported from the old TOML lexer's
+//! `decode_escape_sequences` (single-line mode), preserving its lenient
+//! semantics exactly.
 
 use bun_alloc::ArenaVec;
 use bun_core::fmt::hex_digit_value_u32;
@@ -137,10 +132,9 @@ pub(crate) fn decode_js_escape_sequences<'a>(
                         let mut c3 = iter.c;
 
                         if c3 == '{' as CodePoint {
-                            // Variable-length `\u{...}`: consume and validate
-                            // every digit up to '}' even when out of range
-                            // (original behavior); accumulation clamps so long
-                            // digit runs cannot overflow.
+                            // Variable-length `\u{...}`: validate every digit
+                            // up to '}' even when out of range (original
+                            // behavior); the clamp prevents i64 overflow.
                             let mut is_first = true;
                             let mut out_of_range = false;
                             loop {

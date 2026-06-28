@@ -15,6 +15,7 @@
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
+use bun_alloc::ArenaVecExt as _;
 use bun_ast::{self, E, Expr, Loc, Log, Source};
 use bun_collections::HashMap;
 use bun_core::{self, StackCheck};
@@ -126,14 +127,6 @@ fn loc_of(pos: usize) -> Loc {
     Loc {
         start: i32::try_from(pos).expect("source length is bounded by i32::MAX"),
     }
-}
-
-/// Releases an arena vec's storage as an arena-owned slice.
-fn vec_into_slice<'a, T>(v: ArenaVec<'a, T>) -> &'a [T] {
-    let (ptr, len, _cap, _alloc) = v.into_raw_parts();
-    // SAFETY: the storage is arena-owned for 'a and is never freed
-    // individually; the first `len` elements were initialized by push.
-    unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
 impl<'a, 'log> Parser<'a, 'log> {
@@ -744,15 +737,10 @@ impl<'a, 'log> Parser<'a, 'log> {
             if self.at_eof() {
                 return Err(self.err(self.pos, b"Unterminated inline table; expected '}'"));
             }
-            let path = self.parse_key_path()?;
-            self.skip_ws();
-            if self.peek() != b'=' {
-                return Err(self.err_char(self.pos, "Expected '=' after a key but found"));
-            }
-            self.pos += 1;
-            self.skip_trivia()?;
-            let value = self.parse_value()?;
-            self.assign_path(ptr, &path, value)?;
+            // `keyval-sep = ws %x3D ws`: newlines and comments are allowed
+            // around keyvals but never between '=' and the value, exactly as
+            // at the top level.
+            self.parse_keyval(ptr)?;
             self.skip_trivia()?;
             match self.peek() {
                 b',' => {
@@ -1106,18 +1094,19 @@ impl<'a, 'log> Parser<'a, 'log> {
             return Err(self.err_char(self.pos, "Expected a number but found"));
         }
 
-        // Integer part.
+        // Integer part, accumulated as an unsigned magnitude so i64::MIN
+        // (magnitude 2^63) is still distinguishable from a 64-bit overflow.
         let int_start = self.pos;
-        let mut int_value: i64 = 0;
+        let mut magnitude: u64 = 0;
         let mut int_overflow = false;
         let mut digits = 0usize;
         loop {
             let c = self.peek();
             if c.is_ascii_digit() {
                 digits += 1;
-                int_value = match int_value
+                magnitude = match magnitude
                     .checked_mul(10)
-                    .and_then(|v| v.checked_add(i64::from(c - b'0')))
+                    .and_then(|v| v.checked_add(u64::from(c - b'0')))
                 {
                     Some(v) => v,
                     None => {
@@ -1188,16 +1177,26 @@ impl<'a, 'log> Parser<'a, 'log> {
             return Ok(Expr::init(E::Number::new(value), loc));
         }
 
-        if int_overflow {
+        let signed_limit = if negative {
+            1u64 << 63 // |i64::MIN|
+        } else {
+            i64::MAX as u64
+        };
+        if int_overflow || magnitude > signed_limit {
             return Err(self.err(start, b"Integer is outside the 64-bit signed range"));
         }
-        let signed = if negative { -int_value } else { int_value };
-        if signed > MAX_SAFE_INTEGER || signed < -MAX_SAFE_INTEGER {
+        if magnitude > MAX_SAFE_INTEGER as u64 {
             return Err(self.err(
                 start,
                 b"Integer cannot be losslessly represented as a JavaScript number; it must be within +/-(2^53 - 1)",
             ));
         }
+        // magnitude <= 2^53 - 1, so the casts are exact.
+        let signed = if negative {
+            -(magnitude as i64)
+        } else {
+            magnitude as i64
+        };
         Ok(Expr::init(E::Number::new(signed as f64), loc))
     }
 
@@ -1348,7 +1347,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                 b'"' => {
                     if !multiline {
                         self.pos += 1;
-                        return Ok((vec_into_slice(buf), is_ascii));
+                        return Ok((buf.into_bump_slice(), is_ascii));
                     }
                     let (run, closes) = self.quote_run_close(b'"')?;
                     if closes {
@@ -1356,7 +1355,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                             buf.push(b'"');
                         }
                         self.pos += run;
-                        return Ok((vec_into_slice(buf), is_ascii));
+                        return Ok((buf.into_bump_slice(), is_ascii));
                     }
                     for _ in 0..run {
                         buf.push(b'"');
@@ -1541,7 +1540,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                 b'\'' => {
                     if !multiline {
                         let text = match buf {
-                            Some(b) => vec_into_slice(b),
+                            Some(b) => b.into_bump_slice(),
                             None => &self.src[start..self.pos],
                         };
                         self.pos += 1;
@@ -1555,7 +1554,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                                 for _ in 0..extra {
                                     b.push(b'\'');
                                 }
-                                vec_into_slice(b)
+                                b.into_bump_slice()
                             }
                             None => &self.src[start..self.pos + extra],
                         };

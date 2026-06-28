@@ -795,7 +795,9 @@ declare module "bun" {
      * @returns A JavaScript object
      * @throws {SyntaxError} If the input is not valid TOML
      */
-    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): object;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): object;
   }
 
   /**
@@ -880,7 +882,7 @@ declare module "bun" {
      * Bun.JSONL.parse('{bad}\n'); // throws SyntaxError
      * ```
      */
-    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): unknown[];
+    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike): unknown[];
 
     /**
      * Parse a JSONL chunk, designed for streaming use.
@@ -915,7 +917,7 @@ declare module "bun" {
      * ```
      */
     export function parseChunk(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       start?: number,
       end?: number,
     ): ParseChunkResult;
@@ -1312,7 +1314,7 @@ declare module "bun" {
      * ```
      */
     export function html(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       options?: Options,
     ): string;
 
@@ -1388,7 +1390,7 @@ declare module "bun" {
      * ```
      */
     export function ansi(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       theme?: AnsiTheme,
     ): string;
 
@@ -1430,7 +1432,7 @@ declare module "bun" {
      * ```
      */
     export function render(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       callbacks?: RenderCallbacks,
       options?: Options,
     ): string;
@@ -1479,7 +1481,7 @@ declare module "bun" {
      * ```
      */
     export function react(
-      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;

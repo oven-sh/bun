@@ -312,16 +312,16 @@ struct us_connecting_socket_t {
     struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
-    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1;
+    /* error_is_dns: `error` holds the raw getaddrinfo(3) return code for a
+     * failed name lookup rather than an errno. The two constant sets are
+     * different namespaces that overlap numerically, so consumers of `error`
+     * must check this bit first. */
+    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1, error_is_dns : 1;
     unsigned char timeout;
     unsigned char long_timeout;
     unsigned char kind;
     uint16_t port;
     int error;
-    /* Raw getaddrinfo(3) return code when the name lookup for this connect
-     * failed; 0 otherwise. Kept out of `error`: the EAI_* and errno
-     * constant sets are different namespaces and overlap numerically. */
-    int dns_error;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;

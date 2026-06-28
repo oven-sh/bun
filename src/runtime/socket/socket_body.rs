@@ -1034,12 +1034,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        debug_assert!(errno >= 0);
         let callback = handlers.on_connect_error;
         let global = handlers.global_object;
         // A failed name lookup is reported as the resolver error
         // (`getaddrinfo ENOTFOUND <hostname>`, `syscall`/`hostname` set),
-        // matching `node:dns` — never collapsed into ECONNREFUSED.
+        // matching `node:dns` — never collapsed into ECONNREFUSED. On that
+        // path `errno` carries the same (possibly negative) getaddrinfo code
+        // as `dns_error`, so it is only treated as an errno in the else arm.
         let dns_err = c_ares::Error::init_eai(dns_error).filter(|_| dns_error != 0);
         let err = if let Some(dns_err) = dns_err {
             let hostname: &[u8] = match this.connection.get() {
@@ -1052,6 +1053,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 hostname,
             )
         } else {
+            debug_assert!(errno >= 0);
             // Unix-path connect errors keep their real code (a non-socket file
             // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
             // ENOENT, an inexpressible path is EINVAL); everything else stays

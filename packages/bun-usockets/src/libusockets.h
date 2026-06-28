@@ -396,8 +396,8 @@ int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) nonnull_
 int us_connecting_socket_is_closed(struct us_connecting_socket_t *c) nonnull_fn_decl;
 int us_connecting_socket_get_error(struct us_connecting_socket_t *c) nonnull_fn_decl;
 /* Raw getaddrinfo(3) return code when the name lookup itself failed; 0 for a
- * connect failure past name resolution. A different namespace from
- * us_connecting_socket_get_error (errno). */
+ * connect failure past name resolution. Nonzero means us_connecting_socket_get_error
+ * returns the same getaddrinfo code, not an errno (the two namespaces overlap). */
 int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) nonnull_fn_decl;
 struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) nonnull_fn_decl;

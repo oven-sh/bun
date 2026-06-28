@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// Four env-selected fault modes:
+// Env-selected fault modes:
 //   SHELL_FAIL_RECV=1        every recv() fails with ENOMEM.
 //   SHELL_FAIL_EPOLL=1       every epoll_ctl ADD/MOD on a pipe-like fd fails
 //                            with ENOMEM.

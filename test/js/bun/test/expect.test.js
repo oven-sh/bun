@@ -1023,6 +1023,19 @@ describe("expect()", () => {
       expect(await failureMessage(() => expect(Promise.reject(hostileProxy)).rejects.toThrow())).toContain(
         "did not throw",
       );
+
+      // ...and a cyclic getPrototypeOf trap must not spin the prototype walk forever.
+      const cyclicProxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            return cyclicProxy;
+          },
+        },
+      );
+      expect(await failureMessage(() => expect(Promise.reject(cyclicProxy)).rejects.toThrow())).toContain(
+        "did not throw",
+      );
     }
   });
 

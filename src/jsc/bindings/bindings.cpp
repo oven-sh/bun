@@ -3834,11 +3834,11 @@ bool JSC__JSValue__isJestError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject
     }
 
     // `value instanceof Error`: does the prototype chain reach Error.prototype?
-    // A throwing Proxy trap makes getPrototype() return an empty JSValue, so
-    // `proto &&` must be checked before isObject().
+    // A throwing Proxy getPrototypeOf trap yields an empty JSValue (hence `proto &&`),
+    // and a trap returning a cycle would otherwise spin forever (hence the depth bound).
     JSC::JSValue proto = object->getPrototype(globalObject);
     CLEAR_IF_EXCEPTION(scope);
-    while (proto && proto.isObject()) {
+    for (unsigned depth = 0; proto && proto.isObject() && depth < 64; depth++) {
         JSC::JSCell* protoCell = proto.asCell();
         if (protoCell->inherits<JSC::ErrorPrototype>() || protoCell->type() == JSC::ErrorInstanceType)
             return true;

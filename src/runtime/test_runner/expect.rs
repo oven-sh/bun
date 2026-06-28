@@ -2935,13 +2935,14 @@ impl ExpectMatcherUtils {
         {
             return Ok(JSValue::UNDEFINED);
         }
-        // Jest never gates `object`: every subset key is checked against it, so
-        // a subset with no own enumerable keys matches anything vacuously.
-        if !Self::is_typeof_object(object) {
-            return Ok(JSValue::from(
-                subset.keys(global_this)?.get_length(global_this)? == 0,
-            ));
-        }
+        // Jest never gates `object`: each subset key (string or symbol) is
+        // checked against it, and none can match a non-object, so an empty
+        // object stands in for one and both branches share one engine.
+        let object = if Self::is_typeof_object(object) {
+            object
+        } else {
+            JSValue::create_empty_object(global_this, 0)
+        };
         Ok(JSValue::from(object.jest_deep_match(subset, global_this, false)?))
     }
 

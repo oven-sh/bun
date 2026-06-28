@@ -150,6 +150,7 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
         subsetEqNullObjEmpty: this.utils.subsetEquality(null, {}),
         subsetEqUndefObjWeakMap: this.utils.subsetEquality(undefined, new WeakMap()),
         subsetEqNullObjNonEmpty: this.utils.subsetEquality(null, { a: 1 }),
+        subsetEqNullObjSymbol: this.utils.subsetEquality(null, { [Symbol("s")]: 1 }),
       };
       return { pass: true, message: () => "" };
     },
@@ -188,11 +189,12 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
   // domain; they have no enumerable keys, so the subset match is vacuously true.
   expect(captured.subsetEqWeakSet).toBe(true);
   expect(captured.subsetEqWeakMap).toBe(true);
-  // jest only gates the subset arg: every subset key is checked against
-  // `object`, so an empty-key subset matches even a null or undefined object.
+  // jest only gates the subset arg: every subset key (string or symbol) is
+  // checked against `object`, so only an empty subset matches a null object.
   expect(captured.subsetEqNullObjEmpty).toBe(true);
   expect(captured.subsetEqUndefObjWeakMap).toBe(true);
   expect(captured.subsetEqNullObjNonEmpty).toBe(false);
+  expect(captured.subsetEqNullObjSymbol).toBe(false);
 });
 
 it("is ok if there is no message specified", () => {

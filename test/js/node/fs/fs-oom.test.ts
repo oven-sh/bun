@@ -61,12 +61,15 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
   const SIZE = 32 * 1024 * 1024;
   const env = {
     ...bunEnv,
-    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=48"]
+    // `detect_leaks=0` (last wins): natives owned only by a JSC cell
+    // (TextDecoder, Blob) are invisible to LeakSanitizer's reachability scan
+    // and get reported at exit, independently of what these children test.
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=48", "detect_leaks=0"]
       .filter(Boolean)
       .join(":"),
   };
 
-  test("readFileSync, readFile, Buffer.toString and TextDecoder recover", async () => {
+  test("readFileSync, readFile, Bun.file, Buffer.toString and TextDecoder recover", async () => {
     using dir = tempDir("utf16-alloc-oom", {});
     const file = join(String(dir), "big-utf8.txt");
     // Valid UTF-8 whose first character is non-ASCII ('\u00e9' = C3 A9), so the
@@ -91,10 +94,18 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
           () => results.push("ASYNC_UNEXPECTED_SUCCESS"),
           e => results.push(report(e)),
         );
+        // Lifetime::Temporary: the callee owns the leaked file-read buffer and
+        // must reclaim it on the error path too (CI's ASAN lane runs with
+        // detect_leaks=1:abort_on_error=1, so a leak here fails the exit code).
+        await Bun.file(file).text().then(
+          () => results.push("BUNFILE_UNEXPECTED_SUCCESS"),
+          e => results.push(report(e)),
+        );
         const big = Buffer.alloc(${SIZE}, "a"); big[0] = 0xc3; big[1] = 0xa9;
+        const decoder = new TextDecoder();
         try { big.toString("utf8"); results.push("TOSTRING_UNEXPECTED_SUCCESS"); }
         catch (e) { results.push(report(e)); }
-        try { new TextDecoder().decode(big); results.push("DECODE_UNEXPECTED_SUCCESS"); }
+        try { decoder.decode(big); results.push("DECODE_UNEXPECTED_SUCCESS"); }
         catch (e) { results.push(report(e)); }
         // Slow (WTF-8 replacement) path: the simdutf length query counts ~0
         // code units for a continuation-byte flood, so the output buffer is
@@ -102,7 +113,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
         const cont = Buffer.alloc(${SIZE}, 0x80);
         try { cont.toString("utf8"); results.push("TOSTRING_SLOW_UNEXPECTED_SUCCESS"); }
         catch (e) { results.push(report(e)); }
-        try { new TextDecoder().decode(cont); results.push("DECODE_SLOW_UNEXPECTED_SUCCESS"); }
+        try { decoder.decode(cont); results.push("DECODE_SLOW_UNEXPECTED_SUCCESS"); }
         catch (e) { results.push(report(e)); }
         console.log(JSON.stringify(results));
         `,
@@ -117,6 +128,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
       { name: "Error", code: "ENOMEM" },
       { name: "Error", code: "ENOMEM" },
+      { name: "RangeError", code: undefined },
       { name: "Error", code: "ERR_STRING_TOO_LONG" },
       { name: "RangeError", code: undefined },
       { name: "Error", code: "ERR_STRING_TOO_LONG" },

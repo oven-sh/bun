@@ -63,18 +63,9 @@ test("tearing down hundreds of spawned subprocesses at exit does not overflow th
 }, 120_000);
 
 // https://github.com/oven-sh/bun/issues/28175
-//
-// The first Bun.spawnSync in a VM lazily creates a private libuv loop that is
-// freed through us_loop_free when the VM is destroyed, which for a Worker is
-// mid-process. libuv only removes a loop from its global uv__loops[] registry
-// when uv_loop_close() succeeds; us_loop_free used to free the loop even when
-// uv_loop_close() returned UV_EBUSY, leaving a dangling registry pointer that
-// uv__wake_all_loops() dereferences on the next Windows suspend/resume.
-//
-// The debug build keeps libuv's internal assert()s live, so a teardown that
-// frees a still-registered loop aborts the child process below. The stdio
-// shapes are the ones that leave the most handles in CLOSING state on the
-// spawn-sync loop at teardown (extra-fd pipe, timeout timer, stdin writer).
+// Exercises us_loop_free on the per-VM spawnSync libuv loop at Worker teardown
+// under the debug build, where libuv's assert()s are live: a teardown that
+// frees a still-registered (uv_loop_close == UV_EBUSY) loop aborts the child.
 test.skipIf(!isWindows)(
   "the per-worker spawnSync libuv loop is fully drained and closed at worker teardown",
   async () => {
@@ -102,10 +93,11 @@ test.skipIf(!isWindows)(
         import { Worker } from "node:worker_threads";
         for (let i = 0; i < 6; i++) {
           const worker = new Worker(new URL("./worker.mjs", import.meta.url));
-          await new Promise((resolve, reject) => {
-            worker.on("message", resolve);
-            worker.on("error", reject);
-          });
+          const { promise, resolve, reject } = Promise.withResolvers();
+          worker.on("message", resolve);
+          worker.on("error", reject);
+          worker.on("exit", code => reject(new Error("worker exited before posting: " + code)));
+          await promise;
           await worker.terminate();
         }
         console.log("OK");

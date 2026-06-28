@@ -1253,6 +1253,7 @@ function Server(options, secureConnectionListener): void {
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+  this._ticketKeys = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
@@ -1411,6 +1412,10 @@ function Server(options, secureConnectionListener): void {
       this.secureProtocol = options.secureProtocol;
       this.minVersion = options.minVersion;
       this.maxVersion = options.maxVersion;
+
+      // validateSecureContextOptions already checked type + 48-byte length.
+      const ticketKeys = options.ticketKeys;
+      if (ticketKeys != null) this.setTicketKeys(ticketKeys);
     }
   };
 
@@ -1422,9 +1427,20 @@ function Server(options, secureConnectionListener): void {
   Server.prototype.getTicketKeys = function () {
     const { _handle } = this;
     if (_handle) {
-      return _getTicketKeys(_handle);
+      const keys = _getTicketKeys(_handle);
+      if (keys !== undefined) return keys;
     }
-    throw $ERR_SERVER_NOT_RUNNING();
+    // Not listening yet: the SSL_CTX only exists once listen() creates the
+    // native Listener. Node builds the SSL_CTX in the constructor and returns
+    // its keys here, so return the recorded key material instead of throwing,
+    // generating it on first access (the way BoringSSL's lazy default-key
+    // rotation does). `kRealListen` applies these exact bytes to the SSL_CTX.
+    let stored = this._ticketKeys;
+    if (stored === undefined) {
+      stored = (_randomBytes ??= require("node:crypto").randomBytes)(48);
+      this._ticketKeys = stored;
+    }
+    return Buffer.from(stored);
   };
 
   Server.prototype.setTicketKeys = function (keys) {
@@ -1434,9 +1450,13 @@ function Server(options, secureConnectionListener): void {
     if (keys.byteLength !== 48) {
       throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
     }
+    // Buffer.from(Uint8Array) copies, so later mutation of the caller's
+    // buffer cannot change what is applied to the SSL_CTX at listen time.
+    // The intermediate Uint8Array view also accepts a DataView input.
+    this._ticketKeys = Buffer.from(new Uint8Array(keys.buffer, keys.byteOffset, keys.byteLength));
     const { _handle } = this;
     if (_handle) {
-      _setTicketKeys(_handle, keys);
+      _setTicketKeys(_handle, this._ticketKeys);
     }
   };
 
@@ -1455,6 +1475,7 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
+        ticketKeys: this._ticketKeys,
         ciphers: this.ciphers,
         // Translate minVersion/maxVersion/secureProtocol to the integer
         // protocol range the native layer applies (secureProtocol wins, like
@@ -1705,6 +1726,7 @@ interface X509CertificateLike {
 }
 type X509CertificateCtor = new (cert: CACertInput) => X509CertificateLike;
 let _X509CertificateClass: X509CertificateCtor | undefined;
+let _randomBytes: ((size: number) => Buffer) | undefined;
 
 // tls.setDefaultCACertificates(certs)
 // https://github.com/nodejs/node/blob/v25.2.1/lib/tls.js#L202

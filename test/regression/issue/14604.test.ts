@@ -77,21 +77,16 @@ test("tls.Server.setTicketKeys accepts DataView", async () => {
   expect(retrieved[47]).toBe(0xcd);
 });
 
-test("tls.Server ticket key methods do not throw 'Not implented' before listening", () => {
-  const server = tls_mod.createServer(tls);
-  // The regression guard: these used to throw "Not implented in Bun yet".
-  // Node.js creates the SSL_CTX in the constructor so both calls succeed there,
-  // but Bun creates it lazily in listen(); either outcome is acceptable — we
-  // just must not regress back to the stub error.
-  try {
-    server.setTicketKeys(Buffer.alloc(48));
-  } catch (e: any) {
-    expect(e.message).not.toContain("Not implented");
-  }
-  try {
-    server.getTicketKeys();
-  } catch (e: any) {
-    expect(e.message).not.toContain("Not implented");
-  }
-  server.close();
+test("tls.Server ticket key methods work before listening and survive listen()", async () => {
+  // These used to throw "Not implented in Bun yet". Node builds the SSL_CTX in
+  // the constructor, so both methods work before listen(); keys set here are
+  // the keys the SSL_CTX uses once listen() creates it.
+  await using server = tls_mod.createServer(tls);
+  const keys = Buffer.alloc(48, 0x5a);
+  server.setTicketKeys(keys);
+  expect(server.getTicketKeys().equals(keys)).toBe(true);
+
+  server.listen(0);
+  await once(server, "listening");
+  expect(server.getTicketKeys().equals(keys)).toBe(true);
 });

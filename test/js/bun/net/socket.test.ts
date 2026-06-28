@@ -4157,3 +4157,107 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
     });
   });
 });
+
+// On the libuv (Windows) event loop backend, a synchronous re-entrant loop
+// tick from inside a socket's data callback ran the closed-socket sweep and
+// freed the us_socket_t the suspended outer dispatch frame still held.
+//
+// Bun picks the uws entry point at the top of each tick from libuv's
+// active_handles count: non-zero => us_loop_run, zero => us_loop_pump. The
+// two cases drive the same close-then-re-enter sequence through each one.
+// On Windows the subprocess also reports active_handles as seen from inside
+// data(): 3 in the ref'd case (listener, accepted socket, client), and 1 in
+// the unref'd case, which is us_loop_pump's own increment, i.e. proof that
+// the dispatch really came through the pump.
+describe.concurrent.each([
+  { name: "ref'd (us_loop_run)", unref: false, activeHandlesInData: 3 },
+  { name: "unref'd (us_loop_pump)", unref: true, activeHandlesInData: 1 },
+])(
+  "closing a socket and re-entering the event loop from its own data callback, $name",
+  ({ unref, activeHandlesInData }) => {
+    it("survives", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const UNREF = ${unref};
+            const { getEventLoopStats } = require("bun:internal-for-testing");
+            // The setImmediate callback only runs inside the nested tick that
+            // transform() spins while it waits for the handler's promise, so
+            // reentries === 20 proves every round really re-entered the loop.
+            let reentries = 0;
+            const activeHandles = new Set();
+            const server = Bun.listen({
+              hostname: "127.0.0.1",
+              port: 0,
+              socket: {
+                open(sock) {
+                  if (UNREF) sock.unref();
+                },
+                data(sock) {
+                  activeHandles.add(getEventLoopStats().numPolls);
+                  // Synchronously close the socket, then synchronously re-enter
+                  // the event loop. transform() ticks the loop until the handler's
+                  // promise settles and then throws because it cannot return the
+                  // result synchronously; the nested tick is the part that matters.
+                  sock.terminate();
+                  try {
+                    new HTMLRewriter()
+                      .on("p", { element: () => new Promise(r => setImmediate(() => { reentries++; r(); })) })
+                      .transform("<p></p>");
+                  } catch {}
+                },
+                close() {},
+                error() {},
+              },
+            });
+            if (UNREF) server.unref();
+            for (let i = 0; i < 20; i++) {
+              const { promise, resolve } = Promise.withResolvers();
+              Bun.connect({
+                hostname: "127.0.0.1",
+                port: server.port,
+                socket: {
+                  open(s) {
+                    if (UNREF) s.unref();
+                    // Write from the top of the next tick rather than from inside
+                    // open(): the immediate releases its own keep-alive before the
+                    // tick chooses its entry point, so in the unref'd case the tick
+                    // that dispatches data() sees zero active handles.
+                    setImmediate(() => s.write("x"));
+                  },
+                  data() {},
+                  close: resolve,
+                  end: resolve,
+                  error: resolve,
+                  connectError: resolve,
+                },
+              }).catch(resolve);
+              await promise;
+            }
+            server.stop(true);
+            console.log(JSON.stringify({ reentries, activeHandles: [...activeHandles] }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A crashed child prints nothing; keep the parse from throwing so the
+      // failure diff still shows its stderr and exit code.
+      expect({ result: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        result: {
+          reentries: 20,
+          // numPolls is libuv's active_handles on Windows; on the other
+          // backends it counts polls and the run/pump distinction does not exist.
+          activeHandles: isWindows ? [activeHandlesInData] : expect.any(Array),
+        },
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
+  },
+);

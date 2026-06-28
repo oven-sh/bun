@@ -181,11 +181,14 @@ static void close_cb_free(uv_handle_t *h) { us_free(h->data); }
 
 /* This one is different for polls, since we need two frees here */
 static void close_cb_free_poll(uv_handle_t *h) {
-  /* It is only in case we called us_poll_stop then quickly us_poll_free that we
-   * enter this. Most of the time, actual freeing is done by us_poll_free. */
+  /* us_poll_free normally re-pointed data at the us_poll_t before this runs.
+   * If a nested tick's loop_post deferred the closed-socket sweep (see
+   * tick_depth in us_loop_run), we run first: mark the handle for us_poll_free. */
   if (h->data) {
     us_free(h->data);
     us_free(h);
+  } else {
+    h->data = h;
   }
 }
 
@@ -210,6 +213,14 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd,
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
   // poll was resized and dont own uv_poll_t anymore
   if(!p->uv_p) {
+    us_free(p);
+    return;
+  }
+  /* close_cb_free_poll already ran: a nested tick deferred this sweep to the
+   * outermost loop_post (tick_depth), so libuv finished closing the handle
+   * before we got here. It is done with uv_p; we free both. */
+  if (p->uv_p->data == (void *)p->uv_p) {
+    us_free(p->uv_p);
     us_free(p);
     return;
   }
@@ -333,10 +344,19 @@ void us_loop_pump(struct us_loop_t *loop) {
    * for unref'd handles (subprocess exit packets, socket events) and due
    * timers are never processed. Bun's outer drive loops (wait_for_promise,
    * bun:test) supply their own keep-going predicate, so force exactly one
-   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
+   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0.
+   *
+   * Bun enters here instead of us_loop_run whenever nothing ref's the loop, so
+   * this can be the outermost tick of a close-then-re-enter sequence: a poll
+   * callback dispatched by this iteration closes its socket (uv_close makes
+   * the loop active again) and re-enters through us_loop_run. That nested
+   * tick's loop_post must see depth 2, or it sweeps the socket this
+   * iteration's dispatch still holds. See us_internal_loop_post. */
+  loop->data.tick_depth++;
   loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
   loop->uv_loop->active_handles--;
+  loop->data.tick_depth--;
 }
 
 struct us_loop_t *us_create_loop(void *hint,
@@ -405,6 +425,11 @@ void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
   uv_update_time(loop->uv_loop);
 
+  /* us_internal_loop_post runs from the uv_check_t registered above, so it
+   * fires inside uv_run; the tick_depth bracket mirrors us_loop_run and
+   * us_loop_run_bun_tick in epoll_kqueue.c. See us_internal_loop_post. */
+  loop->data.tick_depth++;
+
   /* UV_RUN_ONCE may block in the poll phase (pending callbacks dispatch
    * first), making this the JS thread's park hook, the counterpart of
    * us_loop_run_bun_tick's. jsc_vm is only set on the JS thread's loop. */
@@ -415,6 +440,7 @@ void us_loop_run(struct us_loop_t *loop) {
   }
 
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+  loop->data.tick_depth--;
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

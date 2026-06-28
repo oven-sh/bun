@@ -100,7 +100,8 @@ interface CppSQLStatement {
   get: (...args: TODO[]) => TODO;
   all: (...args: TODO[]) => TODO;
   iterate: (...args: TODO[]) => TODO;
-  iterateNext: () => TODO;
+  // One row object, or null once the cursor is exhausted.
+  iterateNext: () => unknown;
   iterateEnd: () => void;
   as: (...args: TODO[]) => TODO;
   values: (...args: TODO[]) => TODO;

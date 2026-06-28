@@ -533,6 +533,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 if (s->ssl && us_internal_ssl_is_low_prio(s)) {
                     if (flags->low_prio_state == 2) {
                         flags->low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
+                    } else if (flags->low_prio_state == 1) {
+                        /* Already parked in loop->data.low_prio_head, where prev/next
+                         * are THAT queue's links, not group->head_sockets'. We can
+                         * still be dispatched READABLE here: us_socket_raw_write
+                         * re-arms READABLE|WRITABLE on any short/failed bsd_send, and
+                         * the SSL write BIO goes through it from the on_writable the
+                         * park left polling. Running the park again would call
+                         * us_internal_socket_group_unlink_socket with the low-prio
+                         * links (splicing the two lists into each other, so a later
+                         * close frees this socket while head_sockets still reaches
+                         * it) and double-count low_prio_count. Re-mask READABLE off
+                         * and stay parked until handle_low_priority_sockets
+                         * re-admits us. */
+                        us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                        break;
                     } else if (loop->data.low_prio_budget > 0) {
                         loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
                     } else {

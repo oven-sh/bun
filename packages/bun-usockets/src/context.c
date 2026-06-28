@@ -204,6 +204,11 @@ void us_internal_socket_group_link_socket(struct us_socket_group_t *group, struc
 }
 
 void us_internal_socket_group_unlink_socket(struct us_socket_group_t *group, struct us_socket_t *s) {
+    /* A socket with low_prio_state == 1 lives in loop->data.low_prio_head and
+     * its prev/next are THAT queue's links: unlinking it here would splice the
+     * low-prio queue into head_sockets and orphan the real chain. Every caller
+     * must delist from the low-prio queue (or branch away) first. */
+    US_ASSERT(s->flags.low_prio_state != 1);
     /* We have to properly update the iterator used to sweep sockets for timeouts */
     if (s == group->iterator) {
         group->iterator = s->next;

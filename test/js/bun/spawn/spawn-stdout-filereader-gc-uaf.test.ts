@@ -242,8 +242,8 @@ test.skipIf(isWindows)(
       );
 
       // Release the grandchild, then block without ticking the event loop so
-      // it fills the socketpair buffer past the 128 KiB flush threshold
-      // before the readable poll can dispatch.
+      // it saturates the socketpair buffer before the readable poll can
+      // dispatch, delivering one large chunk in a single read_with_fn call.
       fs.writeFileSync(FLAG, "");
       Bun.sleepSync(800);
 
@@ -280,10 +280,13 @@ test.skipIf(isWindows)(
     } catch {
       throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
     }
-    // Precondition: the delivered chunk exceeded read_with_fn's mid-loop
-    // flush threshold (stack_buffer_len/2 = 128 KiB), so on_read_chunk's
-    // p.run() ran with more of read_with_fn's loop still ahead of it.
-    expect(result.chunkLen).toBeGreaterThan(128 * 1024);
+    // Precondition: a non-empty chunk was flushed, so on_read_chunk's p.run()
+    // ran with read_with_fn still on the stack. The kernel socketpair buffer
+    // decides which of read_with_fn's two flush sites fires (the 128 KiB
+    // mid-loop flush on Linux; the retry flush on macOS, whose default is a
+    // few KiB), and the pin under test guards both identically, so the chunk
+    // size is deliberately not pinned to a platform-specific buffer size.
+    expect(result.chunkLen).toBeGreaterThan(0);
     // Precondition: the from_pipe pin made the wrapper Strong before cancel.
     expect(result.protectedBefore).toBeGreaterThanOrEqual(1);
     // Invariant: the re-entrant cancel must not downgrade the wrapper while

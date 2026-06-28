@@ -1518,6 +1518,12 @@ pub struct Stream {
     remote_window_size: u64,
     // remote used window size for the stream
     remote_used_window_size: u64,
+    // Whether the JS Readable backing this stream is consuming (node: !kReadPaused). The engine
+    // only replenishes the stream's receive window (§6.9) for bytes delivered while this is true;
+    // while false they accumulate in the engine stream's `recv_deferred` so a peer can get at most
+    // one window ahead of a paused reader. Starts false: the JS side flips it from
+    // Http2Stream._read (readStart) and back from a rejected push (readStop).
+    reading: bool,
     signal: Option<Box<SignalRef>>,
 
     // when we have backpressure we queue the data e round robin the Streams
@@ -2078,6 +2084,7 @@ impl Stream {
             used_window_size: 0,
             remote_window_size: remote_window_size as u64,
             remote_used_window_size: 0,
+            reading: false,
             signal: None,
             data_frame_queue: PendingQueue::default(),
         }
@@ -5695,6 +5702,18 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
+    fn is_stream_reading(&self, stream_id: u32) -> bool {
+        // `reading` is updated synchronously from inside the on_data dispatch (readStop from a
+        // rejected push) and from the Readable's _read (readStart), so the engine sees the flip
+        // for the remaining frames of the current batch. A stream with no legacy entry cannot
+        // have a JS reader: treat it as not consuming.
+        match self.streams.get().get(&stream_id) {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            Some(&stream) => unsafe { (*stream).reading },
+            None => false,
+        }
+    }
+
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
@@ -6599,6 +6618,81 @@ impl H2FrameParser {
         Ok(JSValue::from(
             stream.state == StreamState::CLOSED && stream.rst_code == ErrorCode::CANCEL.0,
         ))
+    }
+
+    /// Shared argument handling for readStart/readStop. Unlike the other stream-id host fns,
+    /// a missing stream (or id 0) is a silent no-op rather than an error: both are fired from
+    /// the Readable machinery's hot path and race with stream teardown and with pending
+    /// (not-yet-submitted) requests that have no id yet.
+    fn read_state_stream(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Option<*mut Stream>> {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
+            return Err(global_object.throw(format_args!("Expected stream argument")));
+        }
+        let stream_arg = args_list.ptr[0];
+        if !stream_arg.is_number() {
+            return Err(global_object.throw(format_args!("Invalid stream id")));
+        }
+        let stream_id = stream_arg.to_u32();
+        if stream_id == 0 {
+            return Ok(None);
+        }
+        Ok(this.streams.get().get(&stream_id).copied())
+    }
+
+    /// node: `Http2Stream::ReadStart` — the JS Readable's `_read` ran, so the reader is
+    /// consuming. Credits bytes delivered while it was paused back to the stream's receive
+    /// window and flushes the resulting WINDOW_UPDATE, otherwise a peer stalled on the window
+    /// never resumes.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn read_start(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let Some(stream) = Self::read_state_stream(this, global_object, callframe)? else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+        if unsafe { (*stream).reading } {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // SAFETY: as above
+        unsafe { (*stream).reading = true };
+        // When a receive() batch holds the engine borrow (drained microtasks ran _read), the
+        // batch-end replenish_windows observes the flag; outside one, replenish here so the
+        // deferred grant goes on the wire now rather than waiting for the next inbound read.
+        let mut replenished = false;
+        if let Ok(mut guard) = this.engine.try_borrow_mut() {
+            if let Some(engine) = guard.as_mut() {
+                engine.replenish_windows(this);
+                replenished = true;
+            }
+        }
+        if replenished {
+            let _ = this.flush();
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// node: `Http2Stream::ReadStop` — the JS Readable's buffer is full (push returned false).
+    /// Stop crediting this stream's receive window so the peer stalls at the window instead
+    /// of ballooning an unread buffer. Takes effect for the rest of the current receive batch.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn read_stop(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if let Some(stream) = Self::read_state_stream(this, global_object, callframe)? {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).reading = false };
+        }
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]

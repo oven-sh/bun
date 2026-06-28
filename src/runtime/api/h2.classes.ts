@@ -41,6 +41,14 @@ export default [
         fn: "setLocalWindowSize",
         length: 1,
       },
+      readStart: {
+        fn: "readStart",
+        length: 1,
+      },
+      readStop: {
+        fn: "readStop",
+        length: 1,
+      },
       read: {
         fn: "read",
         length: 1,

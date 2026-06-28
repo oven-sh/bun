@@ -2037,7 +2037,12 @@ function pushToStream(stream, data) {
     return;
   }
 
-  stream.push(data);
+  if (!stream.push(data) && data !== null) {
+    // The readable buffer reached its highWaterMark: stop crediting this stream's HTTP/2
+    // receive window so the peer stalls at the window instead of ballooning an unread
+    // buffer. _read resumes the crediting (mirrors node's handle.readStop/readStart).
+    stream[bunHTTP2Session]?.[bunHTTP2Native]?.readStop(stream.id);
+  }
 }
 
 enum StreamState {
@@ -2092,6 +2097,7 @@ function uncorkNT(stream: Http2Stream) {
 }
 class Http2Stream extends Duplex {
   #id: number;
+  #didRead: boolean = false;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
   [bunHTTP2StreamFinal]: VoidFunction | null = null;
   [bunHTTP2StreamStatus]: number = 0;
@@ -2107,6 +2113,11 @@ class Http2Stream extends Duplex {
       decodeStrings: false,
       autoDestroy: false,
     });
+    // node: suppress the Readable's speculative read-ahead until something actually reads the
+    // stream (_read clears this on its first run). Data is push-driven here, so read-ahead only
+    // pulls up to a highWaterMark into a stream nobody is reading, crediting that much HTTP/2
+    // receive window back to the peer for free.
+    this._readableState.readingMore = true;
     this.#id = streamId;
     this[bunHTTP2Session] = session;
     this[bunHTTP2Headers] = headers;
@@ -2465,7 +2476,17 @@ class Http2Stream extends Duplex {
   }
 
   _read(_size) {
-    // we always use the internal stream queue now
+    // Data is delivered by the native parser (pushToStream), not pulled here. _read still marks
+    // when the JS readable wants more: re-enable read-ahead and resume crediting this stream's
+    // HTTP/2 receive window, granting back bytes that arrived while nothing was reading (node's
+    // handle.readStart()). A pending request has no wire stream yet; the _read triggered by its
+    // first delivered chunk runs with the id assigned.
+    if (!this.#didRead) {
+      this._readableState.readingMore = false;
+      this.#didRead = true;
+    }
+    const id = this.#id;
+    if (id) this[bunHTTP2Session]?.[bunHTTP2Native]?.readStart(id);
   }
 
   end(chunk, encoding, callback) {

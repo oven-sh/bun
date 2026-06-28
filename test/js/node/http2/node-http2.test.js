@@ -2806,6 +2806,139 @@ it("http2 server splits an oversized PUSH_PROMISE header block into CONTINUATION
   }
 });
 
+it("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) resets only that stream", async () => {
+  // Declining a server push (pushedStream.close(NGHTTP2_REFUSED_STREAM)) is the documented way
+  // to reject it: node sends exactly one RST_STREAM(REFUSED_STREAM) for the pushed id, the
+  // pushed stream errors with ERR_HTTP2_STREAM_ERROR, and the session (and the request that
+  // carried the PUSH_PROMISE) keeps working.
+  const server = http2.createServer();
+  const serverPushClosed = Promise.withResolvers();
+  server.on("stream", (stream, headers) => {
+    stream.pushStream({ ":path": "/pushed" }, (err, push) => {
+      if (err) return serverPushClosed.reject(err);
+      push.on("error", () => {});
+      push.on("close", () => serverPushClosed.resolve(push.rstCode));
+      push.respond({ ":status": 200 });
+      // Keep the pushed stream open: only the client's RST_STREAM closes it.
+      push.write("pushed-chunk");
+    });
+    stream.respond({ ":status": 200 });
+    stream.end("main-data");
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const serverPort = server.address().port;
+
+  // TCP proxy recording every HTTP/2 frame the client sends.
+  const clientFrames = [];
+  const proxySockets = [];
+  const proxy = net.createServer(socket => {
+    const upstream = net.connect(serverPort, "127.0.0.1");
+    proxySockets.push(socket, upstream);
+    let buffered = Buffer.alloc(0);
+    let sawPreface = false;
+    socket.on("data", chunk => {
+      upstream.write(chunk);
+      buffered = Buffer.concat([buffered, chunk]);
+      if (!sawPreface) {
+        if (buffered.length < 24) return;
+        buffered = buffered.subarray(24);
+        sawPreface = true;
+      }
+      while (buffered.length >= 9) {
+        const length = buffered.readUIntBE(0, 3);
+        if (buffered.length < 9 + length) break;
+        clientFrames.push({
+          type: buffered[3],
+          streamId: buffered.readUInt32BE(5) & 0x7fffffff,
+          payload: Buffer.from(buffered.subarray(9, 9 + length)),
+        });
+        buffered = buffered.subarray(9 + length);
+      }
+    });
+    upstream.on("data", chunk => socket.write(chunk));
+    socket.on("close", () => upstream.destroy());
+    upstream.on("close", () => socket.destroy());
+    socket.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  await new Promise(resolve => proxy.listen(0, "127.0.0.1", resolve));
+
+  let client;
+  try {
+    client = http2.connect(`http://127.0.0.1:${proxy.address().port}`);
+    const sessionErrors = [];
+    client.on("error", err => sessionErrors.push(err));
+
+    const pushEvents = [];
+    const pushClosed = Promise.withResolvers();
+    const pushSurfaced = Promise.withResolvers();
+    client.on("stream", (pushedStream, headers) => {
+      pushEvents.push(`stream ${headers[":path"]} writableEnded=${pushedStream.writableEnded}`);
+      let localClose;
+      try {
+        // node: the client can never send on a pushed stream, so its local half reads closed.
+        localClose = pushedStream.state.localClose;
+      } catch (e) {
+        localClose = e;
+      }
+      pushedStream.on("aborted", () => pushEvents.push("aborted"));
+      pushedStream.on("error", err => pushEvents.push(`error ${err.code}: ${err.message}`));
+      pushedStream.on("close", () => pushClosed.resolve(pushedStream.rstCode));
+      pushedStream.close(http2.constants.NGHTTP2_REFUSED_STREAM);
+      pushSurfaced.resolve({ id: pushedStream.id, localClose });
+    });
+
+    const reqClosed = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", chunk => (body += chunk));
+    req.on("error", reqClosed.reject);
+    req.on("close", reqClosed.resolve);
+
+    const { id: pushedId, localClose } = await pushSurfaced.promise;
+    expect(pushEvents).toEqual(["stream /pushed writableEnded=true"]);
+    expect(localClose).toBe(1);
+
+    // The refusal closes the pushed stream with the requested code on both ends.
+    expect(await pushClosed.promise).toBe(http2.constants.NGHTTP2_REFUSED_STREAM);
+    expect(await serverPushClosed.promise).toBe(http2.constants.NGHTTP2_REFUSED_STREAM);
+    expect(pushEvents).toEqual([
+      "stream /pushed writableEnded=true",
+      "error ERR_HTTP2_STREAM_ERROR: Stream closed with error code NGHTTP2_REFUSED_STREAM",
+    ]);
+
+    // The request that carried the PUSH_PROMISE (and the session) is untouched.
+    await reqClosed.promise;
+    expect(body).toBe("main-data");
+    expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
+    const againClosed = Promise.withResolvers();
+    const again = client.request({ ":path": "/" });
+    again.resume();
+    again.on("error", againClosed.reject);
+    again.on("close", againClosed.resolve);
+    await againClosed.promise;
+    expect(sessionErrors).toEqual([]);
+
+    // Exactly one RST_STREAM (REFUSED_STREAM) went out for the pushed stream id, and the client
+    // never sent HEADERS or DATA on it.
+    const pushedRsts = clientFrames.filter(f => f.type === 3 && f.streamId === pushedId);
+    expect(pushedRsts.map(f => f.payload.readUInt32BE(0))).toEqual([http2.constants.NGHTTP2_REFUSED_STREAM]);
+    expect(clientFrames.filter(f => (f.type === 0 || f.type === 1) && f.streamId === pushedId)).toEqual([]);
+
+    // Graceful close still reaches 'close': the refused push does not pin the session open.
+    const sessionClosed = Promise.withResolvers();
+    client.on("close", sessionClosed.resolve);
+    client.close();
+    await sessionClosed.promise;
+  } finally {
+    client?.destroy();
+    proxy.close();
+    for (const socket of proxySockets) socket.destroy();
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

@@ -2333,6 +2333,9 @@ class Http2Stream extends Duplex {
   }
   _destroy(err, callback) {
     const { ending } = this._writableState;
+    // node only submits an RST_STREAM from destroy when the stream was not closed yet: close()
+    // already sent one (and a natively closed stream has nothing left to reset).
+    const wasClosed = (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
     // closed by definition — closing it is not an abort and nothing must be sent on the wire.
@@ -2386,6 +2389,7 @@ class Http2Stream extends Duplex {
       session &&
       typeof this.#id === "number" &&
       !this[kNeverAnnounced] &&
+      !wasClosed &&
       // A cleanly closed stream the native side already freed has nothing to send:
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
@@ -4201,6 +4205,9 @@ class ClientHttp2Session extends Http2Session {
       }
       const pushedStream = new ClientHttp2Stream(pushId, self, headers);
       pushedStream[kPush] = true;
+      // node ends the writable half of a pushed stream at creation: the client can never send
+      // on a promised stream (RFC 9113 §5.1), and close() must not treat it as an abort.
+      pushedStream.end();
       pushedStream.once("close", () => {
         self.#reservedStreamsCount--;
       });

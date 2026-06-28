@@ -4985,16 +4985,12 @@ impl H2FrameParser {
         data.len()
     }
 
-    /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
-    fn handle_received_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
-        // connection stream
-        if stream_identifier == 0 {
-            return None;
-        }
-
-        // already exists
+    /// Create (or fetch) the bookkeeping entry for `stream_identifier`, updating the
+    /// last-stream-id high-water marks. Returns the heap-allocated entry (owned by the
+    /// `streams` map) and whether it was just created.
+    fn register_stream(&self, stream_identifier: u32, state: StreamState) -> (*mut Stream, bool) {
         if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
-            return Some(stream);
+            return (stream, false);
         }
 
         if stream_identifier > self.last_stream_id.get() {
@@ -5007,13 +5003,12 @@ impl H2FrameParser {
             self.last_peer_stream_id.set(stream_identifier);
         }
 
-        // new stream open
         let local_window_size = if self.outstanding_settings.get() > 0 {
             DEFAULT_WINDOW_SIZE as u32
         } else {
             self.local_settings.get().initial_window_size
         };
-        let stream = bun_core::heap::into_raw(Box::new(Stream::init(
+        let mut new_stream = Box::new(Stream::init(
             stream_identifier,
             local_window_size,
             self.remote_settings
@@ -5021,9 +5016,25 @@ impl H2FrameParser {
                 .map(|s| s.initial_window_size)
                 .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
             self.padding_strategy.get(),
-        )));
+        ));
+        new_stream.state = state;
+        let stream = bun_core::heap::into_raw(new_stream);
         self.streams
             .with_mut(|s| s.insert(stream_identifier, stream));
+        (stream, true)
+    }
+
+    /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
+    fn handle_received_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
+        // connection stream
+        if stream_identifier == 0 {
+            return None;
+        }
+
+        let (stream, is_new) = self.register_stream(stream_identifier, StreamState::OPEN);
+        if !is_new {
+            return Some(stream);
+        }
 
         let Some(this_value) = self.strong_this.get().try_get() else {
             return Some(stream);
@@ -5696,6 +5707,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
+        // Register the promised stream so the outbound host fns (rstStream, writeStream,
+        // getStreamState) see it like any other stream. A client can never send on a promised
+        // stream (RFC 9113 §5.1: reserved (remote)), so its sending half starts closed.
+        self.register_stream(promised_id, StreamState::HALF_CLOSED_LOCAL);
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
         self.rewrite_pending_push.set(promised_id);

@@ -408,13 +408,6 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn close(&mut self, fd: Fd) -> sys::Result<()> {
-            // SAFETY: self.actions is live
-            spawn_errno(errno_from_posix_spawn(unsafe {
-                system::posix_spawn_file_actions_addclose(&raw mut self.actions, fd.native())
-            }))
-        }
-
         pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> sys::Result<()> {
             if fd == newfd {
                 return self.inherit(fd);
@@ -564,13 +557,10 @@ pub mod posix_spawn {
             for action in &act.actions {
                 match action.kind {
                     bun_spawn::FileActionType::Close => {
-                        // Darwin's posix_spawn fails the whole spawn with EBADF
-                        // if an addclose fd is not open. A fd the parent does
-                        // not have open is already absent from the child.
-                        let fd = Fd::from_native(action.fds[0]);
-                        if sys::fcntl(fd, system::F_GETFD, 0).is_ok() {
-                            posix_actions.close(fd)?;
-                        }
+                        // Redundant: POSIX_SPAWN_CLOEXEC_DEFAULT (always set on
+                        // this path) closes any fd without an open/dup2/inherit
+                        // action. Darwin also fails the whole spawn with EBADF
+                        // when an addclose fd is not open, so never register one.
                     }
                     bun_spawn::FileActionType::Dup2 => {
                         posix_actions.dup2(

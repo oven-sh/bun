@@ -798,6 +798,31 @@ declare module "bun" {
     export function parse(
       input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
     ): object;
+
+    /**
+     * Serialize a JavaScript object to a TOML document.
+     *
+     * The top-level value must be an object (a TOML document is a table).
+     * `Date` values become TOML offset date-times. `null`, `BigInt`, and
+     * circular structures throw, since TOML cannot represent them;
+     * `undefined`, function, and symbol properties are skipped.
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript object to serialize.
+     * @param replacer Not supported; pass `undefined` or `null`.
+     * @param space Accepted for signature parity with `YAML.stringify` and
+     * `JSON5.stringify`, but ignored: TOML output is line-oriented.
+     * @returns A TOML document string
+     *
+     * @example
+     * ```js
+     * import { TOML } from "bun";
+     * TOML.stringify({ name: "app", server: { port: 8080 } });
+     * // 'name = "app"\n\n[server]\nport = 8080\n'
+     * ```
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
   }
 
   /**

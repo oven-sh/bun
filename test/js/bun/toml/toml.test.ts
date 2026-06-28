@@ -511,3 +511,166 @@ describe("error contract", () => {
     );
   });
 });
+
+describe("TOML.stringify", () => {
+  function stringifyError(value: unknown): Error {
+    let err: unknown;
+    try {
+      TOML.stringify(value);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    return err as Error;
+  }
+
+  test("layout: keyvals first, then tables, then arrays of tables", () => {
+    expect(
+      TOML.stringify({
+        server: { host: "localhost", port: 8080 },
+        name: "app",
+        points: [{ x: 1 }, { x: 2 }],
+        debug: true,
+      }),
+    ).toBe(
+      'name = "app"\ndebug = true\n\n[server]\nhost = "localhost"\nport = 8080\n\n[[points]]\nx = 1\n\n[[points]]\nx = 2\n',
+    );
+  });
+
+  test("nested tables emit dotted headers", () => {
+    expect(TOML.stringify({ a: { b: { c: 1 } } })).toBe("[a]\n\n[a.b]\nc = 1\n");
+  });
+
+  test("round-trips through TOML.parse", () => {
+    const value = {
+      title: "example",
+      count: 42,
+      pi: 3.14,
+      on: true,
+      off: false,
+      list: [1, "two", [3.5], { four: 4 }],
+      empty: [],
+      nested: { deep: { key: "value" } },
+      multi: 'line one\nline two\t"quoted"',
+    };
+    expect(TOML.parse(TOML.stringify(value))).toEqual(value);
+  });
+
+  test("keys: bare when possible, quoted otherwise", () => {
+    expect(TOML.stringify({ bare_key: 1, "key with space": 2, ключ: 3, "": 4, "a.b": 5 })).toBe(
+      'bare_key = 1\n"key with space" = 2\n"ключ" = 3\n"" = 4\n"a.b" = 5\n',
+    );
+    expect(TOML.stringify({ t: { "dotted.seg": 1 } })).toBe('[t]\n"dotted.seg" = 1\n');
+    expect(TOML.stringify({ "dotted.tbl": { a: 1 } })).toBe('["dotted.tbl"]\na = 1\n');
+  });
+
+  test("string escaping is exact and round-trips", () => {
+    expect(TOML.stringify({ s: 'a"b\\c\nd\te\u0000f' })).toBe('s = "a\\"b\\\\c\\nd\\te\\u0000f"\n');
+    const original = { s: '\b\t\n\f\r"\\中🦊' };
+    expect(TOML.parse(TOML.stringify(original))).toEqual(original);
+  });
+
+  test("lone surrogates are replaced with U+FFFD like the parse boundary", () => {
+    expect(TOML.stringify({ s: "a\uD800b" })).toBe('s = "a�b"\n');
+    // A well-formed pair passes through.
+    expect(TOML.stringify({ s: "🦊" })).toBe('s = "🦊"\n');
+  });
+
+  test("numbers: integers, floats, special values", () => {
+    expect(TOML.stringify({ i: 5, f: 0.5, nz: -0.0, n: NaN, p: Infinity, m: -Infinity })).toBe(
+      "i = 5\nf = 0.5\nnz = -0.0\nn = nan\np = inf\nm = -inf\n",
+    );
+    expect(TOML.stringify({ max: Number.MAX_SAFE_INTEGER })).toBe("max = 9007199254740991\n");
+  });
+
+  test("integral doubles beyond the safe range are emitted as floats", () => {
+    // Bare digits would round-trip as an out-of-range TOML integer.
+    expect(TOML.stringify({ big: 1e20 })).toBe("big = 100000000000000000000.0\n");
+    expect(TOML.parse(TOML.stringify({ big: 1e20 }))).toEqual({ big: 1e20 });
+    expect(TOML.parse(TOML.stringify({ big: 1e21 }))).toEqual({ big: 1e21 });
+  });
+
+  test("Date becomes a TOML offset date-time", () => {
+    const d = new Date(Date.UTC(1979, 4, 27, 7, 32, 0, 999));
+    expect(TOML.stringify({ d })).toBe("d = 1979-05-27T07:32:00.999Z\n");
+    // parse returns datetimes as source-text strings.
+    expect(TOML.parse(TOML.stringify({ d }))).toEqual({ d: "1979-05-27T07:32:00.999Z" });
+    expect(TOML.stringify({ d: new Date(0) })).toBe("d = 1970-01-01T00:00:00.000Z\n");
+  });
+
+  test("invalid and unrepresentable Dates throw", () => {
+    expect(stringifyError({ d: new Date(NaN) }).message).toBe("TOML.stringify cannot serialize an invalid Date");
+    expect(stringifyError({ d: new Date(-62167219200001) }).message).toBe(
+      "TOML.stringify cannot serialize a Date outside years 0000-9999",
+    );
+  });
+
+  test("null values throw with the offending key", () => {
+    expect(stringifyError({ a: { broken: null } }).message).toBe(
+      "TOML cannot represent null (key 'broken'); remove the key or use a sentinel value",
+    );
+    expect(stringifyError({ list: [1, null] }).message).toBe("TOML cannot represent null in an array");
+    expect(stringifyError({ list: [1, undefined] }).message).toBe("TOML cannot represent undefined in an array");
+  });
+
+  test("BigInt throws like the YAML and JSON5 siblings", () => {
+    expect(stringifyError({ n: 1n }).message).toBe("TOML.stringify cannot serialize BigInt");
+  });
+
+  test("circular structures throw", () => {
+    const cycle: any = { a: 1 };
+    cycle.self = cycle;
+    expect(stringifyError(cycle).message).toBe("Converting circular structure to TOML");
+    const arrCycle: any = { list: [] };
+    arrCycle.list.push(arrCycle.list);
+    expect(stringifyError(arrCycle).message).toBe("Converting circular structure to TOML");
+  });
+
+  test("top level must be a plain object", () => {
+    const msg = "TOML.stringify expects an object at the top level (a TOML document is a table)";
+    expect(stringifyError([1, 2]).message).toBe(msg);
+    expect(stringifyError(null).message).toBe(msg);
+    expect(stringifyError("str").message).toBe(msg);
+    expect(stringifyError(5).message).toBe(msg);
+    expect(stringifyError(new Date(0)).message).toBe(msg);
+    expect(TOML.stringify(undefined as any)).toBeUndefined();
+  });
+
+  test("replacer is rejected; space is accepted and ignored", () => {
+    expect(() => TOML.stringify({}, (() => 1) as any)).toThrow("TOML.stringify does not support the replacer argument");
+    expect(TOML.stringify({ a: { b: 1 } }, null, 2)).toBe(TOML.stringify({ a: { b: 1 } }));
+  });
+
+  test("undefined, function, and symbol properties are skipped", () => {
+    expect(TOML.stringify({ a: 1, u: undefined, f: () => 1, s: Symbol("x") })).toBe("a = 1\n");
+  });
+
+  test("empty shapes", () => {
+    expect(TOML.stringify({})).toBe("");
+    expect(TOML.stringify({ t: {} })).toBe("[t]\n");
+    expect(TOML.stringify({ a: [] })).toBe("a = []\n");
+    expect(TOML.stringify({ a: [{}] })).toBe("[[a]]\n");
+  });
+
+  test("mixed arrays use inline tables", () => {
+    expect(TOML.stringify({ a: [1, { b: 2 }, {}] })).toBe("a = [1, { b = 2 }, {}]\n");
+    expect(TOML.parse(TOML.stringify({ a: [1, { b: 2 }] }))).toEqual({ a: [1, { b: 2 }] });
+  });
+
+  test("boxed primitives unwrap", () => {
+    expect(TOML.stringify({ n: new Number(5), s: new String("x"), b: new Boolean(true) } as any)).toBe(
+      'n = 5\ns = "x"\nb = true\n',
+    );
+  });
+
+  test("stringify is GC-safe under stress", () => {
+    // Unique keys each iteration force fresh WTF strings through the
+    // header-path bookkeeping; a refcount imbalance there crashes under GC.
+    for (let i = 0; i < 2000; i++) {
+      TOML.stringify({ ["table" + i]: { ["inner" + i]: { deep: [{ a: i }, { b: i }] } } });
+      if (i % 256 === 0) Bun.gc(true);
+    }
+    Bun.gc(true);
+    expect(TOML.parse(TOML.stringify({ ok: true }))).toEqual({ ok: true });
+  });
+});

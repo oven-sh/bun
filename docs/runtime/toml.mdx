@@ -94,6 +94,35 @@ try {
 }
 ```
 
+### `Bun.TOML.stringify()`
+
+Serialize a JavaScript object to a TOML document. Scalar keys come first,
+followed by `[table]` and `[[array-of-tables]]` sections:
+
+```ts
+Bun.TOML.stringify({
+  name: "app",
+  server: { host: "localhost", port: 8080 },
+  points: [{ x: 1 }, { x: 2 }],
+});
+// name = "app"
+//
+// [server]
+// host = "localhost"
+// port = 8080
+//
+// [[points]]
+// x = 1
+//
+// [[points]]
+// x = 2
+```
+
+The top-level value must be an object — a TOML document is a table. `Date`
+values become TOML offset date-times. Because TOML cannot represent them,
+`null` values, `BigInt`, and circular structures throw; `undefined`,
+function, and symbol properties are skipped.
+
 ---
 
 ## Module Import

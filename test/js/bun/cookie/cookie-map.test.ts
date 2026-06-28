@@ -364,9 +364,8 @@ describe("invalid delete usage", () => {
 });
 
 // A Cookie header value is percent-decoded only if the whole value decodes
-// cleanly, matching node's `cookie` package. RFC 6265 allows a literal "%"
-// in a cookie value, so a value that was never percent-encoded must come
-// through verbatim instead of being corrupted with U+FFFD.
+// cleanly (node `cookie` semantics). RFC 6265 allows a literal "%" in a
+// cookie value, so a value that was never percent-encoded must round-trip.
 describe("Bun.CookieMap percent-decoding", () => {
   test("values that do not decode cleanly are kept raw", () => {
     const cases: Record<string, string> = {

@@ -1393,6 +1393,7 @@ dependencies = [
  "bun_core",
  "bun_highway",
  "bun_js_printer",
+ "bun_simdutf_sys",
  "bytemuck",
  "const_format",
  "enum-map",

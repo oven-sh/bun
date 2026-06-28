@@ -27,6 +27,7 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_highway.workspace = true
 bun_ast.workspace = true
+bun_simdutf_sys.workspace = true
 
 [dev-dependencies]
 # JSON round-trip test prints via `bun_js_printer`; sibling crate, dev-only.

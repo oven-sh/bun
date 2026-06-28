@@ -1,6 +1,4 @@
-use bun_core::String as BunString;
-use bun_js_printer as js_printer;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_parsers::toml::TOML;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -13,45 +11,33 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         global,
         frame,
         b"input.toml",
-        false,
+        true,
         true,
         |arena, log, source| {
-            let parse_result = match TOML::parse(source, log, arena, false) {
+            let root = match TOML::parse(source, log, arena, false) {
                 Ok(v) => v,
                 Err(e) if e == bun_core::err!("StackOverflow") => {
                     return Err(global.throw_stack_overflow());
                 }
+                Err(e) if e == bun_core::err!("OutOfMemory") => {
+                    return Err(JsError::OutOfMemory);
+                }
                 Err(_) => {
-                    return Err(global.throw_value(log.to_js(global, "Failed to parse toml")?));
+                    if let Some(first_msg) = log.msgs.first() {
+                        return Err(global.throw_value(global.create_syntax_error_instance(
+                            format_args!(
+                                "TOML Parse error: {}",
+                                bstr::BStr::new(&first_msg.data.text),
+                            ),
+                        )));
+                    }
+                    return Err(global.throw_value(global.create_syntax_error_instance(
+                        format_args!("TOML Parse error: Unable to parse TOML"),
+                    )));
                 }
             };
 
-            if log.has_errors() {
-                return Err(global.throw_value(log.to_js(global, "Failed to parse toml")?));
-            }
-
-            // for now...
-            let buffer_writer = js_printer::BufferWriter::init();
-            let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-            if js_printer::print_json(
-                &mut writer,
-                parse_result,
-                source,
-                js_printer::PrintJsonOptions {
-                    indent: Default::default(),
-                    mangled_props: None,
-                    ..Default::default()
-                },
-            )
-            .is_err()
-            {
-                return Err(global.throw_value(log.to_js(global, "Failed to print toml")?));
-            }
-
-            let slice = writer.ctx.buffer.slice();
-            let mut out = BunString::borrow_utf8(slice);
-
-            out.to_js_by_parse_json(global)
+            super::expr_to_js(root, global)
         },
     )
 }

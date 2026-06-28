@@ -2149,6 +2149,9 @@ describe("toml-test/valid-out-of-range-integer", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Integer cannot be losslessly represented as a JavaScript number; it must be within +/-(2^53 - 1)",
+    );
   });
 });
 
@@ -2162,6 +2165,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found ','");
   });
 
   test("invalid/array/double-comma-02", () => {
@@ -2173,6 +2177,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found ','");
   });
 
   test("invalid/array/extend-defined-aot", () => {
@@ -2184,6 +2189,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'arr'");
   });
 
   test("invalid/array/extending-table", () => {
@@ -2196,6 +2202,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend array 'a'");
   });
 
   test("invalid/array/missing-separator-01", () => {
@@ -2207,6 +2214,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found 'f'");
   });
 
   test("invalid/array/missing-separator-02", () => {
@@ -2218,6 +2226,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found '2'");
   });
 
   test("invalid/array/no-close-01", () => {
@@ -2229,6 +2238,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
   });
 
   test("invalid/array/no-close-02", () => {
@@ -2240,6 +2250,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated array; expected ']'");
   });
 
   test("invalid/array/no-close-03", () => {
@@ -2251,6 +2262,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
   });
 
   test("invalid/array/no-close-04", () => {
@@ -2262,6 +2274,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
   });
 
   test("invalid/array/no-close-05", () => {
@@ -2273,6 +2286,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
   });
 
   test("invalid/array/no-close-06", () => {
@@ -2284,6 +2298,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
   });
 
   test("invalid/array/no-close-07", () => {
@@ -2295,6 +2310,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
   });
 
   test("invalid/array/no-close-08", () => {
@@ -2306,6 +2322,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated array; expected ']'");
   });
 
   test("invalid/array/no-close-table-01", () => {
@@ -2317,6 +2334,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
   });
 
   test("invalid/array/no-close-table-02", () => {
@@ -2328,6 +2346,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
   });
 
   test("invalid/array/no-close-table-03", () => {
@@ -2339,6 +2358,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found ']'");
   });
 
   test("invalid/array/no-close-table-04", () => {
@@ -2350,6 +2370,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found ']'");
   });
 
   test("invalid/array/no-comma-01", () => {
@@ -2361,6 +2382,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found 'f'");
   });
 
   test("invalid/array/no-comma-02", () => {
@@ -2372,6 +2394,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found '2'");
   });
 
   test("invalid/array/no-comma-03", () => {
@@ -2383,6 +2406,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
   });
 
   test("invalid/array/only-comma-01", () => {
@@ -2394,6 +2418,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found ','");
   });
 
   test("invalid/array/only-comma-02", () => {
@@ -2405,6 +2430,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found ','");
   });
 
   test("invalid/array/tables-01", () => {
@@ -2416,6 +2442,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend array 'fruit'");
   });
 
   test("invalid/array/tables-02", () => {
@@ -2428,6 +2455,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine array of tables 'variety' as a table");
   });
 
   test("invalid/array/text-after-array-entries", () => {
@@ -2439,6 +2467,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'N'");
   });
 
   test("invalid/array/text-before-array-separator", () => {
@@ -2450,6 +2479,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found 'N'");
   });
 
   test("invalid/array/text-in-array", () => {
@@ -2461,6 +2491,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'I'");
   });
 
   test("invalid/bool/almost-false-with-extra", () => {
@@ -2472,6 +2503,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
   });
 
   test("invalid/bool/almost-false", () => {
@@ -2483,6 +2515,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
   });
 
   test("invalid/bool/almost-true-with-extra", () => {
@@ -2494,6 +2527,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
   });
 
   test("invalid/bool/almost-true", () => {
@@ -2505,6 +2539,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
   });
 
   test("invalid/bool/capitalized-false", () => {
@@ -2516,6 +2551,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'F'");
   });
 
   test("invalid/bool/capitalized-true", () => {
@@ -2527,6 +2563,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
   });
 
   test("invalid/bool/just-f", () => {
@@ -2538,6 +2575,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
   });
 
   test("invalid/bool/just-t", () => {
@@ -2549,6 +2587,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
   });
 
   test("invalid/bool/mixed-case-false", () => {
@@ -2560,6 +2599,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
   });
 
   test("invalid/bool/mixed-case-true", () => {
@@ -2571,6 +2611,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
   });
 
   test("invalid/bool/mixed-case", () => {
@@ -2582,6 +2623,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'v'");
   });
 
   test("invalid/bool/starting-same-false", () => {
@@ -2593,6 +2635,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
   });
 
   test("invalid/bool/starting-same-true", () => {
@@ -2604,6 +2647,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
   });
 
   test("invalid/bool/wrong-case-false", () => {
@@ -2615,6 +2659,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'F'");
   });
 
   test("invalid/bool/wrong-case-true", () => {
@@ -2626,6 +2671,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
   });
 
   test("invalid/control/bare-cr", () => {
@@ -2637,6 +2683,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Bare carriage return is not allowed; use \\r\\n or \\n",
+    );
   });
 
   test("invalid/control/bare-formfeed", () => {
@@ -2648,6 +2697,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found (0x0C)");
   });
 
   test("invalid/control/bare-null", () => {
@@ -2659,6 +2709,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/control/bare-vertical-tab", () => {
@@ -2670,6 +2723,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found (0x0B)");
   });
 
   test("invalid/control/comment-cr", () => {
@@ -2681,6 +2735,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Bare carriage return is not allowed; use \\r\\n or \\n",
+    );
   });
 
   test("invalid/control/comment-del", () => {
@@ -2692,6 +2749,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a comment: (0x7F)",
+    );
   });
 
   test("invalid/control/comment-ff", () => {
@@ -2703,6 +2763,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a comment: (0x0C)",
+    );
   });
 
   test("invalid/control/comment-lf", () => {
@@ -2714,6 +2777,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a comment: (0x10)",
+    );
   });
 
   test("invalid/control/comment-null", () => {
@@ -2725,6 +2791,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a comment: (0x00)",
+    );
   });
 
   test("invalid/control/comment-us", () => {
@@ -2736,6 +2805,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a comment: (0x1F)",
+    );
   });
 
   test("invalid/control/linetab-number-01", () => {
@@ -2747,6 +2819,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: (0x0B)");
   });
 
   test("invalid/control/linetab-number-02", () => {
@@ -2758,6 +2831,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: (0x0B)");
   });
 
   test("invalid/control/linetab-number-03", () => {
@@ -2769,6 +2843,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: (0x0B)");
   });
 
   test("invalid/control/linetab-number-04", () => {
@@ -2780,6 +2855,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: (0x0B)");
   });
 
   test("invalid/control/multi-cr", () => {
@@ -2791,6 +2867,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Bare carriage return is not allowed; use \\r\\n or \\n",
+    );
   });
 
   test("invalid/control/multi-del", () => {
@@ -2802,6 +2881,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x7F)",
+    );
   });
 
   test("invalid/control/multi-lf", () => {
@@ -2813,7 +2895,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x10)",
+    );
   });
 
   test("invalid/control/multi-null", () => {
@@ -2825,7 +2909,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x00)",
+    );
   });
 
   test("invalid/control/multi-us", () => {
@@ -2837,7 +2923,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x1F)",
+    );
   });
 
   test("invalid/control/only-ff", () => {
@@ -2849,6 +2937,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x0C)");
   });
 
   test("invalid/control/only-null", () => {
@@ -2860,6 +2949,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x00)");
   });
 
   test("invalid/control/only-vt", () => {
@@ -2871,6 +2961,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x0B)");
   });
 
   test("invalid/control/rawmulti-cr", () => {
@@ -2882,6 +2973,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Bare carriage return is not allowed; use \\r\\n or \\n",
+    );
   });
 
   test("invalid/control/rawmulti-del", () => {
@@ -2893,6 +2987,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a literal string: (0x7F)",
+    );
   });
 
   test("invalid/control/rawmulti-lf", () => {
@@ -2904,7 +3001,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a literal string: (0x10)",
+    );
   });
 
   test("invalid/control/rawmulti-null", () => {
@@ -2916,7 +3015,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a literal string: (0x00)",
+    );
   });
 
   test("invalid/control/rawmulti-us", () => {
@@ -2928,7 +3029,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a literal string: (0x1F)",
+    );
   });
 
   test("invalid/control/rawstring-cr", () => {
@@ -2940,6 +3043,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Bare carriage return is not allowed; use \\r\\n or \\n",
+    );
   });
 
   test("invalid/control/rawstring-del", () => {
@@ -2951,6 +3057,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a literal string: (0x7F)",
+    );
   });
 
   test("invalid/control/rawstring-lf", () => {
@@ -2962,7 +3071,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a literal string: (0x10)",
+    );
   });
 
   test("invalid/control/rawstring-null", () => {
@@ -2974,7 +3085,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a literal string: (0x00)",
+    );
   });
 
   test("invalid/control/rawstring-us", () => {
@@ -2986,7 +3099,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character is not allowed in a literal string: (0x1F)",
+    );
   });
 
   test("invalid/control/string-bs", () => {
@@ -2998,6 +3113,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x08)",
+    );
   });
 
   test("invalid/control/string-cr", () => {
@@ -3009,6 +3127,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Bare carriage return is not allowed; use \\r\\n or \\n",
+    );
   });
 
   test("invalid/control/string-del", () => {
@@ -3020,6 +3141,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x7F)",
+    );
   });
 
   test("invalid/control/string-lf", () => {
@@ -3031,7 +3155,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x10)",
+    );
   });
 
   test("invalid/control/string-null", () => {
@@ -3043,7 +3169,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x00)",
+    );
   });
 
   test("invalid/control/string-us", () => {
@@ -3055,7 +3183,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Control character must be escaped in a string: (0x1F)",
+    );
   });
 
   test("invalid/datetime/day-zero", () => {
@@ -3067,6 +3197,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/datetime/feb-29", () => {
@@ -3078,6 +3209,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/datetime/feb-30", () => {
@@ -3089,6 +3221,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/datetime/hour-over", () => {
@@ -3100,6 +3233,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: hours must be between 00 and 23");
   });
 
   test("invalid/datetime/leading-zero-date", () => {
@@ -3111,6 +3245,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/datetime/leading-zero-datetime", () => {
@@ -3122,6 +3257,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/datetime/mday-over", () => {
@@ -3134,6 +3270,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/datetime/mday-under", () => {
@@ -3146,6 +3283,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/datetime/minute-over", () => {
@@ -3157,6 +3295,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: minutes must be between 00 and 59");
   });
 
   test("invalid/datetime/month-over", () => {
@@ -3168,6 +3307,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: month must be between 01 and 12");
   });
 
   test("invalid/datetime/month-under", () => {
@@ -3179,6 +3319,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: month must be between 01 and 12");
   });
 
   test("invalid/datetime/no-date-time-sep", () => {
@@ -3190,6 +3331,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '0'");
   });
 
   test("invalid/datetime/no-leads-month", () => {
@@ -3202,6 +3344,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: expected a 2-digit month");
   });
 
   test("invalid/datetime/no-leads-with-milli", () => {
@@ -3214,6 +3357,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: expected a 2-digit day");
   });
 
   test("invalid/datetime/no-leads", () => {
@@ -3226,6 +3370,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: expected a 2-digit month");
   });
 
   test("invalid/datetime/no-t", () => {
@@ -3237,6 +3382,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '1'");
   });
 
   test("invalid/datetime/no-year-month-sep", () => {
@@ -3248,6 +3394,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '-'");
   });
 
   test("invalid/datetime/offset-minus-minute-1digit", () => {
@@ -3259,6 +3406,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date-time offset: expected 2-digit minutes");
   });
 
   test("invalid/datetime/offset-minus-no-hour-minute-sep", () => {
@@ -3270,6 +3418,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid date-time offset: expected ':' between hours and minutes",
+    );
   });
 
   test("invalid/datetime/offset-minus-no-hour-minute", () => {
@@ -3281,6 +3432,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date-time offset: expected 2-digit hours");
   });
 
   test("invalid/datetime/offset-minus-no-minute", () => {
@@ -3292,6 +3444,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid date-time offset: expected ':' between hours and minutes",
+    );
   });
 
   test("invalid/datetime/offset-overflow-hour", () => {
@@ -3303,6 +3458,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid date-time offset: hours must be between 00 and 23",
+    );
   });
 
   test("invalid/datetime/offset-overflow-minute", () => {
@@ -3314,6 +3472,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid date-time offset: minutes must be between 00 and 59",
+    );
   });
 
   test("invalid/datetime/offset-plus-minute-1digit", () => {
@@ -3325,6 +3486,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date-time offset: expected 2-digit minutes");
   });
 
   test("invalid/datetime/offset-plus-no-hour-minute-sep", () => {
@@ -3336,6 +3498,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid date-time offset: expected ':' between hours and minutes",
+    );
   });
 
   test("invalid/datetime/offset-plus-no-hour-minute", () => {
@@ -3347,6 +3512,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date-time offset: expected 2-digit hours");
   });
 
   test("invalid/datetime/offset-plus-no-minute", () => {
@@ -3358,6 +3524,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid date-time offset: expected ':' between hours and minutes",
+    );
   });
 
   test("invalid/datetime/only-T", () => {
@@ -3369,6 +3538,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
   });
 
   test("invalid/datetime/only-TZ", () => {
@@ -3380,6 +3550,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
   });
 
   test("invalid/datetime/only-Tdot", () => {
@@ -3391,6 +3562,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
   });
 
   test("invalid/datetime/second-over", () => {
@@ -3403,6 +3575,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: seconds must be between 00 and 60");
   });
 
   test("invalid/datetime/second-trailing-dot", () => {
@@ -3414,6 +3587,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid time: expected at least one digit of fractional seconds",
+    );
   });
 
   test("invalid/datetime/second-trailing-dotz", () => {
@@ -3425,6 +3601,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid time: expected at least one digit of fractional seconds",
+    );
   });
 
   test("invalid/datetime/time-no-leads", () => {
@@ -3436,6 +3615,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: expected 2-digit hours");
   });
 
   test("invalid/datetime/trailing-x", () => {
@@ -3447,6 +3627,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: 'x'");
   });
 
   test("invalid/datetime/y10k-date", () => {
@@ -3458,6 +3639,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '-'");
   });
 
   test("invalid/datetime/y10k-datetime", () => {
@@ -3469,6 +3651,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '-'");
   });
 
   test("invalid/encoding/bom-not-at-start-01", () => {
@@ -3480,6 +3663,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found (0xEF)");
   });
 
   test("invalid/encoding/bom-not-at-start-02", () => {
@@ -3491,6 +3675,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0xEF)");
   });
 
   test("invalid/encoding/bom-not-at-start-03", () => {
@@ -3502,6 +3687,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0xEF)");
   });
 
   test("invalid/encoding/ideographic-space", () => {
@@ -3513,6 +3699,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0xE3)");
   });
 
   test("invalid/encoding/utf16-comment", () => {
@@ -3525,6 +3712,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x00)");
   });
 
   test("invalid/encoding/utf16-key", () => {
@@ -3536,6 +3724,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x00)");
   });
 
   test("invalid/float/arabic-zero-01", () => {
@@ -3547,6 +3736,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/arabic-zero-02", () => {
@@ -3558,6 +3750,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found (0xD9)");
   });
 
   test("invalid/float/arabic-zero-03", () => {
@@ -3569,6 +3762,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: An exponent must contain at least one digit");
   });
 
   test("invalid/float/arabic-zero-04", () => {
@@ -3580,6 +3774,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found (0xD9)");
   });
 
   test("invalid/float/double-dot-01", () => {
@@ -3591,6 +3786,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/double-dot-02", () => {
@@ -3602,6 +3800,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '.'");
   });
 
   test("invalid/float/exp-dot-01", () => {
@@ -3613,6 +3812,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '.'");
   });
 
   test("invalid/float/exp-dot-02", () => {
@@ -3624,6 +3824,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/exp-dot-03", () => {
@@ -3635,6 +3838,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/exp-double-e-01", () => {
@@ -3646,6 +3852,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: An exponent must contain at least one digit");
   });
 
   test("invalid/float/exp-double-e-02", () => {
@@ -3657,6 +3864,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: 'e'");
   });
 
   test("invalid/float/exp-double-us", () => {
@@ -3668,6 +3876,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: An exponent must contain at least one digit");
   });
 
   test("invalid/float/exp-leading-us", () => {
@@ -3679,6 +3888,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: An exponent must contain at least one digit");
   });
 
   test("invalid/float/exp-trailing-us-01", () => {
@@ -3690,6 +3900,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/float/exp-trailing-us-02", () => {
@@ -3701,6 +3912,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/float/exp-trailing-us", () => {
@@ -3712,6 +3924,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/float/inf-capital", () => {
@@ -3723,6 +3936,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'I'");
   });
 
   test("invalid/float/inf-incomplete-01", () => {
@@ -3734,6 +3948,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'i'");
   });
 
   test("invalid/float/inf-incomplete-02", () => {
@@ -3745,6 +3960,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'i'");
   });
 
   test("invalid/float/inf-incomplete-03", () => {
@@ -3756,6 +3972,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'i'");
   });
 
   test("invalid/float/inf_underscore", () => {
@@ -3767,6 +3984,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'i'");
   });
 
   test("invalid/float/leading-dot-neg", () => {
@@ -3778,6 +3996,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found '.'");
   });
 
   test("invalid/float/leading-dot-plus", () => {
@@ -3789,6 +4008,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found '.'");
   });
 
   test("invalid/float/leading-dot", () => {
@@ -3800,6 +4020,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '.'");
   });
 
   test("invalid/float/leading-us", () => {
@@ -3811,6 +4032,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '_'");
   });
 
   test("invalid/float/leading-zero-neg", () => {
@@ -3822,6 +4044,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/float/leading-zero-plus", () => {
@@ -3833,6 +4056,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/float/leading-zero", () => {
@@ -3844,6 +4068,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/float/nan-capital", () => {
@@ -3855,6 +4080,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'N'");
   });
 
   test("invalid/float/nan-incomplete-01", () => {
@@ -3866,6 +4092,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'n'");
   });
 
   test("invalid/float/nan-incomplete-02", () => {
@@ -3877,6 +4104,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'n'");
   });
 
   test("invalid/float/nan-incomplete-03", () => {
@@ -3888,6 +4116,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'n'");
   });
 
   test("invalid/float/nan_underscore", () => {
@@ -3899,6 +4128,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'n'");
   });
 
   test("invalid/float/trailing-dot-01", () => {
@@ -3910,6 +4140,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/trailing-dot-02", () => {
@@ -3921,6 +4154,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/trailing-dot-min", () => {
@@ -3932,6 +4168,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/trailing-dot-plus", () => {
@@ -3943,6 +4182,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/trailing-dot", () => {
@@ -3954,6 +4196,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/trailing-exp-dot", () => {
@@ -3965,6 +4210,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/trailing-exp-minus", () => {
@@ -3976,6 +4224,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: An exponent must contain at least one digit");
   });
 
   test("invalid/float/trailing-exp-plus", () => {
@@ -3987,6 +4236,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: An exponent must contain at least one digit");
   });
 
   test("invalid/float/trailing-exp", () => {
@@ -3998,6 +4248,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: An exponent must contain at least one digit");
   });
 
   test("invalid/float/trailing-us-exp-01", () => {
@@ -4009,6 +4260,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/float/trailing-us-exp-02", () => {
@@ -4020,6 +4272,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/float/trailing-us", () => {
@@ -4031,6 +4284,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/float/us-after-dot", () => {
@@ -4042,6 +4296,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A decimal point must be followed by at least one digit",
+    );
   });
 
   test("invalid/float/us-before-dot", () => {
@@ -4053,6 +4310,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/inline-table/bad-key-syntax", () => {
@@ -4064,6 +4322,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '['");
   });
 
   test("invalid/inline-table/double-comma", () => {
@@ -4075,6 +4334,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found ','");
   });
 
   test("invalid/inline-table/duplicate-key-01", () => {
@@ -4086,6 +4346,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'b'");
   });
 
   test("invalid/inline-table/duplicate-key-02", () => {
@@ -4097,6 +4358,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'dupe'");
   });
 
   test("invalid/inline-table/duplicate-key-03", () => {
@@ -4108,6 +4370,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'fruit' with a dotted key");
   });
 
   test("invalid/inline-table/duplicate-key-04", () => {
@@ -4119,6 +4382,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'b'");
   });
 
   test("invalid/inline-table/empty-01", () => {
@@ -4130,6 +4394,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found ','");
   });
 
   test("invalid/inline-table/empty-02", () => {
@@ -4141,6 +4406,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found ','");
   });
 
   test("invalid/inline-table/empty-03", () => {
@@ -4152,6 +4418,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found ','");
   });
 
   test("invalid/inline-table/no-close-01", () => {
@@ -4163,6 +4430,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated inline table; expected '}'");
   });
 
   test("invalid/inline-table/no-close-02", () => {
@@ -4174,6 +4442,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
   });
 
   test("invalid/inline-table/no-comma-01", () => {
@@ -4185,6 +4454,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found 'y'");
   });
 
   test("invalid/inline-table/no-comma-02", () => {
@@ -4196,6 +4466,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found 'v'");
   });
 
   test("invalid/inline-table/overwrite-01", () => {
@@ -4208,6 +4479,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a'");
   });
 
   test("invalid/inline-table/overwrite-02", () => {
@@ -4219,6 +4491,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend inline table 'a'");
   });
 
   test("invalid/inline-table/overwrite-03", () => {
@@ -4230,6 +4503,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'a' with a dotted key");
   });
 
   test("invalid/inline-table/overwrite-04", () => {
@@ -4241,6 +4515,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend inline table 'inline-t'");
   });
 
   test("invalid/inline-table/overwrite-05", () => {
@@ -4252,6 +4527,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend inline table 'inline-t'");
   });
 
   test("invalid/inline-table/overwrite-06", () => {
@@ -4263,6 +4539,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'b'");
   });
 
   test("invalid/inline-table/overwrite-07", () => {
@@ -4274,6 +4551,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'table'");
   });
 
   test("invalid/inline-table/overwrite-08", () => {
@@ -4285,6 +4563,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'inner' with a dotted key");
   });
 
   test("invalid/inline-table/overwrite-09", () => {
@@ -4296,6 +4575,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'nested' with a dotted key");
   });
 
   test("invalid/inline-table/overwrite-10", () => {
@@ -4308,6 +4588,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'b'");
   });
 
   test("invalid/integer/arabic-zero-01", () => {
@@ -4319,6 +4600,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: (0xD9)");
   });
 
   test("invalid/integer/arabic-zero-02", () => {
@@ -4330,6 +4612,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: (0xD9)");
   });
 
   test("invalid/integer/arabic-zero-03", () => {
@@ -4341,6 +4624,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found (0xD9)");
   });
 
   test("invalid/integer/arabic-zero-04", () => {
@@ -4352,6 +4636,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found (0xD9)");
   });
 
   test("invalid/integer/capital-bin", () => {
@@ -4363,6 +4648,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: 'B'");
   });
 
   test("invalid/integer/capital-hex", () => {
@@ -4374,6 +4660,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: 'X'");
   });
 
   test("invalid/integer/capital-oct", () => {
@@ -4385,6 +4672,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: 'O'");
   });
 
   test("invalid/integer/double-sign-nex", () => {
@@ -4396,6 +4684,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found '-'");
   });
 
   test("invalid/integer/double-sign-plus", () => {
@@ -4407,6 +4696,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found '+'");
   });
 
   test("invalid/integer/double-us", () => {
@@ -4418,6 +4708,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/integer/incomplete-bin", () => {
@@ -4429,6 +4720,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected at least one digit after the radix prefix");
   });
 
   test("invalid/integer/incomplete-hex", () => {
@@ -4440,6 +4732,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected at least one digit after the radix prefix");
   });
 
   test("invalid/integer/incomplete-oct", () => {
@@ -4451,6 +4744,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected at least one digit after the radix prefix");
   });
 
   test("invalid/integer/invalid-bin", () => {
@@ -4462,6 +4756,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid digit in number: '2'");
   });
 
   test("invalid/integer/invalid-hex-01", () => {
@@ -4473,6 +4768,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid digit in number: 'z'");
   });
 
   test("invalid/integer/invalid-hex-02", () => {
@@ -4484,6 +4780,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected at least one digit after the radix prefix");
   });
 
   test("invalid/integer/invalid-hex-03", () => {
@@ -4495,6 +4792,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected at least one digit after the radix prefix");
   });
 
   test("invalid/integer/invalid-oct", () => {
@@ -4506,6 +4804,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid digit in number: '8'");
   });
 
   test("invalid/integer/leading-us-bin", () => {
@@ -4517,6 +4816,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '_'");
   });
 
   test("invalid/integer/leading-us-hex", () => {
@@ -4528,6 +4828,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '_'");
   });
 
   test("invalid/integer/leading-us-oct", () => {
@@ -4539,6 +4840,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '_'");
   });
 
   test("invalid/integer/leading-us", () => {
@@ -4550,6 +4852,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '_'");
   });
 
   test("invalid/integer/leading-zero-01", () => {
@@ -4561,6 +4864,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/integer/leading-zero-02", () => {
@@ -4572,6 +4876,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/integer/leading-zero-03", () => {
@@ -4583,6 +4888,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/integer/leading-zero-sign-01", () => {
@@ -4594,6 +4900,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/integer/leading-zero-sign-02", () => {
@@ -4605,6 +4912,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/integer/leading-zero-sign-03", () => {
@@ -4616,6 +4924,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Leading zeros are not allowed in numbers");
   });
 
   test("invalid/integer/negative-bin", () => {
@@ -4627,6 +4936,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A sign is not allowed on hexadecimal, octal, or binary integers",
+    );
   });
 
   test("invalid/integer/negative-hex", () => {
@@ -4638,6 +4950,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A sign is not allowed on hexadecimal, octal, or binary integers",
+    );
   });
 
   test("invalid/integer/negative-oct", () => {
@@ -4649,6 +4964,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A sign is not allowed on hexadecimal, octal, or binary integers",
+    );
   });
 
   test("invalid/integer/positive-bin", () => {
@@ -4660,6 +4978,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A sign is not allowed on hexadecimal, octal, or binary integers",
+    );
   });
 
   test("invalid/integer/positive-hex", () => {
@@ -4671,6 +4992,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A sign is not allowed on hexadecimal, octal, or binary integers",
+    );
   });
 
   test("invalid/integer/positive-oct", () => {
@@ -4682,6 +5006,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A sign is not allowed on hexadecimal, octal, or binary integers",
+    );
   });
 
   test("invalid/integer/text-after-integer", () => {
@@ -4693,6 +5020,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/integer/trailing-us-bin", () => {
@@ -4704,6 +5034,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/integer/trailing-us-hex", () => {
@@ -4715,6 +5046,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/integer/trailing-us-oct", () => {
@@ -4726,6 +5058,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/integer/trailing-us", () => {
@@ -4737,6 +5070,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Underscores in numbers must be surrounded by digits");
   });
 
   test("invalid/integer/us-after-bin", () => {
@@ -4748,6 +5082,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected at least one digit after the radix prefix");
   });
 
   test("invalid/integer/us-after-hex", () => {
@@ -4759,6 +5094,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected at least one digit after the radix prefix");
   });
 
   test("invalid/integer/us-after-oct", () => {
@@ -4770,6 +5106,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected at least one digit after the radix prefix");
   });
 
   test("invalid/key/after-array", () => {
@@ -4781,6 +5118,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a table header",
+    );
   });
 
   test("invalid/key/after-table", () => {
@@ -4792,6 +5132,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a table header",
+    );
   });
 
   test("invalid/key/after-value", () => {
@@ -4803,6 +5146,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/key/bare-invalid-character-01", () => {
@@ -4814,6 +5160,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '!'");
   });
 
   test("invalid/key/bare-invalid-character-02", () => {
@@ -4825,6 +5172,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '!'");
   });
 
   test("invalid/key/dot", () => {
@@ -4836,6 +5184,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '.'");
   });
 
   test("invalid/key/dotdot", () => {
@@ -4847,6 +5196,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '.'");
   });
 
   test("invalid/key/dotted-redefine-table-01", () => {
@@ -4858,6 +5208,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a'");
   });
 
   test("invalid/key/dotted-redefine-table-02", () => {
@@ -4869,6 +5220,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'b'");
   });
 
   test("invalid/key/duplicate-keys-01", () => {
@@ -4880,6 +5232,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'name'");
   });
 
   test("invalid/key/duplicate-keys-02", () => {
@@ -4891,6 +5244,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'dupe'");
   });
 
   test("invalid/key/duplicate-keys-03", () => {
@@ -4902,6 +5256,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'spelling'");
   });
 
   test("invalid/key/duplicate-keys-04", () => {
@@ -4913,6 +5268,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'spelling'");
   });
 
   test("invalid/key/duplicate-keys-05", () => {
@@ -4924,6 +5280,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a'");
   });
 
   test("invalid/key/duplicate-keys-06", () => {
@@ -4935,6 +5292,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a'b'");
   });
 
   test("invalid/key/duplicate-keys-07", () => {
@@ -4946,6 +5304,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key ''");
   });
 
   test("invalid/key/duplicate-keys-08", () => {
@@ -4957,6 +5316,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'arr'");
   });
 
   test("invalid/key/duplicate-keys-09", () => {
@@ -4968,6 +5328,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'tbl'");
   });
 
   test("invalid/key/empty", () => {
@@ -4979,6 +5340,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '='");
   });
 
   test("invalid/key/end-in-escape", () => {
@@ -4990,6 +5352,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x0A)");
   });
 
   test("invalid/key/escape", () => {
@@ -5001,6 +5364,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '\\'");
   });
 
   test("invalid/key/hash", () => {
@@ -5012,6 +5376,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '#'");
   });
 
   test("invalid/key/multiline-key-01", () => {
@@ -5023,6 +5388,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '\"'");
   });
 
   test("invalid/key/multiline-key-02", () => {
@@ -5034,6 +5400,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '''");
   });
 
   test("invalid/key/multiline-key-03", () => {
@@ -5045,6 +5412,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '\"'");
   });
 
   test("invalid/key/multiline-key-04", () => {
@@ -5056,6 +5424,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '''");
   });
 
   test("invalid/key/newline-01", () => {
@@ -5067,6 +5436,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found (0x0A)");
   });
 
   test("invalid/key/newline-02", () => {
@@ -5078,6 +5448,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/key/newline-03", () => {
@@ -5089,6 +5462,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; literal strings cannot contain newlines",
+    );
   });
 
   test("invalid/key/newline-04", () => {
@@ -5100,6 +5476,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '\"'");
   });
 
   test("invalid/key/newline-05", () => {
@@ -5111,6 +5488,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '''");
   });
 
   test("invalid/key/newline-06", () => {
@@ -5122,6 +5500,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Missing value after '='; values must be on the same line",
+    );
   });
 
   test("invalid/key/no-eol-01", () => {
@@ -5133,6 +5514,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/key/no-eol-02", () => {
@@ -5144,6 +5528,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: 'r'");
   });
 
   test("invalid/key/no-eol-03", () => {
@@ -5155,6 +5540,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/key/no-eol-04", () => {
@@ -5166,6 +5554,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/key/no-eol-05", () => {
@@ -5177,6 +5568,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/key/no-eol-06", () => {
@@ -5188,6 +5582,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: 'r'");
   });
 
   test("invalid/key/no-eol-07", () => {
@@ -5199,6 +5594,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: 'r'");
   });
 
   test("invalid/key/only-float", () => {
@@ -5210,6 +5606,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found (0x0A)");
   });
 
   test("invalid/key/only-int", () => {
@@ -5221,6 +5618,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found (0x0A)");
   });
 
   test("invalid/key/only-str", () => {
@@ -5232,6 +5630,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found (0x0A)");
   });
 
   test("invalid/key/open-bracket", () => {
@@ -5243,6 +5642,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '='");
   });
 
   test("invalid/key/partial-quoted", () => {
@@ -5254,6 +5654,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '\"'");
   });
 
   test("invalid/key/quoted-unclosed-01", () => {
@@ -5265,6 +5666,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/key/quoted-unclosed-02", () => {
@@ -5276,6 +5680,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/key/single-open-bracket", () => {
@@ -5287,6 +5694,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x0A)");
   });
 
   test("invalid/key/space-quoted", () => {
@@ -5298,6 +5706,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '\"'");
   });
 
   test("invalid/key/space", () => {
@@ -5309,6 +5718,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found 'b'");
   });
 
   test("invalid/key/special-character", () => {
@@ -5320,6 +5730,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0xCE)");
   });
 
   test("invalid/key/start-bracket", () => {
@@ -5331,6 +5742,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '='");
   });
 
   test("invalid/key/start-dot", () => {
@@ -5342,6 +5754,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '.'");
   });
 
   test("invalid/key/tab-quoted", () => {
@@ -5353,6 +5766,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found '\"'");
   });
 
   test("invalid/key/tab", () => {
@@ -5364,6 +5778,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found 'b'");
   });
 
   test("invalid/key/two-equals-01", () => {
@@ -5375,6 +5790,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '='");
   });
 
   test("invalid/key/two-equals-02", () => {
@@ -5386,6 +5802,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '='");
   });
 
   test("invalid/key/two-equals-03", () => {
@@ -5397,6 +5814,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'b'");
   });
 
   test("invalid/key/without-value-01", () => {
@@ -5408,6 +5826,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found (0x0A)");
   });
 
   test("invalid/key/without-value-02", () => {
@@ -5419,6 +5838,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Missing value after '='; values must be on the same line",
+    );
   });
 
   test("invalid/key/without-value-03", () => {
@@ -5430,6 +5852,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found (0x0A)");
   });
 
   test("invalid/key/without-value-04", () => {
@@ -5441,6 +5864,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Missing value after '='; values must be on the same line",
+    );
   });
 
   test("invalid/key/without-value-05", () => {
@@ -5452,6 +5878,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected '=' after a key but found (0x0A)");
   });
 
   test("invalid/key/without-value-06", () => {
@@ -5463,6 +5890,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Missing value after '='; values must be on the same line",
+    );
   });
 
   test("invalid/key/without-value-07", () => {
@@ -5474,6 +5904,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x0A)");
   });
 
   test("invalid/local-date/day-1digit", () => {
@@ -5485,6 +5916,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: expected a 2-digit day");
   });
 
   test("invalid/local-date/feb-29", () => {
@@ -5496,6 +5928,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/local-date/feb-30", () => {
@@ -5507,6 +5940,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/local-date/mday-over", () => {
@@ -5519,6 +5953,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/local-date/mday-under", () => {
@@ -5531,6 +5966,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/local-date/month-over", () => {
@@ -5542,6 +5978,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: month must be between 01 and 12");
   });
 
   test("invalid/local-date/month-under", () => {
@@ -5553,6 +5990,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: month must be between 01 and 12");
   });
 
   test("invalid/local-date/no-leads-with-milli", () => {
@@ -5564,6 +6002,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: expected a 2-digit day");
   });
 
   test("invalid/local-date/no-leads", () => {
@@ -5575,6 +6014,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: expected a 2-digit month");
   });
 
   test("invalid/local-date/trailing-t", () => {
@@ -5586,6 +6026,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: expected 2-digit hours");
   });
 
   test("invalid/local-date/y10k", () => {
@@ -5597,6 +6038,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '-'");
   });
 
   test("invalid/local-date/year-3digits", () => {
@@ -5608,6 +6050,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '-'");
   });
 
   test("invalid/local-datetime/feb-29", () => {
@@ -5619,6 +6062,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/local-datetime/feb-30", () => {
@@ -5630,6 +6074,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/local-datetime/hour-over", () => {
@@ -5641,6 +6086,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: hours must be between 00 and 23");
   });
 
   test("invalid/local-datetime/mday-over", () => {
@@ -5653,6 +6099,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/local-datetime/mday-under", () => {
@@ -5665,6 +6112,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: day is out of range for the month");
   });
 
   test("invalid/local-datetime/minute-over", () => {
@@ -5676,6 +6124,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: minutes must be between 00 and 59");
   });
 
   test("invalid/local-datetime/month-over", () => {
@@ -5687,6 +6136,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: month must be between 01 and 12");
   });
 
   test("invalid/local-datetime/month-under", () => {
@@ -5698,6 +6148,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: month must be between 01 and 12");
   });
 
   test("invalid/local-datetime/no-leads-with-milli", () => {
@@ -5710,6 +6161,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: expected a 2-digit day");
   });
 
   test("invalid/local-datetime/no-leads", () => {
@@ -5721,6 +6173,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid date: expected a 2-digit month");
   });
 
   test("invalid/local-datetime/no-t", () => {
@@ -5732,6 +6185,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '1'");
   });
 
   test("invalid/local-datetime/second-over", () => {
@@ -5744,6 +6198,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: seconds must be between 00 and 60");
   });
 
   test("invalid/local-datetime/time-no-leads", () => {
@@ -5755,6 +6210,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: expected 2-digit hours");
   });
 
   test("invalid/local-datetime/y10k", () => {
@@ -5766,6 +6222,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: '-'");
   });
 
   test("invalid/local-time/hour-over", () => {
@@ -5777,6 +6234,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: hours must be between 00 and 23");
   });
 
   test("invalid/local-time/minute-over", () => {
@@ -5788,6 +6246,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: minutes must be between 00 and 59");
   });
 
   test("invalid/local-time/second-over", () => {
@@ -5800,6 +6259,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: seconds must be between 00 and 60");
   });
 
   test("invalid/local-time/time-no-leads-01", () => {
@@ -5811,6 +6271,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unexpected character after a value: ':'");
   });
 
   test("invalid/local-time/time-no-leads-02", () => {
@@ -5822,6 +6283,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid time: expected 2-digit seconds");
   });
 
   test("invalid/local-time/trailing-dot", () => {
@@ -5833,6 +6295,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid time: expected at least one digit of fractional seconds",
+    );
   });
 
   test("invalid/local-time/trailing-dotdot", () => {
@@ -5844,6 +6309,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Invalid time: expected at least one digit of fractional seconds",
+    );
   });
 
   test("invalid/spec-1.1.0/common-16-0", () => {
@@ -5856,6 +6324,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/spec-1.1.0/common-19-0", () => {
@@ -5868,6 +6339,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Too many quotes at the end of a multi-line string");
   });
 
   test("invalid/spec-1.1.0/common-2", () => {
@@ -5879,6 +6351,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found '#'");
   });
 
   test("invalid/spec-1.1.0/common-46-0", () => {
@@ -5891,6 +6364,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'apple'");
   });
 
   test("invalid/spec-1.1.0/common-46-1", () => {
@@ -5903,6 +6377,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'taste'");
   });
 
   test("invalid/spec-1.1.0/common-49-0", () => {
@@ -5914,6 +6389,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'type' with a dotted key");
   });
 
   test("invalid/spec-1.1.0/common-5", () => {
@@ -5926,6 +6402,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '='");
   });
 
   test("invalid/spec-1.1.0/common-50-0", () => {
@@ -5937,6 +6414,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'type'");
   });
 
   test("invalid/string/bad-byte-escape", () => {
@@ -5948,6 +6426,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+    );
   });
 
   test("invalid/string/bad-concat", () => {
@@ -5959,6 +6440,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/string/bad-escape-01", () => {
@@ -5970,6 +6454,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: 'a'");
   });
 
   test("invalid/string/bad-escape-02", () => {
@@ -5981,6 +6466,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
   });
 
   test("invalid/string/bad-escape-03", () => {
@@ -5992,6 +6478,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/string/bad-escape-04", () => {
@@ -6003,6 +6492,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
   });
 
   test("invalid/string/bad-escape-05", () => {
@@ -6014,6 +6504,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
   });
 
   test("invalid/string/bad-hex-esc-01", () => {
@@ -6025,6 +6516,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+    );
   });
 
   test("invalid/string/bad-hex-esc-02", () => {
@@ -6036,6 +6530,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+    );
   });
 
   test("invalid/string/bad-hex-esc-03", () => {
@@ -6047,6 +6544,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+    );
   });
 
   test("invalid/string/bad-hex-esc-04", () => {
@@ -6058,6 +6558,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+    );
   });
 
   test("invalid/string/bad-hex-esc-05", () => {
@@ -6069,6 +6572,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A hex escape must be followed by exactly 2 hex digits",
+    );
   });
 
   test("invalid/string/bad-multiline", () => {
@@ -6080,6 +6586,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/string/bad-slash-escape", () => {
@@ -6091,6 +6600,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: '/'");
   });
 
   test("invalid/string/bad-uni-esc-01", () => {
@@ -6102,6 +6612,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-02", () => {
@@ -6113,6 +6626,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-03", () => {
@@ -6124,6 +6640,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-04", () => {
@@ -6135,6 +6654,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-05", () => {
@@ -6146,6 +6668,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-06", () => {
@@ -6157,6 +6682,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Escaped code point must be a Unicode scalar value");
   });
 
   test("invalid/string/bad-uni-esc-07", () => {
@@ -6168,6 +6694,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-ml-01", () => {
@@ -6179,6 +6708,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-ml-02", () => {
@@ -6190,6 +6722,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-ml-03", () => {
@@ -6201,6 +6736,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-ml-04", () => {
@@ -6212,6 +6750,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-ml-05", () => {
@@ -6223,6 +6764,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
   });
 
   test("invalid/string/bad-uni-esc-ml-06", () => {
@@ -6234,6 +6778,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Escaped code point must be a Unicode scalar value");
   });
 
   test("invalid/string/bad-uni-esc-ml-07", () => {
@@ -6245,6 +6790,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 4 hex digits",
+    );
   });
 
   test("invalid/string/basic-multiline-out-of-range-unicode-escape-01", () => {
@@ -6256,6 +6804,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Escaped code point must be a Unicode scalar value");
   });
 
   test("invalid/string/basic-multiline-out-of-range-unicode-escape-02", () => {
@@ -6267,6 +6816,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Escaped code point must be a Unicode scalar value");
   });
 
   test("invalid/string/basic-multiline-quotes", () => {
@@ -6278,6 +6828,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/string/basic-multiline-unknown-escape", () => {
@@ -6289,6 +6842,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: '@'");
   });
 
   test("invalid/string/basic-out-of-range-unicode-escape-01", () => {
@@ -6300,6 +6854,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Escaped code point must be a Unicode scalar value");
   });
 
   test("invalid/string/basic-out-of-range-unicode-escape-02", () => {
@@ -6311,6 +6866,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Escaped code point must be a Unicode scalar value");
   });
 
   test("invalid/string/basic-unknown-escape", () => {
@@ -6322,6 +6878,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: '@'");
   });
 
   test("invalid/string/literal-multiline-quotes-01", () => {
@@ -6333,6 +6890,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Too many quotes at the end of a multi-line string");
   });
 
   test("invalid/string/literal-multiline-quotes-02", () => {
@@ -6344,6 +6902,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Too many quotes at the end of a multi-line string");
   });
 
   test("invalid/string/missing-quotes-array", () => {
@@ -6355,6 +6914,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'v'");
   });
 
   test("invalid/string/missing-quotes-inline-table", () => {
@@ -6366,6 +6926,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'v'");
   });
 
   test("invalid/string/missing-quotes", () => {
@@ -6377,6 +6938,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'v'");
   });
 
   test("invalid/string/multiline-bad-escape-01", () => {
@@ -6388,6 +6950,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: 'a'");
   });
 
   test("invalid/string/multiline-bad-escape-02", () => {
@@ -6399,6 +6962,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
   });
 
   test("invalid/string/multiline-bad-escape-03", () => {
@@ -6410,6 +6974,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
   });
 
   test("invalid/string/multiline-bad-escape-04", () => {
@@ -6421,6 +6986,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-escape-space-01", () => {
@@ -6432,6 +6998,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
   });
 
   test("invalid/string/multiline-escape-space-02", () => {
@@ -6443,6 +7010,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x20)");
   });
 
   test("invalid/string/multiline-lit-no-close-01", () => {
@@ -6454,6 +7022,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-lit-no-close-02", () => {
@@ -6465,6 +7034,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-lit-no-close-03", () => {
@@ -6476,6 +7046,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-lit-no-close-04", () => {
@@ -6487,6 +7058,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-no-close-01", () => {
@@ -6498,6 +7070,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-no-close-02", () => {
@@ -6509,6 +7082,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-no-close-03", () => {
@@ -6520,6 +7094,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-no-close-04", () => {
@@ -6531,6 +7106,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-no-close-05", () => {
@@ -6542,6 +7118,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/multiline-quotes-01", () => {
@@ -6553,6 +7130,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Too many quotes at the end of a multi-line string");
   });
 
   test("invalid/string/no-close-01", () => {
@@ -6564,6 +7142,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/string/no-close-02", () => {
@@ -6575,6 +7156,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/string/no-close-03", () => {
@@ -6586,6 +7170,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; literal strings cannot contain newlines",
+    );
   });
 
   test("invalid/string/no-close-04", () => {
@@ -6597,6 +7184,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; literal strings cannot contain newlines",
+    );
   });
 
   test("invalid/string/no-close-05", () => {
@@ -6608,6 +7198,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/no-close-06", () => {
@@ -6619,6 +7210,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/no-close-07", () => {
@@ -6630,6 +7222,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/no-close-08", () => {
@@ -6641,6 +7234,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Unterminated string");
   });
 
   test("invalid/string/no-close-09", () => {
@@ -6652,6 +7246,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/string/no-close-10", () => {
@@ -6663,6 +7260,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; literal strings cannot contain newlines",
+    );
   });
 
   test("invalid/string/no-open-01", () => {
@@ -6674,6 +7274,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
   });
 
   test("invalid/string/no-open-02", () => {
@@ -6685,6 +7286,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
   });
 
   test("invalid/string/no-open-03", () => {
@@ -6696,6 +7298,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
   });
 
   test("invalid/string/no-open-04", () => {
@@ -6707,6 +7310,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
   });
 
   test("invalid/string/no-open-05", () => {
@@ -6718,6 +7322,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
   });
 
   test("invalid/string/no-open-06", () => {
@@ -6729,6 +7334,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
   });
 
   test("invalid/string/no-open-07", () => {
@@ -6740,6 +7346,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
   });
 
   test("invalid/string/no-open-08", () => {
@@ -6751,6 +7358,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
   });
 
   test("invalid/string/text-after-string", () => {
@@ -6762,6 +7370,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a key/value pair",
+    );
   });
 
   test("invalid/string/wrong-close", () => {
@@ -6773,6 +7384,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/table/append-with-dotted-keys-01", () => {
@@ -6785,6 +7399,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'b' with a dotted key");
   });
 
   test("invalid/table/append-with-dotted-keys-02", () => {
@@ -6797,6 +7412,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'b' with a dotted key");
   });
 
   test("invalid/table/append-with-dotted-keys-03", () => {
@@ -6808,6 +7424,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'b'");
   });
 
   test("invalid/table/append-with-dotted-keys-04", () => {
@@ -6820,6 +7437,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'dependencies'");
   });
 
   test("invalid/table/append-with-dotted-keys-05", () => {
@@ -6831,6 +7449,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'b'");
   });
 
   test("invalid/table/append-with-dotted-keys-06", () => {
@@ -6842,6 +7461,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a'");
   });
 
   test("invalid/table/append-with-dotted-keys-07", () => {
@@ -6853,6 +7473,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'k1'");
   });
 
   test("invalid/table/append-with-dotted-keys-08", () => {
@@ -6865,6 +7486,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend table 'b' with a dotted key");
   });
 
   test("invalid/table/array-empty", () => {
@@ -6876,6 +7498,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found ']'");
   });
 
   test("invalid/table/array-implicit", () => {
@@ -6888,6 +7511,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'albums' as an array of tables");
   });
 
   test("invalid/table/array-no-close-01", () => {
@@ -6899,6 +7523,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']]' to close an array-of-tables header but found (0x0A)",
+    );
   });
 
   test("invalid/table/array-no-close-02", () => {
@@ -6910,6 +7537,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']]' to close an array-of-tables header but found (0x0A)",
+    );
   });
 
   test("invalid/table/array-no-close-03", () => {
@@ -6921,6 +7551,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+    );
   });
 
   test("invalid/table/array-no-close-04", () => {
@@ -6932,6 +7565,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+    );
   });
 
   test("invalid/table/bare-invalid-character-01", () => {
@@ -6943,6 +7579,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '!'");
   });
 
   test("invalid/table/bare-invalid-character-02", () => {
@@ -6954,6 +7591,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '!'");
   });
 
   test("invalid/table/dot", () => {
@@ -6965,6 +7603,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '.'");
   });
 
   test("invalid/table/dotdot", () => {
@@ -6976,6 +7615,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '.'");
   });
 
   test("invalid/table/duplicate-key-01", () => {
@@ -6987,6 +7627,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'a'");
   });
 
   test("invalid/table/duplicate-key-02", () => {
@@ -6998,6 +7639,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'type' as a table");
   });
 
   test("invalid/table/duplicate-key-03", () => {
@@ -7009,6 +7651,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'apple' as an array of tables");
   });
 
   test("invalid/table/duplicate-key-04", () => {
@@ -7020,6 +7663,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'apple'");
   });
 
   test("invalid/table/duplicate-key-05", () => {
@@ -7031,6 +7675,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'taste'");
   });
 
   test("invalid/table/duplicate-key-06", () => {
@@ -7042,6 +7687,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'tbl' as an array of tables");
   });
 
   test("invalid/table/duplicate-key-07", () => {
@@ -7053,6 +7699,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine array of tables 'tbl' as a table");
   });
 
   test("invalid/table/duplicate-key-08", () => {
@@ -7064,6 +7711,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine inline table 'b'");
   });
 
   test("invalid/table/duplicate-key-09", () => {
@@ -7075,6 +7723,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'a'");
   });
 
   test("invalid/table/duplicate-key-10", () => {
@@ -7086,6 +7735,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot extend array 'a'");
   });
 
   test("invalid/table/duplicate-key-11", () => {
@@ -7097,6 +7747,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'b'");
   });
 
   test("invalid/table/duplicate-key-12", () => {
@@ -7108,6 +7759,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'b'");
   });
 
   test("invalid/table/empty-implicit-table", () => {
@@ -7119,6 +7771,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '.'");
   });
 
   test("invalid/table/empty", () => {
@@ -7130,6 +7783,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found ']'");
   });
 
   test("invalid/table/equals-sign", () => {
@@ -7141,6 +7795,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '='");
   });
 
   test("invalid/table/llbrace", () => {
@@ -7152,6 +7807,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found '['");
   });
 
   test("invalid/table/multiline-key-01", () => {
@@ -7163,6 +7819,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '\"'");
   });
 
   test("invalid/table/multiline-key-02", () => {
@@ -7174,6 +7831,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '''");
   });
 
   test("invalid/table/nested-brackets-close", () => {
@@ -7185,6 +7843,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a table header",
+    );
   });
 
   test("invalid/table/nested-brackets-open", () => {
@@ -7196,6 +7857,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '['");
   });
 
   test("invalid/table/newline-01", () => {
@@ -7207,6 +7869,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+    );
   });
 
   test("invalid/table/newline-02", () => {
@@ -7218,6 +7883,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/table/newline-03", () => {
@@ -7229,6 +7897,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+    );
   });
 
   test("invalid/table/newline-04", () => {
@@ -7240,6 +7911,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x0A)");
   });
 
   test("invalid/table/newline-05", () => {
@@ -7251,6 +7923,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+    );
   });
 
   test("invalid/table/no-close-01", () => {
@@ -7262,6 +7937,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found 'w'");
   });
 
   test("invalid/table/no-close-02", () => {
@@ -7273,6 +7949,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']' to close a table header but found (0xC3)",
+    );
   });
 
   test("invalid/table/no-close-03", () => {
@@ -7284,6 +7963,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
   });
 
   test("invalid/table/no-close-04", () => {
@@ -7295,6 +7977,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found (0x0A)");
   });
 
   test("invalid/table/no-close-05", () => {
@@ -7306,6 +7989,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+    );
   });
 
   test("invalid/table/no-close-06", () => {
@@ -7317,6 +8003,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+    );
   });
 
   test("invalid/table/no-close-07", () => {
@@ -7328,6 +8017,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Unterminated string; literal strings cannot contain newlines",
+    );
   });
 
   test("invalid/table/no-close-08", () => {
@@ -7339,6 +8031,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '''");
   });
 
   test("invalid/table/no-close-09", () => {
@@ -7350,6 +8043,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '\"'");
   });
 
   test("invalid/table/overwrite-array-in-parent", () => {
@@ -7361,6 +8055,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'arr'");
   });
 
   test("invalid/table/overwrite-bool-with-array", () => {
@@ -7372,6 +8067,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a' as a table");
   });
 
   test("invalid/table/overwrite-with-deep-table", () => {
@@ -7383,6 +8079,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a' as a table");
   });
 
   test("invalid/table/redefine-01", () => {
@@ -7394,6 +8091,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'b' as a table");
   });
 
   test("invalid/table/redefine-02", () => {
@@ -7406,6 +8104,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 't2'");
   });
 
   test("invalid/table/redefine-03", () => {
@@ -7418,6 +8117,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 't3'");
   });
 
   test("invalid/table/rrbrace", () => {
@@ -7429,6 +8129,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ']]' to close an array-of-tables header but found (0x20)",
+    );
   });
 
   test("invalid/table/super-twice", () => {
@@ -7440,6 +8143,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine table 'a'");
   });
 
   test("invalid/table/text-after-table", () => {
@@ -7451,6 +8155,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected a newline or end of file after a table header",
+    );
   });
 
   test("invalid/table/trailing-dot", () => {
@@ -7462,6 +8169,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a key but found ']'");
   });
 
   test("invalid/table/whitespace", () => {
@@ -7473,6 +8181,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found 'k'");
   });
 
   test("invalid/table/with-pound", () => {
@@ -7484,5 +8193,6 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '#'");
   });
 });

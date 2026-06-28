@@ -28,6 +28,8 @@ pub(crate) mod directory_watch_store_body;
 pub(crate) mod error_report_request_body;
 #[path = "../DevServer/HmrSocket.rs"]
 pub(crate) mod hmr_socket_body;
+#[path = "../DevServer/js_escape.rs"]
+pub(crate) mod js_escape;
 // HotReloadEvent body draft dissolved into this file (see struct + impl below).
 #[path = "../DevServer/IncrementalGraph.rs"]
 pub(crate) mod incremental_graph_body;

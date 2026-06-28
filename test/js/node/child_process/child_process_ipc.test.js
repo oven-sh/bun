@@ -64,12 +64,16 @@ describe("send() returns false when the IPC write queue backs up", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
     // Exactly one send() must have returned false (the loop breaks on it).
     // The count of true returns before that depends on the kernel socket
-    // buffer size, so only the false count is fixed.
-    expect(stdout.trim()).toMatch(/^true=\d+ false=1$/);
-    expect(exitCode).toBe(0);
+    // buffer size, so only the false count is fixed. stderr is not asserted
+    // (debug/ASAN builds can emit benign noise) but is included so a fixture
+    // failure shows up in the same diff as the counts and exit code.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^true=\d+ false=1$/),
+      stderr,
+      exitCode: 0,
+    });
   });
 
   // Child-side process.send(): parent blocks its event loop so nothing
@@ -122,8 +126,11 @@ describe("send() returns false when the IPC write queue backs up", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toMatch(/^true=\d+ false=1$/);
-    expect(exitCode).toBe(0);
+    // See above: stderr is surfaced in the diff but not asserted empty.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^true=\d+ false=1$/),
+      stderr,
+      exitCode: 0,
+    });
   });
 });

@@ -185,8 +185,10 @@ void us_connecting_socket_free(struct us_connecting_socket_t *c) {
     /* Neutralize the address list: a connect_timer tick already queued in the
      * current ready-poll batch still dereferences `c` (valid until
      * us_internal_free_closed_sockets below) and must not start new connects
-     * on a connecting socket that is done. The timer itself is closed there
-     * too, after the batch, where no stale tick can be pending. */
+     * on a connecting socket that is done. A still-armed timer is closed there
+     * as well, after the batch, NOT here: closing it from inside another
+     * poll's dispatch would free a timer whose own tick may still be pending
+     * in the same kqueue batch. */
     c->addrinfo_head = NULL;
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration

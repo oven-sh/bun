@@ -135,6 +135,10 @@ test.skipIf(skip)(
       signal: null,
     });
     expect(out.ms).toBeLessThan(4000);
+    // Nothing can succeed before the first 300 ms attempt tick (the whole
+    // initial batch is blackholed), so this proves the success really came
+    // through the per-attempt timer rather than some other path.
+    expect(out.ms).toBeGreaterThanOrEqual(250);
   },
   // The failure mode under test is a deliberate 4 s connect stall in the
   // spawned fixture, which does not fit in the default 5 s test timeout.
@@ -142,45 +146,63 @@ test.skipIf(skip)(
 );
 
 test.skipIf(skip)(
-  "aborting while the per-attempt connect timer is armed with untried addresses tears down cleanly",
+  "an armed per-attempt timer is torn down on both the success and the abort path",
   async () => {
     const { out, stderr, exitCode, signal } = await runFixture(/* js */ `
-      // Only used to pick a port the blackholes can share; 127.0.0.100 is
-      // deliberately not in the resolved list, so every address is blackholed.
-      using server = Bun.serve({ port: 0, hostname: "127.0.0.100", fetch: () => new Response("x") });
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.100",
+        fetch: () => new Response("hello from 127.0.0.100"),
+      });
       const port = server.port;
       const dead = [2, 3, 4, 5, 6, 7, 8, 9].map(n => "127.0.0." + n);
       for (const ip of dead) blackhole(ip, port);
 
-      // 8 addresses and CONCURRENT_CONNECTIONS = 4 means the attempt timer is
-      // created up front and, at the 700 ms abort, still has untried addresses.
-      // This exercises us_connecting_socket_close with a live connect_timer,
-      // whose teardown (and the re-entrancy neutralization of addrinfo_head)
-      // is what this test guards: a use-after-free or a leaked timer turns
-      // into a nonzero exit code or a signal under the ASAN build.
-      const host = "he-abort-" + port + ".test";
-      seedOrFail(host, dead);
+      // (A) Live address FIRST, 5 addresses. The connect succeeds from the
+      // initial CONCURRENT_CONNECTIONS (4) batch, so the connecting socket is
+      // retired while the 300 ms attempt timer is still armed and has NEVER
+      // ticked (one address is left untried). The deferred us_timer_close in
+      // us_internal_free_closed_sockets is the only thing that reaps it; if it
+      // leaked, its next tick would dereference the freed connecting socket.
+      // This is the most common production shape for a >4-address hostname.
+      const hostA = "he-first-" + port + ".test";
+      seedOrFail(hostA, ["127.0.0.100", ...dead.slice(0, 4)]);
+      const resA = await fetch("http://" + hostA + ":" + port + "/", {
+        signal: AbortSignal.timeout(4000),
+      });
+      const a = { ok: true, body: await resA.text() };
 
-      const t0 = performance.now();
-      let result;
+      // (B) Every address blackholed; abort at 700 ms with the timer still
+      // armed and addresses untried. This exercises us_connecting_socket_close
+      // with a live timer, and it keeps the event loop alive well past (A)'s
+      // 300 ms timer deadline, so a timer leaked by (A) fires here and its
+      // use-after-free of the freed connecting socket aborts the process
+      // under the ASAN build.
+      const hostB = "he-abort-" + port + ".test";
+      seedOrFail(hostB, dead);
+      const tB = performance.now();
+      let b;
       try {
-        await fetch("http://" + host + ":" + port + "/", { signal: AbortSignal.timeout(700) });
-        result = { ok: true, ms: Math.round(performance.now() - t0) };
+        await fetch("http://" + hostB + ":" + port + "/", { signal: AbortSignal.timeout(700) });
+        b = { ok: true, ms: Math.round(performance.now() - tB) };
       } catch (e) {
-        result = { ok: false, ms: Math.round(performance.now() - t0), err: e?.name ?? String(e) };
+        b = { ok: false, ms: Math.round(performance.now() - tB), err: e?.name ?? String(e) };
       }
-      console.log(JSON.stringify(result));
+      console.log(JSON.stringify({ a, b }));
       for (const fd of fds) libc.symbols.close(fd);
       process.exit(0);
     `);
     expect({ out, stderr, exitCode, signal }).toEqual({
-      out: { ok: false, ms: expect.any(Number), err: "TimeoutError" },
+      out: {
+        a: { ok: true, body: "hello from 127.0.0.100" },
+        b: { ok: false, ms: expect.any(Number), err: "TimeoutError" },
+      },
       stderr: expect.any(String),
       exitCode: 0,
       signal: null,
     });
     // The abort must win well before any kernel connect timeout.
-    expect(out.ms).toBeLessThan(5000);
+    expect(out.b.ms).toBeLessThan(5000);
   },
   20_000,
 );

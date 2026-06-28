@@ -994,15 +994,21 @@ impl BufferOutputSink {
             // and kept alive by (*sink).response_value (Strong root).
             let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
             let sink_ptr_usize = sink as usize;
-            if matches!(sink_body_value, webcore::body::Value::Locked(l)
-                if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
+            // If a `.body` readable is already attached, the body must stay
+            // `Locked` so `to_error_instance` below delivers the error to its
+            // `ByteStream`; clearing to `Empty` here would strand any pending
+            // `reader.read()` forever.
+            let has_readable = match sink_body_value {
+                webcore::body::Value::Locked(l) => l.readable.has(),
+                _ => false,
+            };
+            if !has_readable
+                && matches!(sink_body_value, webcore::body::Value::Locked(l)
+                    if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
             {
-                if let webcore::body::Value::Locked(l) = sink_body_value {
-                    l.readable.deinit();
-                }
+                // No reader and no pending read: normalize to `Empty` so
+                // `to_error_instance` takes the simple (non-`Locked`) path.
                 *sink_body_value = webcore::body::Value::Empty;
-                // is there a pending promise?
-                // we will need to reject it
             } else if matches!(sink_body_value, webcore::body::Value::Locked(l)
                 if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_some())
             {

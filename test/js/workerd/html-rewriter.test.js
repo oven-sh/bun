@@ -209,6 +209,34 @@ describe("HTMLRewriter", () => {
       });
     });
 
+    it("a read already pending on .body when the upstream fails rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const transformed = rewriter().transform(res);
+        // Acquire the reader and start the read BEFORE the upstream fails.
+        // This is the one shape (readable attached, no pending promise) where
+        // the error handler must deliver the failure to the attached stream:
+        // discarding the readable here would leave this read pending forever.
+        const read = settle(transformed.body.getReader().read());
+        release();
+        expect(await read).toEqual(rejectedWithConnectionError);
+      });
+    });
+
+    it(".clone() of a failed transformed body is also failed", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const transformed = rewriter().transform(res);
+        const text = settle(transformed.text());
+        release();
+        // Barrier: the body is now in its error state.
+        expect(await text).toEqual(rejectedWithConnectionError);
+        // Cloning a failed body must produce a failed body, not an empty one
+        // that reads back as a complete (and empty) document.
+        expect(await settle(transformed.clone().text())).toEqual(rejectedWithConnectionError);
+      });
+    });
+
     it("does not invoke onDocument end for a document that never completed", async () => {
       // Sanity: end() fires exactly once on a complete document.
       {

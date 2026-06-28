@@ -1640,6 +1640,13 @@ impl Value {
             return Ok(Value::Null);
         }
 
+        // A failed body clones as failed, so the clone's readers reject via
+        // `handle_body_error` instead of falling through to `Empty` below and
+        // resolving as an empty "successful" body.
+        if let Value::Error(err) = self {
+            return Ok(Value::Error(err.dupe(global_this)));
+        }
+
         Ok(Value::Empty)
     }
 }

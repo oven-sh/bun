@@ -331,6 +331,65 @@ describe("TextDecoder ignoreBOM", () => {
   });
 });
 
+// https://encoding.spec.whatwg.org/#concept-td-serialize
+// The BOM is consumed only when it is the first code point of the stream,
+// even if its bytes arrive in separate `{ stream: true }` chunks.
+describe("TextDecoder BOM in streaming mode", () => {
+  function decodeChunks(decoder, chunks) {
+    let out = "";
+    for (const chunk of chunks) out += decoder.decode(new Uint8Array(chunk), { stream: true });
+    return out + decoder.decode();
+  }
+
+  it.each([
+    { encoding: "utf-8", chunks: [[0xef], [0xbb], [0xbf, 0x61]] },
+    { encoding: "utf-8", chunks: [[0xef, 0xbb], [0xbf, 0x61]] },
+    { encoding: "utf-8", chunks: [[0xef], [0xbb, 0xbf], [0x61]] },
+    { encoding: "utf-8", chunks: [[0xef, 0xbb, 0xbf], [0x61]] },
+    { encoding: "utf-16le", chunks: [[0xff], [0xfe, 0x61, 0x00]] },
+    { encoding: "utf-16le", chunks: [[0xff, 0xfe], [0x61, 0x00]] },
+    { encoding: "utf-16be", chunks: [[0xfe], [0xff, 0x00, 0x61]] },
+  ])("strips a BOM split across chunks: %o", ({ encoding, chunks }) => {
+    expect(decodeChunks(new TextDecoder(encoding), chunks)).toBe("a");
+  });
+
+  it.each([
+    { encoding: "utf-8", chunks: [[0xef], [0xbb], [0xbf, 0x61]] },
+    { encoding: "utf-16le", chunks: [[0xff], [0xfe, 0x61, 0x00]] },
+    { encoding: "utf-16be", chunks: [[0xfe], [0xff, 0x00, 0x61]] },
+  ])("keeps a split BOM with ignoreBOM: %o", ({ encoding, chunks }) => {
+    expect(decodeChunks(new TextDecoder(encoding, { ignoreBOM: true }), chunks)).toBe("\uFEFFa");
+  });
+
+  it("decodes a BOM-only stream to the empty string", () => {
+    expect(decodeChunks(new TextDecoder(), [[0xef, 0xbb], [0xbf]])).toBe("");
+    expect(decodeChunks(new TextDecoder("utf-16le"), [[0xff], [0xfe]])).toBe("");
+  });
+
+  it("keeps a BOM that is not at the start of the stream", () => {
+    expect(decodeChunks(new TextDecoder(), [[0x61], [0xef, 0xbb, 0xbf, 0x62]])).toBe("a\uFEFFb");
+    expect(decodeChunks(new TextDecoder("utf-16le"), [[0x61, 0x00], [0xff, 0xfe, 0x62, 0x00]])).toBe("a\uFEFFb");
+    expect(decodeChunks(new TextDecoder("utf-16be"), [[0x00, 0x61], [0xfe, 0xff, 0x00, 0x62]])).toBe("a\uFEFFb");
+  });
+
+  it("strips only the first of two consecutive BOMs", () => {
+    expect(decodeChunks(new TextDecoder(), [[0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf, 0x61]])).toBe("\uFEFFa");
+    expect(decodeChunks(new TextDecoder(), [[0xef, 0xbb], [0xbf, 0xef, 0xbb], [0xbf, 0x61]])).toBe("\uFEFFa");
+  });
+
+  it("strips the BOM of each stream when the decoder is reused", () => {
+    const decoder = new TextDecoder();
+    expect(decoder.decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x61]))).toBe("a");
+    expect(decoder.decode(new Uint8Array([0xef, 0xbb, 0xbf, 0x62]))).toBe("b");
+    expect(decodeChunks(decoder, [[0xef], [0xbb], [0xbf, 0x63]])).toBe("c");
+  });
+
+  it("flushes an incomplete BOM as a replacement character", () => {
+    expect(decodeChunks(new TextDecoder(), [[0xef], [0xbb]])).toBe("\uFFFD");
+    expect(decodeChunks(new TextDecoder("utf-16le"), [[0xff]])).toBe("\uFFFD");
+  });
+});
+
 it("truncated sequences", () => {
   const assert_equals = (a, b) => expect(a).toBe(b);
 

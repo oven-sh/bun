@@ -38,6 +38,11 @@ pub struct TextDecoder {
     pub lead_byte: Cell<Option<u8>>,
     pub lead_surrogate: Cell<Option<u16>>,
 
+    // The Encoding Standard's "BOM seen flag": true once the current stream has
+    // produced a code unit (or consumed a BOM). A BOM is stripped only while
+    // this is false, so one appearing later in the stream is kept.
+    bom_seen: Cell<bool>,
+
     // WebKit `PAL::TextCodec` for every other encoding. The codec owns the
     // streaming state (lead byte, ISO-2022-JP mode, GB18030 first/second/third),
     // so it must live across `{stream: true}` chunks. Created lazily on first
@@ -57,6 +62,7 @@ impl Default for TextDecoder {
             buffered: Cell::new(Buffered::default()),
             lead_byte: Cell::new(None),
             lead_surrogate: Cell::new(None),
+            bom_seen: Cell::new(false),
             codec: Cell::new(None),
             ignore_bom: false,
             fatal: false,
@@ -264,6 +270,21 @@ impl TextDecoder {
         global_this: &JSGlobalObject,
         buffer_slice: &[u8],
     ) -> JsResult<JSValue> {
+        let result = self.decode_slice_impl::<FLUSH>(global_this, buffer_slice);
+        // A flushing decode ends the stream; the next `decode()` starts a new
+        // one whose own leading BOM must be considered again. The rest of the
+        // per-stream state is reset by the decoding arms themselves.
+        if FLUSH {
+            self.bom_seen.set(false);
+        }
+        result
+    }
+
+    fn decode_slice_impl<const FLUSH: bool>(
+        &self,
+        global_this: &JSGlobalObject,
+        buffer_slice: &[u8],
+    ) -> JsResult<JSValue> {
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
@@ -290,33 +311,36 @@ impl TextDecoder {
                 })
             }
             EncodingLabel::Utf8 => {
-                let maybe_without_bom =
-                    if !self.ignore_bom && buffer_slice.starts_with(b"\xef\xbb\xbf") {
-                        &buffer_slice[3..]
-                    } else {
-                        buffer_slice
-                    };
-
-                let (input, deinit): (&[u8], bool);
+                let input: &[u8];
                 let joined_owned: Box<[u8]>;
                 let buffered = self.buffered.get();
                 if buffered.len > 0 {
                     let buffered_len = buffered.len as usize;
                     let mut joined =
-                        vec![0u8; maybe_without_bom.len() + buffered_len].into_boxed_slice();
+                        vec![0u8; buffer_slice.len() + buffered_len].into_boxed_slice();
                     joined[0..buffered_len].copy_from_slice(buffered.slice());
-                    joined[buffered_len..][0..maybe_without_bom.len()]
-                        .copy_from_slice(maybe_without_bom);
+                    joined[buffered_len..][0..buffer_slice.len()].copy_from_slice(buffer_slice);
                     self.buffered.set(Buffered::default());
                     joined_owned = joined;
                     input = &joined_owned;
-                    deinit = true;
                 } else {
                     joined_owned = Box::default();
                     let _ = &joined_owned;
-                    input = maybe_without_bom;
-                    deinit = false;
+                    input = buffer_slice;
                 }
+
+                // The BOM is stripped only at the start of the stream. Checking
+                // after the join catches one split across `{stream: true}`
+                // chunks, and `bom_seen` keeps one appearing later in the stream.
+                let input = if !self.ignore_bom
+                    && !self.bom_seen.get()
+                    && input.starts_with(b"\xef\xbb\xbf")
+                {
+                    self.bom_seen.set(true);
+                    &input[3..]
+                } else {
+                    input
+                };
 
                 // Dispatch the runtime `fatal` bool to a const-generic parameter.
                 let maybe_decode_result = if self.fatal {
@@ -328,7 +352,7 @@ impl TextDecoder {
                 let maybe_decode_result = match maybe_decode_result {
                     Ok(v) => v,
                     Err(err) => {
-                        // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
+                        // `joined_owned` drops at scope exit.
                         if self.fatal {
                             if matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
                                 return Err(global_this
@@ -346,7 +370,7 @@ impl TextDecoder {
                 };
 
                 if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
-                    // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
+                    // `joined_owned` drops at scope exit.
                     debug_assert!(self.buffered.get().len == 0);
                     if !FLUSH {
                         if leftover_len != 0 {
@@ -368,6 +392,7 @@ impl TextDecoder {
                         drop(decoded);
                         return Ok(ZigString::EMPTY.to_js(global_this));
                     }
+                    self.bom_seen.set(true);
                     // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
                     // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
@@ -375,7 +400,9 @@ impl TextDecoder {
                     return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
                 }
 
-                debug_assert!(input.is_empty() || !deinit);
+                if !input.is_empty() {
+                    self.bom_seen.set(true);
+                }
 
                 // Experiment: using mimalloc directly is slightly slower
                 Ok(ZigString::init(input).to_js(global_this))
@@ -384,21 +411,11 @@ impl TextDecoder {
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
                 // inline .@"UTF-16LE", .@"UTF-16BE" => |utf16_encoding| { ... }
                 let big_endian = matches!(enc, EncodingLabel::Utf16Be);
-                let bom: &[u8] = if !big_endian {
-                    b"\xff\xfe"
-                } else {
-                    b"\xfe\xff"
-                };
-                let input = if !self.ignore_bom && buffer_slice.starts_with(bom) {
-                    &buffer_slice[2..]
-                } else {
-                    buffer_slice
-                };
 
-                let (decoded, saw_error) = if big_endian {
-                    self.decode_utf16::<true, FLUSH>(input)?
+                let (mut decoded, saw_error) = if big_endian {
+                    self.decode_utf16::<true, FLUSH>(buffer_slice)?
                 } else {
-                    self.decode_utf16::<false, FLUSH>(input)?
+                    self.decode_utf16::<false, FLUSH>(buffer_slice)?
                 };
 
                 if saw_error && self.fatal {
@@ -414,6 +431,16 @@ impl TextDecoder {
                             ),
                         )
                         .throw());
+                }
+
+                // U+FEFF is the BOM only when it is the first code unit the
+                // stream produces. `decode_utf16` holds the pending byte across
+                // chunks, so a BOM split over `{stream: true}` calls lands here.
+                if !decoded.is_empty() {
+                    if !self.ignore_bom && !self.bom_seen.get() && decoded[0] == 0xFEFF {
+                        decoded.remove(0);
+                    }
+                    self.bom_seen.set(true);
                 }
 
                 if decoded.is_empty() {

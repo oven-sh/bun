@@ -9416,11 +9416,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
         stderr: "pipe",
         env,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ exitCode: 0 });
 
       expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
@@ -9498,10 +9494,7 @@ test("an unsaved bun link in a consumer survives bun install", async () => {
 
   await run([bunExe(), "link"], join(packageDir, "linked-src"));
 
-  await write(
-    packageJson,
-    JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } }),
-  );
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } }));
   await run([bunExe(), "install"], packageDir);
   await run([bunExe(), "link", "my-linked-pkg"], packageDir);
   expect(await exists(join(packageDir, "node_modules", "my-linked-pkg", "package.json"))).toBe(true);

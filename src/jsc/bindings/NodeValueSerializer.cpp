@@ -1744,9 +1744,10 @@ extern "C" size_t Bun__NodeIPC__serialize(JSC::JSGlobalObject* globalObject, JSC
     }
     Vector<uint8_t> buffer = serializer.release();
     size_t total = buffer.size();
-    // A payload >= 4 GiB cannot be represented in the 4-byte frame header;
-    // a truncated length would desynchronize every subsequent IPC frame.
-    if (total - 4 > UINT32_MAX) {
+    // A frame whose total size exceeds 4 GiB cannot be represented in the
+    // decoder's 4-byte frame bookkeeping and would be rejected by the peer;
+    // a truncated length header would desynchronize every subsequent frame.
+    if (total > UINT32_MAX) {
         throwException(globalObject, scope, createDOMException(globalObject, ExceptionCode::DataCloneError, "Serialized IPC message is larger than 4 GiB."_s));
         return SIZE_MAX;
     }

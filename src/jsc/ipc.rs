@@ -345,6 +345,16 @@ mod advanced {
 
         log!("Received advanced IPC message of len {}", message_len);
 
+        // Individual IPC frames must not exceed 4 GiB: the total consumed,
+        // `HEADER_LENGTH + message_len`, has to fit back in `bytes_consumed`
+        // (u32) for the caller's drain loop to advance correctly. Mirrors the
+        // json decoder's `idx == u32::MAX` guard and the serializer's refusal
+        // to emit a frame this large.
+        if message_len > u32::MAX - HEADER_LENGTH_U32 {
+            log!("Advanced IPC frame of len {} exceeds the 4 GiB limit", message_len);
+            return Err(IPCDecodeError::InvalidFormat);
+        }
+
         // Every V8-serialized payload starts with the 0xFF format-version
         // marker. A peer speaking a different protocol (such as an older bun
         // whose advanced mode used a private 5-byte framing) would otherwise

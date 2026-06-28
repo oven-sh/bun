@@ -176,6 +176,44 @@ describe("ipc mode advanced", () => {
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "DISCONNECTED", exitCode: 0 });
   });
 
+  rawInjection("a frame whose declared length exceeds 4 GiB closes the channel instead of hanging", async () => {
+    // [ff ff ff ff ff]: a length of 0xFFFFFFFF whose first payload byte is
+    // 0xFF, so the V8 format-marker check passes and only the 4 GiB frame
+    // limit can reject it. The injector stays alive, so a disconnect can only
+    // come from the decoder actively rejecting the frame, never from EOF.
+    using dir = tempDir("ipc-adv-hugeframe", {
+      "parent.cjs": /* js */ `
+        const { fork } = require("child_process");
+        const child = fork(require("path").join(__dirname, "inject.cjs"), [], {
+          execPath: process.execPath, execArgv: [], serialization: "advanced", stdio: "ignore",
+        });
+        child.on("message", m => console.error("UNEXPECTED_IPC_MESSAGE", JSON.stringify(m)));
+        child.on("exit", (code, signal) => {
+          console.log("FAIL injector exited before the decoder rejected the frame: " + code + ", " + signal);
+          process.exitCode = 1;
+        });
+        child.on("disconnect", () => {
+          child.removeAllListeners("exit");
+          console.log("DISCONNECTED");
+          child.kill();
+        });
+      `,
+      "inject.cjs": /* js */ `
+        require("fs").writeSync(3, Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff]));
+        setInterval(() => {}, 1000);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "parent.cjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "DISCONNECTED", exitCode: 0 });
+  });
+
   it("a deeply nested message is a catchable RangeError, not a stack overflow", async () => {
     // The serializer recurses once per nesting level of the message, so it
     // must bound recursion by the native stack and throw, exactly like Node.

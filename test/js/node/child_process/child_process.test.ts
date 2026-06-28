@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -57,6 +58,72 @@ describe("ChildProcess.spawn()", () => {
       proc.kill();
     });
     expect(result).toBe(true);
+  });
+
+  // `errors` collects every "error" the child emits, including ones emitted by
+  // kill() after the awaited lifecycle events, and is asserted empty.
+  it("kill() on a running process returns true and sets .killed", async () => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+    const errors: unknown[] = [];
+    child.on("error", err => errors.push(err));
+    await once(child, "spawn");
+    const closed = once(child, "close");
+    try {
+      expect(child.killed).toBe(false);
+      expect(child.kill(0)).toBe(true);
+      expect(child.kill()).toBe(true);
+      expect(child.killed).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+    }
+    await closed;
+    expect(errors).toEqual([]);
+  });
+
+  it("kill() after the process has exited returns false and does not set .killed", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { stdio: "ignore", env: bunEnv });
+    const errors: unknown[] = [];
+    child.on("error", err => errors.push(err));
+    await once(child, "close");
+
+    expect({
+      exitCode: child.exitCode,
+      "kill()": child.kill(),
+      "kill(0)": child.kill(0),
+      "kill('SIGTERM')": child.kill("SIGTERM"),
+      killed: child.killed,
+      errors,
+    }).toEqual({
+      exitCode: 0,
+      "kill()": false,
+      "kill(0)": false,
+      "kill('SIGTERM')": false,
+      killed: false,
+      errors: [],
+    });
+  });
+
+  it("kill() after the process was killed returns false but .killed stays true", async () => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+    const errors: unknown[] = [];
+    child.on("error", err => errors.push(err));
+    await once(child, "spawn");
+    const closed = once(child, "close");
+    expect(child.kill()).toBe(true);
+    expect(child.killed).toBe(true);
+    await closed;
+
+    expect({
+      "kill()": child.kill(),
+      "kill(0)": child.kill(0),
+      killed: child.killed,
+      errors,
+    }).toEqual({
+      "kill()": false,
+      "kill(0)": false,
+      killed: true,
+      errors: [],
+    });
   });
 });
 

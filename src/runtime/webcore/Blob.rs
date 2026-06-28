@@ -1466,28 +1466,26 @@ impl BlobExt for Blob {
             // credentials to the upload (`upload_stream` consumes an
             // `IntrusiveRc` by value, so the else-arm heap-dupes from the
             // store's `Arc` instead of from the `aws_options` clone).
-            return crate::webcore::__s3_client::upload_stream(
-                if extra_options.is_some() {
-                    aws_options.credentials.dupe()
-                } else {
-                    s3.get_credentials().dupe()
-                },
-                path,
-                readable_stream,
-                global_this,
-                aws_options.options,
-                aws_options.acl,
-                aws_options.storage_class,
-                self.content_type_or_mime_type(),
-                // SAFETY: option-wrapped raw `*const [u8]` borrowed back; the
-                // backing storage is owned by `aws_options` which outlives this call.
-                aws_options.content_disposition.as_deref(),
-                aws_options.content_encoding.as_deref(),
-                proxy_url,
-                aws_options.request_payer,
-                None,
-                core::ptr::null_mut(),
-            );
+            return crate::webcore::__s3_client::upload_stream(if extra_options.is_some() {
+                aws_options.credentials.dupe()
+            } else {
+                s3.get_credentials().dupe()
+            })
+            .path(path)
+            .readable_stream(readable_stream)
+            .global_this(global_this)
+            .options(aws_options.options)
+            .maybe_acl(aws_options.acl)
+            .maybe_storage_class(aws_options.storage_class)
+            .maybe_content_type(self.content_type_or_mime_type())
+            // SAFETY: option-wrapped raw `*const [u8]` borrowed back; the
+            // backing storage is owned by `aws_options` which outlives this call.
+            .maybe_content_disposition(aws_options.content_disposition.as_deref())
+            .maybe_content_encoding(aws_options.content_encoding.as_deref())
+            .maybe_proxy(proxy_url)
+            .request_payer(aws_options.request_payer)
+            .callback_context(core::ptr::null_mut())
+            .call();
         }
 
         if !matches!(store.data, store::Data::File(_)) {
@@ -1832,30 +1830,27 @@ impl BlobExt for Blob {
                 // MultiPartUpload derefs on done.
                 return crate::webcore::s3::client::writable_stream(
                     credentials_with_options.credentials.dupe(),
-                    path,
-                    global_this,
-                    credentials_with_options.options,
-                    self.content_type_or_mime_type(),
-                    content_disposition_str.as_ref().map(|s| s.slice()),
-                    content_encoding_str.as_ref().map(|s| s.slice()),
-                    proxy,
-                    credentials_with_options.storage_class,
-                    credentials_with_options.request_payer,
-                );
+                )
+                .path(path)
+                .global_this(global_this)
+                .options(credentials_with_options.options)
+                .maybe_content_type(self.content_type_or_mime_type())
+                .maybe_content_disposition(content_disposition_str.as_ref().map(|s| s.slice()))
+                .maybe_content_encoding(content_encoding_str.as_ref().map(|s| s.slice()))
+                .maybe_proxy(proxy)
+                .maybe_storage_class(credentials_with_options.storage_class)
+                .request_payer(credentials_with_options.request_payer)
+                .call();
             }
 
-            return crate::webcore::s3::client::writable_stream(
-                s3.get_credentials().dupe(),
-                path,
-                global_this,
-                Default::default(),
-                self.content_type_or_mime_type(),
-                None,
-                None,
-                proxy,
-                None,
-                s3.request_payer,
-            );
+            return crate::webcore::s3::client::writable_stream(s3.get_credentials().dupe())
+                .path(path)
+                .global_this(global_this)
+                .options(Default::default())
+                .maybe_content_type(self.content_type_or_mime_type())
+                .maybe_proxy(proxy)
+                .request_payer(s3.request_payer)
+                .call();
         }
 
         #[cfg(windows)]
@@ -4676,27 +4671,28 @@ fn write_file_with_empty_source_to_destination(
             let promise_value = promise.value();
             let proxy_owned = http_proxy_href(ctx);
             let proxy_url = proxy_owned.as_deref();
-            s3_client::upload(
-                &aws_options.credentials,
-                s3.path(),
-                b"",
-                destination_blob.content_type_or_mime_type(),
+            s3_client::upload(&aws_options.credentials)
+                .path(s3.path())
+                .content(b"")
+                .maybe_content_type(destination_blob.content_type_or_mime_type())
                 // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                 // on `aws_options`, which outlives this call.
-                aws_options.content_disposition.as_deref(),
-                aws_options.content_encoding.as_deref(),
-                aws_options.acl,
-                proxy_url,
-                aws_options.storage_class,
-                aws_options.request_payer,
-                Wrapper::resolve,
-                bun_core::heap::into_raw(Box::new(Wrapper {
-                    promise,
-                    store: destination_store.clone(),
-                    global: bun_ptr::BackRef::new(ctx),
-                }))
-                .cast::<c_void>(),
-            )?;
+                .maybe_content_disposition(aws_options.content_disposition.as_deref())
+                .maybe_content_encoding(aws_options.content_encoding.as_deref())
+                .maybe_acl(aws_options.acl)
+                .maybe_proxy_url(proxy_url)
+                .maybe_storage_class(aws_options.storage_class)
+                .request_payer(aws_options.request_payer)
+                .callback(Wrapper::resolve)
+                .callback_context(
+                    bun_core::heap::into_raw(Box::new(Wrapper {
+                        promise,
+                        store: destination_store.clone(),
+                        global: bun_ptr::BackRef::new(ctx),
+                    }))
+                    .cast::<c_void>(),
+                )
+                .call()?;
             return Ok(promise_value);
         }
         // Writing to a buffer-backed blob should be a type error,
@@ -4891,28 +4887,26 @@ pub fn write_file_with_source_destination(
                         )?,
                         ctx,
                     )? {
-                        return s3_client::upload_stream(
-                            if options.extra_options.is_some() {
-                                aws_options.credentials.dupe()
-                            } else {
-                                s3.get_credentials().dupe()
-                            },
-                            s3.path(),
-                            stream,
-                            ctx,
-                            aws_options.options,
-                            aws_options.acl,
-                            aws_options.storage_class,
-                            destination_blob.content_type_or_mime_type(),
-                            // SAFETY: `*const [u8]` borrows from sibling `_*_slice`
-                            // fields on `aws_options`, which outlives this call.
-                            aws_options.content_disposition.as_deref(),
-                            aws_options.content_encoding.as_deref(),
-                            proxy_url,
-                            aws_options.request_payer,
-                            None,
-                            core::ptr::null_mut(),
-                        );
+                        return s3_client::upload_stream(if options.extra_options.is_some() {
+                            aws_options.credentials.dupe()
+                        } else {
+                            s3.get_credentials().dupe()
+                        })
+                        .path(s3.path())
+                        .readable_stream(stream)
+                        .global_this(ctx)
+                        .options(aws_options.options)
+                        .maybe_acl(aws_options.acl)
+                        .maybe_storage_class(aws_options.storage_class)
+                        .maybe_content_type(destination_blob.content_type_or_mime_type())
+                        // SAFETY: `*const [u8]` borrows from sibling `_*_slice`
+                        // fields on `aws_options`, which outlives this call.
+                        .maybe_content_disposition(aws_options.content_disposition.as_deref())
+                        .maybe_content_encoding(aws_options.content_encoding.as_deref())
+                        .maybe_proxy(proxy_url)
+                        .request_payer(aws_options.request_payer)
+                        .callback_context(core::ptr::null_mut())
+                        .call();
                     } else {
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             ctx,
@@ -4957,27 +4951,28 @@ pub fn write_file_with_source_destination(
                     }
                     let promise = jsc::JSPromiseStrong::init(ctx);
                     let promise_value = promise.value();
-                    s3_client::upload(
-                        &aws_options.credentials,
-                        s3.path(),
-                        bytes.slice(),
-                        destination_blob.content_type_or_mime_type(),
+                    s3_client::upload(&aws_options.credentials)
+                        .path(s3.path())
+                        .content(bytes.slice())
+                        .maybe_content_type(destination_blob.content_type_or_mime_type())
                         // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                         // on `aws_options`, which outlives this call.
-                        aws_options.content_disposition.as_deref(),
-                        aws_options.content_encoding.as_deref(),
-                        aws_options.acl,
-                        proxy_url,
-                        aws_options.storage_class,
-                        aws_options.request_payer,
-                        Wrapper::resolve,
-                        bun_core::heap::into_raw(Box::new(Wrapper {
-                            store: source_store.clone(),
-                            promise,
-                            global: bun_ptr::BackRef::new(ctx),
-                        }))
-                        .cast::<c_void>(),
-                    )?;
+                        .maybe_content_disposition(aws_options.content_disposition.as_deref())
+                        .maybe_content_encoding(aws_options.content_encoding.as_deref())
+                        .maybe_acl(aws_options.acl)
+                        .maybe_proxy_url(proxy_url)
+                        .maybe_storage_class(aws_options.storage_class)
+                        .request_payer(aws_options.request_payer)
+                        .callback(Wrapper::resolve)
+                        .callback_context(
+                            bun_core::heap::into_raw(Box::new(Wrapper {
+                                store: source_store.clone(),
+                                promise,
+                                global: bun_ptr::BackRef::new(ctx),
+                            }))
+                            .cast::<c_void>(),
+                        )
+                        .call()?;
                     return Ok(promise_value);
                 }
             }
@@ -4991,28 +4986,26 @@ pub fn write_file_with_source_destination(
                     )?,
                     ctx,
                 )? {
-                    return s3_client::upload_stream(
-                        if options.extra_options.is_some() {
-                            aws_options.credentials.dupe()
-                        } else {
-                            s3.get_credentials().dupe()
-                        },
-                        s3.path(),
-                        stream,
-                        ctx,
-                        s3.options,
-                        aws_options.acl,
-                        aws_options.storage_class,
-                        destination_blob.content_type_or_mime_type(),
-                        // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
-                        // on `aws_options`, which outlives this call.
-                        aws_options.content_disposition.as_deref(),
-                        aws_options.content_encoding.as_deref(),
-                        proxy_url,
-                        aws_options.request_payer,
-                        None,
-                        core::ptr::null_mut(),
-                    );
+                    return s3_client::upload_stream(if options.extra_options.is_some() {
+                        aws_options.credentials.dupe()
+                    } else {
+                        s3.get_credentials().dupe()
+                    })
+                    .path(s3.path())
+                    .readable_stream(stream)
+                    .global_this(ctx)
+                    .options(s3.options)
+                    .maybe_acl(aws_options.acl)
+                    .maybe_storage_class(aws_options.storage_class)
+                    .maybe_content_type(destination_blob.content_type_or_mime_type())
+                    // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
+                    // on `aws_options`, which outlives this call.
+                    .maybe_content_disposition(aws_options.content_disposition.as_deref())
+                    .maybe_content_encoding(aws_options.content_encoding.as_deref())
+                    .maybe_proxy(proxy_url)
+                    .request_payer(aws_options.request_payer)
+                    .callback_context(core::ptr::null_mut())
+                    .call();
                 } else {
                     return Ok(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5189,112 +5182,115 @@ pub fn write_file_internal(
         // `Response` and `Request` both expose `get_body_value()` /
         // `get_body_readable_stream()`; one helper takes the
         // body-value pointer and a `get_stream` closure.
-        let mut body_dispatch =
-            |body_value: *mut webcore::body::Value,
-             get_stream: &mut dyn FnMut(&JSGlobalObject) -> Option<ReadableStream>|
-             -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
-                use core::ops::ControlFlow;
-                use webcore::body::Value as BodyValue;
-                // SAFETY: `body_value` is `&mut Body::Value` from a live JS heap
-                // Response/Request `m_ctx`; raw to allow re-borrow after `use_()`.
-                let body_value_ref = unsafe { &mut *body_value };
-                match body_value_ref {
-                    BodyValue::WTFStringImpl(_)
-                    | BodyValue::InternalBlob(_)
-                    | BodyValue::Used
-                    | BodyValue::Empty
-                    | BodyValue::Blob(_)
-                    | BodyValue::Null => Ok(ControlFlow::Continue(body_value_ref.use_())),
-                    BodyValue::Error(err_ref) => {
-                        let err_js = err_ref.to_js(global_this);
-                        destination_blob.detach();
-                        // SAFETY: `body_value` points into a live JS-heap Body; re-borrowed
-                        // after `err_ref` is consumed so no `&mut` alias remains active.
-                        let _ = unsafe { &mut *body_value }.use_();
-                        Ok(ControlFlow::Break(
+        let mut body_dispatch = |body_value: *mut webcore::body::Value,
+                                 get_stream: &mut dyn FnMut(
+            &JSGlobalObject,
+        ) -> Option<ReadableStream>|
+         -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
+            use core::ops::ControlFlow;
+            use webcore::body::Value as BodyValue;
+            // SAFETY: `body_value` is `&mut Body::Value` from a live JS heap
+            // Response/Request `m_ctx`; raw to allow re-borrow after `use_()`.
+            let body_value_ref = unsafe { &mut *body_value };
+            match body_value_ref {
+                BodyValue::WTFStringImpl(_)
+                | BodyValue::InternalBlob(_)
+                | BodyValue::Used
+                | BodyValue::Empty
+                | BodyValue::Blob(_)
+                | BodyValue::Null => Ok(ControlFlow::Continue(body_value_ref.use_())),
+                BodyValue::Error(err_ref) => {
+                    let err_js = err_ref.to_js(global_this);
+                    destination_blob.detach();
+                    // SAFETY: `body_value` points into a live JS-heap Body; re-borrowed
+                    // after `err_ref` is consumed so no `&mut` alias remains active.
+                    let _ = unsafe { &mut *body_value }.use_();
+                    Ok(ControlFlow::Break(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this, err_js,
+                            global_this,
+                            err_js,
                         ),
                     ))
-                    }
-                    BodyValue::Locked(_) => {
-                        if destination_blob.is_s3() {
-                            let dest_store = destination_blob
-                                .store()
-                                .expect("infallible: store present")
-                                .clone();
-                            let s3 = dest_store.data.as_s3();
-                            let aws_options = s3
-                                .get_credentials_with_options(options.extra_options, global_this)?;
-                            let _ = body_value_ref.to_readable_stream(global_this)?;
-                            let readable_opt = get_stream(global_this).or_else(|| {
-                                // SAFETY: re-borrow after `to_readable_stream`.
-                                let BodyValue::Locked(locked) = (unsafe { &mut *body_value })
-                                else {
-                                    return None;
-                                };
-                                locked.readable.get(global_this)
-                            });
-                            if let Some(readable) = readable_opt {
-                                if readable.is_disturbed(global_this) {
-                                    destination_blob.detach();
-                                    return Err(global_this.throw_invalid_arguments(format_args!(
-                                        "ReadableStream has already been used"
-                                    )));
-                                }
-                                let proxy_owned = http_proxy_href(global_this);
-                                let proxy_url = proxy_owned.as_deref();
-                                return Ok(ControlFlow::Break(s3_client::upload_stream(
-                                    if options.extra_options.is_some() {
-                                        aws_options.credentials.dupe()
-                                    } else {
-                                        s3.get_credentials().dupe()
-                                    },
-                                    s3.path(),
-                                    readable,
-                                    global_this,
-                                    aws_options.options,
-                                    aws_options.acl,
-                                    aws_options.storage_class,
-                                    destination_blob.content_type_or_mime_type(),
-                                    // SAFETY: `*const [u8]` borrows from sibling
-                                    // `_*_slice` fields on `aws_options`, which
-                                    // outlives this call.
-                                    aws_options.content_disposition.as_deref(),
-                                    aws_options.content_encoding.as_deref(),
-                                    proxy_url,
-                                    aws_options.request_payer,
-                                    None,
-                                    core::ptr::null_mut(),
-                                )?));
-                            }
-                            destination_blob.detach();
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "ReadableStream has already been used"
-                            )));
-                        }
-                        let task =
-                            bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
-                                global_this: bun_ptr::BackRef::new(global_this),
-                                // Move `destination_blob` by value into the task.
-                                file_blob: core::mem::replace(
-                                    &mut destination_blob,
-                                    Blob::init_empty(global_this),
-                                ),
-                                promise: jsc::JSPromiseStrong::init(global_this),
-                                mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
-                            }));
-                        // SAFETY: re-borrow after the early-return paths.
-                        let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
-                            unreachable!()
-                        };
-                        locked.task = Some(task.cast::<c_void>());
-                        locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
-                        // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
-                        Ok(ControlFlow::Break(unsafe { (*task).promise.value() }))
-                    }
                 }
-            };
+                BodyValue::Locked(_) => {
+                    if destination_blob.is_s3() {
+                        let dest_store = destination_blob
+                            .store()
+                            .expect("infallible: store present")
+                            .clone();
+                        let s3 = dest_store.data.as_s3();
+                        let aws_options =
+                            s3.get_credentials_with_options(options.extra_options, global_this)?;
+                        let _ = body_value_ref.to_readable_stream(global_this)?;
+                        let readable_opt = get_stream(global_this).or_else(|| {
+                            // SAFETY: re-borrow after `to_readable_stream`.
+                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                                return None;
+                            };
+                            locked.readable.get(global_this)
+                        });
+                        if let Some(readable) = readable_opt {
+                            if readable.is_disturbed(global_this) {
+                                destination_blob.detach();
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "ReadableStream has already been used"
+                                )));
+                            }
+                            let proxy_owned = http_proxy_href(global_this);
+                            let proxy_url = proxy_owned.as_deref();
+                            return Ok(ControlFlow::Break(
+                                s3_client::upload_stream(if options.extra_options.is_some() {
+                                    aws_options.credentials.dupe()
+                                } else {
+                                    s3.get_credentials().dupe()
+                                })
+                                .path(s3.path())
+                                .readable_stream(readable)
+                                .global_this(global_this)
+                                .options(aws_options.options)
+                                .maybe_acl(aws_options.acl)
+                                .maybe_storage_class(aws_options.storage_class)
+                                .maybe_content_type(destination_blob.content_type_or_mime_type())
+                                // SAFETY: `*const [u8]` borrows from sibling
+                                // `_*_slice` fields on `aws_options`, which
+                                // outlives this call.
+                                .maybe_content_disposition(
+                                    aws_options.content_disposition.as_deref(),
+                                )
+                                .maybe_content_encoding(aws_options.content_encoding.as_deref())
+                                .maybe_proxy(proxy_url)
+                                .request_payer(aws_options.request_payer)
+                                .callback_context(core::ptr::null_mut())
+                                .call()?,
+                            ));
+                        }
+                        destination_blob.detach();
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "ReadableStream has already been used"
+                        )));
+                    }
+                    let task =
+                        bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
+                            global_this: bun_ptr::BackRef::new(global_this),
+                            // Move `destination_blob` by value into the task.
+                            file_blob: core::mem::replace(
+                                &mut destination_blob,
+                                Blob::init_empty(global_this),
+                            ),
+                            promise: jsc::JSPromiseStrong::init(global_this),
+                            mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
+                        }));
+                    // SAFETY: re-borrow after the early-return paths.
+                    let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                        unreachable!()
+                    };
+                    locked.task = Some(task.cast::<c_void>());
+                    locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
+                    // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
+                    Ok(ControlFlow::Break(unsafe { (*task).promise.value() }))
+                }
+            }
+        };
 
         // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both

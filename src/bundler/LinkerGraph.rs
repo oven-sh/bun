@@ -586,13 +586,13 @@ impl<'a> LinkerGraph<'a> {
         );
 
         let ref_ = self.runtime_function(name);
-        self.generate_symbol_import_and_use(
-            source_index,
-            entry_point_part_index.get(),
-            ref_,
-            count,
-            Index::RUNTIME,
-        )
+        self.generate_symbol_import_and_use()
+            .source_index(source_index)
+            .part_index(entry_point_part_index.get())
+            .ref_(ref_)
+            .use_count(count)
+            .source_index_to_import_from(Index::RUNTIME)
+            .call()
     }
 
     pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
@@ -605,7 +605,14 @@ impl<'a> LinkerGraph<'a> {
             part,
         )
     }
+}
 
+// Separate impl block so `#[bon::bon]` only re-emits this one method.
+#[bon::bon]
+impl<'a> LinkerGraph<'a> {
+    /// Named setters: `source_index`, `part_index`, and `use_count` are all
+    /// `u32`; positional arguments could transpose any pair of them.
+    #[builder]
     pub fn generate_symbol_import_and_use(
         &mut self,
         source_index: u32,
@@ -631,7 +638,9 @@ impl<'a> LinkerGraph<'a> {
             source_index_to_import_from,
         )
     }
+}
 
+impl<'a> LinkerGraph<'a> {
     pub fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
         top_level_symbol_to_parts(
             self.meta.items_top_level_symbol_to_parts_overlay(),

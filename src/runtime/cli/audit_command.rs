@@ -476,17 +476,16 @@ fn send_audit_request(
     let mut response_buf = MutableString::init(1024)?;
     // `init_sync` erases lifetimes internally (port-erased raw pointers); all
     // borrowed inputs live on this stack frame past `send_sync()`.
-    let mut req = http::AsyncHTTP::init_sync(
-        http::Method::POST,
-        url,
-        headers.entries,
-        headers_buf,
-        &raw mut response_buf,
-        &final_compressed_body,
-        http_proxy,
-        None,
-        http::FetchRedirect::Follow,
-    );
+    let mut req = http::AsyncHTTP::init_sync()
+        .method(http::Method::POST)
+        .url(url)
+        .headers(headers.entries)
+        .headers_buf(headers_buf)
+        .response_buffer(&raw mut response_buf)
+        .request_body(&final_compressed_body)
+        .maybe_http_proxy(http_proxy)
+        .redirect_type(http::FetchRedirect::Follow)
+        .call();
     let res = match req.send_sync() {
         Ok(r) => r,
         Err(err) => {

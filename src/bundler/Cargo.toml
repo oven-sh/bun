@@ -10,6 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bon.workspace = true
 bytemuck = "1"
 bun_opaque.workspace = true
 bun_dispatch.workspace = true

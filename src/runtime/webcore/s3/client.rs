@@ -295,22 +295,23 @@ pub(crate) fn list_objects(
 
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
 
-    let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
-        // Written below via `MaybeUninit::write` before any read.
-        http: core::mem::MaybeUninit::uninit(),
-        range: None,
-        sign_result: result,
-        callback_context,
-        callback: s3_simple_request::Callback::ListObjects(callback),
-        headers,
-        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
-        response_buffer: MutableString::default(),
-        result: bun_http::HTTPClientResult::default(),
-        concurrent_task: Default::default(),
-        proxy_url: Box::default(),
-        body: Box::default(),
-        poll_ref: bun_io::KeepAlive::init(),
-    }));
+    let task_ptr = bun_core::heap::into_raw(Box::new(
+        S3HttpSimpleTask::builder()
+            // Written below via `MaybeUninit::write` before any read.
+            .http(core::mem::MaybeUninit::uninit())
+            .sign_result(result)
+            .callback_context(callback_context)
+            .callback(s3_simple_request::Callback::ListObjects(callback))
+            .headers(headers)
+            .vm(bun_ptr::BackRef::new(VirtualMachine::get()))
+            .response_buffer(MutableString::default())
+            .result(bun_http::HTTPClientResult::default())
+            .concurrent_task(Default::default())
+            .proxy_url(Box::default())
+            .body(Box::default())
+            .poll_ref(bun_io::KeepAlive::init())
+            .build(),
+    ));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
 
@@ -341,34 +342,36 @@ pub(crate) fn list_objects(
     } else {
         None
     };
-    let mut vm_ref = task.vm.expect("vm set at task creation");
+    let mut vm_ref = task.vm;
     // SAFETY: `task.vm` is the live per-thread VM BackRef from
     // `VirtualMachine::get()`; `get_mut` exclusivity holds — single-threaded
     // dispatch on the JS thread, no other `&`/`&mut VirtualMachine` is live for
     // this call's duration.
     let vm = unsafe { vm_ref.get_mut() };
 
-    task.http.write(bun_http::AsyncHTTP::init(
-        bun_http::Method::GET,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        &raw mut task.response_buffer,
-        b"",
-        bun_http::HTTPClientResultCallback::new::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpSimpleTask::http_callback,
-        ),
-        bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
-            ..Default::default()
-        },
-    ));
+    task.http.write(
+        bun_http::AsyncHTTP::init()
+            .method(bun_http::Method::GET)
+            .url(url)
+            .headers(task.headers.entries.clone().expect("OOM"))
+            .headers_buf(headers_buf)
+            .response_buffer(&raw mut task.response_buffer)
+            .request_body(b"")
+            .callback(bun_http::HTTPClientResultCallback::new::<S3HttpSimpleTask>(
+                task_ptr,
+                // SAFETY: `task_ptr` is the heap-allocated task registered above; the
+                // HTTP thread invokes this with that exact pointer.
+                S3HttpSimpleTask::http_callback,
+            ))
+            .redirect_type(bun_http::FetchRedirect::Follow)
+            .options(bun_http::async_http::Options {
+                http_proxy,
+                verbose: Some(vm.get_verbose_fetch()),
+                reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+                ..Default::default()
+            })
+            .call(),
+    );
 
     // queue http request
     bun_http::http_thread::init(&Default::default());
@@ -379,8 +382,11 @@ pub(crate) fn list_objects(
     Ok(())
 }
 
+/// Named setters: `path`/`content` are both `&[u8]` and four of the options
+/// are `Option<&[u8]>`, so positional arguments could transpose them.
+#[bon::builder]
 pub fn upload(
-    this: &S3Credentials,
+    #[builder(start_fn)] this: &S3Credentials,
     path: &[u8],
     content: &[u8],
     content_type: Option<&[u8]>,
@@ -417,8 +423,11 @@ pub fn upload(
 ///
 /// Takes ownership of one `credentials` ref (adopted directly into the
 /// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`.
+/// Named setters: four of the parameters are `Option<&[u8]>`, so positional
+/// arguments could transpose any pair of them.
+#[bon::builder]
 pub(crate) fn writable_stream(
-    credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    #[builder(start_fn)] credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
     global_this: &JSGlobalObject,
     options: MultiPartUploadOptions,
@@ -737,8 +746,12 @@ impl Drop for S3UploadStreamWrapper {
 /// Takes ownership of one `credentials` ref (adopted directly into the
 /// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`. On every
 /// early-return path the ref is explicitly released.
+/// Named setters: `content_type`/`content_disposition`/`content_encoding`/
+/// `proxy` are four consecutive `Option<&[u8]>` parameters that positional
+/// arguments could transpose.
+#[bon::builder]
 pub fn upload_stream(
-    credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    #[builder(start_fn)] credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
     readable_stream: ReadableStream,
     global_this: &JSGlobalObject,
@@ -1004,35 +1017,37 @@ pub(crate) fn download_stream(
         Box::<[u8]>::default()
     };
     let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
-        S3HttpDownloadStreamingTask {
+        S3HttpDownloadStreamingTask::builder()
             // `http: undefined` — fully overwritten by `task.http.write(AsyncHTTP::init(...))` below.
-            http: core::mem::MaybeUninit::uninit(),
-            sign_result: result,
-            proxy_url: owned_proxy,
-            callback_context: NonNull::new(callback_context.cast::<()>())
-                .expect("callers always pass a non-null Box-allocated context"),
-            callback,
-            range: range.map(Vec::into_boxed_slice),
-            headers,
+            .http(core::mem::MaybeUninit::uninit())
+            .sign_result(result)
+            .proxy_url(owned_proxy)
+            .callback_context(
+                NonNull::new(callback_context.cast::<()>())
+                    .expect("callers always pass a non-null Box-allocated context"),
+            )
+            .callback(callback)
+            .maybe_range(range.map(Vec::into_boxed_slice))
+            .headers(headers)
             // `VirtualMachine::get()` returns the live per-thread VM singleton.
-            vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
-            has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
-            signal_store: Default::default(),
-            signals: Default::default(),
-            poll_ref: bun_io::KeepAlive::init(),
-            response_buffer: MutableString::default(),
-            mutex: Default::default(),
-            reported_response_buffer: MutableString::default(),
+            .vm(bun_ptr::BackRef::new(VirtualMachine::get()))
+            .has_schedule_callback(core::sync::atomic::AtomicBool::new(false))
+            .signal_store(Default::default())
+            .signals(Default::default())
+            .poll_ref(bun_io::KeepAlive::init())
+            .response_buffer(MutableString::default())
+            .mutex(Default::default())
+            .reported_response_buffer(MutableString::default())
             // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with
             // `has_more == false`, tripping the `assert(state.has_more)` in
             // `process_http_callback` on the very first HTTP-thread callback.
-            state: core::sync::atomic::AtomicU64::new(
+            .state(core::sync::atomic::AtomicU64::new(
                 crate::webcore::s3::download_stream::State::default().0,
-            ),
-            concurrent_task: Default::default(),
-            async_http_id: 0,
-        },
+            ))
+            .concurrent_task(Default::default())
+            .async_http_id(0)
+            .build(),
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
     // (freed via heap::take in S3HttpDownloadStreamingTask::http_callback).
@@ -1064,28 +1079,32 @@ pub(crate) fn download_stream(
     let verbose = vm_mut.get_verbose_fetch();
     let reject_unauthorized = vm_mut.get_tls_reject_unauthorized();
 
-    task.http.write(bun_http::AsyncHTTP::init(
-        bun_http::Method::GET,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        &raw mut task.response_buffer,
-        b"",
-        bun_http::HTTPClientResultCallback::new::<S3HttpDownloadStreamingTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpDownloadStreamingTask::http_callback,
-        ),
-        bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(verbose),
-            signals: Some(task.signals),
-            reject_unauthorized: Some(reject_unauthorized),
-            ..Default::default()
-        },
-    ));
+    task.http.write(
+        bun_http::AsyncHTTP::init()
+            .method(bun_http::Method::GET)
+            .url(url)
+            .headers(task.headers.entries.clone().expect("OOM"))
+            .headers_buf(headers_buf)
+            .response_buffer(&raw mut task.response_buffer)
+            .request_body(b"")
+            .callback(bun_http::HTTPClientResultCallback::new::<
+                S3HttpDownloadStreamingTask,
+            >(
+                task_ptr,
+                // SAFETY: `task_ptr` is the heap-allocated task registered above; the
+                // HTTP thread invokes this with that exact pointer.
+                S3HttpDownloadStreamingTask::http_callback,
+            ))
+            .redirect_type(bun_http::FetchRedirect::Follow)
+            .options(bun_http::async_http::Options {
+                http_proxy,
+                verbose: Some(verbose),
+                signals: Some(task.signals),
+                reject_unauthorized: Some(reject_unauthorized),
+                ..Default::default()
+            })
+            .call(),
+    );
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     let http = unsafe { task.http.assume_init_mut() };
     task.async_http_id = http.async_http_id;

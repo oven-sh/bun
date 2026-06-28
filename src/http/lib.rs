@@ -2637,19 +2637,19 @@ impl<'a> HTTPClient<'a> {
             // server is still parsing as the previous chunked body.
             bun_core::scoped_log!(fetch, "Keep-Alive release in redirect");
             debug_assert!(!self.connected_url.hostname.is_empty());
-            Self::ssl_ctx_mut(ctx).release_socket(
-                socket,
-                self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                self.flags.reject_unauthorized,
-                self.connected_url.hostname,
-                self.connected_url.get_port_auto(),
-                self.tls_props.as_ref(),
-                None,
-                b"",
-                0,
-                0,
-                None,
-            );
+            Self::ssl_ctx_mut(ctx)
+                .release_socket(socket)
+                .did_have_handshaking_error_while_reject_unauthorized_is_false(
+                    self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
+                )
+                .established_with_reject_unauthorized(self.flags.reject_unauthorized)
+                .hostname(self.connected_url.hostname)
+                .port(self.connected_url.get_port_auto())
+                .maybe_ssl_config(self.tls_props.as_ref())
+                .target_hostname(b"")
+                .target_port(0)
+                .proxy_auth_hash(0)
+                .call();
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
         }
@@ -4311,21 +4311,23 @@ impl<'a> HTTPClient<'a> {
                 // writeProxyConnect line 346). The SNI override (hostname) is
                 // hashed into proxyAuthHash separately — both must match, but
                 // they're distinct values when a Host header override is set.
-                Self::ssl_ctx_mut(ctx).release_socket(
-                    socket,
-                    self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                    self.flags.reject_unauthorized,
-                    self.connected_url.hostname,
-                    self.connected_url.get_port_auto(),
-                    self.tls_props.as_ref(),
-                    tunnel,
-                    if had_tunnel { self.url.hostname } else { b"" },
-                    if had_tunnel {
+                Self::ssl_ctx_mut(ctx)
+                    .release_socket(socket)
+                    .did_have_handshaking_error_while_reject_unauthorized_is_false(
+                        self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
+                    )
+                    .established_with_reject_unauthorized(self.flags.reject_unauthorized)
+                    .hostname(self.connected_url.hostname)
+                    .port(self.connected_url.get_port_auto())
+                    .maybe_ssl_config(self.tls_props.as_ref())
+                    .maybe_tunnel(tunnel)
+                    .target_hostname(if had_tunnel { self.url.hostname } else { b"" })
+                    .target_port(if had_tunnel {
                         self.url.get_port_auto()
                     } else {
                         0
-                    },
-                    if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
+                    })
+                    .proxy_auth_hash(if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
                         // Direct TLS: the handshake verified the peer against
                         // the Host-header override (get_tls_hostname), so the
                         // override hash must be part of the pool key. Matches
@@ -4333,9 +4335,8 @@ impl<'a> HTTPClient<'a> {
                         self.proxy_auth_hash()
                     } else {
                         0
-                    },
-                    None,
-                );
+                    })
+                    .call();
             } else {
                 if self.proxy_tunnel.is_some() {
                     bun_core::scoped_log!(fetch, "close the tunnel");
@@ -4561,19 +4562,19 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "onPreconnect({})", BStr::new(self.url.href));
         self.unregister_abort_tracker();
         let ctx = self.get_ssl_ctx::<IS_SSL>();
-        Self::ssl_ctx_mut(ctx).release_socket(
-            socket,
-            self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-            self.flags.reject_unauthorized,
-            self.url.hostname,
-            self.url.get_port_auto(),
-            self.tls_props.as_ref(),
-            None,
-            b"",
-            0,
-            0,
-            None,
-        );
+        Self::ssl_ctx_mut(ctx)
+            .release_socket(socket)
+            .did_have_handshaking_error_while_reject_unauthorized_is_false(
+                self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
+            )
+            .established_with_reject_unauthorized(self.flags.reject_unauthorized)
+            .hostname(self.url.hostname)
+            .port(self.url.get_port_auto())
+            .maybe_ssl_config(self.tls_props.as_ref())
+            .target_hostname(b"")
+            .target_port(0)
+            .proxy_auth_hash(0)
+            .call();
 
         self.state.reset();
         self.state.response_stage = ResponseStage::Done;

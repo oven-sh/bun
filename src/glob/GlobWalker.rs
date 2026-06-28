@@ -1421,66 +1421,29 @@ impl SyntaxHint {
 // GlobWalker impl
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[bon::bon]
 impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
-    /// The arena parameter is dereferenced and copied if all allocations go well and nothing goes wrong
-    // Note: out-param constructor reshaped to return Self.
+    /// `pattern` is positional; everything else is a named setter so the
+    /// five bool flags cannot be transposed:
+    /// `GlobWalker::init(pattern).only_files(true).call()?`
+    #[builder]
     pub fn init(
+        /// Copied into the walker.
+        #[builder(start_fn)]
         pattern: &[u8],
-        dot: bool,
-        absolute: bool,
-        follow_symlinks: bool,
-        error_on_broken_symlinks: bool,
-        only_files: bool,
-        ignore_filter_fn: Option<IgnoreFilterFn>,
-    ) -> Result<Maybe<Self>, Error> {
-        // `bun_paths::fs::FileSystem` (singleton holds only the cwd string; the
-        // DirEntry cache stays in `bun_resolver`).
-        Self::init_with_cwd(
-            pattern,
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
-            dot,
-            absolute,
-            follow_symlinks,
-            error_on_broken_symlinks,
-            only_files,
-            ignore_filter_fn,
-        )
-    }
-
-    pub fn debug_pattern_components(&self) {
-        let pattern = &self.pattern;
-        let components = &self.pattern_components;
-        let ptr = std::ptr::from_ref(self) as usize;
-        log!("GlobWalker(0x{:x}) components:", ptr);
-        for cmp in components.iter() {
-            match cmp.syntax_hint {
-                SyntaxHint::Single => log!("  *"),
-                SyntaxHint::Double => log!("  **"),
-                SyntaxHint::Dot => log!("  ."),
-                SyntaxHint::DotBack => log!("  ../"),
-                SyntaxHint::Literal | SyntaxHint::WildcardFilepath | SyntaxHint::None => log!(
-                    "  hint={} component_str={}",
-                    <&'static str>::from(cmp.syntax_hint),
-                    bstr::BStr::new(cmp.pattern_slice(pattern))
-                ),
-            }
-        }
-    }
-
-    /// `cwd` should be allocated with the arena
-    /// The arena parameter is dereferenced and copied if all allocations go well and nothing goes wrong
-    // Note: out-param constructor reshaped to return Self.
-    pub fn init_with_cwd(
-        pattern: &[u8],
+        /// Copied into the walker. Defaults to the process's top-level dir
+        /// (`bun_paths::fs::FileSystem` singleton; the DirEntry cache stays
+        /// in `bun_resolver`).
+        #[builder(default = bun_paths::fs::FileSystem::instance().top_level_dir())]
         cwd: &[u8],
-        dot: bool,
-        absolute: bool,
-        follow_symlinks: bool,
-        error_on_broken_symlinks: bool,
-        only_files: bool,
+        #[builder(default)] dot: bool,
+        #[builder(default)] absolute: bool,
+        #[builder(default)] follow_symlinks: bool,
+        #[builder(default)] error_on_broken_symlinks: bool,
+        #[builder(default)] only_files: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
-        log!("initWithCwd(cwd={})", bstr::BStr::new(cwd));
+        log!("init(cwd={})", bstr::BStr::new(cwd));
         let mut this = Self {
             cwd: Box::from(cwd),
             pattern: Box::from(pattern),
@@ -1510,13 +1473,33 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             &mut this.basename_excluding_special_syntax_component_idx,
         )?;
 
-        // copy arena after all allocations are successful
-
         if cfg!(debug_assertions) {
             this.debug_pattern_components();
         }
 
         Ok(Ok(this))
+    }
+}
+
+impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
+    pub fn debug_pattern_components(&self) {
+        let pattern = &self.pattern;
+        let components = &self.pattern_components;
+        let ptr = std::ptr::from_ref(self) as usize;
+        log!("GlobWalker(0x{:x}) components:", ptr);
+        for cmp in components.iter() {
+            match cmp.syntax_hint {
+                SyntaxHint::Single => log!("  *"),
+                SyntaxHint::Double => log!("  **"),
+                SyntaxHint::Dot => log!("  ."),
+                SyntaxHint::DotBack => log!("  ../"),
+                SyntaxHint::Literal | SyntaxHint::WildcardFilepath | SyntaxHint::None => log!(
+                    "  hint={} component_str={}",
+                    <&'static str>::from(cmp.syntax_hint),
+                    bstr::BStr::new(cmp.pattern_slice(pattern))
+                ),
+            }
+        }
     }
 
     pub fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {

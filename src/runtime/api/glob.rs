@@ -291,9 +291,6 @@ fn glob_walk_result_to_js(
 }
 
 impl Glob {
-    /// The reference to the arena is not used after the scope because it is copied
-    /// by `GlobWalker.init`/`GlobWalker.initWithCwd` if all allocations work and no
-    /// errors occur
     fn make_glob_walker(
         &self,
         global_this: &JSGlobalObject,
@@ -313,34 +310,18 @@ impl Glob {
 
         let _ = arena; // arena ownership is no longer threaded through GlobWalker init.
 
-        if let Some(cwd) = cwd {
-            let glob_walker = match GlobWalker::init_with_cwd(
-                &self.pattern,
-                &cwd,
-                dot,
-                absolute,
-                follow_symlinks,
-                error_on_broken_symlinks,
-                only_files,
-                None,
-            )? {
-                bun_sys::Result::Err(err) => {
-                    return Err(global_this.throw_value(err.to_js(global_this)));
-                }
-                bun_sys::Result::Ok(gw) => Box::new(gw),
-            };
-            return Ok(Some(glob_walker));
-        }
-
-        let glob_walker = match GlobWalker::init(
-            &self.pattern,
-            dot,
-            absolute,
-            follow_symlinks,
-            error_on_broken_symlinks,
-            only_files,
-            None,
-        )? {
+        // `maybe_cwd(None)` falls through to the builder's default (the
+        // process top-level dir), so the "with cwd" / "without cwd" call
+        // sites collapse into one.
+        let glob_walker = match GlobWalker::init(&self.pattern)
+            .maybe_cwd(cwd.as_deref())
+            .dot(dot)
+            .absolute(absolute)
+            .follow_symlinks(follow_symlinks)
+            .error_on_broken_symlinks(error_on_broken_symlinks)
+            .only_files(only_files)
+            .call()?
+        {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -412,8 +393,8 @@ impl Glob {
         // `arguments` drops at scope exit.
 
         let mut arena = Arena::new();
-        // GlobWalker::init/init_with_cwd own their allocations (Box); the
-        // arena here is vestigial.
+        // GlobWalker::init owns its allocations (Box); the arena here is
+        // vestigial.
         let glob_walker =
             match self.make_glob_walker(global_this, &mut arguments, "scan", &mut arena) {
                 Err(err) => {

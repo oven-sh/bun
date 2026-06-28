@@ -409,13 +409,14 @@ pub fn generate_code_for_lazy_export(
                 ),
                 expr,
             );
-            this.graph.generate_symbol_import_and_use(
-                source_index,
-                0,
-                module_ref,
-                1,
-                Index::init(source_index),
-            )?;
+            this.graph
+                .generate_symbol_import_and_use()
+                .source_index(source_index)
+                .part_index(0)
+                .ref_(module_ref)
+                .use_count(1)
+                .source_index_to_import_from(Index::init(source_index))
+                .call()?;
 
             // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
             if matches!(expr.data, ExprData::ECall(ref c)

@@ -728,13 +728,13 @@ impl<'a> LinkerContext<'a> {
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph
-                    .generate_symbol_import_and_use(
-                        html_import,
-                        Index::part(1u32).get(),
-                        actual_ref,
-                        1,
-                        Index::RUNTIME,
-                    )
+                    .generate_symbol_import_and_use()
+                    .source_index(html_import)
+                    .part_index(Index::part(1u32).get())
+                    .ref_(actual_ref)
+                    .use_count(1)
+                    .source_index_to_import_from(Index::RUNTIME)
+                    .call()
                     .expect("OOM");
             }
         }
@@ -3174,13 +3174,13 @@ impl<'a> LinkerContext<'a> {
                 // Bake uses a wrapping approach that does not use __commonJS
                 if self.options.output_format != Format::InternalBakeDev {
                     self.graph
-                        .generate_symbol_import_and_use(
-                            source_index,
-                            part_index,
-                            self.cjs_runtime_ref,
-                            1,
-                            crate::Index::RUNTIME,
-                        )
+                        .generate_symbol_import_and_use()
+                        .source_index(source_index)
+                        .part_index(part_index)
+                        .ref_(self.cjs_runtime_ref)
+                        .use_count(1)
+                        .source_index_to_import_from(crate::Index::RUNTIME)
+                        .call()
                         .expect("unreachable");
                 }
             }
@@ -3277,25 +3277,25 @@ impl<'a> LinkerContext<'a> {
                 *wrapper_part_index = crate::Index::part(part_index);
                 if wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
                     self.graph
-                        .generate_symbol_import_and_use(
-                            source_index,
-                            part_index,
-                            self.esm_runtime_ref,
-                            1,
-                            crate::Index::RUNTIME,
-                        )
+                        .generate_symbol_import_and_use()
+                        .source_index(source_index)
+                        .part_index(part_index)
+                        .ref_(self.esm_runtime_ref)
+                        .use_count(1)
+                        .source_index_to_import_from(crate::Index::RUNTIME)
+                        .call()
                         .expect("OOM");
 
                     // Only mark __promiseAll as used if we have multiple async dependencies
                     if needs_promise_all {
                         self.graph
-                            .generate_symbol_import_and_use(
-                                source_index,
-                                part_index,
-                                self.promise_all_runtime_ref,
-                                1,
-                                crate::Index::RUNTIME,
-                            )
+                            .generate_symbol_import_and_use()
+                            .source_index(source_index)
+                            .part_index(part_index)
+                            .ref_(self.promise_all_runtime_ref)
+                            .use_count(1)
+                            .source_index_to_import_from(crate::Index::RUNTIME)
+                            .call()
                             .expect("OOM");
                     }
                 }
@@ -4037,13 +4037,14 @@ impl<'a> LinkerContext<'a> {
             },
         )?;
 
-        self.graph.generate_symbol_import_and_use(
-            source_index,
-            part_index,
-            module_ref,
-            1,
-            crate::Index::init(source_index),
-        )?;
+        self.graph
+            .generate_symbol_import_and_use()
+            .source_index(source_index)
+            .part_index(part_index)
+            .ref_(module_ref)
+            .use_count(1)
+            .source_index_to_import_from(crate::Index::init(source_index))
+            .call()?;
         let top_level = &mut self
             .graph
             .meta

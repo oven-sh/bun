@@ -118,6 +118,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "bon"
+version = "3.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a602c73c7b0148ec6d12af6fd5cc7a46e2eacc8878271a999abac56eed12f561"
+dependencies = [
+ "bon-macros",
+ "rustversion",
+]
+
+[[package]]
+name = "bon-macros"
+version = "3.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
+dependencies = [
+ "darling",
+ "ident_case",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -343,6 +368,7 @@ name = "bun_bundler"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bon",
  "bstr",
  "bumpalo",
  "bun_alloc",
@@ -773,6 +799,7 @@ name = "bun_glob"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bon",
  "bstr",
  "bun_alloc",
  "bun_collections",
@@ -813,6 +840,7 @@ name = "bun_http"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bon",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -934,6 +962,7 @@ name = "bun_install"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bon",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -1619,6 +1648,7 @@ dependencies = [
  "bcrypt",
  "bitflags",
  "blake2",
+ "bon",
  "bstr",
  "bun_alloc",
  "bun_analytics",
@@ -1717,6 +1747,7 @@ name = "bun_s3_signing"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bon",
  "bstr",
  "bun_base64",
  "bun_boringssl_sys",
@@ -2548,6 +2579,7 @@ dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
+ "strsim",
  "syn",
 ]
 
@@ -3330,6 +3362,12 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "strsim"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"

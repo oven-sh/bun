@@ -343,19 +343,12 @@ impl WorkspaceMap {
                 if cwd.is_empty() {
                     cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }
-                // GlobWalker::init_with_cwd is now an associated constructor
-                // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
-                // ignore filter supplied as final arg.
-                let mut walker = match GlobWalker::init_with_cwd(
-                    glob_pattern,
-                    cwd,
-                    false,
-                    false,
-                    false,
-                    false,
-                    true,
-                    Some(ignored_workspace_paths),
-                )? {
+                let mut walker = match GlobWalker::init(glob_pattern)
+                    .cwd(cwd)
+                    .only_files(true)
+                    .ignore_filter_fn(ignored_workspace_paths)
+                    .call()?
+                {
                     Ok(w) => w,
                     Err(e) => {
                         let _ = bun_ast::add_error_pretty!(
@@ -573,5 +566,5 @@ fn ignored_workspace_paths(path: &[u8]) -> bool {
 
 // The ignore-filter is a runtime fn-pointer field on
 // `bun_glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
-// `init_with_cwd(..., Some(ignored_workspace_paths))`.
+// `init(..).ignore_filter_fn(ignored_workspace_paths)`.
 type GlobWalker = glob::GlobWalker<glob::walk::SyscallAccessor, false>;

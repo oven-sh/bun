@@ -632,20 +632,22 @@ impl NetworkTask {
         // MaybeUninit overwrite — see field doc; old slot value is
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
         // `notify`, neither of which is safe/meaningful to drop.
-        self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
-            http::Method::GET,
-            url,
-            header_builder.entries,
-            headers_buf,
-            ptr::addr_of_mut!(self.response_buffer),
-            b"",
-            completion_callback,
-            http::FetchRedirect::Follow,
-            AsyncHTTPOptions {
-                http_proxy,
-                ..Default::default()
-            },
-        ));
+        self.unsafe_http_client = MaybeUninit::new(
+            AsyncHTTP::init()
+                .method(http::Method::GET)
+                .url(url)
+                .headers(header_builder.entries)
+                .headers_buf(headers_buf)
+                .response_buffer(ptr::addr_of_mut!(self.response_buffer))
+                .request_body(b"")
+                .callback(completion_callback)
+                .redirect_type(http::FetchRedirect::Follow)
+                .options(AsyncHTTPOptions {
+                    http_proxy,
+                    ..Default::default()
+                })
+                .call(),
+        );
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
 
         if PackageManager::verbose_install() {
@@ -865,17 +867,19 @@ impl NetworkTask {
         // MaybeUninit overwrite — see field doc; old slot value is
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
         // `notify`, neither of which is safe/meaningful to drop.
-        self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
-            http::Method::GET,
-            url,
-            header_builder.entries,
-            header_buf,
-            ptr::addr_of_mut!(self.response_buffer),
-            b"",
-            completion_callback,
-            http::FetchRedirect::Follow,
-            http_options,
-        ));
+        self.unsafe_http_client = MaybeUninit::new(
+            AsyncHTTP::init()
+                .method(http::Method::GET)
+                .url(url)
+                .headers(header_builder.entries)
+                .headers_buf(header_buf)
+                .response_buffer(ptr::addr_of_mut!(self.response_buffer))
+                .request_body(b"")
+                .callback(completion_callback)
+                .redirect_type(http::FetchRedirect::Follow)
+                .options(http_options)
+                .call(),
+        );
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;

@@ -10,6 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bon.workspace = true
 bun_opaque.workspace = true
 rust-argon2.workspace = true
 bcrypt.workspace = true

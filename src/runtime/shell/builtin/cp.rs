@@ -175,16 +175,16 @@ impl Cp {
                 let interp_ptr = interp.as_ctx_ptr();
                 for i in start..target {
                     let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                    let task = ShellCpTask::create(
-                        cmd,
-                        evtloop,
-                        opts,
-                        operands,
-                        src,
-                        tgt.clone(),
-                        cwd.clone(),
-                        interp_ptr,
-                    );
+                    let task = ShellCpTask::create()
+                        .cmd(cmd)
+                        .evtloop(evtloop)
+                        .opts(opts)
+                        .operands(operands)
+                        .src(src)
+                        .tgt(tgt.clone())
+                        .cwd_path(cwd.clone())
+                        .interp(interp_ptr)
+                        .call();
                     // SAFETY: freshly heap-allocated.
                     unsafe { ShellCpTask::schedule(task) };
                 }
@@ -402,7 +402,13 @@ pub struct ShellCpTask {
     pub task: ShellTask,
 }
 
+// Separate impl block so `#[bon::bon]` only re-emits `create`, not the rest
+// of the (large) `ShellCpTask` impl below.
+#[bon::bon]
 impl ShellCpTask {
+    /// Named setters: `src`/`tgt`/`cwd_path` are three consecutive `Vec<u8>`
+    /// parameters; transposing `src` and `tgt` in a `cp` is data loss.
+    #[builder]
     pub(crate) fn create(
         cmd: NodeId,
         evtloop: EventLoopHandle,
@@ -431,7 +437,9 @@ impl ShellCpTask {
         task.task.interp = interp;
         bun_core::heap::into_raw(task)
     }
+}
 
+impl ShellCpTask {
     /// Appends `"{src} -> {dest}\n"` to the verbose
     /// buffer (printed to stdout once the cp finishes). Called from work-pool
     /// threads; serialised via `verbose_output`'s mutex.

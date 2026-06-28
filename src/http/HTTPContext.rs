@@ -565,7 +565,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
             unsafe { ssl_ctx_setup(self.ssl_ctx()) };
         }
     }
+}
 
+// Separate impl block so `#[bon::bon]` only re-emits `release_socket` and
+// `existing_socket`, not the rest of the (large) `HTTPContext` impl above.
+#[bon::bon]
+impl<const SSL: bool> HTTPContext<SSL> {
     /// Attempt to keep the socket alive by reusing it for another request.
     /// If no space is available, close the socket.
     ///
@@ -577,10 +582,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// tunnel. The pool takes ownership of one strong ref on the tunnel;
     /// the caller must NOT deref it afterwards. If pooling fails (pool
     /// full, hostname too long, socket bad), the tunnel is dereffed here.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// Named setters: `hostname`/`target_hostname` and `port`/`target_port`
+    /// are same-typed pairs that positional arguments could transpose.
+    #[builder]
     pub(crate) fn release_socket(
         &mut self,
-        socket: HTTPSocket<SSL>,
+        #[builder(start_fn)] socket: HTTPSocket<SSL>,
         did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
         established_with_reject_unauthorized: bool,
         hostname: &[u8],
@@ -685,7 +693,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
         Self::close_socket(socket);
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Named setters: `hostname`/`target_hostname` and `port`/`target_port`
+    /// are same-typed pairs that positional arguments could transpose.
+    #[builder]
     fn existing_socket(
         &mut self,
         reject_unauthorized: bool,
@@ -830,7 +840,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         None
     }
+}
 
+impl<const SSL: bool> HTTPContext<SSL> {
     pub(crate) fn connect_socket(
         &mut self,
         client: &mut HTTPClient,
@@ -951,21 +963,23 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 0
             };
 
-            if let Some(mut found) = self.existing_socket(
-                client.flags.reject_unauthorized,
-                hostname,
-                port,
-                SSLConfig::raw_ptr(client.tls_props.as_ref()),
-                want_tunnel,
-                target_hostname,
-                target_port,
-                proxy_auth_hash,
-                if SSL {
+            if let Some(mut found) = self
+                .existing_socket()
+                .reject_unauthorized(client.flags.reject_unauthorized)
+                .hostname(hostname)
+                .port(port)
+                .maybe_ssl_config(SSLConfig::raw_ptr(client.tls_props.as_ref()))
+                .want_tunnel(want_tunnel)
+                .target_hostname(target_hostname)
+                .target_port(target_port)
+                .proxy_auth_hash(proxy_auth_hash)
+                .want_h2(if SSL {
                     client.alpn_offer()
                 } else {
                     AlpnOffer::H1
-                },
-            ) {
+                })
+                .call()
+            {
                 let sock = found.socket;
                 Self::set_socket_ext(
                     sock,

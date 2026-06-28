@@ -343,6 +343,10 @@ libc = "0.2"
 memchr = "2"
 rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
 bitflags = "2"
+# Compile-time-checked (typestate) builders for structs and functions: named
+# setters for same-typed positional args, required fields enforced by the type
+# system. Zero runtime cost (the required/optional state lives in the types).
+bon = "3"
 thiserror = "2"
 smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }

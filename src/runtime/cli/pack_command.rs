@@ -3037,18 +3037,19 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     // while a lifecycle script runs (single-threaded CLI dispatch).
     let command_ctx = unsafe { &mut *std::ptr::from_ref(ctx.command_ctx).cast_mut() };
     let use_system_shell = command_ctx.debug.use_system_shell;
-    match RunCommand::run_package_script_foreground(
-        command_ctx,
-        script,
-        name,
-        abs_workspace_path,
+    match RunCommand::run_package_script_foreground()
+        .ctx(command_ctx)
+        .original_script(script)
+        .name(name)
+        .cwd(abs_workspace_path)
         // SAFETY: `env` is non-null (set by `PackageManager::init` /
         // `configure_env_for_run`).
-        unsafe { &mut *env },
-        &[],
-        silent,
-        use_system_shell,
-    ) {
+        .env(unsafe { &mut *env })
+        .passthrough(&[])
+        .silent(silent)
+        .use_system_shell(use_system_shell)
+        .call()
+    {
         Ok(_) => Ok(()),
         Err(err) => {
             if err == bun_core::err!("MissingShell") {

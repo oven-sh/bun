@@ -1,11 +1,6 @@
-// napi_add_finalizer and napi_create_external finalizers must run at env
-// teardown for objects still alive at exit (only napi_wrap's used to), and a
-// finalizer already run by GC must not run again at teardown. A finalizer
-// registered *by* a teardown finalizer must be drained in the same teardown,
-// not left as a dangling entry in the env's finalizer list. Each finalizer
-// prints "finalize: <name>" to stdout exactly once. stdout, not stderr: on
-// the ASAN CI lane a spawned child's stderr arrives empty, and the existing
-// test_wrap_cleanup_order fixture writes to stdout for the same reason.
+// Every finalizer registration API must run its finalizer at env teardown,
+// exactly once, including finalizers registered by another teardown finalizer.
+// Each prints "finalize: <name>" to stdout (a child's stderr is unreliable on CI).
 
 #include <node_api.h>
 #include <stdio.h>
@@ -125,11 +120,9 @@ typedef struct {
     char* recycled_name;
 } RecycleContext;
 
-// Runs as a teardown finalizer: deletes the ref from addFinalizerSaveRef (which
-// frees its NapiRef and tombstones its entry in the env's list), then registers
-// a brand-new finalizer. The allocator commonly hands back the just-freed
-// address, so the new registration's (callback, hint, data) key collides with
-// the tombstone; the new finalizer must still run.
+// Runs as a teardown finalizer: deletes the ref from addFinalizerSaveRef, then
+// registers a new finalizer. The allocator commonly hands back the just-freed
+// NapiRef address; the new finalizer must still run.
 static void recycle_finalize(napi_env env, void* data, void* hint) {
     (void)hint;
     RecycleContext* ctx = (RecycleContext*)data;

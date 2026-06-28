@@ -223,12 +223,9 @@ public:
         // ListHashSet iteration is safe against concurrent inserts, and m_isFinishingFinalizers
         // routes all removals to active=false, so the only unsafe op (erase-current) can't occur.
         //
-        // Bun lets a finalizer register new finalizers (napi_wrap, napi_add_finalizer,
-        // napi_create_external); addFinalizer() appends them after the position a
-        // reverse iteration has already passed. Clearing the set after a single pass
-        // would then free a BoundFinalizer that a still-live NapiRef or NapiExternal
-        // points at through boundCleanup (a use-after-free on its next sweep), so
-        // loop until a pass runs nothing new.
+        // A finalizer may register new finalizers, appended past where this pass already is.
+        // Repeat until a pass runs nothing new: clear() after one pass would free entries a
+        // still-live NapiRef or NapiExternal points at through boundCleanup.
         bool ranAny;
         do {
             ranAny = false;
@@ -276,13 +273,9 @@ public:
 
     const auto& addFinalizer(napi_finalize callback, void* hint, void* data)
     {
-        // add() deduplicates on (callback, hint, data). During cleanup() a dying
-        // owner's entry is only marked inactive, not erased, and NapiRef is
-        // TZone-allocated, so a finalizer that deletes a ref and registers a new
-        // one can get the freed address back and alias that dead entry. It then
-        // belongs exclusively to the new owner (only a freed address can collide),
-        // so reactivate it; otherwise the drain never runs it and clear() frees it
-        // while the new owner's boundCleanup still points at it.
+        // add() dedups on (callback, hint, data), so during cleanup() a new registration
+        // whose freed-and-reused address matches a tombstoned entry gets that entry back.
+        // Reactivate it so the drain runs it before clear() frees it under its new owner.
         const auto& bound = *m_finalizers.add({ callback, hint, data }).iterator;
         bound.active = true;
         return bound;

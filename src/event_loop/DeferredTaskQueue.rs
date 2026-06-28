@@ -25,6 +25,15 @@
 //!
 //! The DeferredTaskQueue is drained after the microtask queue, but before other tasks are executed. This avoids re-entrancy
 //! issues with the event loop.
+//!
+//! `run()` must tolerate re-entrant mutation of the map: a callback can reach user JS, which can
+//! `post_task` / `unregister_task` any entry (for example, `H2FrameParser`'s auto-flush unregisters
+//! itself and then returns `true`, and before the cork slot became self-scoped one parser's flush
+//! could unregister another's). Each pass is capped at the number of entries present when it
+//! started; that cap is a livelock bound, not a strict "no new entries this pass" frontier, because
+//! a swap-remove can pull a freshly appended entry forward. Every callback flushes its own object's
+//! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
+//! anything a pass skips runs on the next one.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -63,17 +72,9 @@ impl DeferredTaskQueue {
     }
 
     pub fn run(&mut self) {
-        // Callbacks may re-entrantly `post_task` / `unregister_task` on this
-        // same map (e.g. `H2FrameParser::on_auto_flush` unregisters itself and
-        // returns `true`), so `self.map.len()` and entry positions can change
-        // under us. Re-read `len()` each iteration and, after the callback,
-        // re-check whether `key` is still at `i` to decide whether to advance.
-        // `remaining` caps the pass at the initial entry count so re-entrant
-        // remove+repost can't spin; it is a livelock bound, not a strict
-        // "no new entries this pass" guarantee (a swap-remove can pull a
-        // freshly appended entry forward). Each callback flushes its own
-        // object's buffer to its own fd/socket, so relative order within a
-        // pass has no correctness effect; anything skipped runs next pass.
+        // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
+        // note in the file doc), so re-read `len()` every iteration and
+        // re-check slot `i` after each callback. `remaining` is a livelock bound.
         let mut i: usize = 0;
         let mut remaining = self.map.len();
         while remaining > 0 && i < self.map.len() {

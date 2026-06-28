@@ -1390,7 +1390,13 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                let mut result = resp.init.get().clone(global_this)?;
+                // The caller's init is this Response, so whether its headers
+                // count as "from the init" is decided here, not inherited from
+                // how the donor's own headers came to exist (it may have
+                // materialized them lazily). Mirrors the Request path above.
+                result.headers_from_init = result.headers.is_some();
+                return Ok(Some(result));
             }
         }
 

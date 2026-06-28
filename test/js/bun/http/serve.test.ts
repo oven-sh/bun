@@ -1379,6 +1379,27 @@ describe("should support Content-Range with Bun.file()", () => {
       },
     );
   });
+
+  // `new Response(body, existingResponse)` is a headers-carrying init exactly
+  // like a plain `{ headers }`; it must not inherit the donor's own
+  // headers_from_init (the donor may have materialized its headers lazily).
+  it("slice with a Response as the headers-carrying init stays 200", async () => {
+    await runTest(
+      {
+        fetch() {
+          const donor = new Response("x");
+          donor.headers.set("x-custom", "1");
+          return new Response(Bun.file(fixture).slice(0, 10), donor);
+        },
+      },
+      async server => {
+        const response = await fetch(server.url.origin);
+        expect(response.headers.get("x-custom")).toBe("1");
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        expect(response.status).toBe(200);
+      },
+    );
+  });
 });
 
 it("formats error responses correctly", async () => {

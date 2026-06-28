@@ -94,9 +94,9 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
           () => results.push("ASYNC_UNEXPECTED_SUCCESS"),
           e => results.push(report(e)),
         );
-        // Lifetime::Temporary: the callee owns the leaked file-read buffer and
-        // must reclaim it on the error path too (CI's ASAN lane runs with
-        // detect_leaks=1:abort_on_error=1, so a leak here fails the exit code).
+        // Bun.file().text() reaches the converter through
+        // Blob::to_string_with_bytes with Lifetime::Temporary, the one caller
+        // that also owns its input buffer across the failing allocation.
         await Bun.file(file).text().then(
           () => results.push("BUNFILE_UNEXPECTED_SUCCESS"),
           e => results.push(report(e)),

@@ -2099,29 +2099,32 @@ function rstNextTick(id: number, rstCode: number) {
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
 }
-// 'finish' handler registered from _final (node: Http2Stream[kMaybeDestroy], server branch).
-// RFC 9113 8.1: a server that sent a complete response (any trailers included: _final resolves
-// the wantTrailers path before the writable can finish) and never attempted to read the request
-// body closes the stream with RST_STREAM(NO_ERROR) so the client stops uploading. Without the
-// reset an upload larger than the stream's receive window deadlocks: the server will never
-// consume the body, so it never re-opens the window. node defers to setImmediate so pushStreams
-// submitted from the same tick reach the wire first; we match.
-function maybeResetUnreadRequest() {
-  const session = this[bunHTTP2Session];
-  if (
+// node's Http2Stream[kMaybeDestroy], server branch (RFC 9113 8.1): a server stream that sent a
+// complete response (any trailers included: _final resolves the wantTrailers path before the
+// writable can finish) and never attempted to read the request body must reset the stream with
+// RST_STREAM(NO_ERROR) so the client stops uploading. Without the reset an upload larger than
+// the stream's receive window deadlocks: the server will never consume the body, so it never
+// re-opens the window.
+function shouldResetUnreadRequest(stream) {
+  const session = stream[bunHTTP2Session];
+  return (
     session != null &&
     session.type === NGHTTP2_SESSION_SERVER &&
-    (this[bunHTTP2StreamStatus] & StreamState.Closed) === 0 &&
-    this.headersSent &&
-    !this[kDidRead] &&
-    this.readableFlowing === null
-  ) {
-    setImmediate(resetUnreadRequestNT, this);
-  }
+    (stream[bunHTTP2StreamStatus] & StreamState.Closed) === 0 &&
+    stream.headersSent &&
+    !stream[kDidRead] &&
+    stream.readableFlowing === null
+  );
+}
+// 'finish' handler registered from _final. node defers the close to setImmediate so pushStreams
+// submitted from the same tick reach the wire first; we match, and re-check the predicate there
+// so a handler that only starts reading the request body after its response finished is not
+// cut off by the deferral.
+function maybeResetUnreadRequest() {
+  if (shouldResetUnreadRequest(this)) setImmediate(resetUnreadRequestNT, this);
 }
 function resetUnreadRequestNT(stream: ServerHttp2Stream) {
-  // The stream may have closed naturally in the meantime (the peer finished or reset it).
-  if (!stream.closed && !stream.destroyed) stream.close(NGHTTP2_NO_ERROR);
+  if (!stream.destroyed && shouldResetUnreadRequest(stream)) stream.close(NGHTTP2_NO_ERROR);
 }
 class Http2Stream extends Duplex {
   #id: number;

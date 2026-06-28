@@ -1139,14 +1139,22 @@ describe("inbound flow control (RFC 9113 §6.9)", () => {
       // window in one WINDOW_UPDATE (nothing was granted incrementally above).
       const windowUpdate = raw.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
       let received = 0;
-      const drained = new Promise<void>(resolve =>
+      const drained = new Promise<void>((resolve, reject) => {
+        // An early close (including the one after a swallowed 'error') fails the drain with
+        // the cause instead of hanging it until the test timeout.
+        req.once("close", () => reject(new Error(`stream closed after ${received} of ${STREAM_WINDOW} bytes`)));
         req.on("data", (d: Buffer) => {
           received += d.length;
           if (received >= STREAM_WINDOW) resolve();
-        }),
-      );
-      expect((await windowUpdate).payload.readUInt32BE(0) & 0x7fffffff).toBe(STREAM_WINDOW);
-      await drained;
+        });
+      });
+      const [windowUpdateFrame] = await Promise.all([windowUpdate, drained]);
+      expect(windowUpdateFrame.payload.readUInt32BE(0) & 0x7fffffff).toBe(STREAM_WINDOW);
+      // Fence again before asserting "exactly one": any further WINDOW_UPDATE the drain could
+      // have produced must have reached the wire by the time the client answers this ping.
+      const drainFence = Buffer.from("fc-barr3");
+      raw.sendFrame(FrameType.PING, 0, 0, drainFence);
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(drainFence));
       expect(received).toBe(STREAM_WINDOW);
       expect(streamWindowUpdates()).toHaveLength(1);
     } finally {
@@ -1183,11 +1191,12 @@ describe("inbound flow control (RFC 9113 §6.9)", () => {
       c.sendFrame(FrameType.HEADERS, 0x4, 1, request);
 
       const headers = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      const endStream = await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
       const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
       expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
-      // The reset follows the complete response, it does not replace it.
-      expect(c.frames.indexOf(headers)).toBeLessThan(c.frames.indexOf(rst));
-      expect(c.frames.some(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0)).toBe(true);
+      // The reset follows the COMPLETE response (HEADERS then END_STREAM); it does not replace it.
+      expect(c.frames.indexOf(headers)).toBeLessThan(c.frames.indexOf(endStream));
+      expect(c.frames.indexOf(endStream)).toBeLessThan(c.frames.indexOf(rst));
     } finally {
       c.destroy();
       srv.close();

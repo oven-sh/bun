@@ -1337,11 +1337,9 @@ private:
         if (!subtag || !byteOffset || !byteLength) return {};
         RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
         bool bufferIsResizable = buffer->isResizableOrGrowableShared();
-        // V8's ValidateJSArrayBufferViewFlags: bit 1 ("backed by a resizable
-        // buffer") must agree with the buffer that preceded this view, in BOTH
-        // directions. Unknown high bits are intentionally NOT rejected: V8
-        // accepts them today and only has a TODO to tighten on a version bump,
-        // so rejecting them here would diverge from Node.
+        // ValidateJSArrayBufferViewFlags: bit 1 ("backed by a resizable
+        // buffer") must agree with the preceding buffer, in both directions.
+        // Unknown high bits are accepted, matching V8.
         bool isBackedByResizable = flags & 2;
         if (isBackedByResizable != bufferIsResizable) return {};
         // V8 writes byteLength 0 for a length-tracking view; the view's real
@@ -1675,11 +1673,9 @@ private:
 
 using namespace Bun;
 
-// Serialize a value using Node's ChildProcessSerializer framing: a 4-byte
-// big-endian length header followed by the V8 payload. On success, transfers
-// ownership of the buffer to the caller via `*outBytes` and returns its total
-// length; pair with Bun__NodeIPC__serialize_free. On failure returns SIZE_MAX
-// with a JS exception set.
+// Serialize with Node's ChildProcessSerializer framing (4-byte big-endian
+// length + V8 payload). Transfers the buffer to `*outBytes`; pair with
+// Bun__NodeIPC__serialize_free. Returns SIZE_MAX with a JS exception on failure.
 extern "C" size_t Bun__NodeIPC__serialize(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint8_t** outBytes)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1697,6 +1693,12 @@ extern "C" size_t Bun__NodeIPC__serialize(JSC::JSGlobalObject* globalObject, JSC
     }
     Vector<uint8_t> buffer = serializer.release();
     size_t total = buffer.size();
+    // A payload >= 4 GiB cannot be represented in the 4-byte frame header;
+    // a truncated length would desynchronize every subsequent IPC frame.
+    if (total - 4 > UINT32_MAX) {
+        throwException(globalObject, scope, createDOMException(globalObject, ExceptionCode::DataCloneError, "Serialized IPC message is larger than 4 GiB."_s));
+        return SIZE_MAX;
+    }
     uint32_t payloadLen = static_cast<uint32_t>(total - 4);
     buffer[0] = static_cast<uint8_t>((payloadLen >> 24) & 0xFF);
     buffer[1] = static_cast<uint8_t>((payloadLen >> 16) & 0xFF);

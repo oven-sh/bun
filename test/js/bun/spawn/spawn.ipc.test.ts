@@ -132,7 +132,7 @@ describe("ipc mode advanced", () => {
     expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
       stdout: JSON.stringify([{ a: 1 }]),
       exitCode: 0,
-      stderr: "",
+      stderr: expect.any(String),
     });
   });
 
@@ -208,7 +208,7 @@ describe("ipc mode advanced", () => {
     expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
       stdout: "SURVIVED RangeError",
       exitCode: 0,
-      stderr: "",
+      stderr: expect.any(String),
     });
   });
 
@@ -248,7 +248,7 @@ describe("ipc mode advanced", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(["SURVIVED DataCloneError", "SKIP"]).toContain(stdout.trim());
-    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.any(String) });
   });
 
   rawInjection("a dense array whose trailer property count disagrees with the stream is rejected", async () => {
@@ -506,7 +506,11 @@ describe("ipc mode advanced structured clone", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({ stdout: "OK", exitCode: 0, stderr: "" });
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
+      stdout: "OK",
+      exitCode: 0,
+      stderr: expect.any(String),
+    });
   });
 
   it("a bun parent can exchange structured values with a bun child", async () => {

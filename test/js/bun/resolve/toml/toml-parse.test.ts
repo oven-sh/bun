@@ -23,15 +23,14 @@ test("Bun.TOML.parse rejects JS-style \\u{XX} escapes (#30893, #32025)", () => {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/30893: a `\x`/`\u` escape followed by
+// a multi-byte codepoint in a quoted key at offset 0 crashed the old parser.
 test("Bun.TOML.parse rejects \\x escape in quoted key at file start without panicking (#30893)", () => {
-  // Quoted key at offset 0 puts `start = 1`; `\x` + 4-byte codepoint underflows at L1033.
-  // Bytes: `"\x<U+3945C>" = 1`
   const input = '"\\x' + String.fromCodePoint(0x3945c) + '" = 1';
   expect(() => Bun.TOML.parse(input)).toThrow();
 });
 
 test("Bun.TOML.parse rejects \\u escape in quoted key at file start without panicking (#30893)", () => {
-  // Quoted key at offset 0; `\u` + 4-byte codepoint underflows at L1125 (fixed-length \u branch).
   const input = '"\\u' + String.fromCodePoint(0x3945c) + '" = 1';
   expect(() => Bun.TOML.parse(input)).toThrow();
 });
@@ -51,23 +50,16 @@ test("Bun.TOML.parse rejects trailing backslash-CR in multiline basic string (#3
   expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid escape sequence: (0x0D)");
 });
 
-// Pre-existing bug inherited from toml/lexer.zig: the `\t` / `\f` single-char escape
-// arms had their output codepoints swapped (`\t` produced 0x0C form feed instead of
-// 0x09 tab; `\f` produced 0x09 instead of 0x0C). The TOML spec (and ASCII) define
-// `\t` = U+0009 and `\f` = U+000C, and the JS lexer already gets this right.
+// The old parser swapped the `\t` / `\f` escape output codepoints; the spec
+// defines `\t` = U+0009 and `\f` = U+000C.
 test("Bun.TOML.parse produces correct codepoints for \\t and \\f escapes", () => {
   expect(Bun.TOML.parse('k = "a\\tb"').k).toBe("a\u0009b");
   expect(Bun.TOML.parse('k = "a\\fb"').k).toBe("a\u000cb");
 });
 
-// The outer `\r` arm in decode_escape_sequences had the same iter.i-semantics bug
-// as the `\r` escape arm below it: it indexed `text[iter.i]` for the CRLF lookahead,
-// but after `next()` returns for `\r`, `iter.i` IS the `\r` byte, so the check never
-// fired. Every literal CRLF in a slow-path multiline TOML basic string (any `"""..."""`
-// containing CRLF plus at least one backslash escape to force the slow path) decoded
-// to two LFs instead of one.
+// The old parser decoded a literal CRLF to two LFs when the multiline string
+// also contained a backslash escape; the spec normalizes CRLF to one LF.
 test("Bun.TOML.parse normalizes literal CRLF to LF in multiline basic strings", () => {
-  // `"""a<CRLF>b\tc"""` — the `\t` escape forces the slow decode path.
   const input = 'k = """a\r\nb\\tc"""';
   expect(Bun.TOML.parse(input).k).toBe("a\nb\tc");
 });
@@ -92,13 +84,8 @@ test("Bun.TOML.parse does not conflate distinct keys whose UTF-16 prefixes colli
   expect(Bun.TOML.parse('"\\u0000" = 1\n"\\u0100" = 2')).toEqual({ "\u0000": 1, "Ā": 2 });
 });
 
-// https://github.com/oven-sh/bun/issues/31252
-// `Lexer::expect` in the TOML lexer logs a mismatch via `add_range_error` and
-// then falls through to `next()` for error recovery, so the parser returned
-// `Ok` with a partial AST for inputs like `[1 2]` and `[1 2 3]`. The JS entry
-// point only inspected the `Result`, so the logged diagnostic was discarded
-// and bogus values like `{"a":[1]}` / `{"a":[1,3]}` leaked out. The entry
-// point now also checks `log.has_errors()` on the Ok path.
+// https://github.com/oven-sh/bun/issues/31252: the old parser returned a
+// partial AST for arrays missing comma separators instead of an error.
 test("Bun.TOML.parse rejects array values without comma separators (#31252)", () => {
   expect(() => Bun.TOML.parse("a = [1 2]")).toThrow();
   expect(() => Bun.TOML.parse("a = [1 2 3]")).toThrow();

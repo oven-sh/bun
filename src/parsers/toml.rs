@@ -837,8 +837,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
             _ => false,
         };
 
-        // inf / nan, optionally signed.
-        if self.src[self.pos..].starts_with(b"inf") {
+        // inf / nan, optionally signed. A longer bare word that merely starts
+        // with them (`infinity`, `nanoseconds`) is an unquoted string.
+        if self.src[self.pos..].starts_with(b"inf") && !is_bare_key_char(self.peek_at(self.pos + 3))
+        {
             self.pos += 3;
             self.expect_value_terminator()?;
             let value = if negative {
@@ -848,7 +850,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
             };
             return Ok(ValueData::Number(value));
         }
-        if self.src[self.pos..].starts_with(b"nan") {
+        if self.src[self.pos..].starts_with(b"nan") && !is_bare_key_char(self.peek_at(self.pos + 3))
+        {
             self.pos += 3;
             self.expect_value_terminator()?;
             // The sign of NaN is not observable in TOML.
@@ -1190,14 +1193,20 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     self.pos += 1;
                 }
                 b'\r' => {
-                    if multiline && self.peek_at(self.pos + 1) == b'\n' {
-                        // CRLF normalizes to LF in multi-line strings.
-                        Self::materialize(self.bump, self.src, start, self.pos, &mut buf)
-                            .push(b'\n');
-                        self.pos += 2;
-                    } else {
+                    if self.peek_at(self.pos + 1) != b'\n' {
                         return Err(self.err(self.pos, BARE_CR));
                     }
+                    if !multiline {
+                        // A CRLF in a single-line string is the same mistake
+                        // as a bare LF, so it gets the same diagnostic.
+                        return Err(self.err(
+                            open_pos,
+                            b"Unterminated string; newlines must be escaped in basic strings",
+                        ));
+                    }
+                    // CRLF normalizes to LF in multi-line strings.
+                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(b'\n');
+                    self.pos += 2;
                 }
                 b'\t' => {
                     if let Some(b) = &mut buf {
@@ -1376,14 +1385,20 @@ impl<'a, 'log> Scanner<'a, 'log> {
                     self.pos += 1;
                 }
                 b'\r' => {
-                    if multiline && self.peek_at(self.pos + 1) == b'\n' {
-                        // CRLF normalizes to LF: switch to a copy if borrowing.
-                        Self::materialize(self.bump, self.src, start, self.pos, &mut buf)
-                            .push(b'\n');
-                        self.pos += 2;
-                    } else {
+                    if self.peek_at(self.pos + 1) != b'\n' {
                         return Err(self.err(self.pos, BARE_CR));
                     }
+                    if !multiline {
+                        // A CRLF in a single-line string is the same mistake
+                        // as a bare LF, so it gets the same diagnostic.
+                        return Err(self.err(
+                            open_pos,
+                            b"Unterminated string; literal strings cannot contain newlines",
+                        ));
+                    }
+                    // CRLF normalizes to LF: switch to a copy if borrowing.
+                    Self::materialize(self.bump, self.src, start, self.pos, &mut buf).push(b'\n');
+                    self.pos += 2;
                 }
                 b'\t' => {
                     if let Some(b) = &mut buf {

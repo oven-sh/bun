@@ -105,6 +105,9 @@ describe("JS value mapping", () => {
     expect(Object.getOwnPropertyNames(o)).toEqual(["__proto__"]);
     expect(Object.getOwnPropertyDescriptor(o, "__proto__")!.value).toBe(1);
     expect(Object.getPrototypeOf(o)).toBe(Object.prototype);
+    // A table under "__proto__" must not pollute Object.prototype.
+    const p = TOML.parse('"__proto__" = { polluted = true }') as any;
+    expect(Object.getOwnPropertyDescriptor(p, "__proto__")!.value).toEqual({ polluted: true });
     expect(({} as any).polluted).toBeUndefined();
   });
 
@@ -118,6 +121,14 @@ describe("JS value mapping", () => {
     const o = TOML.parse("constructor = 1\nprototype = 2") as any;
     expect(o.constructor).toBe(1);
     expect(o.prototype).toBe(2);
+  });
+
+  test("digit-only bare keys are strings regardless of magnitude", () => {
+    // Keys are always strings; the integer range rules never apply to them.
+    // Tables keyed by snowflake IDs are the realistic shape of this.
+    expect(TOML.parse("9007199254740993 = 1")).toEqual({ "9007199254740993": 1 });
+    expect(TOML.parse("[175928847299117063]\nk = 1")).toEqual({ "175928847299117063": { k: 1 } });
+    expect(TOML.parse("t = { 99999999999999999999 = 1 }")).toEqual({ t: { "99999999999999999999": 1 } });
   });
 
   test("property order: array-index keys first (JS semantics), then insertion order", () => {
@@ -291,6 +302,19 @@ describe("strings", () => {
       "TOML Parse error: Escaped code point must be a Unicode scalar value",
     );
     expect(() => TOML.parse('a = "\\UFFFFFFFF"')).toThrow(SyntaxError);
+  });
+
+  test("CRLF in a single-line string gets the newline diagnostic, not the bare-CR one", () => {
+    expect(syntaxError('a = "x\r\ny"').message).toBe(
+      "TOML Parse error: Unterminated string; newlines must be escaped in basic strings",
+    );
+    expect(syntaxError("a = 'x\r\ny'").message).toBe(
+      "TOML Parse error: Unterminated string; literal strings cannot contain newlines",
+    );
+    // A genuinely bare CR keeps its own message.
+    expect(syntaxError('a = "x\ry"').message).toBe(
+      "TOML Parse error: Bare carriage return is not allowed; use \\r\\n or \\n",
+    );
   });
 });
 
@@ -472,6 +496,9 @@ describe("error contract", () => {
     expect(syntaxError("linker = isolated").message).toBe('TOML Parse error: Strings must be quoted: "isolated"');
     expect(syntaxError("a = tru").message).toBe('TOML Parse error: Strings must be quoted: "tru"');
     expect(syntaxError("a = nope").message).toBe('TOML Parse error: Strings must be quoted: "nope"');
+    // Bare words that merely start with inf/nan are unquoted strings too.
+    expect(syntaxError("timeout = infinity").message).toBe('TOML Parse error: Strings must be quoted: "infinity"');
+    expect(syntaxError("unit = nanoseconds").message).toBe('TOML Parse error: Strings must be quoted: "nanoseconds"');
   });
 
   test("common mistakes produce specific messages", () => {

@@ -760,11 +760,16 @@ describe("expect()", () => {
     expect(e5).toEqual(d5);
 
     expect(new String("a")).not.toEqual(new String("b"));
+    expect(Object.assign(new String("a"), { e: 1 })).not.toEqual(new String("a"));
+    expect(Object.assign(new String("a"), { e: 1 })).not.toStrictEqual(new String("a"));
+    expect(Object.assign(new String("a"), { e: 1 })).toEqual(Object.assign(new String("a"), { e: 1 }));
 
     var s1 = new String("a");
     var s2 = new String("a");
-    ANY(s1)[f] = "hello";
     expect(s1).toEqual(s2);
+    ANY(s1)[f] = "hello";
+    expect(s1).not.toEqual(s2);
+    expect(s2).not.toEqual(s1);
 
     class String2 extends String {
       constructor() {
@@ -783,8 +788,9 @@ describe("expect()", () => {
 
     var s3 = new String2("a");
     var s4 = new String2("a");
-    ANY(s3)[f] = "hello";
     expect(s3).toEqual(s4);
+    ANY(s3)[f] = "hello";
+    expect(s3).not.toEqual(s4);
 
     var s5 = new String("a");
     var s6 = new String3("a");
@@ -1169,31 +1175,37 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
-  test("deepEquals Set/Map stress test", () => {
-    const arr1 = [];
-    const arr2 = [];
-    const arr3 = [];
-    const arr4 = [];
+  // This CPU-bound stress test takes ~3 minutes under a debug+ASAN build
+  // (vs ~3s in release), well past bun test's 5s default timeout.
+  test(
+    "deepEquals Set/Map stress test",
+    () => {
+      const arr1 = [];
+      const arr2 = [];
+      const arr3 = [];
+      const arr4 = [];
 
-    for (let i = 0; i < 150; i++) {
-      arr1[i] = [i];
-      arr2[i] = [i];
-      arr3[i] = [i, [i]];
-      arr4[i] = [i, [i]];
-    }
+      for (let i = 0; i < 150; i++) {
+        arr1[i] = [i];
+        arr2[i] = [i];
+        arr3[i] = [i, [i]];
+        arr4[i] = [i, [i]];
+      }
 
-    for (let i = 0; i < 2000; i++) {
-      let outerSet = new Set(arr1);
-      let innerSet = new Set(arr2);
-      Bun.deepEquals(outerSet, innerSet);
-    }
+      for (let i = 0; i < 2000; i++) {
+        let outerSet = new Set(arr1);
+        let innerSet = new Set(arr2);
+        Bun.deepEquals(outerSet, innerSet);
+      }
 
-    for (let i = 0; i < 1000; i++) {
-      let outerMap = new Map(arr3);
-      let innerMap = new Map(arr4);
-      Bun.deepEquals(outerMap, innerMap);
-    }
-  });
+      for (let i = 0; i < 1000; i++) {
+        let outerMap = new Map(arr3);
+        let innerMap = new Map(arr4);
+        Bun.deepEquals(outerMap, innerMap);
+      }
+    },
+    typeof Bun !== "undefined" && Bun.version.includes("debug") ? 5 * 60_000 : 5_000,
+  );
 
   test("deepEquals - Date", () => {
     let d = new Date();

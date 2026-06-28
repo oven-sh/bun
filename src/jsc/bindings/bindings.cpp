@@ -74,6 +74,7 @@
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
+#include "JavaScriptCore/StringObject.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "JavaScriptCore/Watchdog.h"
@@ -730,6 +731,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c2, c1);
+    RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
@@ -1421,14 +1423,16 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        JSString* s1 = c1->toStringInline(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSString* s2 = c2->toStringInline(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        // Compare the wrapped [[StringData]] directly; toStringInline would
+        // invoke a user-defined toString/Symbol.toPrimitive on the wrapper.
+        JSString* s1 = uncheckedDowncast<StringObject>(c1)->internalValue();
+        JSString* s2 = uncheckedDowncast<StringObject>(c2)->internalValue();
 
         bool stringsEqual = s1->equal(globalObject, s2);
         RETURN_IF_EXCEPTION(scope, {});
-        return stringsEqual;
+        if (!stringsEqual) return false;
+        // Fall through to check own properties
+        break;
     }
     case JSFunctionType: {
         return false;

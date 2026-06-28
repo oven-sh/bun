@@ -48,6 +48,50 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(b, a)).toBe(false);
   });
 
+  // Own properties added onto a boxed-primitive wrapper object participate in
+  // the comparison, consistently across String, Number, and Boolean.
+  describe("boxed primitive wrappers", () => {
+    it.each([
+      ["String", () => new String("ab")],
+      ["Number", () => new Number(42)],
+      ["Boolean", () => new Boolean(true)],
+    ])("extra own properties on a boxed %s are compared", (_name, make) => {
+      const tagged = () => Object.assign(make(), { e: 1 });
+      expect(deepEquals(tagged(), make())).toBe(false);
+      expect(deepEquals(make(), tagged())).toBe(false);
+      expect(deepEquals(tagged(), tagged())).toBe(true);
+      expect(deepEquals(tagged(), Object.assign(make(), { e: 2 }))).toBe(false);
+    });
+
+    it("compares symbol-keyed own properties on a boxed String", () => {
+      const a: any = new String("ab");
+      a[Symbol.for("deep-equals.tag")] = 1;
+      expect(deepEquals(a, new String("ab"))).toBe(false);
+      expect(deepEquals(new String("ab"), a)).toBe(false);
+    });
+
+    it("boxed Strings without extra own properties still compare by value", () => {
+      expect(deepEquals(new String("ab"), new String("ab"))).toBe(true);
+      expect(deepEquals(new String("ab"), new String("ac"))).toBe(false);
+    });
+
+    it("compares the boxed string value, not toString()", () => {
+      const lie = { value: () => "XX" };
+      expect(deepEquals(Object.defineProperty(new String("ab"), "toString", lie), new String("ab"))).toBe(true);
+      expect(
+        deepEquals(Object.defineProperty(new String("XX"), "toString", { value: () => "ab" }), new String("ab")),
+      ).toBe(false);
+    });
+
+    it("an extra own property whose value is undefined", () => {
+      const a = Object.assign(new String("ab"), { e: undefined });
+      // undefined matches a missing property only in non-strict mode, the same
+      // as plain objects and Number/Boolean wrappers.
+      expect(deepEquals(a, new String("ab"))).toBe(!strict);
+      expect(deepEquals(new String("ab"), a)).toBe(!strict);
+    });
+  });
+
   // we may change this in the future
   it("functions that are not reference-equal are never equal", () => {
     function foo() {}

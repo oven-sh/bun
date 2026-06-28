@@ -1026,9 +1026,16 @@ declare global {
   }
 }
 
-Buffer.prototype.toUnixString = function () {
-  return this.toString("utf-8").replaceAll("\r\n", "\n");
-};
+// Test-only prototype helpers are defined non-enumerably, like native
+// prototype methods, so they never show up in property enumeration
+// (for..in, toEqual, Bun.deepEquals) inside tests.
+Object.defineProperty(Buffer.prototype, "toUnixString", {
+  writable: true,
+  configurable: true,
+  value: function (this: Buffer) {
+    return this.toString("utf-8").replaceAll("\r\n", "\n");
+  },
+});
 
 export function dockerExe(): string | null {
   return which("docker") || which("podman") || null;
@@ -1541,13 +1548,22 @@ export function disableAggressiveGCScope() {
   };
 }
 
-String.prototype.isLatin1 = function () {
-  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
-};
+// Non-enumerable for the same reason as Buffer.prototype.toUnixString above.
+Object.defineProperty(String.prototype, "isLatin1", {
+  writable: true,
+  configurable: true,
+  value: function (this: string) {
+    return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
+  },
+});
 
-String.prototype.isUTF16 = function () {
-  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
-};
+Object.defineProperty(String.prototype, "isUTF16", {
+  writable: true,
+  configurable: true,
+  value: function (this: string) {
+    return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
+  },
+});
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;

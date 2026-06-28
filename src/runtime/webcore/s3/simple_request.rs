@@ -249,34 +249,10 @@ impl S3HttpSimpleTask {
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
             has_error_code = true;
-        } else if let Some(body) = &self.result.body {
-            let bytes = body.list.as_slice();
-            if !bytes.is_empty() {
-                message = bytes;
-                if let Some(start) = strings::index_of(bytes, b"<Code>") {
-                    let value_start = start + b"<Code>".len();
-                    if let Some(end) = strings::index_of(bytes, b"</Code>") {
-                        if end >= value_start {
-                            code = &bytes[value_start..end];
-                            has_error_code = true;
-                        }
-                    }
-                }
-                if let Some(start) = strings::index_of(bytes, b"<Message>") {
-                    let value_start = start + b"<Message>".len();
-                    if let Some(end) = strings::index_of(bytes, b"</Message>") {
-                        if end >= value_start {
-                            message = &bytes[value_start..end];
-                        }
-                    }
-                }
-            }
-        }
-
-        // HEAD responses never carry an XML error document (HTTP forbids a
-        // body on HEAD), so the status code is the only error signal S3 gives
-        // us. Map it to the canonical S3 error code when the body had none.
-        if !has_error_code {
+        } else {
+            // HEAD responses never carry an XML error document (HTTP forbids a
+            // body on HEAD), so seed code/message from the status. The body,
+            // when present, wins below: it is the server's own diagnostic.
             if let Some(metadata) = &self.result.metadata {
                 if let Some(status_err) =
                     get_error_code_and_message_for_status(metadata.response.status_code)
@@ -284,6 +260,29 @@ impl S3HttpSimpleTask {
                     code = status_err.code;
                     message = status_err.message;
                     has_error_code = true;
+                }
+            }
+            if let Some(body) = &self.result.body {
+                let bytes = body.list.as_slice();
+                if !bytes.is_empty() {
+                    message = bytes;
+                    if let Some(start) = strings::index_of(bytes, b"<Code>") {
+                        let value_start = start + b"<Code>".len();
+                        if let Some(end) = strings::index_of(bytes, b"</Code>") {
+                            if end >= value_start {
+                                code = &bytes[value_start..end];
+                                has_error_code = true;
+                            }
+                        }
+                    }
+                    if let Some(start) = strings::index_of(bytes, b"<Message>") {
+                        let value_start = start + b"<Message>".len();
+                        if let Some(end) = strings::index_of(bytes, b"</Message>") {
+                            if end >= value_start {
+                                message = &bytes[value_start..end];
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -304,49 +303,47 @@ impl S3HttpSimpleTask {
     fn fail_if_contains_error(&mut self, status: u32) -> JsTerminatedResult<bool> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
-        let mut has_error_code = false;
 
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
-            has_error_code = true;
-        } else if let Some(body) = &self.result.body {
-            let bytes = body.list.as_slice();
-            let mut has_error = false;
-            if !bytes.is_empty() {
-                message = bytes;
-                if strings::index_of(bytes, b"<Error>").is_some() {
-                    has_error = true;
-                    if let Some(start) = strings::index_of(bytes, b"<Code>") {
-                        let value_start = start + b"<Code>".len();
-                        if let Some(end) = strings::index_of(bytes, b"</Code>") {
-                            if end >= value_start {
-                                code = &bytes[value_start..end];
-                                has_error_code = true;
+        } else {
+            // Seed code/message from the HTTP status (a body-less error
+            // response carries no XML error document to parse). The body,
+            // when present, wins below: it is the server's own diagnostic.
+            if let Some(status_err) = get_error_code_and_message_for_status(status) {
+                code = status_err.code;
+                message = status_err.message;
+            }
+            if let Some(body) = &self.result.body {
+                let bytes = body.list.as_slice();
+                let mut has_error = false;
+                if !bytes.is_empty() {
+                    message = bytes;
+                    if strings::index_of(bytes, b"<Error>").is_some() {
+                        has_error = true;
+                        if let Some(start) = strings::index_of(bytes, b"<Code>") {
+                            let value_start = start + b"<Code>".len();
+                            if let Some(end) = strings::index_of(bytes, b"</Code>") {
+                                if end >= value_start {
+                                    code = &bytes[value_start..end];
+                                }
                             }
                         }
-                    }
-                    if let Some(start) = strings::index_of(bytes, b"<Message>") {
-                        let value_start = start + b"<Message>".len();
-                        if let Some(end) = strings::index_of(bytes, b"</Message>") {
-                            if end >= value_start {
-                                message = &bytes[value_start..end];
+                        if let Some(start) = strings::index_of(bytes, b"<Message>") {
+                            let value_start = start + b"<Message>".len();
+                            if let Some(end) = strings::index_of(bytes, b"</Message>") {
+                                if end >= value_start {
+                                    message = &bytes[value_start..end];
+                                }
                             }
                         }
                     }
                 }
-            }
-            if (!has_error && status == 200) || status == 206 {
+                if (!has_error && status == 200) || status == 206 {
+                    return Ok(false);
+                }
+            } else if status == 200 || status == 206 {
                 return Ok(false);
-            }
-        } else if status == 200 || status == 206 {
-            return Ok(false);
-        }
-        // No <Code> in the body: derive the S3 error code from the HTTP status
-        // (a body-less error response has no XML error document to parse).
-        if !has_error_code {
-            if let Some(status_err) = get_error_code_and_message_for_status(status) {
-                code = status_err.code;
-                message = status_err.message;
             }
         }
         self.callback.fail(code, message, self.callback_context)?;

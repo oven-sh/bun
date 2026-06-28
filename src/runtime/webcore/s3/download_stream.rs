@@ -107,16 +107,22 @@ impl S3HttpDownloadStreamingTask {
         let chunk: MutableString = 'brk: {
             if failed {
                 if !has_more {
-                    let mut has_error_code = false;
-
                     let mut code: &[u8] = b"UnknownError";
                     let mut message: &[u8] = b"an unexpected error has occurred";
                     if state.request_error() != 0 {
                         // SAFETY: request_error != 0 checked above; value originated from @intFromError.
                         let req_err = Error::from_raw(state.request_error());
                         code = req_err.name().as_bytes();
-                        has_error_code = true;
                     } else {
+                        // Seed code/message from the HTTP status (a body-less
+                        // error response carries no XML error document). The
+                        // body, when present, wins below.
+                        if let Some(status_err) =
+                            get_error_code_and_message_for_status(state.status_code())
+                        {
+                            code = status_err.code;
+                            message = status_err.message;
+                        }
                         let bytes = self.reported_response_buffer.list.as_slice();
                         if !bytes.is_empty() {
                             message = bytes;
@@ -127,7 +133,6 @@ impl S3HttpDownloadStreamingTask {
                                     strings::index_of(&bytes[value_start..], b"</Code>")
                                 {
                                     code = &bytes[value_start..value_start + end];
-                                    has_error_code = true;
                                 }
                             }
                             if let Some(start) = strings::index_of(bytes, b"<Message>") {
@@ -138,18 +143,6 @@ impl S3HttpDownloadStreamingTask {
                                     message = &bytes[value_start..value_start + end];
                                 }
                             }
-                        }
-                    }
-
-                    // No <Code> in the body: derive the S3 error code from the
-                    // HTTP status (body-less error responses have no XML error
-                    // document, e.g. a failed HEAD).
-                    if !has_error_code {
-                        if let Some(status_err) =
-                            get_error_code_and_message_for_status(state.status_code())
-                        {
-                            code = status_err.code;
-                            message = status_err.message;
                         }
                     }
 

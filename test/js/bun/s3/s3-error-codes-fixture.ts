@@ -1,6 +1,6 @@
 // Spawned by s3-error-codes.test.ts. Runs every S3 operation against local
 // mock servers that answer with error statuses, and prints the observed error
-// codes as a single JSON object on stdout.
+// codes/messages as a single JSON object on stdout.
 import { S3Client, type S3Options } from "bun";
 
 const baseOptions = {
@@ -28,13 +28,23 @@ async function codeOf(promise: Promise<unknown>): Promise<unknown> {
   }
 }
 
+/** Resolve to the rejection's `{ code, message }`, or a sentinel if it resolved. */
+async function errorOf(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+    return "<resolved>";
+  } catch (error: any) {
+    return { code: error?.code, message: error?.message };
+  }
+}
+
 const results: Record<string, unknown> = {};
 
-// A failed HEAD response has no body (HTTP forbids a body on HEAD), so the S3
-// error code can only come from the HTTP status. 418 has no canonical S3 code.
+// A failed HEAD response has no body (HTTP forbids a body on HEAD), so both the
+// code and the message can only come from the status. 418 has no canonical code.
 for (const status of [403, 404, 405, 411, 412, 416, 418, 500, 501, 503]) {
   using server = serve(() => new Response(null, { status }));
-  results[`stat ${status}`] = await codeOf(S3Client.file("key", options(server.url.href)).stat());
+  results[`stat ${status}`] = await errorOf(S3Client.file("key", options(server.url.href)).stat());
 }
 
 // Every operation routes its errors through the same status fallback.
@@ -58,7 +68,16 @@ for (const status of [403, 404, 405, 411, 412, 416, 418, 500, 501, 503]) {
         { status: 403 },
       ),
   );
-  results["text 403 with xml body"] = await codeOf(S3Client.file("key", options(server.url.href)).text());
+  results["text 403 with xml body"] = await errorOf(S3Client.file("key", options(server.url.href)).text());
+}
+
+// A non-XML error body (e.g. a load balancer's plain-text error page) is the
+// only diagnostic the server sent: keep it as the message, and take only the
+// code from the status.
+{
+  const body = "upstream connect error or disconnect/reset before headers";
+  using server = serve(() => new Response(body, { status: 503 }));
+  results["text 503 with text body"] = await errorOf(S3Client.file("key", options(server.url.href)).text());
 }
 
 // exists() must keep distinguishing "not there" (false) from "not allowed" (reject).

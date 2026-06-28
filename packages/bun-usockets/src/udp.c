@@ -114,6 +114,10 @@ int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled) {
     return bsd_socket_broadcast(us_poll_fd(&s->p), enabled);
 }
 
+int us_udp_socket_buffer_size(struct us_udp_socket_t *s, int is_recv, int *size) {
+    return bsd_socket_buffer_size(us_poll_fd(&s->p), is_recv, size);
+}
+
 int us_udp_socket_set_ttl_unicast(struct us_udp_socket_t *s, int ttl) {
     return bsd_socket_ttl_unicast(us_poll_fd(&s->p), ttl);
 }

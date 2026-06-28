@@ -206,3 +206,95 @@ describe("unref()", () => {
     expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
   });
 });
+
+describe("buffer sizes", () => {
+  // Linux reports SO_RCVBUF/SO_SNDBUF doubled relative to what was requested
+  // (the kernel reserves half for bookkeeping). Other platforms echo the
+  // request back. Node's own test-dgram-socket-buffer-size.js branches the
+  // same way.
+  const applied = (n: number) => (process.platform === "linux" ? 2 * n : n);
+
+  async function bound(options: { recvBufferSize?: number; sendBufferSize?: number } = {}) {
+    const socket = createSocket({ type: "udp4", ...options });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    socket.on("error", reject);
+    socket.bind(0, resolve);
+    await promise;
+    return socket;
+  }
+
+  test("setRecvBufferSize/setSendBufferSize reach the kernel and the getters read it back", async () => {
+    const socket = await bound();
+    try {
+      socket.setRecvBufferSize(10000);
+      socket.setSendBufferSize(12000);
+      // Distinct values so a SO_RCVBUF/SO_SNDBUF mix-up fails the assertion.
+      expect({ recv: socket.getRecvBufferSize(), send: socket.getSendBufferSize() }).toEqual({
+        recv: applied(10000),
+        send: applied(12000),
+      });
+
+      // A second set must be observable: the getter reads the socket, not a cache.
+      socket.setRecvBufferSize(16000);
+      expect(socket.getRecvBufferSize()).toBe(applied(16000));
+      expect(socket.getSendBufferSize()).toBe(applied(12000));
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("recvBufferSize/sendBufferSize options are applied at bind", async () => {
+    const socket = await bound({ recvBufferSize: 4096, sendBufferSize: 6000 });
+    try {
+      expect({ recv: socket.getRecvBufferSize(), send: socket.getSendBufferSize() }).toEqual({
+        recv: applied(4096),
+        send: applied(6000),
+      });
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("throws ERR_SOCKET_BUFFER_SIZE before the socket is bound", () => {
+    const socket = createSocket("udp4");
+    try {
+      for (const fn of ["getRecvBufferSize", "getSendBufferSize"] as const) {
+        expect(() => socket[fn]()).toThrow(
+          expect.objectContaining({ code: "ERR_SOCKET_BUFFER_SIZE", name: "SystemError" }),
+        );
+      }
+      for (const fn of ["setRecvBufferSize", "setSendBufferSize"] as const) {
+        expect(() => socket[fn](8192)).toThrow(
+          expect.objectContaining({ code: "ERR_SOCKET_BUFFER_SIZE", name: "SystemError" }),
+        );
+      }
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("throws ERR_SOCKET_BAD_BUFFER_SIZE for a size that is not a uint32", async () => {
+    const socket = await bound();
+    try {
+      for (const bad of [-1, Infinity, "Doh!"]) {
+        expect(() => socket.setRecvBufferSize(bad as number)).toThrow(
+          expect.objectContaining({ code: "ERR_SOCKET_BAD_BUFFER_SIZE", name: "TypeError" }),
+        );
+        expect(() => socket.setSendBufferSize(bad as number)).toThrow(
+          expect.objectContaining({ code: "ERR_SOCKET_BAD_BUFFER_SIZE", name: "TypeError" }),
+        );
+      }
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("validates the recvBufferSize/sendBufferSize options in createSocket", () => {
+    expect(() => createSocket({ type: "udp4", recvBufferSize: -1 })).toThrow(
+      expect.objectContaining({ code: "ERR_OUT_OF_RANGE", name: "RangeError" }),
+    );
+    expect(() => createSocket({ type: "udp4", sendBufferSize: "x" as unknown as number })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }),
+    );
+  });
+});

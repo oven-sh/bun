@@ -51,6 +51,7 @@ const {
   validateFunction,
   validatePort,
   validateAbortSignal,
+  validateUint32,
 } = require("internal/validators");
 
 const { isIP } = require("internal/net/isIP");
@@ -64,10 +65,15 @@ const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectDefineProperty = Object.defineProperty;
 const FunctionPrototypeBind = Function.prototype.bind;
 
+// Node throws this as a SystemError carrying the underlying syscall failure.
 class ERR_SOCKET_BUFFER_SIZE extends Error {
-  constructor(ctx) {
-    super(`Invalid buffer size: ${ctx}`);
+  constructor(cause) {
+    super("Could not get or set buffer size", { cause });
     this.code = "ERR_SOCKET_BUFFER_SIZE";
+    this.info = cause;
+  }
+  get name() {
+    return "SystemError";
   }
 }
 
@@ -150,6 +156,12 @@ function Socket(type, listener) {
     options = type;
     type = options.type;
     lookup = options.lookup;
+    if (options.recvBufferSize) {
+      validateUint32(options.recvBufferSize, "options.recvBufferSize");
+    }
+    if (options.sendBufferSize) {
+      validateUint32(options.sendBufferSize, "options.sendBufferSize");
+    }
     recvBufferSize = options.recvBufferSize;
     sendBufferSize = options.sendBufferSize;
   }
@@ -204,16 +216,28 @@ function createSocket(type, listener) {
   return new Socket(type, listener);
 }
 
-function bufferSize(self, size, _buffer) {
+// `(size, isRecv)`: a zero size reads SO_RCVBUF/SO_SNDBUF, a non-zero size writes it.
+const bufferSizeFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsBufferSize", 2);
+
+function bufferSize(self, size, buffer) {
   if (size >>> 0 !== size) throw $ERR_SOCKET_BAD_BUFFER_SIZE();
 
-  const ctx = {};
-  // const ret = self[kStateSymbol].handle.bufferSize(size, buffer, ctx);
-  const ret = 1 << 19; // common buffer for all sockets is fixed at 512KiB
-  if (ret === undefined) {
-    throw new ERR_SOCKET_BUFFER_SIZE(ctx);
+  const socket = self[kStateSymbol].handle?.socket;
+  if (!socket) {
+    // Node reports EBADF here: the libuv handle has no fd until bind() runs.
+    throw new ERR_SOCKET_BUFFER_SIZE(Object.assign(new Error("EBADF: bad file descriptor"), { code: "EBADF" }));
   }
-  return ret;
+
+  // setsockopt's size argument is a C int; node rejects anything wider.
+  if (size > 2147483647) {
+    throw new ERR_SOCKET_BUFFER_SIZE(Object.assign(new Error("EINVAL: invalid argument"), { code: "EINVAL" }));
+  }
+
+  try {
+    return bufferSizeFn.$call(socket, size, buffer);
+  } catch (cause) {
+    throw new ERR_SOCKET_BUFFER_SIZE(cause);
+  }
 }
 
 Socket.prototype.bind = function (port_, address_ /* , callback */) {
@@ -343,6 +367,9 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
           state.handle.socket = socket;
           state.receiving = true;
           state.bindState = BIND_STATE_BOUND;
+
+          if (state.recvBufferSize) bufferSize(this, state.recvBufferSize, RECV_BUFFER);
+          if (state.sendBufferSize) bufferSize(this, state.sendBufferSize, SEND_BUFFER);
 
           this.emit("listening");
         },

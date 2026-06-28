@@ -1812,6 +1812,59 @@ impl UDPSocket {
 
         Ok(JSValue::UNDEFINED)
     }
+
+    // See `js_connect` — codegen `JsClass` derive owns the link name.
+    /// `(size, isRecv)`: a zero `size` reads `SO_RCVBUF` (`isRecv`) /
+    /// `SO_SNDBUF`; a non-zero `size` writes it. Returns what `getsockopt`
+    /// reports on a read and echoes the input on a write, like libuv's
+    /// `uv_recv_buffer_size`. Only `node:dgram` calls this.
+    pub fn js_buffer_size(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = call_frame.arguments_old::<2>();
+
+        // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
+        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
+        let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"))
+            );
+        };
+
+        if args.len < 2 {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("Expected 2 arguments, got {}", args.len)));
+        }
+
+        // Coerce (can run user JS) before touching `this.socket`: dgram.ts
+        // always passes a validated uint32, but nothing enforces that here.
+        let mut size = args.ptr[0].coerce_to_i32(global_this)?;
+        let is_recv = args.ptr[1].to_boolean();
+        let tag = if size == 0 {
+            bun_sys::Tag::getsockopt
+        } else {
+            bun_sys::Tag::setsockopt
+        };
+
+        let socket = match this.socket.get() {
+            Some(socket) if !this.closed.get() => socket,
+            _ => {
+                return Err(global_this.throw_value(
+                    bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, tag)
+                        .to_js(global_this),
+                ));
+            }
+        };
+
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).buffer_size(is_recv, &mut size);
+        if let Some(err) = get_us_error::<true>(res, tag) {
+            return Err(global_this.throw_value(err.to_js(global_this)));
+        }
+
+        Ok(JSValue::js_number(f64::from(size)))
+    }
 }
 
 struct Destination {

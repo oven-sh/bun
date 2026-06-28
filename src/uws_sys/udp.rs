@@ -102,6 +102,13 @@ impl Socket {
         us_udp_socket_set_broadcast(self, enabled as c_int)
     }
 
+    /// `SO_RCVBUF` (`is_recv`) / `SO_SNDBUF`. A zero `*size` reads the
+    /// kernel's value into `size`; a non-zero `*size` writes it (and leaves
+    /// `size` untouched). Returns 0 on success, -1 on failure (errno set).
+    pub fn buffer_size(&mut self, is_recv: bool, size: &mut c_int) -> c_int {
+        us_udp_socket_buffer_size(self, is_recv as c_int, size)
+    }
+
     pub fn set_unicast_ttl(&mut self, ttl: i32) -> c_int {
         us_udp_socket_set_ttl_unicast(self, ttl as c_int)
     }
@@ -166,6 +173,11 @@ unsafe extern "C" {
     fn us_udp_socket_remote_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
     safe fn us_udp_socket_close(socket: &mut Socket);
     safe fn us_udp_socket_set_broadcast(socket: &mut Socket, enabled: c_int) -> c_int;
+    safe fn us_udp_socket_buffer_size(
+        socket: &mut Socket,
+        is_recv: c_int,
+        size: &mut c_int,
+    ) -> c_int;
     safe fn us_udp_socket_set_ttl_unicast(socket: &mut Socket, ttl: c_int) -> c_int;
     safe fn us_udp_socket_set_ttl_multicast(socket: &mut Socket, ttl: c_int) -> c_int;
     safe fn us_udp_socket_set_multicast_loopback(socket: &mut Socket, enabled: c_int) -> c_int;

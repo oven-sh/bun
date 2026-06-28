@@ -672,6 +672,23 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd) {
     return tos;
 }
 
+int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int *size) {
+    int option = is_recv ? SO_RCVBUF : SO_SNDBUF;
+    if (*size == 0) {
+        socklen_t len = sizeof(*size);
+#ifdef _WIN32
+        return getsockopt(fd, SOL_SOCKET, option, (char *) size, (int *) &len);
+#else
+        return getsockopt(fd, SOL_SOCKET, option, size, &len);
+#endif
+    }
+#ifdef _WIN32
+    return setsockopt(fd, SOL_SOCKET, option, (const char *) size, sizeof(*size));
+#else
+    return setsockopt(fd, SOL_SOCKET, option, size, sizeof(*size));
+#endif
+}
+
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
     // Linux TCP_CORK has the same underlying corking mechanism as with MSG_MORE
 #ifdef TCP_CORK

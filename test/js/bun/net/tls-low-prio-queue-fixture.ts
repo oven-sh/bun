@@ -38,10 +38,23 @@ const ROUNDS = 2;
 async function captureClientHello(): Promise<Buffer> {
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
   const srv = net.createServer(sock => {
+    // A `data` event delivers a TCP chunk, not a TLS record, so buffer until
+    // the first record is complete (5-byte header + the length it declares)
+    // and resolve with exactly that record.
+    const chunks: Buffer[] = [];
+    let total = 0;
     sock.on("error", reject);
-    sock.once("data", d => {
+    sock.on("close", () => reject(new Error("socket closed before a full ClientHello record arrived")));
+    sock.on("data", d => {
+      chunks.push(d);
+      total += d.length;
+      const buf = Buffer.concat(chunks, total);
+      if (buf.length < 5) return;
+      const recordLength = 5 + buf.readUInt16BE(3);
+      if (buf.length < recordLength) return;
+      sock.removeAllListeners("close");
       sock.destroy();
-      resolve(d);
+      resolve(buf.subarray(0, recordLength));
     });
   });
   srv.on("error", reject);
@@ -132,25 +145,31 @@ async function round() {
   // Every send from THIS process returns 0 (backpressure): the server flights
   // stay WANT_WRITE forever and every writable retry re-issues
   // us_poll_change(READABLE|WRITABLE), including on already-parked sockets.
-  fault.set({ syscall: "send", action: "zero", repeat: -1 });
-  fault.set({ syscall: "writev", action: "zero", repeat: -1 });
+  // The faults are process-wide, so clear them even if the child fails.
+  try {
+    fault.set({ syscall: "send", action: "zero", repeat: -1 });
+    fault.set({ syscall: "writev", action: "zero", repeat: -1 });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", clientSrc],
-    env: {
-      ...bunEnv,
-      REPRO_PORT: String(server.port),
-      REPRO_N: String(N),
-      REPRO_HELLO: clientHello.toString("hex"),
-    },
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  await proc.exited;
-
-  fault.clear();
-  server.stop(true);
-  server = null;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", clientSrc],
+      env: {
+        ...bunEnv,
+        REPRO_PORT: String(server.port),
+        REPRO_N: String(N),
+        REPRO_HELLO: clientHello.toString("hex"),
+      },
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const clientExitCode = await proc.exited;
+    // Without the clients the server sockets never park, so a broken client
+    // script must fail the fixture rather than let it still print OK.
+    if (clientExitCode !== 0) throw new Error(`client fixture exited with ${clientExitCode}`);
+  } finally {
+    fault.clear();
+    server.stop(true);
+    server = null;
+  }
 }
 
 for (let i = 0; i < ROUNDS; i++) {

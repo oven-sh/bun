@@ -37,6 +37,18 @@ bun file-index/git-status.mjs
   medium / long / path-like needles, vs two pure-JS baselines over the same
   path array: a naive `path.includes(needle)` filter (first 32, no ranking)
   and a subsequence scorer + top-K (what you would write in userland).
+  `complete()` keeps a per-index survivor cache that is reused when a query
+  equals or extends the previous one, so each needle is reported as two
+  benches:
+  - **`cold`** — the cache is busted before every timed call by first issuing
+    a decoy query the needle does not extend. This is the cost of the first
+    keystroke of a new query (and is the row to watch for regressions in the
+    scan + score + rank path). The decoy matches nothing and costs ~1 µs
+    (printed per size), which is noise next to the cold call it precedes.
+  - **`warm (cache)`** — the identical query repeated back to back, i.e. the
+    cache-hit path. Timing only this (what a naive repeat-the-call bench
+    does) badly understates real per-keystroke latency and would hide a
+    regression in the cold path.
   - `FILE_INDEX_BENCH_SIZES=10000,100000,250000` — comma-separated path counts.
 - **`glob.mjs`** — `index.glob(pattern)` (pure in-memory, the index is built
   once) vs re-walking the filesystem per query with `Bun.Glob().scanSync` and

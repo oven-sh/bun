@@ -4,6 +4,18 @@
 // query is timed. mitata's min / p50 / max columns are the best / median /
 // worst per-keystroke latency.
 //
+// complete() keeps a per-index survivor cache that is reused whenever a query
+// equals or extends the previous one, so the same call is two very different
+// operations depending on what ran before it. Each needle is therefore
+// reported twice:
+//   - "cold":         the cache is busted before every timed call by first
+//                     issuing a decoy query that the needle does not extend.
+//   - "warm (cache)": the identical query repeated back to back (a cache hit).
+// The decoy is part of the cold bench's timed body, but it matches nothing
+// (no synthetic path contains "@" or "~") so it returns in ~1 µs — under
+// 0.2% of the cheapest cold query — and does not move the cold numbers. Its
+// measured cost is printed per size so that claim is checked on every run.
+//
 //   FILE_INDEX_BENCH_SIZES=10000,100000,250000   path counts (comma separated)
 import { bench, group, run } from "../runner.mjs";
 import { assertEqual, hasFileIndex, syntheticPaths, tempRoot, writeTree } from "./lib.mjs";
@@ -27,6 +39,11 @@ const NEEDLES = [
   ["long", "componentsindexts"],
   ["path-like", "src/index"],
 ];
+// Cache-busting decoys for the "cold" benches: none of the needles above
+// extends either, and neither character appears in any synthetic path, so the
+// index rejects them almost for free. Two are alternated so consecutive decoy
+// calls never equal each other either.
+const DECOYS = ["@", "~"];
 
 // --- pure-JS baselines ------------------------------------------------------
 
@@ -97,6 +114,23 @@ for (const size of sizes) {
     index = new Bun.FileIndex(root);
     await index.ready;
     cleanups.push(() => index.close());
+
+    // The decoys must match nothing (otherwise they would not be cheap) and
+    // their cost must be noise next to the cold queries they precede. Print
+    // it so the "negligible" claim above is re-checked on every run/machine.
+    const decoyNs = [];
+    for (let i = 0; i < 64; i++) {
+      const decoy = DECOYS[i % DECOYS.length];
+      const t0 = Bun.nanoseconds();
+      const hits = index.complete(decoy, { limit: LIMIT });
+      decoyNs.push(Bun.nanoseconds() - t0);
+      assertEqual(hits.length, 0, `decoy ${JSON.stringify(decoy)} matches nothing at size ${size}`);
+    }
+    decoyNs.sort((a, b) => a - b);
+    console.log(
+      `cache-bust decoy over ${size} paths: ${(decoyNs[decoyNs.length >> 1] / 1e3).toFixed(2)} µs median ` +
+        `(included in the timed body of the "cold" benches below)`,
+    );
   }
 
   for (const [kind, needle] of NEEDLES) {
@@ -115,10 +149,19 @@ for (const size of sizes) {
     }
 
     group(`complete "${needle}" (${kind}) over ${size} paths, limit ${LIMIT}`, () => {
-      if (index)
-        bench(`Bun.FileIndex.complete (${size})`, () => {
+      if (index) {
+        // The decoy neither equals nor is extended by `needle`, so every
+        // timed call below pays the full uncached scan + score + rank.
+        let calls = 0;
+        bench(`Bun.FileIndex.complete cold (${size})`, () => {
+          index.complete(DECOYS[calls++ % DECOYS.length], { limit: LIMIT });
           index.complete(needle, { limit: LIMIT });
         });
+        // Identical query repeated back to back: the survivor-cache hit path.
+        bench(`Bun.FileIndex.complete warm (cache) (${size})`, () => {
+          index.complete(needle, { limit: LIMIT });
+        });
+      }
       bench(`JS subsequence scorer + topK (${size})`, () => {
         jsFuzzyTopK(paths, needle, LIMIT);
       });

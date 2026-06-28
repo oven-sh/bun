@@ -14,22 +14,29 @@
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_file_index::{CompleteOptions, CrawlResult, EntryKind, Store};
+use bun_core::ZStr;
+use bun_file_index::{CompleteOptions, CrawlResult, EntryKind, Meta, Store};
 use bun_fuzzy::{Scorer, ScorerOptions};
 use bun_ignore::{IgnoreChain, IgnoreFile};
+use bun_io::KeepAlive;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, StringJsc as _,
+    SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{PathBuffer, platform};
 use bun_sys::{Fd, File, O};
 
 mod crawl_task;
+mod git_task;
 mod grep_task;
+mod watcher;
 
 pub use crate::generated_classes::js_FileIndex as js;
 pub use crawl_task::CrawlTask;
+pub use git_task::{GitDiffTask, GitStatusTask};
 pub use grep_task::GrepTask;
+pub use watcher::WatchDelivery;
 
 /// Default hard cap on bytes retained by the index (`maxMemory`).
 const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024;
@@ -47,6 +54,8 @@ pub(crate) struct Options {
     /// Extra ignore patterns (gitignore syntax), applied as if appended to a
     /// `.gitignore` at the root.
     pub ignore: Vec<Box<[u8]>>,
+    /// Keep the index live with a filesystem watcher (`watch: true`).
+    pub watch: bool,
 }
 
 // Every JS-exposed method takes `&self` (`sharedThis`); per-field interior
@@ -67,6 +76,22 @@ pub struct FileIndex {
     /// Bytes retained by the native store, mirrored here because
     /// `estimated_size` runs on the GC thread and must not touch the store.
     reported_bytes: AtomicUsize,
+    /// The live filesystem watcher (`watch: true`), until `close()`.
+    watcher: RefCell<Option<watcher::WatchHandle>>,
+    /// `ready`/`refresh()` promises waiting for the watcher to acknowledge
+    /// the post-crawl registration sync: `await index.ready` must imply
+    /// "changes from here on are tracked".
+    pending_ready: RefCell<Vec<jsc::JSPromiseStrong>>,
+    /// Re-crawl diff events held back until the same acknowledgement, so a
+    /// handler cannot observe rules the watcher is not yet enforcing.
+    pending_events: RefCell<Vec<(WatchEventKind, Vec<u8>)>>,
+    /// Self-reference, `Strong` while watching: a watching index (and its
+    /// `onchange` slot) must never be collected before `close()`. `Weak`
+    /// (i.e. inert) when not watching.
+    this_ref: RefCell<JsRef>,
+    /// Keeps the event loop alive while watching (like `fs.watch`), until
+    /// `close()`.
+    keep_alive: RefCell<KeepAlive>,
 }
 
 impl FileIndex {
@@ -90,8 +115,9 @@ impl FileIndex {
         }
 
         let root = resolve_root(global, root_slice.slice())?;
-        let options = parse_options(global, options_arg)?;
+        let (options, onchange) = parse_options(global, options_arg)?;
         let max_memory = options.max_memory;
+        let watch = options.watch;
 
         let index = Box::new(FileIndex {
             root,
@@ -101,7 +127,30 @@ impl FileIndex {
             scorer: RefCell::new(Scorer::new(ScorerOptions::default())),
             crawl_truncated: Cell::new(false),
             reported_bytes: AtomicUsize::new(0),
+            watcher: RefCell::new(None),
+            pending_ready: RefCell::new(Vec::new()),
+            pending_events: RefCell::new(Vec::new()),
+            this_ref: RefCell::new(JsRef::empty()),
+            keep_alive: RefCell::new(KeepAlive::default()),
         });
+        if let Some(onchange) = onchange {
+            js::onchange_set_cached(this_value, global, onchange);
+        }
+        if watch {
+            let handle = match watcher::WatchHandle::start(global, &index) {
+                Ok(handle) => handle,
+                Err(err) => {
+                    let err_js = err.to_js(global);
+                    return Err(global.throw_value(err_js));
+                }
+            };
+            *index.watcher.borrow_mut() = Some(handle);
+            // The wrapper (and its `onchange` slot) must survive without any
+            // JS reference until `close()`; a watching index also keeps the
+            // event loop alive, like `fs.watch`.
+            index.this_ref.borrow_mut().set_strong(this_value, global);
+            index.keep_alive.borrow_mut().ref_(bun_io::js_vm_ctx());
+        }
 
         // The initial crawl. Its completion resolves `ready` with `this`; the
         // promise is also cached in the `readyPromise` slot for the getter.
@@ -110,8 +159,25 @@ impl FileIndex {
         Ok(index)
     }
 
+    // `onchange` is declared with `this: true` in `FileIndex.classes.ts`, so
+    // the codegen thunk passes the wrapper cell as `this_value`. The pair
+    // reads/writes the codegen'd `onchange` `values:` slot.
+    bun_jsc::cached_prop_hostfns! {
+        crate::generated_classes::js_FileIndex;
+        (get_onchange, set_onchange => onchange_get_cached, onchange_set_cached),
+    }
+
     pub fn finalize(self: Box<Self>) {
         jsc::mark_binding();
+        // A watcher can still be live here only when the heap is torn down
+        // with a watching index (`finalize` cannot run earlier: the index
+        // holds a strong self-reference until `close()`). Join its thread
+        // before the state it points at is freed.
+        let handle = self.watcher.borrow_mut().take();
+        if let Some(mut handle) = handle {
+            handle.close();
+        }
+        self.this_ref.borrow_mut().finalize();
     }
 
     /// Called from the GC thread: must only read plain atomics.
@@ -140,9 +206,7 @@ impl FileIndex {
     }
 
     pub fn get_watching(&self, _global: &JSGlobalObject) -> JSValue {
-        // The filesystem watcher is not implemented yet (`watch: true` is
-        // rejected by the constructor), so an index is never watching.
-        JSValue::js_boolean(false)
+        JSValue::js_boolean(self.watcher.borrow().is_some())
     }
 
     /// `index.complete(query, { limit, cwd, directories })`
@@ -343,16 +407,370 @@ impl FileIndex {
         grep_task::start(self, global, pattern_arg, options_arg)
     }
 
-    /// `index.close()` — idempotent; releases the store. In-flight crawl and
-    /// grep promises still settle (their tasks own everything they need).
+    /// `index.gitStatus()` — `git status --porcelain=v1` of the indexed view,
+    /// computed in-process on the work pool. Resolves with `null` when `root`
+    /// is not inside a git work tree. Callers should `await index.ready`
+    /// first: the worktree side comes from the in-memory index (see
+    /// [`git_task`]).
     #[bun_jsc::host_fn(method)]
-    pub fn close(&self, _global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub fn git_status(&self, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+        self.check_open(global)?;
+        Ok(git_task::start_status(self, global))
+    }
+
+    /// `index.gitDiff(path)` — line diff of the worktree file against `HEAD`,
+    /// computed in-process on the work pool. Resolves with `null` when `root`
+    /// is not inside a git work tree, or when `path` exists neither in `HEAD`
+    /// nor in the worktree.
+    #[bun_jsc::host_fn(method)]
+    pub fn git_diff(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.check_open(global)?;
+        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.gitDiff")?;
+        if path.is_empty() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "FileIndex.gitDiff(path): path must not be empty"
+            )));
+        }
+        Ok(git_task::start_diff(self, global, path))
+    }
+
+    /// `index.close()` — idempotent. Stops the watcher (signals its thread,
+    /// closes the OS resources, and joins the thread), releases the store,
+    /// and drops the self-reference so the wrapper can be collected.
+    /// In-flight crawl and grep promises still settle (their tasks own
+    /// everything they need).
+    #[bun_jsc::host_fn(method)]
+    pub fn close(&self, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         if !self.closed.replace(true) {
+            // Promises waiting on a watcher acknowledgement that will never
+            // come still settle.
+            self.settle_pending_ready(global);
+            self.stop_watching();
             *self.store.borrow_mut() = Store::new(0);
             self.reported_bytes.store(0, Ordering::Relaxed);
         }
         Ok(JSValue::UNDEFINED)
     }
+}
+
+// Watcher integration. JS thread only.
+impl FileIndex {
+    /// Tear down the watcher (joining its thread) and release the self
+    /// reference + event-loop ref it justified. Idempotent.
+    fn stop_watching(&self) {
+        let handle = self.watcher.borrow_mut().take();
+        if let Some(mut handle) = handle {
+            handle.close();
+        }
+        self.pending_events.borrow_mut().clear();
+        self.keep_alive.borrow_mut().unref(bun_io::js_vm_ctx());
+        // `downgrade`, not `Finalized`: `finalize` has not run.
+        self.this_ref.borrow_mut().downgrade();
+    }
+
+
+    /// Hand the watcher the directory set of the (re)crawled index.
+    fn sync_watcher(&self) {
+        let watcher = self.watcher.borrow();
+        let Some(watcher) = watcher.as_ref() else {
+            return;
+        };
+        let dirs: Vec<Vec<u8>> = {
+            let store = self.store.borrow();
+            store
+                .iter_sorted()
+                .filter(|&id| store.meta(id).kind == EntryKind::Dir)
+                .map(|id| store.path(id).to_vec())
+                .collect()
+        };
+        watcher.sync(dirs, self.root_ignore_chain());
+    }
+
+    /// Apply one delivery of coalesced watch batches: re-`lstat` every dirty
+    /// path, update the store (and the GC's view of retained memory), and
+    /// only then invoke `onchange` with the resulting events.
+    pub(crate) fn apply_watch_batches(&self, global: &JSGlobalObject, batches: Vec<watcher::Batch>) {
+        if self.closed.get() {
+            return;
+        }
+        let mut recrawl = false;
+        let mut synced = false;
+        let mut events: Vec<(WatchEventKind, Vec<u8>)> = Vec::new();
+        {
+            let mut store = self.store.borrow_mut();
+            for batch in batches {
+                recrawl |= batch.recrawl;
+                synced |= batch.synced;
+                for path in batch.paths {
+                    self.apply_one_path(&mut store, path, &mut events);
+                }
+            }
+        }
+        self.report_memory(global);
+        // The re-crawl is started before the callback so a throwing
+        // `onchange` cannot skip it.
+        if recrawl
+            && let Some(this_value) = self.this_value()
+        {
+            crawl_task::start_recrawl(global, this_value, self);
+        }
+        if synced {
+            self.on_watch_synced(global);
+        }
+        self.emit_onchange(global, events);
+    }
+
+    /// `ready` (and `refresh()`) must not resolve, and re-crawl diffs must
+    /// not be observable, before the watcher acknowledges the registration
+    /// of that crawl's directories. Returns the promise unconsumed when
+    /// there is nothing to wait for. JS thread.
+    pub(crate) fn defer_until_synced(
+        &self,
+        promise: jsc::JSPromiseStrong,
+    ) -> Option<jsc::JSPromiseStrong> {
+        if self.closed.get() || self.watcher.borrow().is_none() {
+            return Some(promise);
+        }
+        self.pending_ready.borrow_mut().push(promise);
+        None
+    }
+
+    /// The watcher applied the latest [`watcher::WatchHandle::sync`]: settle
+    /// everything that was waiting on it.
+    fn on_watch_synced(&self, global: &JSGlobalObject) {
+        self.settle_pending_ready(global);
+        let events = core::mem::take(&mut *self.pending_events.borrow_mut());
+        self.emit_onchange(global, events);
+    }
+
+    fn settle_pending_ready(&self, global: &JSGlobalObject) {
+        let pending = core::mem::take(&mut *self.pending_ready.borrow_mut());
+        if pending.is_empty() {
+            return;
+        }
+        let this_value = self.this_value().unwrap_or(JSValue::UNDEFINED);
+        for mut promise in pending {
+            // `JsTerminated` here means the VM is going away; there is
+            // nothing left to settle.
+            let _ = promise.swap().resolve(global, this_value);
+        }
+    }
+
+    /// Re-crawl completion for a watcher-initiated background re-crawl:
+    /// replace the store, re-sync the watcher's directory set, and report
+    /// the difference (paths that appeared / disappeared) as one batch.
+    pub(crate) fn apply_recrawl(&self, global: &JSGlobalObject, result: CrawlResult) {
+        let old_paths: Vec<Vec<u8>> = {
+            let store = self.store.borrow();
+            store.iter_sorted().map(|id| store.path(id).to_vec()).collect()
+        };
+        self.apply_crawl(global, result);
+        let mut events: Vec<(WatchEventKind, Vec<u8>)> = Vec::new();
+        {
+            let store = self.store.borrow();
+            let mut new_iter = store.iter_sorted().peekable();
+            let mut old_iter = old_paths.iter().peekable();
+            // Both sides are sorted by path: a linear merge yields the diff.
+            loop {
+                match (old_iter.peek(), new_iter.peek()) {
+                    (None, None) => break,
+                    (Some(old), Some(&new_id)) => {
+                        let new = store.path(new_id);
+                        match old.as_slice().cmp(new) {
+                            core::cmp::Ordering::Less => {
+                                events.push((WatchEventKind::Delete, old_iter.next().map(Vec::clone).unwrap_or_default()));
+                            }
+                            core::cmp::Ordering::Greater => {
+                                events.push((WatchEventKind::Create, new.to_vec()));
+                                new_iter.next();
+                            }
+                            core::cmp::Ordering::Equal => {
+                                old_iter.next();
+                                new_iter.next();
+                            }
+                        }
+                    }
+                    (Some(_), None) => {
+                        events.push((
+                            WatchEventKind::Delete,
+                            old_iter.next().map(Vec::clone).unwrap_or_default(),
+                        ));
+                    }
+                    (None, Some(&new_id)) => {
+                        events.push((WatchEventKind::Create, store.path(new_id).to_vec()));
+                        new_iter.next();
+                    }
+                }
+            }
+        }
+        // Held back until the watcher acknowledges the new registration
+        // (`on_watch_synced`), so the handler observes rules the watcher is
+        // already enforcing. A non-watching index never gets here, but emit
+        // directly if it somehow does.
+        if self.watcher.borrow().is_some() {
+            self.pending_events.borrow_mut().extend(events);
+        } else {
+            self.emit_onchange(global, events);
+        }
+    }
+
+    /// Re-`lstat` one dirty path and reconcile the store with the result.
+    /// A path that vanished and was an indexed directory takes its indexed
+    /// descendants with it (the watcher cannot enumerate a tree that no
+    /// longer exists).
+    fn apply_one_path(
+        &self,
+        store: &mut Store,
+        path: Vec<u8>,
+        events: &mut Vec<(WatchEventKind, Vec<u8>)>,
+    ) {
+        if path.is_empty() {
+            return;
+        }
+        let mut abs = Vec::with_capacity(self.root.len() + 1 + path.len() + 1);
+        abs.extend_from_slice(&self.root);
+        abs.push(b'/');
+        abs.extend_from_slice(&path);
+        abs.push(0);
+        let abs_z = ZStr::from_buf(&abs, abs.len() - 1);
+        match bun_sys::lstatat(Fd::cwd(), abs_z) {
+            Ok(st) => {
+                let stat = bun_sys::PosixStat::init(&st);
+                let Some(meta) = meta_from_stat(&stat) else {
+                    // The path now names a socket/fifo/device: not indexable.
+                    self.remove_path(store, &path, events);
+                    return;
+                };
+                let existed = store.get(&path).is_some();
+                // A budget failure leaves the entry unindexed; `truncated`
+                // already reports that state.
+                let _ = store.upsert(&path, meta);
+                if store.get(&path).is_some() {
+                    let kind = if existed {
+                        WatchEventKind::Modify
+                    } else {
+                        WatchEventKind::Create
+                    };
+                    events.push((kind, path));
+                }
+            }
+            Err(_) => self.remove_path(store, &path, events),
+        }
+    }
+
+    fn remove_path(
+        &self,
+        store: &mut Store,
+        path: &[u8],
+        events: &mut Vec<(WatchEventKind, Vec<u8>)>,
+    ) {
+        let Some(id) = store.get(path) else { return };
+        if store.meta(id).kind == EntryKind::Dir {
+            let mut prefix = path.to_vec();
+            prefix.push(b'/');
+            let descendants: Vec<Vec<u8>> = store
+                .range_with_prefix(&prefix)
+                .map(|id| store.path(id).to_vec())
+                .collect();
+            for descendant in descendants {
+                store.remove(&descendant);
+                events.push((WatchEventKind::Delete, descendant));
+            }
+        }
+        store.remove(path);
+        events.push((WatchEventKind::Delete, path.to_vec()));
+    }
+
+    /// Invoke `onchange` with `events` through `runCallback` semantics: a
+    /// throwing callback is reported as an uncaught exception and breaks
+    /// neither the watcher nor later deliveries.
+    fn emit_onchange(&self, global: &JSGlobalObject, events: Vec<(WatchEventKind, Vec<u8>)>) {
+        if events.is_empty() || self.closed.get() {
+            return;
+        }
+        let Some(this_value) = self.this_value() else {
+            return;
+        };
+        let Some(onchange) = js::onchange_get_cached(this_value) else {
+            return;
+        };
+        if !onchange.is_callable() {
+            return;
+        }
+        let array = JSValue::create_array_from_iter(global, events.into_iter(), |(kind, path)| {
+            let obj = JSValue::create_empty_object(global, 2);
+            obj.put(global, "kind", utf8_js(global, kind.as_str())?);
+            obj.put(global, "path", utf8_js(global, &path)?);
+            Ok(obj)
+        });
+        let array = match array {
+            Ok(array) => array,
+            Err(err) => {
+                global.report_active_exception_as_unhandled(err);
+                return;
+            }
+        };
+        global
+            .bun_vm()
+            .event_loop_mut()
+            .run_callback(onchange, global, this_value, &[array]);
+    }
+
+    /// The JS wrapper, while it is alive (always, between a `watch: true`
+    /// construction and `close()`).
+    fn this_value(&self) -> Option<JSValue> {
+        self.this_ref.borrow().try_get()
+    }
+
+    /// Re-report retained native bytes to the GC after a store mutation.
+    fn report_memory(&self, global: &JSGlobalObject) {
+        let new_bytes = self.store.borrow().memory_usage();
+        let old = self.reported_bytes.swap(new_bytes, Ordering::Relaxed);
+        if let Some(grown) = new_bytes.checked_sub(old)
+            && grown > 0
+        {
+            global.vm().report_extra_memory(grown);
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WatchEventKind {
+    Create,
+    Modify,
+    Delete,
+}
+
+impl WatchEventKind {
+    fn as_str(self) -> &'static [u8] {
+        match self {
+            WatchEventKind::Create => b"create",
+            WatchEventKind::Modify => b"modify",
+            WatchEventKind::Delete => b"delete",
+        }
+    }
+}
+
+fn meta_from_stat(stat: &bun_sys::PosixStat) -> Option<Meta> {
+    let kind = match bun_core::kind_from_mode(stat.mode as bun_core::Mode) {
+        bun_sys::EntryKind::Directory => EntryKind::Dir,
+        bun_sys::EntryKind::File => EntryKind::File,
+        bun_sys::EntryKind::SymLink => EntryKind::Symlink,
+        _ => return None,
+    };
+    Some(Meta {
+        size: stat.size,
+        mode: stat.mode as u32,
+        mtime_s: stat.mtim.sec,
+        mtime_ns: stat.mtim.nsec as u32,
+        ctime_s: stat.ctim.sec,
+        ctime_ns: stat.ctim.nsec as u32,
+        dev: stat.dev,
+        ino: stat.ino,
+        uid: stat.uid as u32,
+        gid: stat.gid as u32,
+        kind,
+    })
 }
 
 // JS-thread helpers shared with the crawl/grep task modules.
@@ -412,22 +830,17 @@ impl FileIndex {
         Some(IgnoreFile::parse(b"", &bytes))
     }
 
-    /// Replace the store with a crawl's result and re-report retained bytes.
-    /// JS thread only.
+    /// Replace the store with a crawl's result, re-report retained bytes,
+    /// and hand the watcher (if any) the new directory set. JS thread only.
     pub(crate) fn apply_crawl(&self, global: &JSGlobalObject, result: CrawlResult) {
-        let new_bytes = {
+        {
             let mut store = self.store.borrow_mut();
             *store = Store::new(self.options.max_memory);
             store.bulk_load(result.entries);
-            store.memory_usage()
-        };
-        self.crawl_truncated.set(result.truncated);
-        let old = self.reported_bytes.swap(new_bytes, Ordering::Relaxed);
-        if let Some(grown) = new_bytes.checked_sub(old)
-            && grown > 0
-        {
-            global.vm().report_extra_memory(grown);
         }
+        self.crawl_truncated.set(result.truncated);
+        self.report_memory(global);
+        self.sync_watcher();
     }
 }
 
@@ -451,15 +864,22 @@ fn resolve_root(global: &JSGlobalObject, root: &[u8]) -> JsResult<Box<[u8]>> {
     Ok(Box::from(joined))
 }
 
-fn parse_options(global: &JSGlobalObject, options_arg: JSValue) -> JsResult<Options> {
+/// Returns the parsed options and the `onchange` callback to seed the cached
+/// slot with (if any).
+fn parse_options(
+    global: &JSGlobalObject,
+    options_arg: JSValue,
+) -> JsResult<(Options, Option<JSValue>)> {
     let mut options = Options {
         gitignore: true,
         max_memory: DEFAULT_MAX_MEMORY,
         max_file_size: DEFAULT_MAX_FILE_SIZE,
         ignore: Vec::new(),
+        watch: false,
     };
+    let mut onchange = None;
     if options_arg.is_undefined_or_null() {
-        return Ok(options);
+        return Ok((options, onchange));
     }
     if !options_arg.is_object() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -472,12 +892,18 @@ fn parse_options(global: &JSGlobalObject, options_arg: JSValue) -> JsResult<Opti
     {
         options.gitignore = v.to_boolean();
     }
-    if let Some(v) = options_arg.get(global, "watch")?
-        && v.to_boolean()
+    if let Some(v) = options_arg.get(global, "watch")? {
+        options.watch = v.to_boolean();
+    }
+    if let Some(v) = options_arg.get(global, "onchange")?
+        && !v.is_undefined_or_null()
     {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Bun.FileIndex: watch is not implemented yet"
-        )));
+        if !v.is_callable() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Bun.FileIndex: onchange must be a function"
+            )));
+        }
+        onchange = Some(v);
     }
     if let Some(v) = options_arg.get_truthy(global, "maxMemory")? {
         options.max_memory = positive_int_option(global, v, "maxMemory")?;
@@ -489,7 +915,7 @@ fn parse_options(global: &JSGlobalObject, options_arg: JSValue) -> JsResult<Opti
         options.ignore = parse_ignore_patterns(global, v)?;
     }
 
-    Ok(options)
+    Ok((options, onchange))
 }
 
 fn positive_int_option(global: &JSGlobalObject, v: JSValue, name: &str) -> JsResult<usize> {

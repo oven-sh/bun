@@ -49,9 +49,7 @@ describe("Bun.FileIndex", () => {
       expect(() => new Bun.FileIndex(".", { maxMemory: -1 })).toThrow("positive integer");
       expect(() => new Bun.FileIndex(".", { maxFileSize: 0 })).toThrow("positive integer");
       expect(() => new (Bun.FileIndex as any)(".", { ignore: 7 })).toThrow("array of strings");
-      // The filesystem watcher is not implemented yet; refuse rather than
-      // silently never firing.
-      expect(() => new Bun.FileIndex(".", { watch: true })).toThrow("not implemented");
+      expect(() => new (Bun.FileIndex as any)(".", { onchange: 42 })).toThrow("onchange must be a function");
     });
   });
 

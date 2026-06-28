@@ -115,7 +115,11 @@ use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
-use crate::file_index::{CrawlTask as FileIndexCrawlTask, GrepTask as FileIndexGrepTask};
+use crate::file_index::{
+    CrawlTask as FileIndexCrawlTask, GitDiffTask as FileIndexGitDiffTask,
+    GitStatusTask as FileIndexGitStatusTask, GrepTask as FileIndexGrepTask,
+    WatchDelivery as FileIndexWatchTask,
+};
 use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::image::AsyncImageTask;
@@ -295,6 +299,13 @@ pub fn run_task(
             FileIndexCrawlTask::run_from_js(cast_ptr!(FileIndexCrawlTask))?;
         }
         task_tag::FileIndexGrepTask => run_then_destroy!(FileIndexGrepTask<'_>),
+        task_tag::FileIndexGitStatusTask => run_then_destroy!(FileIndexGitStatusTask<'_>),
+        task_tag::FileIndexGitDiffTask => run_then_destroy!(FileIndexGitDiffTask<'_>),
+        // The pointer is an `Arc::into_raw` reference to the watcher's
+        // shared state; `run_from_js` consumes it (`Arc::from_raw`).
+        task_tag::FileIndexWatchTask => {
+            FileIndexWatchTask::run_from_js(cast_ptr!(FileIndexWatchTask))?;
+        }
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
@@ -592,7 +603,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 99,
+    task_tag::COUNT == 102,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

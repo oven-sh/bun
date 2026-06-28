@@ -15,13 +15,24 @@ use bun_sys::{Dir, O};
 
 use super::FileIndex;
 
+/// Why a crawl was started; decides what its completion does on the JS
+/// thread.
+pub(crate) enum Purpose {
+    /// `new FileIndex()` / `refresh()`: settle the `Promise<FileIndex>`.
+    Api(JSPromiseStrong),
+    /// Watcher-initiated background re-crawl (a `.gitignore` changed, or the
+    /// OS event queue overflowed). There is no promise to settle; the diff
+    /// between the old and new index is delivered through `onchange`.
+    WatcherRecrawl,
+}
+
 /// One in-flight crawl. Heap-allocated on the JS thread; only its address
 /// crosses threads (inside [`Completion`]). The `Strong` keeps the
 /// `FileIndex` wrapper — and therefore the native `FileIndex` the completion
 /// writes back into — alive for exactly as long as the crawl is in flight.
 pub struct CrawlTask {
     this_strong: Strong,
-    promise: JSPromiseStrong,
+    purpose: Purpose,
     /// Written only by [`Completion`] (exactly once) before the task is
     /// enqueued back to the JS thread.
     result: Result<CrawlResult, bun_sys::Error>,
@@ -39,6 +50,20 @@ impl Taskable for CrawlTask {
 /// nonexistent root rejects with the real syscall error instead of being
 /// indistinguishable from an empty directory.
 pub(crate) fn start(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex) -> JSValue {
+    let promise = JSPromiseStrong::init(global);
+    let promise_js = promise.value();
+    start_with(global, this_value, index, Purpose::Api(promise));
+    promise_js
+}
+
+/// Start a watcher-initiated background re-crawl. No promise is created: a
+/// failure (e.g. the root disappeared) must not surface as an unhandled
+/// rejection from inside the watcher.
+pub(crate) fn start_recrawl(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex) {
+    start_with(global, this_value, index, Purpose::WatcherRecrawl);
+}
+
+fn start_with(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex, purpose: Purpose) {
     let root_error = match Dir::open_with(index.root_bytes(), O::CLOEXEC) {
         Ok(_) => None,
         Err(err) => Some(err),
@@ -47,7 +72,7 @@ pub(crate) fn start(global: &JSGlobalObject, this_value: JSValue, index: &FileIn
 
     let mut task = Box::new(CrawlTask {
         this_strong: Strong::create(this_value, global),
-        promise: JSPromiseStrong::init(global),
+        purpose,
         result: match root_error {
             Some(err) => Err(err),
             None => Ok(CrawlResult::default()),
@@ -60,7 +85,6 @@ pub(crate) fn start(global: &JSGlobalObject, this_value: JSValue, index: &FileIn
     });
     // Keep the event loop alive until `run_from_js` settles the promise.
     task.keep_alive.ref_(bun_io::js_vm_ctx());
-    let promise_js = task.promise.value();
 
     let options = CrawlOptions {
         // The user named this directory explicitly; symlinks *inside* the
@@ -79,7 +103,6 @@ pub(crate) fn start(global: &JSGlobalObject, this_value: JSValue, index: &FileIn
         let root = index.root_bytes().to_vec();
         crawl(&root, options, move |result| completion.complete(result));
     }
-    promise_js
 }
 
 /// The owning handle to an in-flight [`CrawlTask`], moved into the crawl's
@@ -140,20 +163,41 @@ impl CrawlTask {
             return Ok(());
         }
         let global = vm.global();
-        let promise = owned.promise.swap();
-        match core::mem::replace(&mut owned.result, Ok(CrawlResult::default())) {
-            Err(err) => {
-                let err_js = err.to_js(global);
-                promise.reject_with_async_stack(global, Ok(err_js))
-            }
-            Ok(result) => {
-                let this_value = owned.this_strong.get();
-                if let Some(index) = this_value.as_class_ref::<FileIndex>()
-                    && !index.is_closed()
-                {
-                    index.apply_crawl(global, result);
+        let result = core::mem::replace(&mut owned.result, Ok(CrawlResult::default()));
+        match core::mem::replace(&mut owned.purpose, Purpose::WatcherRecrawl) {
+            Purpose::Api(mut promise) => match result {
+                Err(err) => {
+                    let err_js = err.to_js(global);
+                    promise.swap().reject_with_async_stack(global, Ok(err_js))
                 }
-                promise.resolve(global, this_value)
+                Ok(result) => {
+                    let this_value = owned.this_strong.get();
+                    if let Some(index) = this_value.as_class_ref::<FileIndex>()
+                        && !index.is_closed()
+                    {
+                        index.apply_crawl(global, result);
+                        // A watching index resolves `ready` only once the
+                        // watcher acknowledges this crawl's registrations.
+                        promise = match index.defer_until_synced(promise) {
+                            None => return Ok(()),
+                            Some(promise) => promise,
+                        };
+                    }
+                    promise.swap().resolve(global, this_value)
+                }
+            },
+            // A failed background re-crawl (e.g. the root was deleted) keeps
+            // the previous index; the watcher keeps reporting what it can.
+            Purpose::WatcherRecrawl => {
+                if let Ok(result) = result {
+                    let this_value = owned.this_strong.get();
+                    if let Some(index) = this_value.as_class_ref::<FileIndex>()
+                        && !index.is_closed()
+                    {
+                        index.apply_recrawl(global, result);
+                    }
+                }
+                Ok(())
             }
         }
     }

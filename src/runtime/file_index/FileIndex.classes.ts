@@ -12,12 +12,14 @@ export default [
     configurable: false,
     JSType: "0b11101110",
     // `readyPromise` is the eagerly-created Promise behind `index.ready`,
-    // resolved/rejected by the crawl-completion task.
-    values: ["readyPromise"],
+    // resolved/rejected by the crawl-completion task. `onchange` is the
+    // user's watch callback (a writable property + constructor option).
+    values: ["readyPromise", "onchange"],
     klass: {},
     proto: {
       root: { getter: "getRoot", cache: true },
       ready: { getter: "getReady", this: true },
+      onchange: { getter: "getOnchange", setter: "setOnchange", this: true },
       size: { getter: "getSize" },
       memoryUsage: { getter: "getMemoryUsage" },
       truncated: { getter: "getTruncated" },
@@ -43,6 +45,8 @@ export default [
         // private-symbol names do not always resolve).
         privateSymbol: "pull",
       },
+      gitStatus: { fn: "gitStatus", length: 0 },
+      gitDiff: { fn: "gitDiff", length: 1 },
       close: { fn: "close", length: 0 },
       "@@dispose": { fn: "close", length: 0 },
     },

@@ -1706,6 +1706,7 @@ dependencies = [
  "bun_event_loop",
  "bun_file_index",
  "bun_fuzzy",
+ "bun_git",
  "bun_glob",
  "bun_hash",
  "bun_highway",

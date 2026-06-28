@@ -1,8 +1,8 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
+const ReusePortHandle = require("internal/cluster/ReusePortHandle");
 const path = require("node:path");
-const { throwNotImplemented, kHandle } = require("internal/shared");
+const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
@@ -244,14 +244,10 @@ function queryServer(worker, message) {
       if (message.address.length < address.length) address = message.address;
     }
 
-    // UDP is exempt from round-robin connection balancing for what should
-    // be obvious reasons: it's connectionless. There is nothing to send to
-    // the workers except raw datagrams and that's pointless.
-    if (schedulingPolicy !== SCHED_RR || message.addressType === "udp4" || message.addressType === "udp6") {
-      throwNotImplemented("node:cluster SCHED_NONE");
-    } else {
-      handle = new RoundRobinHandle(key, address, message);
-    }
+    // Bun cannot pass listening or accepted socket handles to workers over
+    // IPC, so every cluster server uses an SO_REUSEPORT handle regardless of
+    // cluster.schedulingPolicy; see internal/cluster/ReusePortHandle.ts.
+    handle = new ReusePortHandle(key, address, message);
 
     handles.set(key, handle);
   }
@@ -279,6 +275,12 @@ function queryServer(worker, message) {
 }
 
 function listening(worker, message) {
+  // message.key is the handle key this server resolved to (child.ts records
+  // it off the queryServer reply). A listen(0) worker reports the port it
+  // actually bound here so the rest of the cluster can bind the same one.
+  const handle = handles.get(message.key);
+  if (handle !== undefined) handle.onListening(worker, message.port);
+
   const info = {
     addressType: message.addressType,
     address: message.address,

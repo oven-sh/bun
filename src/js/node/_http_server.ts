@@ -15,7 +15,7 @@ const {
   validateInteger,
   validateFunction,
 } = require("internal/validators");
-const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const { ConnResetException, ExceptionWithHostPort, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -77,7 +77,6 @@ const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInte
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -491,41 +490,37 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
+    // Bun's cluster primary cannot hand socket handles to workers over IPC,
+    // so every worker binds its own SO_REUSEPORT socket. _getServer is still
+    // what makes the workers agree on one port: for listen(0) the primary
+    // records the first worker's kernel-assigned port and hands it to the
+    // rest. See internal/cluster/ReusePortHandle.ts.
+    const serverQuery = {
+      address: socketPath != null ? socketPath : null,
+      port: socketPath != null ? -1 : port,
+      addressType: 4,
+      fd: undefined,
+      flags: 0,
+    };
+    cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+      if (err) {
+        server.emit("error", new ExceptionWithHostPort(err, "bind", host, port));
+        return;
+      }
 
-    // const serverQuery = {
-    //   // address: address,
-    //   port: port,
-    //   addressType: 4,
-    //   // fd: fd,
-    //   // flags,
-    //   // backlog,
-    //   // ...options,
-    // };
-    // cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
-    //   // err = checkBindError(err, port, handle);
-    //   // if (err) {
-    //   //   throw new ExceptionWithHostPort(err, "bind", address, port);
-    //   // }
-    //   if (err) {
-    //     throw err;
-    //   }
-    //   server[kRealListen](port, host, socketPath, onListen);
-    // });
-
-    server.once("listening", () => {
-      cluster.worker.state = "listening";
-      const address = server.address();
-      const message = {
-        act: "listening",
-        port: (address && address.port) || port,
-        data: null,
-        addressType: 4,
-      };
-      sendHelper(message, null);
+      // The primary's answer: the one port every worker of this key must bind.
+      const out = {};
+      if (handle.getsockname) handle.getsockname(out);
+      const clusterPort = out.port ?? port;
+      try {
+        server[kRealListen](tls, clusterPort, host, socketPath, true, onListen);
+      } catch (listenErr) {
+        // Deregister from the primary (it may be waiting on this worker for a
+        // port) before reporting the bind failure.
+        handle.close();
+        setTimeout(() => server.emit("error", listenErr), 1);
+      }
     });
-
-    server[kRealListen](tls, port, host, socketPath, true, onListen);
   } catch (err) {
     setTimeout(() => server.emit("error", err), 1);
   }

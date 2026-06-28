@@ -104,7 +104,7 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     internal/cluster/child                      processBindingNativesGetter     PropertyCallback
     internal/cluster/isPrimary                  processBindingNativesGetter     PropertyCallback
     internal/cluster/primary                    processBindingNativesGetter     PropertyCallback
-    internal/cluster/RoundRobinHandle           processBindingNativesGetter     PropertyCallback
+    internal/cluster/ReusePortHandle            processBindingNativesGetter     PropertyCallback
     internal/cluster/Worker                     processBindingNativesGetter     PropertyCallback
     internal/crypto/x509                        processBindingNativesGetter     PropertyCallback
     internal/debugger                           processBindingNativesGetter     PropertyCallback

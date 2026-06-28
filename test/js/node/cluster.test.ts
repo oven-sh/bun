@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -185,3 +185,114 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });
+
+// Node's cluster primary resolves listen(0) to ONE port that every worker
+// shares; Bun used to let each worker bind its own ephemeral port, so
+// server.address().port disagreed between workers and only one of them served
+// the port the application registered.
+const listenZeroFixture = /* js */ `
+import cluster from "node:cluster";
+
+// "net" or "http"; loading only the module under test keeps the per-process
+// startup cost of a debug build out of the test's timeout budget.
+const kind = process.argv[2];
+const mod = (await import("node:" + kind)).default;
+const workerCount = 3;
+const requestCount = 8;
+
+if (cluster.isPrimary) {
+  const reported = [];
+  const listening = [];
+  const { promise: allReady, resolve: ready } = Promise.withResolvers();
+  const check = () => {
+    if (reported.length === workerCount && listening.length === workerCount) ready();
+  };
+  cluster.on("message", (worker, message) => {
+    reported.push(message.port);
+    check();
+  });
+  cluster.on("listening", (worker, address) => {
+    listening.push(address.port);
+    check();
+  });
+  for (let i = 0; i < workerCount; i++) cluster.fork();
+  await allReady;
+
+  // Every request to the one reported port must be answered by a worker: the
+  // primary never owns a competing socket that would swallow connections.
+  const port = reported[0];
+  let served = 0;
+  for (let i = 0; i < requestCount; i++) {
+    let body;
+    if (kind === "http") {
+      body = await (await fetch("http://127.0.0.1:" + port + "/")).text();
+    } else {
+      body = await new Promise((resolve, reject) => {
+        const socket = mod.connect(port, "127.0.0.1");
+        let data = "";
+        socket.on("data", chunk => (data += chunk));
+        socket.on("end", () => resolve(data));
+        socket.on("error", reject);
+      });
+    }
+    if (body.startsWith("served by worker ")) served++;
+  }
+
+  console.log(
+    JSON.stringify({
+      workers: reported.length,
+      distinctReportedPorts: new Set(reported).size,
+      distinctListeningPorts: new Set(listening).size,
+      listeningMatchesReported: new Set([...reported, ...listening]).size === 1,
+      served,
+    }),
+  );
+  for (const id in cluster.workers) cluster.workers[id].process.kill();
+  process.exit(0);
+} else {
+  const body = "served by worker " + cluster.worker.id;
+  const server =
+    kind === "http"
+      ? mod.createServer((req, res) => res.end(body))
+      : mod.createServer(socket => socket.end(body));
+  server.on("error", error => {
+    console.error("worker listen error:", error.code);
+    process.exit(1);
+  });
+  server.listen(0, "127.0.0.1", () => {
+    process.send({ port: server.address().port });
+  });
+}
+`;
+
+test.concurrent.each(["net", "http"])(
+  "cluster workers all share one primary-resolved port for listen(0) (%s)",
+  async kind => {
+    using dir = tempDir("cluster-listen0", { "fixture.mjs": listenZeroFixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs", kind],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    let result;
+    try {
+      result = JSON.parse(stdout.trim().split("\n").pop()!);
+    } catch {
+      result = { stdout, stderr };
+    }
+    expect(result).toEqual({
+      workers: 3,
+      distinctReportedPorts: 1,
+      distinctListeningPorts: 1,
+      listeningMatchesReported: true,
+      served: 8,
+    });
+    expect(exitCode).toBe(0);
+  },
+  // The primary and each worker load node:cluster from scratch in a debug
+  // build, which alone is most of bun:test's 5s default.
+  30_000,
+);

@@ -1,6 +1,7 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
+const { owner_symbol } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
@@ -13,9 +14,7 @@ const cluster = new EventEmitter();
 const handles = new Map();
 const indexes = new Map();
 const noop = FunctionPrototype;
-const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
-const owner_symbol = Symbol("owner_symbol");
 
 export default cluster;
 
@@ -51,9 +50,8 @@ cluster._setupWorker = function () {
   onInternalMessage(worker, onmessage);
   send({ act: "online" });
 
-  function onmessage(message, handle) {
-    if (message.act === "newconn") onconnection(message, handle);
-    else if (message.act === "disconnect") worker._disconnect(true);
+  function onmessage(message) {
+    if (message.act === "disconnect") worker._disconnect(true);
   }
 };
 
@@ -142,43 +140,22 @@ function shared(message, { handle, indexesKey, index }, cb) {
   cb(message.errno, handle);
 }
 
-// Round-robin. Master distributes handles across workers.
+// Bookkeeping handle for a server whose port the primary coordinates. Unlike
+// Node's, it is not the server's `_handle`: the worker really listens (with
+// SO_REUSEPORT) and that real handle refs the event loop, so `ref`/`unref`
+// need no setInterval stand-in here.
 function rr(message, { indexesKey, index }, cb) {
   const errno = message.errno;
   if (errno) return cb(errno, null);
 
   let key = message.key;
 
-  let fakeHandle: Timer | null = null;
-
-  function ref() {
-    if (!fakeHandle) {
-      fakeHandle = setInterval(noop, TIMEOUT_MAX);
-    }
-  }
-
-  function unref() {
-    if (fakeHandle) {
-      clearInterval(fakeHandle);
-      fakeHandle = null;
-    }
-  }
-
   function listen(_backlog) {
-    // TODO(bnoordhuis) Send a message to the primary that tells it to
-    // update the backlog size. The actual backlog should probably be
-    // the largest requested size by any worker.
     return 0;
   }
 
   function close() {
-    // lib/net.js treats server._handle.close() as effectively synchronous.
-    // That means there is a time window between the call to close() and
-    // the ack by the primary process in which we can still receive handles.
-    // onconnection() below handles that by sending those handles back to
-    // the primary.
     if (key === undefined) return;
-    unref();
     // If the handle is the last handle in process,
     // the parent process will delete the handle when worker process exits.
     // So it is ok if the close message get lost.
@@ -195,10 +172,7 @@ function rr(message, { indexesKey, index }, cb) {
     return 0;
   }
 
-  // Faux handle. net.Server is not associated with handle,
-  // so we control its state(ref or unref) by setInterval.
-  const handle = { close, listen, ref, unref };
-  handle.ref();
+  const handle = { close, listen, ref: noop, unref: noop };
   if (message.sockname) {
     handle.getsockname = getsockname; // TCP handles only.
   }
@@ -206,25 +180,6 @@ function rr(message, { indexesKey, index }, cb) {
   $assert(handles.has(key) === false);
   handles.set(key, handle);
   cb(0, handle);
-}
-
-// Round-robin connection.
-function onconnection(message, handle) {
-  const key = message.key;
-  const server = handles.get(key);
-  let accepted = server !== undefined;
-
-  if (accepted && server[owner_symbol]) {
-    const self = server[owner_symbol];
-    if (self.maxConnections != null && self._connections >= self.maxConnections) {
-      accepted = false;
-    }
-  }
-
-  send({ ack: message.seq, accepted });
-
-  if (accepted) server.onconnection(0, handle);
-  else handle.close();
 }
 
 function send(message, cb?) {

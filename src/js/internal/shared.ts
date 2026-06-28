@@ -290,6 +290,10 @@ export default {
   NodeEntryObserver,
 
   kHandle: Symbol("kHandle"),
+  // Node's `owner_symbol`: links a handle to the JS object that owns it.
+  // node:net and node:cluster's worker side must agree on it so that
+  // `worker.disconnect()` can close the servers sharing a cluster handle.
+  owner_symbol: Symbol("owner_symbol"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kResistStopPropagation: Symbol("kResistStopPropagation"),
   kWeakHandler: Symbol("kWeak"),

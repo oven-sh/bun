@@ -1,6 +1,6 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
+const ReusePortHandle = require("internal/cluster/ReusePortHandle");
 const path = require("node:path");
 const { throwNotImplemented, kHandle } = require("internal/shared");
 
@@ -244,13 +244,14 @@ function queryServer(worker, message) {
       if (message.address.length < address.length) address = message.address;
     }
 
-    // UDP is exempt from round-robin connection balancing for what should
-    // be obvious reasons: it's connectionless. There is nothing to send to
-    // the workers except raw datagrams and that's pointless.
-    if (schedulingPolicy !== SCHED_RR || message.addressType === "udp4" || message.addressType === "udp6") {
-      throwNotImplemented("node:cluster SCHED_NONE");
+    // Sharing a dgram socket needs handle passing over IPC, which Bun's IPC
+    // does not support.
+    if (message.addressType === "udp4" || message.addressType === "udp6") {
+      throwNotImplemented("node:cluster with a shared dgram socket");
     } else {
-      handle = new RoundRobinHandle(key, address, message);
+      // Both SCHED_RR and SCHED_NONE resolve to the kernel distributing
+      // connections across the workers' SO_REUSEPORT sockets.
+      handle = new ReusePortHandle(key, address, message);
     }
 
     handles.set(key, handle);
@@ -285,6 +286,10 @@ function listening(worker, message) {
     port: message.port,
     fd: message.fd,
   };
+
+  // A worker holds `message.port` now: release the primary's matching port-0
+  // reservation before anything can learn the port from the events below.
+  handles.forEach(handle => handle.onWorkerListening(message.port));
 
   worker.state = "listening";
   worker.emit("listening", info);

@@ -34,6 +34,7 @@ const {
   hasObserver,
   startPerf,
   stopPerf,
+  owner_symbol,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
@@ -48,6 +49,7 @@ const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
+const UV_TCP_IPV6ONLY = 1;
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
@@ -115,9 +117,12 @@ const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBuf
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const owner_symbol = Symbol("owner_symbol");
 
 const kServerSocket = Symbol("kServerSocket");
+// node:cluster's per-server bookkeeping handle, for a worker whose listen was
+// coordinated by the primary. Bun's `_handle` is always the real listener, so
+// unlike Node this lives next to it rather than replacing it.
+const kClusterHandle = Symbol("kClusterHandle");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // tls.Server exposes its native SecureContext constructor through this key so
@@ -721,8 +726,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const self = socket.data as any as NetServer;
     if (!self) return;
     // Dispatch through the listener handle's onconnection hook so user code
-    // (and node:cluster RoundRobinHandle) can intercept accepted sockets the
-    // same way Node.js exposes TCP/Pipe wrap onconnection.
+    // can intercept accepted sockets the same way Node.js exposes TCP/Pipe
+    // wrap onconnection.
     // For a standalone server-side wrap (new TLSSocket(duplex, { isServer })),
     // `self` is the wrapping socket - not a Server - and its handle has no
     // onconnection; throwing here would tear the brand-new TLS engine down
@@ -3083,6 +3088,7 @@ function Server(options?, connectionListener?) {
   this._connections = 0;
 
   this._handle = null as MaybeListener;
+  this[kClusterHandle] = null;
   this._usingWorkers = false;
   this.workers = [];
   this._unref = false;
@@ -3143,6 +3149,14 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     this._handle.stop(false);
     this._handle = null;
+  }
+
+  // Node closes its cluster handle through `_handle`; ours is separate, and
+  // the primary must be told this worker no longer shares the port.
+  const clusterHandle = this[kClusterHandle];
+  if (clusterHandle) {
+    this[kClusterHandle] = null;
+    clusterHandle.close();
   }
 
   this._emitCloseIfDrained();
@@ -3370,11 +3384,14 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       options[kSocketClass] = Socket;
     }
 
+    // The address/port/addressType triple is what node:cluster keys shared
+    // listens on (and, for a TCP port of 0, what the primary reserves a
+    // concrete port for), so it has to describe what this worker will bind.
     listenInCluster(
       this,
-      null,
-      port,
-      4,
+      path ?? hostname,
+      path != null ? -1 : port,
+      path != null ? -1 : 4,
       backlog,
       fd,
       exclusive,
@@ -3382,7 +3399,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       reusePort,
       readableAll,
       writableAll,
-      undefined,
+      ipv6Only ? UV_TCP_IPV6ONLY : 0,
       undefined,
       path,
       hostname,
@@ -3599,25 +3616,52 @@ function listenInCluster(
     backlog,
     ...options,
   };
+  // `handle` is node:cluster's bookkeeping object for this server, not a
+  // listening socket: the primary cannot hand its accepted sockets to workers
+  // (Bun's IPC does not pass fds), so each worker really binds the port with
+  // SO_REUSEPORT and the kernel distributes connections across them.
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
     err = checkBindError(err, port, handle);
     if (err) {
-      throw new ExceptionWithHostPort(err, "bind", address, port);
+      const ex = new ExceptionWithHostPort(err, "bind", address, port);
+      return server.emit("error", ex);
     }
-    server[kRealListen](
-      path,
-      port,
-      hostname,
-      exclusive,
-      ipv6Only,
-      reusePort,
-      readableAll,
-      writableAll,
-      tls,
-      contexts,
-      onListen,
-      fd,
-    );
+    // For a port-0 listen the primary reserved the concrete port every worker
+    // has to agree on; it reports it through the handle's sockname.
+    if (port === 0 && handle.getsockname) {
+      const out: { port?: number } = {};
+      handle.getsockname(out);
+      const resolvedPort = out.port;
+      if (resolvedPort) port = resolvedPort;
+    }
+    handle[owner_symbol] = server;
+    server[kClusterHandle] = handle;
+    try {
+      server[kRealListen](
+        path,
+        port,
+        hostname,
+        exclusive,
+        ipv6Only,
+        true, // reusePort: every worker binds this port
+        readableAll,
+        writableAll,
+        tls,
+        contexts,
+        onListen,
+        fd,
+      );
+    } catch (err) {
+      // This callback runs from the primary's reply, outside listen()'s
+      // try/catch, so surface bind failures the same way it does.
+      const isUnix = path != null;
+      setTimeout(
+        emitErrorNextTick,
+        1,
+        server,
+        formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
+      );
+    }
   });
 }
 

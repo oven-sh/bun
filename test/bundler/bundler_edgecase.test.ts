@@ -166,7 +166,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/NodeEnvOptionalChaining", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         capture(process?.env?.NODE_ENV);
@@ -178,13 +177,102 @@ describe("bundler", () => {
         capture(process?.env.NODE_ENV);
         capture(process?.env.NODE_ENV === 'production');
         capture(process?.env.NODE_ENV === 'development');
+        capture(globalThis.process.env.NODE_ENV);
+        capture(globalThis.process.env.NODE_ENV === 'production');
+        capture(globalThis.process.env.NODE_ENV === 'development');
+        capture(globalThis.process?.env?.NODE_ENV);
+        capture(globalThis.process?.env?.NODE_ENV === 'production');
+        capture(globalThis.process?.env?.NODE_ENV === 'development');
+        capture(globalThis["process"].env.NODE_ENV);
+        capture(globalThis["process"].env.NODE_ENV === 'production');
+        capture(globalThis["process"].env.NODE_ENV === 'development');
       `,
     },
     target: "browser",
-    capture: ['"development"', "false", "true", '"development"', "false", "true", '"development"', "false", "true"],
+    capture: [
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+      '"development"',
+      "false",
+      "true",
+    ],
     env: {
       NODE_ENV: "development",
     },
+  });
+  // Regression for the globalThis base case added to isDotDefineMatch: an explicit
+  // `--define:globalThis.X.Y` must not be shadowed by a built-in valueless define
+  // for `["X","Y"]` (e.g. `Math.PI`) when matching a `globalThis.X.Y` expression.
+  itBundled("edgecase/NodeEnvDefineOverridesBuiltinThroughGlobalThis", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(globalThis.Math.PI);
+      `,
+    },
+    target: "browser",
+    define: { "globalThis.Math.PI": "3" },
+    capture: ["3"],
+  });
+  // When both `X.Y` and `globalThis.X.Y` are defined, a `globalThis.X.Y` expression
+  // must resolve to the more specific `globalThis.X.Y` value regardless of the
+  // hash-map iteration order of the two user defines.
+  itBundled("edgecase/NodeEnvMoreSpecificGlobalThisDefineWins", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(globalThis.FOO.BAR);
+        capture(FOO.BAR);
+      `,
+    },
+    target: "browser",
+    define: {
+      "FOO.BAR": '"bare"',
+      "globalThis.FOO.BAR": '"via_globalThis"',
+    },
+    capture: ['"via_globalThis"', '"bare"'],
+  });
+  // A more-specific `--define:globalThis.X.Y` must win over a less-specific
+  // `--drop=X.Y` for a `globalThis.X.Y(...)` call: the substituted identifier
+  // should be emitted, not dropped to `undefined`.
+  itBundled("edgecase/NodeEnvDefineBeatsDropAcrossGlobalThis", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(globalThis.console.log("x"));
+      `,
+    },
+    target: "browser",
+    drop: ["console.log"],
+    define: {
+      "globalThis.console.log": "myLogger",
+    },
+    capture: ['myLogger("x")'],
+  });
+  // The symmetric inverse: a more-specific `--drop=globalThis.X.Y` must win over
+  // a less-specific `--define:X.Y=v` for `globalThis.X.Y(...)`.
+  itBundled("edgecase/NodeEnvDropBeatsDefineAcrossGlobalThis", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(globalThis.console.log("x"));
+      `,
+    },
+    target: "browser",
+    drop: ["globalThis.console.log"],
+    define: {
+      "console.log": "myLogger",
+    },
+    capture: ["undefined"],
   });
 
   itBundled("edgecase/StarExternal", {

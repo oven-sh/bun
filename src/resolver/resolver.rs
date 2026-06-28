@@ -2570,6 +2570,25 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Re-read `path`'s cached directory listing in place (see
+    /// `RealFS::refresh_directory`). The `DirInfo` cache is left alone: it only
+    /// stores the index of the entries slot, which is refreshed in place, so a
+    /// cached `DirInfo` still observes the new listing. Returns `true` iff the
+    /// cache now holds a live listing for `path`; on `false` the caller should
+    /// fall back to [`bust_dir_cache`](Self::bust_dir_cache) so the next read
+    /// re-stats the path.
+    ///
+    /// Prefer this over `bust_dir_cache` when called repeatedly (e.g. from a
+    /// watcher): a bust orphans the old slot and its `Entry` allocations in the
+    /// append-only entry arenas, so a bust + re-read loop grows without bound,
+    /// while a refresh of an unchanged directory allocates nothing.
+    pub fn refresh_dir_cache(&mut self, path: &[u8]) -> bool {
+        Self::assert_valid_cache_key(path);
+        let alive = self.fs_mut().fs.refresh_directory(path);
+        bun_core::scoped_log!(ResolverDev, "Refresh {} = {}", bstr::BStr::new(path), alive);
+        alive
+    }
+
     /// Bust the directory cache for the given path.
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {

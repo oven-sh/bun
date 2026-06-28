@@ -393,6 +393,88 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
+it("reload() of an unchanged directory does not leak native memory", async () => {
+  // reload() used to evict the resolver's directory caches and re-read the tree
+  // from scratch: the evicted slots (one DirEntry per directory, one Entry per
+  // file, plus interned route-name strings) live in append-only arenas that are
+  // never freed, so every reload() grew RSS by ~35 KB for this tree and a
+  // watcher calling it on each save eventually aborted with OutOfMemory.
+  //
+  // RSS keeps growing for a while after startup even without the leak (JIT
+  // tier-up, allocator size classes), so the leak check is the slope of the
+  // last 200-reload window, long after everything one-time has happened. The
+  // leak grows every window by the same amount; a healthy process is flat.
+  const files: Record<string, string> = {
+    "pages/index.tsx": "export default 1;",
+    "pages/[id].tsx": "export default 1;",
+    "pages/a/[...rest].tsx": "export default 1;",
+  };
+  for (let i = 0; i < 37; i++) files[`pages/p${i}.tsx`] = "export default 1;";
+  using dir = tempDir("fsr-reload-leak", files);
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const gcRss = async () => {
+      Bun.gc(true);
+      await Bun.sleep(10);
+      Bun.gc(true);
+      return process.memoryUsage.rss();
+    };
+    function spin() {
+      for (let i = 0; i < 200; i++) router.reload();
+    }
+    // warm up allocator size classes, lazy caches and the JIT
+    spin();
+    const samples = [await gcRss()];
+    for (let round = 0; round < 4; round++) {
+      spin();
+      samples.push(await gcRss());
+    }
+    const windowsMB = [];
+    for (let i = 1; i < samples.length; i++) windowsMB.push(+((samples[i] - samples[i - 1]) / 1024 / 1024).toFixed(2));
+    console.log(
+      JSON.stringify({
+        routes: Object.keys(router.routes).length,
+        stillMatches: router.match("/a/x/y")?.name ?? null,
+        lastWindowMB: windowsMB[windowsMB.length - 1],
+        windowsMB,
+      }),
+    );
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", code],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine delays the reuse of freed chunks (default 256 MB), so
+      // under bun-asan the loop's transient allocations would also grow RSS and
+      // drown out the difference between live leaked memory and normal churn.
+      // Recycle frees immediately so RSS tracks live memory on every build.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0:thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error(`child exited with ${exitCode}:\n${stderr}`);
+  const result = JSON.parse(stdout) as {
+    routes: number;
+    stillMatches: string | null;
+    lastWindowMB: number;
+    windowsMB: number[];
+  };
+  expect(result).toMatchObject({ routes: 40, stillMatches: "/a/[...rest]" });
+  // The unfixed leak grew every 200-reload window by >6 MB, including the last
+  // one. One-time costs have settled by then, so the healthy slope is ~0.
+  expect(result.lastWindowMB, `post-GC RSS growth (MB) per 200-reload window: ${result.windowsMB}`).toBeLessThan(2);
+}, 60_000);
+
 it(".query works with dynamic routes, including params", () => {
   // set up the test
   const { dir } = make(["posts/[id].tsx"]);
@@ -661,23 +743,18 @@ it("caps the number of parsed query string parameters instead of crashing", asyn
 it("does not match a dynamic route whose static segment merely collides on length and 32-bit hash", () => {
   // Route segment matching must compare bytes, not just (length, truncated
   // 32-bit wyhash). Bun.hash.wyhash(s, 0) is the same hash the router stores
-  // for static route segments, so a birthday search over a few hundred
-  // thousand equal-length candidates finds a colliding pair with overwhelming
-  // probability (expected after ~80k candidates).
-  const seen = new Map<number, string>();
-  let pair: [string, string] | null = null;
-  for (let i = 0; i < 600_000; i++) {
-    const candidate = "s" + i.toString(36).padStart(9, "0");
-    const h = Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(candidate))));
-    const prev = seen.get(h);
-    if (prev !== undefined) {
-      pair = [prev, candidate];
-      break;
-    }
-    seen.set(h, candidate);
-  }
-  expect(pair).not.toBeNull();
-  const [routeSegment, attackSegment] = pair!;
+  // for static route segments, and it is stable, so the colliding pair is
+  // precomputed (a birthday search over this candidate set at runtime took
+  // several seconds in debug builds). Regenerate if the assertion below ever
+  // fails:
+  //   const seen = new Map(); for (let i = 0; ; i++) {
+  //     const s = "s" + i.toString(36).padStart(9, "0");
+  //     const h = Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(s))));
+  //     if (seen.has(h)) { console.log([seen.get(h), s]); break; } seen.set(h, s);
+  //   }
+  const [routeSegment, attackSegment] = ["s000000io9", "s000001eqf"];
+  const hash32 = (s: string) => Number(BigInt.asUintN(32, BigInt(Bun.hash.wyhash(s))));
+  expect(hash32(attackSegment)).toBe(hash32(routeSegment));
   expect(attackSegment).not.toBe(routeSegment);
   expect(attackSegment.length).toBe(routeSegment.length);
 

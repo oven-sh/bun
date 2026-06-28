@@ -288,6 +288,7 @@ impl FileSystemRouter {
                     &root_dir_info,
                     &mut RouterResolver(&mut vm.transpiler.resolver),
                     &config_dir,
+                    None,
                 )
                 .is_err()
             {
@@ -360,7 +361,20 @@ impl FileSystemRouter {
         Ok(fs_router)
     }
 
-    pub fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
+    /// Refresh `path`'s directory listing in place, which is allocation-free
+    /// when the directory is unchanged (see `Resolver::refresh_dir_cache`); if
+    /// it is no longer a readable directory, evict the stale caches instead so
+    /// the next read re-stats it.
+    fn refresh_or_bust_dir_cache(&self, global_this: &JSGlobalObject, path: &[u8]) {
+        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
+        // Re-derive the `&mut` per call (see `refresh_dir_cache_recursive`).
+        let vm = global_this.bun_vm();
+        if !vm.as_mut().transpiler.resolver.refresh_dir_cache(path) {
+            let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
+        }
+    }
+
+    pub fn refresh_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
         // `&mut` per use site so the recursive call (which does the same) doesn't pop our
         // SB tag mid-loop.
@@ -419,26 +433,27 @@ impl FileSystemRouter {
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
+                        self.refresh_or_bust_dir_cache(
+                            global_this,
                             strings::paths::without_trailing_slash_windows_path(&full_path),
                         );
-                        self.bust_dir_cache_recursive(global_this, &full_path);
+                        self.refresh_dir_cache_recursive(global_this, &full_path);
                     }
                 }
             }
         }
 
-        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
+        self.refresh_or_bust_dir_cache(global_this, path);
     }
 
-    pub fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
+    pub fn refresh_dir_cache(&self, global_this: &JSGlobalObject) {
         let dir =
             strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
         // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
         // recursive walk re-derives the path from the resolver per-iteration so a one-time
         // copy is sufficient.
         let dir = dir.to_vec();
-        self.bust_dir_cache_recursive(global_this, &dir);
+        self.refresh_dir_cache_recursive(global_this, &dir);
     }
 
     #[bun_jsc::host_fn(method)]
@@ -463,8 +478,12 @@ impl FileSystemRouter {
             )
         };
 
-        this.bust_dir_cache(global_this);
-        // Note: `bust_dir_cache` re-derives the VM borrow internally; rebind here so
+        // Refresh (not bust) the cached listings: a watcher-driven `reload()`
+        // runs this for the whole tree on every file save, and busting orphans
+        // the old slots in the append-only resolver arenas, which grows RSS
+        // without bound (see `Resolver::refresh_dir_cache`).
+        this.refresh_dir_cache(global_this);
+        // Note: `refresh_dir_cache` re-derives the VM borrow internally; rebind here so
         // our `vm` borrow is fresh under Stacked Borrows.
         let vm = global_this.bun_vm().as_mut();
 
@@ -505,12 +524,19 @@ impl FileSystemRouter {
         .expect("unreachable");
         {
             let config_dir = router.config.dir.clone();
+            // R-2: `prev_routes` borrows `this.router` only for the duration of
+            // `load_routes` (which never re-enters JS) and is released before the
+            // `JsCell::set` below replaces it. Threading it through lets an
+            // unchanged route reuse the names the previous load interned instead
+            // of growing the never-freed `DirnameStore` on every `reload()`.
+            let prev_routes = &this.router.get().routes;
             if router
                 .load_routes(
                     &mut log,
                     &root_dir_info,
                     &mut RouterResolver(&mut vm.transpiler.resolver),
                     &config_dir,
+                    Some(prev_routes),
                 )
                 .is_err()
             {

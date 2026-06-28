@@ -1244,6 +1244,42 @@ pub mod fs {
             store_fd: bool,
             iterator: I,
         ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+            self.read_directory_with_iterator_maybe_force(
+                dir_maybe_trail_slash,
+                maybe_handle,
+                generation,
+                store_fd,
+                iterator,
+                false,
+            )
+        }
+
+        /// Re-read `dir_`'s cached listing in place, reusing the existing
+        /// `DirEntry` slot and its per-name `Entry` allocations. Unlike
+        /// [`bust_entries_cache`](Self::bust_entries_cache) followed by a
+        /// fresh read (which orphans the old slot and re-allocates every
+        /// `Entry` in the append-only `EntryStore`), refreshing an unchanged
+        /// directory does not grow the process-lifetime entry arenas.
+        ///
+        /// Returns `true` iff the cache now holds a live listing for `dir_`.
+        /// `false` means it holds an open error or a not-found marker; the
+        /// caller decides whether to evict it so the next read retries.
+        pub fn refresh_directory(&mut self, dir_: &[u8]) -> bool {
+            matches!(
+                self.read_directory_with_iterator_maybe_force(dir_, None, 0, false, (), true),
+                Ok(EntriesOption::Entries(_))
+            )
+        }
+
+        fn read_directory_with_iterator_maybe_force<I: DirEntryIterator>(
+            &mut self,
+            dir_maybe_trail_slash: &[u8],
+            maybe_handle: Option<Fd>,
+            generation: Generation,
+            store_fd: bool,
+            iterator: I,
+            force_refresh: bool,
+        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
@@ -1270,7 +1306,9 @@ pub mod fs {
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Entries(e) if e.generation < generation => {
+                            EntriesOption::Entries(e)
+                                if force_refresh || e.generation < generation =>
+                            {
                                 in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                             }
                             cached => return Ok(cached),

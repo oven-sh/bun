@@ -248,18 +248,29 @@ impl<'a> Router<'a> {
 
     // This loads routes recursively, in depth-first order.
     // it does not currently handle duplicate exact route matches. that's undefined behavior, for now.
+    //
+    // `prev_routes` is the route set from a previous load of the same directory
+    // (if any); `Route::parse` reuses its interned names so a reload of an
+    // unchanged tree does not grow the never-freed `DirnameStore`.
     pub fn load_routes<R: ResolverLike>(
         &mut self,
         log: &mut bun_ast::Log,
         root_dir_info: &DirInfo,
         resolver: &mut R,
         base_dir: &[u8],
+        prev_routes: Option<&Routes>,
     ) -> Result<(), CoreError> {
         if self.loaded_routes {
             return Ok(());
         }
-        self.routes =
-            RouteLoader::load_all(self.config.clone(), log, resolver, root_dir_info, base_dir);
+        self.routes = RouteLoader::load_all(
+            self.config.clone(),
+            log,
+            resolver,
+            root_dir_info,
+            base_dir,
+            prev_routes,
+        );
         self.loaded_routes = true;
         Ok(())
     }
@@ -579,12 +590,57 @@ impl Routes {
     }
 }
 
+/// Lookup over a previous load's interned route names, keyed by `public_path`
+/// contents.
+///
+/// `Route::parse` interns `public_path` (and a lowercased `match_name`) into
+/// the process-lifetime `DirnameStore`, which is never freed. A
+/// `FileSystemRouter.reload()` driven by a file watcher re-parses the same
+/// files on every call, so without reuse each reload appends another copy of
+/// every route name and the store grows without bound. An unchanged route
+/// instead reuses the slices interned by the previous load, which stay valid
+/// forever (`MatchedRoute` objects created before the reload still borrow
+/// them).
+pub struct PrevRouteNames {
+    by_public_path: StringHashMap<(&'static [u8], &'static [u8], &'static [u8])>,
+}
+
+impl PrevRouteNames {
+    pub fn init(prev: &Routes) -> PrevRouteNames {
+        let list = &prev.list;
+        let mut by_public_path = StringHashMap::new();
+        by_public_path
+            .ensure_total_capacity(list.len())
+            .expect("unreachable");
+        let (public_paths, names, match_names) = (
+            list.items_public_path(),
+            list.items_name(),
+            list.items_match_name(),
+        );
+        for i in 0..list.len() {
+            // Keys already live in the process-lifetime `DirnameStore`, so the
+            // zero-copy static-key insert is sound.
+            by_public_path
+                .put_static_key(public_paths[i], (public_paths[i], names[i], match_names[i]))
+                .expect("unreachable");
+        }
+        PrevRouteNames { by_public_path }
+    }
+
+    #[inline]
+    fn get(&self, public_path: &[u8]) -> Option<(&'static [u8], &'static [u8], &'static [u8])> {
+        self.by_public_path.get(public_path).copied()
+    }
+}
+
 struct RouteLoader<'a> {
     // allocator dropped — global mimalloc
     fs: &'static FileSystem,
     config: RouteConfig,
     route_dirname_len: u16,
 
+    /// Interned names from the previous load of this directory, if any.
+    prev_names: Option<PrevRouteNames>,
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
     log: &'a mut bun_ast::Log,
     // NOTE: raw NonNull (not &'a Route) because it points into self.all_routes
@@ -698,6 +754,7 @@ impl<'a> RouteLoader<'a> {
         resolver: &mut R,
         root_dir_info: &DirInfo,
         base_dir: &[u8],
+        prev_routes: Option<&Routes>,
     ) -> Routes {
         let mut route_dirname_len: u16 = 0;
 
@@ -717,6 +774,7 @@ impl<'a> RouteLoader<'a> {
             all_routes: Vec::new(),
             index: None,
             route_dirname_len,
+            prev_names: prev_routes.map(PrevRouteNames::init),
         };
         this.load(resolver, root_dir_info, base_dir);
         if this.all_routes.is_empty() {
@@ -866,6 +924,7 @@ impl<'a> RouteLoader<'a> {
                                         self.log,
                                         public_dir,
                                         self.route_dirname_len,
+                                        self.prev_names.as_ref(),
                                     )
                                 };
                                 if let Some(route) = route {
@@ -1001,6 +1060,7 @@ impl Route {
         log: &mut bun_ast::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
+        prev: Option<&PrevRouteNames>,
     ) -> Option<Route> {
         // NOTE: `entry` is a raw `*mut Entry`
         // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
@@ -1081,6 +1141,9 @@ impl Route {
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
+            // An unchanged route (same `public_path` bytes as the previous load)
+            // reuses the slices that load already interned; see `PrevRouteNames`.
+            let reused = prev.and_then(|p| p.get(public_path));
             // NOTE: reshaped for borrowck — both arms intern via DirnameStore
             // (process-lifetime arena → `&'static`), so the post-if bindings are
             // 'static and the route_file_buf borrow is dropped before the
@@ -1098,28 +1161,34 @@ impl Route {
                         name_i += 1;
                     }
 
-                    let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
-                    let name_len = name.len();
-
-                    // NOTE: DirnameStore::append returns `&'static [u8]` (process-
-                    // lifetime arena), so rebinding here drops the borrow on
-                    // `route_file_buf` and avoids needing lifetime transmutes
-                    // below.
-                    let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.append(public_path).expect("unreachable");
-                    let name: &'static [u8] = &public_path[name_offset..][0..name_len];
-                    let match_name: &'static [u8] = if has_uppercase {
-                        dirname_store
-                            .append_lower_case(&name[1..])
-                            .expect("unreachable")
+                    if let Some(triple) = reused {
+                        triple
                     } else {
-                        &name[1..]
-                    };
+                        let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
+                        let name_len = name.len();
 
-                    debug_assert!(match_name[0] != b'/');
-                    debug_assert!(name[0] == b'/');
-                    (public_path, name, match_name)
+                        // NOTE: DirnameStore::append returns `&'static [u8]` (process-
+                        // lifetime arena), so rebinding here drops the borrow on
+                        // `route_file_buf` and avoids needing lifetime transmutes
+                        // below.
+                        let dirname_store = FileSystem::instance().dirname_store();
+                        let public_path: &'static [u8] =
+                            dirname_store.append(public_path).expect("unreachable");
+                        let name: &'static [u8] = &public_path[name_offset..][0..name_len];
+                        let match_name: &'static [u8] = if has_uppercase {
+                            dirname_store
+                                .append_lower_case(&name[1..])
+                                .expect("unreachable")
+                        } else {
+                            &name[1..]
+                        };
+
+                        debug_assert!(match_name[0] != b'/');
+                        debug_assert!(name[0] == b'/');
+                        (public_path, name, match_name)
+                    }
+                } else if let Some(triple) = reused {
+                    triple
                 } else {
                     let dirname_store = FileSystem::instance().dirname_store();
                     let public_path: &'static [u8] =
@@ -1241,15 +1310,15 @@ impl Route {
                 debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
             }
 
-            // NOTE: name/match_name/public_path are already `&'static` via
-            // DirnameStore::append above. `entry.base()` borrows the entry (it
-            // may be inline-stored for ≤31-byte names); intern it
-            // explicitly to get `&'static` without a lifetime transmute.
-            // SAFETY: read-only reborrow; the `&mut` write above is dead.
-            let basename: &'static [u8] = FileSystem::instance()
-                .dirname_store()
-                .append(unsafe { &*entry }.base())
-                .expect("unreachable");
+            // NOTE: `entry.base()` is already process-stable: the `Entry` lives
+            // in the never-freed `EntryStore` and `base_` is either inline in
+            // that slot or interned in `FilenameStore` (the same proof
+            // `DirEntry::add_entry_with_store` uses for its `'static` map keys).
+            // Interning another copy here would grow `DirnameStore` by one
+            // basename per route on every `FileSystemRouter.reload()`.
+            // SAFETY: read-only reborrow (the `&mut` write above is dead), and
+            // the bytes outlive the process per the NOTE above.
+            let basename: &'static [u8] = unsafe { bun_ptr::detach_lifetime((*entry).base()) };
 
             Some(Route {
                 name,
@@ -2139,6 +2208,7 @@ mod tests {
                 &mut resolver,
                 &root_dir,
                 top_level_dir,
+                None,
             );
             scopeguard::ScopeGuard::into_inner(_err_dump);
             Ok(routes)
@@ -2203,6 +2273,7 @@ mod tests {
                 &root_dir,
                 &mut resolver,
                 top_level_dir,
+                None,
             )?;
             let entry_points = router.get_entry_points();
 

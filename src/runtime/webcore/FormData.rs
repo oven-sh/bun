@@ -79,12 +79,10 @@ impl AsyncFormDataExt for AsyncFormData {
     }
 }
 
-/// Raw slices into the input buffer (`filename` may instead borrow a per-entry
-/// percent-decode buffer). Not `bun.Semver.String` because the bytes are
-/// binary and can contain null bytes, which its inline storage treats as
-/// terminators.
+/// Raw byte slices: `value` and `content_type` borrow the caller-owned input
+/// buffer; `filename` borrows either that or a per-entry percent-decode buffer.
 pub struct Field<'a> {
-    /// Borrows into the caller-owned input buffer (binary body slice).
+    /// Binary body slice (may contain null bytes).
     pub value: &'a [u8],
     pub filename: &'a [u8],
     pub content_type: &'a [u8],

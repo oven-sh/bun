@@ -32,7 +32,11 @@
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSSetInlines.h>
 #include <JavaScriptCore/JSSetIterator.h>
+#include <JavaScriptCore/JSFinalizationRegistry.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/JSWeakObjectRef.h>
+#include <JavaScriptCore/JSWeakSet.h>
 #include <JavaScriptCore/NumberObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
@@ -359,7 +363,11 @@ private:
         if (isArr)
             RELEASE_AND_RETURN(scope, writeArray(obj));
 
-        if (obj->isCallable() || obj->inherits<JSC::JSPromise>()) {
+        // Types V8 refuses to clone. Without this they'd fall through to
+        // writePlainObject and silently arrive as `{}`.
+        if (obj->isCallable() || obj->inherits<JSC::JSPromise>()
+            || obj->inherits<JSC::JSWeakMap>() || obj->inherits<JSC::JSWeakSet>()
+            || obj->inherits<JSC::JSWeakObjectRef>() || obj->inherits<JSC::JSFinalizationRegistry>()) {
             throwDataCloneError("The object could not be cloned."_s);
             return false;
         }
@@ -614,11 +622,23 @@ private:
         default:
             break;
         }
-        // Sub-tag order matches V8's WriteJSError: message, cause, stack.
+        // Sub-tag order must match V8's WriteJSError exactly: message, stack,
+        // then cause LAST. V8's reader is order-strict (it walks these
+        // linearly, not in a loop) and rejects cause-before-stack, and it
+        // constructs the Error after the stack so a self-referential cause
+        // can resolve to it.
         JSValue messageValue = err->getDirect(m_vm, m_vm.propertyNames->message);
         if (messageValue && messageValue.isString()) {
             writeByte(static_cast<uint8_t>(V8ErrorTag::kMessage));
             if (!writeString(messageValue))
+                return false;
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        JSValue stackValue = err->get(m_globalObject, m_vm.propertyNames->stack);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (stackValue && stackValue.isString()) {
+            writeByte(static_cast<uint8_t>(V8ErrorTag::kStack));
+            if (!writeString(stackValue))
                 return false;
             RETURN_IF_EXCEPTION(scope, false);
         }
@@ -629,14 +649,6 @@ private:
             bool ok = writeValue(causeValue);
             RETURN_IF_EXCEPTION(scope, false);
             if (!ok) return false;
-        }
-        JSValue stackValue = err->get(m_globalObject, m_vm.propertyNames->stack);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (stackValue && stackValue.isString()) {
-            writeByte(static_cast<uint8_t>(V8ErrorTag::kStack));
-            if (!writeString(stackValue))
-                return false;
-            RETURN_IF_EXCEPTION(scope, false);
         }
         writeByte(static_cast<uint8_t>(V8ErrorTag::kEnd));
         return true;
@@ -1473,72 +1485,88 @@ private:
     JSValue readError()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
+        // Mirror V8's ReadJSError exactly: the sub-tags are a fixed linear
+        // sequence `[prototype] [message] [stack] [cause] end`, not a loop.
+        // The Error is constructed and tracked AFTER `stack` and BEFORE
+        // `cause`. Both halves matter:
+        //  - the writer tracks the Error before writeError, so the cause's
+        //    nested objects get later ids; the reader must do the same or
+        //    every later kObjectReference in the message resolves wrong.
+        //  - a self-referential cause (`err.cause = err`) is a
+        //    kObjectReference to the Error's own id, which must already be
+        //    in the table when the cause is read.
+        auto sub = readByte();
+        if (!sub) return {};
+
         ErrorType type = ErrorType::Error;
-        JSValue message;
-        JSValue stack;
-        JSValue cause;
-        bool hasCause = false;
-        while (true) {
-            auto sub = readByte();
-            if (!sub) return {};
-            auto subTag = static_cast<V8ErrorTag>(*sub);
-            if (subTag == V8ErrorTag::kEnd) break;
-            switch (subTag) {
-            case V8ErrorTag::kEvalErrorPrototype:
-                type = ErrorType::EvalError;
-                break;
-            case V8ErrorTag::kRangeErrorPrototype:
-                type = ErrorType::RangeError;
-                break;
-            case V8ErrorTag::kReferenceErrorPrototype:
-                type = ErrorType::ReferenceError;
-                break;
-            case V8ErrorTag::kSyntaxErrorPrototype:
-                type = ErrorType::SyntaxError;
-                break;
-            case V8ErrorTag::kTypeErrorPrototype:
-                type = ErrorType::TypeError;
-                break;
-            case V8ErrorTag::kUriErrorPrototype:
-                type = ErrorType::URIError;
-                break;
-            case V8ErrorTag::kMessage:
-                message = readValue();
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!message) return {};
-                break;
-            case V8ErrorTag::kStack:
-                stack = readValue();
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!stack) return {};
-                break;
-            case V8ErrorTag::kCause:
-                cause = readValue();
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!cause) return {};
-                hasCause = true;
-                break;
-            default:
-                return {};
-            }
+        bool hadPrototypeTag = true;
+        switch (static_cast<V8ErrorTag>(*sub)) {
+        case V8ErrorTag::kEvalErrorPrototype:
+            type = ErrorType::EvalError;
+            break;
+        case V8ErrorTag::kRangeErrorPrototype:
+            type = ErrorType::RangeError;
+            break;
+        case V8ErrorTag::kReferenceErrorPrototype:
+            type = ErrorType::ReferenceError;
+            break;
+        case V8ErrorTag::kSyntaxErrorPrototype:
+            type = ErrorType::SyntaxError;
+            break;
+        case V8ErrorTag::kTypeErrorPrototype:
+            type = ErrorType::TypeError;
+            break;
+        case V8ErrorTag::kUriErrorPrototype:
+            type = ErrorType::URIError;
+            break;
+        default:
+            hadPrototypeTag = false;
+            break;
         }
+        if (hadPrototypeTag) {
+            sub = readByte();
+            if (!sub) return {};
+        }
+
         String messageStr;
-        if (message && message.isString()) {
+        if (static_cast<V8ErrorTag>(*sub) == V8ErrorTag::kMessage) {
+            JSValue message = readValue();
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!message || !message.isString()) return {};
             messageStr = asString(message)->value(m_globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            sub = readByte();
+            if (!sub) return {};
         }
+
         String stackStr;
-        if (stack && stack.isString()) {
+        if (static_cast<V8ErrorTag>(*sub) == V8ErrorTag::kStack) {
+            JSValue stack = readValue();
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!stack || !stack.isString()) return {};
             stackStr = asString(stack)->value(m_globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            sub = readByte();
+            if (!sub) return {};
         }
+
         // This overload installs `message` and `stack` as non-enumerable own
         // data properties (matching a freshly-constructed Error), and skips
         // capturing a stack trace at the deserialization site.
         ErrorInstance* error = ErrorInstance::create(m_globalObject, WTF::move(messageStr), type, {}, {}, WTF::move(stackStr));
-        if (hasCause)
+        trackObject(error);
+
+        if (static_cast<V8ErrorTag>(*sub) == V8ErrorTag::kCause) {
+            JSValue cause = readValue();
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!cause) return {};
             error->putDirect(m_vm, m_vm.propertyNames->cause, cause, static_cast<unsigned>(PropertyAttribute::DontEnum));
-        return trackObject(error);
+            sub = readByte();
+            if (!sub) return {};
+        }
+
+        if (static_cast<V8ErrorTag>(*sub) != V8ErrorTag::kEnd) return {};
+        return error;
     }
 
     JSGlobalObject* m_globalObject;

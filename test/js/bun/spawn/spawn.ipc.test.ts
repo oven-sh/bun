@@ -121,9 +121,8 @@ describe("ipc mode advanced", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("SURVIVED RangeError");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({ stdout: "SURVIVED RangeError", exitCode: 0, stderr: "" });
   });
 
   it("a typed array larger than 4 GiB throws instead of truncating its length", async () => {
@@ -165,9 +164,9 @@ describe("ipc mode advanced", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(["SURVIVED DataCloneError", "SKIP"]).toContain(stdout.trim());
-    expect(exitCode).toBe(0);
+    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
   });
 
   it("a dense array whose trailer property count disagrees with the stream is rejected", async () => {
@@ -365,6 +364,70 @@ describe.skipIf(!nodeExe())("ipc mode advanced node interop", () => {
     expect(Buffer.isBuffer(got.buf)).toBe(true);
     expect(got.cyclic[1]).toBe(got.cyclic);
     expect(got.shared[0]).toBe(got.shared[1]);
+  });
+
+  // V8 writes error sub-tags in the fixed order message, stack, cause and its
+  // reader walks them linearly, so emitting the cause before the stack makes
+  // node reject the whole frame. The node child then re-serializes the echo
+  // with real V8, so the return leg also proves the reader against genuine V8
+  // output for an Error carrying an object cause.
+  it("an Error with an object cause round-trips through a node child", async () => {
+    using dir = tempDir("ipc-adv-err-node", { "echo.cjs": ECHO_CHILD });
+    const e = new TypeError("boom");
+    e.cause = { x: 1 };
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), nodeExe()!, { e, pair: [e, e], done: true });
+
+    expect(got.e).toBeInstanceOf(TypeError);
+    expect(got.e.message).toBe("boom");
+    expect(got.e.cause).toEqual({ x: 1 });
+    // A second reference to the Error must resolve to the Error, not to its cause.
+    expect(got.pair[0]).toBe(got.e);
+    expect(got.pair[1]).toBe(got.e);
+  });
+
+  // Both ends must assign the Error its object id BEFORE the cause's objects
+  // get theirs; getting the reader backwards shifts every id assigned after
+  // the cause, so [e, e] silently comes back as [e, e.cause].
+  it("object ids stay aligned across an Error cause between two bun processes", async () => {
+    using dir = tempDir("ipc-adv-err-ids", { "echo.cjs": ECHO_CHILD });
+    const e = new Error("m");
+    e.cause = { x: 1 };
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), bunExe(), { pair: [e, e], done: true });
+
+    expect(got.pair[1]).toBe(got.pair[0]);
+    expect(got.pair[0].cause).toEqual({ x: 1 });
+    expect(got.pair[1]).not.toBe(got.pair[0].cause);
+  });
+
+  // Registering the Error before reading its cause is also what lets a
+  // self-referential cause resolve; V8 round-trips this with identity intact.
+  it("a self-referential Error cause round-trips with identity", async () => {
+    using dir = tempDir("ipc-adv-err-self", { "echo.cjs": ECHO_CHILD });
+    const e = new Error("self");
+    e.cause = e;
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), bunExe(), { e, done: true });
+
+    expect(got.e).toBeInstanceOf(Error);
+    expect(got.e.cause).toBe(got.e);
+  });
+
+  // V8 refuses to clone these; falling through to the plain-object path would
+  // silently deliver `{}` to the receiver instead of throwing at the sender.
+  it("sending a WeakMap, WeakSet, WeakRef, or FinalizationRegistry throws DataCloneError", async () => {
+    using dir = tempDir("ipc-adv-weak", { "echo.cjs": ECHO_CHILD });
+    const child = fork(path.join(String(dir), "echo.cjs"), [], {
+      execPath: bunExe(),
+      execArgv: [],
+      serialization: "advanced",
+      stdio: "ignore",
+    });
+    try {
+      for (const value of [new WeakMap(), new WeakSet(), new WeakRef({}), new FinalizationRegistry(() => {})]) {
+        expect(() => child.send(value as any)).toThrow("could not be cloned");
+      }
+    } finally {
+      child.kill();
+    }
   });
 });
 

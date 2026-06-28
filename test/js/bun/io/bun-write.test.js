@@ -454,15 +454,15 @@ const IS_UV_FS_COPYFILE_DISABLED =
         pull(c) {
           c.write(new TextEncoder().encode("ab"));
           c.write("héllo"); // latin1 JSString: 5 chars, 6 UTF-8 bytes
-          c.write("日本"); // utf16 JSString: 2 chars, 6 UTF-8 bytes
+          c.write("日本\uD800"); // utf16 JSString; the lone surrogate encodes as U+FFFD (3 bytes)
           c.close();
         },
       });
       const resp = new Response(rs);
       const n = await Bun.write(dest, resp);
       expect({ n, text: await Bun.file(dest).text(), bodyUsed: resp.bodyUsed }).toEqual({
-        n: 14,
-        text: "abhéllo日本",
+        n: 17,
+        text: "abhéllo日本\uFFFD",
         bodyUsed: true,
       });
     });

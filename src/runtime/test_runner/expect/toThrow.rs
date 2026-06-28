@@ -18,16 +18,10 @@ fn get_truthy_cause(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<
     Ok(value.get(global, "cause")?.filter(|v| v.to_boolean()))
 }
 
-fn get_object_message(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
-    if !value.is_object() {
-        return Ok(None);
-    }
-    value.fast_get(global, bun_jsc::BuiltinName::Message)
-}
-
 // Jest 30 compares `cause` in addition to `message` for `toThrow(errorInstance)`.
-// Error-like causes (objects with a `message`) are compared by message, then the
-// walk descends into their own causes; anything else is compared by deep equality.
+// Error-instance causes are compared by message and the walk descends into their
+// own causes (Jest's serializer sees only own properties, so it cannot tell
+// `Error` subclasses apart either). Non-Error causes are compared structurally.
 fn error_causes_equal(
     expected: JSValue,
     received: JSValue,
@@ -45,16 +39,18 @@ fn error_causes_equal(
             (None, None) => return Ok(true),
             (Some(_), None) | (None, Some(_)) => return Ok(false),
             (Some(ec), Some(rc)) => {
-                if let (Some(em), Some(rm)) = (
-                    get_object_message(ec, global)?,
-                    get_object_message(rc, global)?,
-                ) {
-                    if !em.is_same_value(rm, global)? {
-                        return Ok(false);
+                if ec.is_error() && rc.is_error() {
+                    if let (Some(em), Some(rm)) = (
+                        ec.fast_get(global, bun_jsc::BuiltinName::Message)?,
+                        rc.fast_get(global, bun_jsc::BuiltinName::Message)?,
+                    ) {
+                        if !em.is_same_value(rm, global)? {
+                            return Ok(false);
+                        }
+                        expected = ec;
+                        received = rc;
+                        continue;
                     }
-                    expected = ec;
-                    received = rc;
-                    continue;
                 }
                 return ec.jest_deep_equals(rc, global);
             }

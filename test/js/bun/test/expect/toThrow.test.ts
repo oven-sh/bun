@@ -63,13 +63,28 @@ describe("toThrow compares Error cause", () => {
   });
 
   test("error subclass causes compare by message", () => {
+    class Wrapped extends Error {}
     expect(thrower(new Error("m", { cause: new TypeError("x") }))).toThrow(new Error("m", { cause: new Error("x") }));
+    expect(thrower(new Error("m", { cause: new Wrapped("x") }))).toThrow(new Error("m", { cause: new Error("x") }));
   });
 
   test("object causes compare structurally", () => {
     expect(thrower(new Error("m", { cause: { x: 1 } }))).toThrow(new Error("m", { cause: { x: 1 } }));
     expect(() => {
       expect(thrower(new Error("m", { cause: { x: 1 } }))).toThrow(new Error("m", { cause: { x: 2 } }));
+    }).toThrow();
+  });
+
+  // A plain object with a `message` is not an Error instance, so it is compared
+  // structurally and every differing property is a mismatch, as in Jest 30.
+  test("non-Error causes with a message still compare all properties", () => {
+    expect(thrower(new Error("m", { cause: { message: "x", code: 1 } }))).toThrow(
+      new Error("m", { cause: { message: "x", code: 1 } }),
+    );
+    expect(() => {
+      expect(thrower(new Error("m", { cause: { message: "x", code: 1 } }))).toThrow(
+        new Error("m", { cause: { message: "x", code: 2 } }),
+      );
     }).toThrow();
   });
 

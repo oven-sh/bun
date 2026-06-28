@@ -1224,6 +1224,48 @@ it.skipIf(isWindows)(
   },
 );
 
+// The per-task pending_err mutex was acquired via `lock()` (returns `()`) instead of
+// `lock_guard()`, so it was never released: the next failing subtask on the same worker
+// panicked "Deadlock detected" (debug) or blocked forever and the promise never settled.
+it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple subtasks fail", async () => {
+  using dir = tempDir("readdir-recursive-multi-error", {
+    "keep.txt": "x",
+  });
+  // Self-referencing symlinks: opening one with O_DIRECTORY fails with
+  // ELOOP, which is not swallowed by the recursive walker, so every
+  // enqueued subtask hits the pending_err path.
+  for (let i = 0; i < 64; i++) {
+    const link = join(String(dir), `loop${i}`);
+    fs.symlinkSync(link, link);
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+          const fs = require("fs");
+          fs.promises.readdir(${JSON.stringify(String(dir))}, { recursive: true }).then(
+            r => console.log("resolved", r.length),
+            e => console.log("rejected", e.code),
+          );
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    timeout: 10_000,
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "rejected ELOOP",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
@@ -1558,6 +1600,66 @@ describe("readFile", () => {
         expect.toThrowWithCode(() => readFileSync(mydir + "/" + name, { encoding: "utf8" }), "ENOENT");
       }
     }
+  });
+});
+
+describe("open with a numeric flag boxed as a double", () => {
+  // https://github.com/oven-sh/bun/issues/32505
+  // Go's `syscall/js` (GOOS=js GOARCH=wasm) reads every argument out of wasm
+  // linear memory with DataView.getFloat64, so a valid integer flag such as
+  // 578 (O_RDWR|O_CREAT|O_TRUNC) reaches fs.open boxed as a double instead of
+  // an int32. Node accepts any integer-valued number; Bun must too.
+  const asDouble = (n: number) => new Float64Array([n])[0];
+
+  it("openSync accepts a double-boxed flag and honors it", () => {
+    using dir = tempDir("fs-flags-double", {});
+    const file = join(String(dir), "sync.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+    expect(Number.isInteger(flags)).toBe(true);
+
+    const fd = openSync(file, flags, 0o666);
+    try {
+      writeSync(fd, "hello\n");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("hello\n");
+  });
+
+  it("async open accepts a double-boxed flag and honors it", async () => {
+    using dir = tempDir("fs-flags-double-async", {});
+    const file = join(String(dir), "async.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    fs.open(file, flags, 0o666, (err, fd) => (err ? reject(err) : resolve(fd)));
+    const fd = await promise;
+    try {
+      writeSync(fd, "world\n");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("world\n");
+  });
+
+  it("promises.open accepts a double-boxed flag and honors it", async () => {
+    using dir = tempDir("fs-flags-double-promise", {});
+    const file = join(String(dir), "promise.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+
+    const handle = await promises.open(file, flags, 0o666);
+    try {
+      await handle.write("promise\n");
+    } finally {
+      await handle.close();
+    }
+    expect(readFileSync(file, "utf8")).toBe("promise\n");
+  });
+
+  it("still rejects a non-integer numeric flag", () => {
+    using dir = tempDir("fs-flags-double-reject", {});
+    const file = join(String(dir), "bad.txt");
+    expect(() => openSync(file, asDouble(578.5), 0o666)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   });
 });
 
@@ -3637,6 +3739,99 @@ it("test syscall errno, issue#4198", () => {
     )[process.platform],
   );
   rmdirSync(path);
+});
+
+describe("error.syscall is node's operation name, not the raw kernel syscall", () => {
+  // Node documents err.syscall as a stable, platform-independent operation
+  // name ("stat", "lstat", "utime", ...). On Linux, Bun implements stat via
+  // statx(2) and utimes via utimensat(2); the implementation detail must not
+  // leak into err.syscall.
+  const missing = join(tmpdir(), "fs-syscall-" + Date.now(), "nope");
+  const badfd = 2147483640;
+  const syscallOf = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e: any) {
+      return e.syscall;
+    }
+    throw new Error("expected to throw");
+  };
+  const syscallOfAsync = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e: any) {
+      return e.syscall;
+    }
+    throw new Error("expected to reject");
+  };
+
+  it("sync", () => {
+    expect({
+      stat: syscallOf(() => statSync(missing)),
+      lstat: syscallOf(() => lstatSync(missing)),
+      fstat: syscallOf(() => fstatSync(badfd)),
+      utimes: syscallOf(() => fs.utimesSync(missing, 1, 1)),
+      lutimes: syscallOf(() => fs.lutimesSync(missing, 1, 1)),
+      futimes: syscallOf(() => fs.futimesSync(badfd, 1, 1)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      fstat: "fstat",
+      utimes: "utime",
+      lutimes: "lutime",
+      futimes: "futime",
+    });
+  });
+
+  it("syscall appears in the error message", () => {
+    expect(() => statSync(missing)).toThrow(/, stat '/);
+    expect(() => lstatSync(missing)).toThrow(/, lstat '/);
+    expect(() => fs.utimesSync(missing, 1, 1)).toThrow(/, utime '/);
+    expect(() => fs.lutimesSync(missing, 1, 1)).toThrow(/, lutime '/);
+  });
+
+  it("async (fs/promises)", async () => {
+    expect({
+      stat: await syscallOfAsync(() => promises.stat(missing)),
+      lstat: await syscallOfAsync(() => promises.lstat(missing)),
+      utimes: await syscallOfAsync(() => promises.utimes(missing, 1, 1)),
+      lutimes: await syscallOfAsync(() => promises.lutimes(missing, 1, 1)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      utimes: "utime",
+      lutimes: "lutime",
+    });
+  });
+
+  it("async (callback)", async () => {
+    const cb = (fn: (cb: (err: any) => void) => void) =>
+      new Promise<string>(resolve => fn(err => resolve(err?.syscall)));
+    expect({
+      stat: await cb(done => fs.stat(missing, done)),
+      lstat: await cb(done => fs.lstat(missing, done)),
+      utimes: await cb(done => fs.utimes(missing, 1, 1, done)),
+      lutimes: await cb(done => fs.lutimes(missing, 1, 1, done)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      utimes: "utime",
+      lutimes: "lutime",
+    });
+  });
+
+  it("FileHandle.read after close reports 'read', not 'fsync'", async () => {
+    using dir = tempDir("fs-syscall-fh", { "f.txt": "hello" });
+    const handle = await promises.open(join(String(dir), "f.txt"), "r");
+    await handle.close();
+    let err: any;
+    try {
+      await handle.read(Buffer.alloc(1), 0, 1, 0);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, syscall: err?.syscall }).toEqual({ code: "EBADF", syscall: "read" });
+  });
 });
 
 it.if(isWindows)("writing to windows hidden file is possible", () => {

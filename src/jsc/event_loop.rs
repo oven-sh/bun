@@ -84,7 +84,6 @@ pub struct EventLoop {
     #[cfg(not(windows))]
     pub uws_loop: (),
 
-    pub debug: Debug,
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
@@ -122,7 +121,6 @@ impl Default for EventLoop {
             uws_loop: None,
             #[cfg(not(windows))]
             uws_loop: (),
-            debug: Debug::default(),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
@@ -131,81 +129,6 @@ impl Default for EventLoop {
             #[cfg(not(unix))]
             signal_handler: (),
         }
-    }
-}
-
-#[cfg(debug_assertions)]
-#[derive(Default)]
-pub struct Debug {
-    pub is_inside_tick_queue: bool,
-    pub js_call_count_outside_tick_queue: usize,
-    pub drain_microtasks_count_outside_tick_queue: usize,
-    pub _prev_is_inside_tick_queue: bool,
-    /// RAII: deref-on-drop. `exit()` just `take()`s; if `Debug` is dropped
-    /// without `exit()` running, the +1 from the last `run_callback` no
-    /// longer leaks.
-    pub last_fn_name: bun_core::OwnedString,
-    pub track_last_fn_name: bool,
-}
-
-#[cfg(debug_assertions)]
-impl Debug {
-    pub fn enter(&mut self) {
-        self._prev_is_inside_tick_queue = self.is_inside_tick_queue;
-        self.is_inside_tick_queue = true;
-        self.js_call_count_outside_tick_queue = 0;
-        self.drain_microtasks_count_outside_tick_queue = 0;
-    }
-
-    pub fn exit(&mut self) {
-        self.is_inside_tick_queue = self._prev_is_inside_tick_queue;
-        self._prev_is_inside_tick_queue = false;
-        self.js_call_count_outside_tick_queue = 0;
-        self.drain_microtasks_count_outside_tick_queue = 0;
-        drop(core::mem::take(&mut self.last_fn_name));
-    }
-}
-
-#[cfg(not(debug_assertions))]
-#[derive(Default)]
-pub struct Debug;
-
-#[cfg(not(debug_assertions))]
-impl Debug {
-    #[inline]
-    pub fn enter(&mut self) {}
-    #[inline]
-    pub fn exit(&mut self) {}
-}
-
-/// RAII pairing for [`Debug::enter`] / [`Debug::exit`]. Holds the raw pointer
-/// (not `&mut`) so re-entrant JS callbacks that touch the same loop while the
-/// guard is live don't alias a long-lived mutable borrow.
-#[must_use = "dropping immediately exits the debug scope"]
-pub struct DebugEnterGuard {
-    debug: *mut Debug,
-}
-
-impl Drop for DebugEnterGuard {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `debug` was live at `enter_scope` and is owned by the
-        // process-lifetime `EventLoop`.
-        unsafe { (*self.debug).exit() };
-    }
-}
-
-impl Debug {
-    /// `enter()` now, `exit()` on drop.
-    ///
-    /// # Safety
-    /// `debug` must point to a live `Debug` (the `event_loop.debug` field) and
-    /// remain valid for the guard's lifetime.
-    #[inline]
-    pub unsafe fn enter_scope(debug: *mut Debug) -> DebugEnterGuard {
-        // SAFETY: caller contract — `debug` is live; short-lived `&mut` only.
-        unsafe { (*debug).enter() };
-        DebugEnterGuard { debug }
     }
 }
 
@@ -317,7 +240,6 @@ impl EventLoop {
     pub fn enter(&mut self) {
         bun_core::scoped_log!(EventLoop, "enter() = {}", self.entered_event_loop_count);
         self.entered_event_loop_count += 1;
-        self.debug.enter();
     }
 
     /// "exit" a microtask context in the event loop. See `enter`.
@@ -330,7 +252,6 @@ impl EventLoop {
         }
 
         self.entered_event_loop_count -= 1;
-        self.debug.exit();
     }
 
     /// `enter()` now, `exit()` on drop. Takes the raw VM-owned pointer so the
@@ -361,11 +282,10 @@ impl EventLoop {
         };
 
         // On the error path, `entered_event_loop_count` is intentionally NOT
-        // decremented; only the debug-scope exit runs.
+        // decremented.
         if result.is_ok() {
             self.entered_event_loop_count -= 1;
         }
-        self.debug.exit();
         result
     }
 
@@ -421,12 +341,6 @@ impl EventLoop {
         // `event_loop_handle` (which is the libuv loop).
         if vm.event_loop_handle.is_some() {
             vm.uws_loop_mut().drain_quic_if_necessary();
-        }
-
-        #[cfg(debug_assertions)]
-        {
-            self.debug.drain_microtasks_count_outside_tick_queue +=
-                (!self.debug.is_inside_tick_queue) as usize;
         }
 
         Ok(())
@@ -512,7 +426,17 @@ impl EventLoop {
 
     fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> u32 {
         let mut counter: u32 = 0;
-        let _ = tick_queue_with_count(self, virtual_machine, &mut counter);
+        // On `JsTerminated`, report 0 so the `while tick_with_count() > 0`
+        // drain loops in `tick()` / `tick_tasks_only()` stop immediately. The
+        // termination exception is left on the VM (`tryClearException` never
+        // clears it), so continuing to drain would re-enter
+        // `executeCallImpl` with an exception pending and trip its
+        // `scope.assertNoException()` RELEASE_ASSERT. `tick()` observes the
+        // pending exception via `scope.has_exception()` on the next line and
+        // returns.
+        if tick_queue_with_count(self, virtual_machine, &mut counter).is_err() {
+            return 0;
+        }
         counter
     }
 
@@ -671,9 +595,8 @@ impl EventLoop {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
-        self.debug.enter();
-        // The scope/counter/debug-exit cleanup is inlined at each return site
-        // below (a scopeguard closure would alias `&mut self`).
+        // The scope/counter cleanup is inlined at each return site below (a
+        // scopeguard closure would alias `&mut self`).
 
         let ctx = self.vm();
         self.tick_concurrent();
@@ -695,7 +618,6 @@ impl EventLoop {
                 || scope.has_exception()
             {
                 self.entered_event_loop_count -= 1;
-                self.debug.exit();
                 return;
             }
             self.tick_concurrent();
@@ -712,7 +634,6 @@ impl EventLoop {
         self.global_ref().handle_rejected_promises();
 
         self.entered_event_loop_count -= 1;
-        self.debug.exit();
     }
 
     /// Tick the task queue without draining microtasks afterward.

@@ -258,6 +258,39 @@ describe("Bun.Transpiler", () => {
       exp("export default interface Foo { bar(): void }\nexport const x = 1;", "export const x = 1;\n");
     });
 
+    it("export default of an identifier written with unicode escapes does not crash", () => {
+      // `\u{66}` decodes to `f`, but the decoded buffer lives outside the source
+      // contents, so the parse-time Ref is tagged AllocatedName rather than
+      // SourceContentsSlice. The visit pass must still replace it with a real
+      // symbol before calling record_declared_symbol.
+      const exp = ts.expectPrinted_;
+      exp("export default \\u{66}", "export default f");
+      exp("export default \\u0066", "export default f");
+      exp("export default \\u{66}oo", "export default foo");
+      exp("const \\u{66} = 1; export default \\u{66};", "const f = 1;\nexport default f;\n");
+      exp("export default (function \\u{66}() {})", "export default (function f() {})");
+      exp("export default (class \\u{66} {})", "export default (class f {\n})");
+      exp("export default function \\u{66}() {}", "export default function f() {}");
+      exp("export default class \\u{66} {}", "export default class f {\n}");
+
+      // The exact fuzz repro used the ts loader with target:"node".
+      const node = new Bun.Transpiler({ loader: "ts", target: "node" });
+      expect(node.transformSync("export default \\u{66}")).toBe("export default f;\n");
+
+      // The same shape through the plain JavaScript loader.
+      const js = new Bun.Transpiler({ loader: "js" });
+      expect(js.transformSync("export default \\u{66}")).toBe("export default f;\n");
+      expect(js.transformSync("export default \\u0066oo")).toBe("export default foo;\n");
+
+      // exports.eliminate marks the default export dead and returns early before
+      // the default_name ref is rewritten to a symbol. record_on_exit must not
+      // feed that parse-time ref to record_declared_symbol.
+      const elim = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ["default"] } });
+      expect(elim.transformSync("export default foo")).toBe("");
+      expect(elim.transformSync("export default \\u{66}")).toBe("");
+      expect(elim.transformSync("export default \\u{66}oo")).toBe("");
+    });
+
     it("rejects export clauses inside a non-declare namespace", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -302,6 +335,46 @@ describe("Bun.Transpiler", () => {
       err("f<T>`", "Unterminated string literal");
       exp("new C<T>`ok`", "new C`ok`;\n");
       exp("f<T>`ok`", "f`ok`;\n");
+    });
+
+    it("reports a parse error for a truncated class-in-extends without tripping the scope-order assert", async () => {
+      // An unterminated class-in-extends pushes two ClassBody scopes at the same
+      // EOF loc during error recovery. Run in a subprocess so the debug-only
+      // scope-order assert surfaces as a test failure instead of killing the runner.
+      const cases = {
+        "class o extends class": 'Expected "{" but found end of file',
+        "(class extends class": 'Expected "{" but found end of file',
+        "class o extends (class": 'Expected "{" but found end of file',
+        "class o extends class extends class": 'Expected "{" but found end of file',
+      };
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const t = new Bun.Transpiler({ loader: "tsx", target: "bun" });
+            const out = [];
+            for (const input of ${JSON.stringify(Object.keys(cases))}) {
+              try {
+                t.transformSync(input);
+                out.push("<no error>");
+              } catch (e) {
+                out.push((e instanceof AggregateError ? e.errors[0] : e).message);
+              }
+            }
+            process.stdout.write(JSON.stringify(out));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: Object.values(cases),
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("should parse infer extends ternary correctly #9959", () => {
@@ -1705,6 +1778,45 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
+  // (prints symbol.original_name verbatim), so the `generatedSymbolName`
+  // hash suffix on the automatic JSX runtime import is the sole collision
+  // guard against a user local of the same name in the first JSX element's
+  // scope. With `minify.identifiers`, MinifyRenamer assigns distinct slots
+  // and the hash suffix is not emitted.
+  it("JSX automatic runtime import is not shadowed by a user local", () => {
+    const input =
+      "export function f() { let jsx: any; let jsxDEV: any; let Fragment: any; return [<><div /></>, jsx, jsxDEV, Fragment] }";
+
+    const noop = new Bun.Transpiler({
+      loader: "tsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    }).transformSync(input);
+    expect(noop).toContain("jsxDEV_7x81h0kn(");
+    expect(noop).toContain("Fragment_8vg9x3sq,");
+    expect(noop).toContain("let jsx;");
+    expect(noop).toContain("let jsxDEV;");
+    expect(noop).toContain("let Fragment;");
+    expect(noop).not.toMatch(/\bjsxDEV\(/);
+
+    const minified = new Bun.Transpiler({
+      loader: "tsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      minify: { identifiers: true },
+      autoImportJSX: true,
+    }).transformSync(input);
+    expect(minified).not.toContain("_7x81h0kn");
+    expect(minified).not.toContain("_8vg9x3sq");
+    // Import aliases must not collide with the user's `let` bindings.
+    const aliases = [...minified.matchAll(/\b\w+ as (\w+)\b/g)].map(m => m[1]);
+    const locals = [...minified.matchAll(/\blet (\w+);/g)].map(m => m[1]);
+    expect(aliases).toHaveLength(2);
+    expect(locals).toHaveLength(3);
+    for (const alias of aliases) {
+      expect(locals).not.toContain(alias);
+    }
+  });
+
   it("JSX bare key prop followed by key with a value does not crash", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -2163,6 +2275,27 @@ console.log(<div {...obj} key="after" />);`),
     });
     it("import with quote", () => {
       expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
+    });
+
+    it("import with separator-only or trailing-separator path", () => {
+      expectPrinted_(`import "/"`, `import"/"`);
+      expectPrinted_(`import "//"`, `import"//"`);
+      expectPrinted_(`import "///"`, `import"///"`);
+      expectPrinted_(`import "foo//"`, `import"foo//"`);
+      expectPrinted_(`import "foo///"`, `import"foo///"`);
+      expectPrinted_(`export * from "/"`, `export * from "/"`);
+      expectPrinted_(`export * from "foo//"`, `export * from "foo//"`);
+      expectPrinted_(`export { a } from "/"`, `export { a } from "/"`);
+    });
+
+    it("empty string as import/export clause alias", () => {
+      // ModuleExportName may be any well-formed string literal, including "".
+      expectPrinted_(`import { "" as z } from "m"; z`, `import { "" as z } from "m";\nz`);
+      expectPrinted_(`let z = 1; export { z as "" }`, `let z = 1;\n\nexport { z as "" }`);
+      expectPrinted_(`export { "" as z } from "m"`, `export { "" as z } from "m"`);
+      expectPrinted_(`export { z as "" } from "m"`, `export { z as "" } from "m"`);
+      expectPrinted_(`export { "" as "" } from "m"`, `export { "" } from "m"`);
+      expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
     });
 
     it("string quote selection", () => {

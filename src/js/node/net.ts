@@ -50,10 +50,10 @@ const MathMax = Math.max;
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
 
 /**
  * `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here,
@@ -103,15 +103,15 @@ function appendTlsKeylog(line: Buffer) {
     }
   }
 }
-const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
-const BlockList = $zig("node_net_binding.zig", "BlockList");
-const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
-const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
+const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
+const BlockList = $rust("node_net_binding.rs", "BlockList");
+const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
+const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
-const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
-const isNamedPipeSocket = $newZigFunction("runtime/socket/socket.zig", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newZigFunction("runtime/socket/socket.zig", "jsGetBufferedAmount", 1);
+const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -227,7 +227,8 @@ function onConnectEnd() {
  * disconnecting mid-handshake, which Node reports as ECONNRESET.
  */
 function tlsHandshakeError(verifyError) {
-  if (verifyError && verifyError.code && verifyError.code !== "ECONNRESET") {
+  const verifyErrorCode = verifyError ? verifyError.code : undefined;
+  if (verifyErrorCode && verifyErrorCode !== "ECONNRESET") {
     const reason = verifyError.reason || verifyError.message || "TLS handshake failed";
     const err = new Error(reason) as Error & {
       code?: string;
@@ -246,7 +247,7 @@ function tlsHandshakeError(verifyError) {
       err.reason = match[2];
       err.code = `ERR_SSL_${match[2]}`;
     } else {
-      err.code = verifyError.code;
+      err.code = verifyErrorCode;
     }
     return err;
   }
@@ -335,8 +336,9 @@ const SocketHandlers: SocketHandler = {
     if (!self) return;
     // make sure to disable timeout on usocket and handle on TS side
     socket.timeout(0);
-    if (self.timeout) {
-      self.setTimeout(self.timeout);
+    const selfTimeout = self.timeout;
+    if (selfTimeout) {
+      self.setTimeout(selfTimeout);
     }
     self._handle = socket;
     self.connecting = false;
@@ -359,8 +361,9 @@ const SocketHandlers: SocketHandler = {
 
     // A TOS value set before the connection existed (setTypeOfService before
     // connect) is applied to the live handle now.
-    if (self[kSetTOS] !== undefined && self._handle?.setTypeOfService) {
-      self._handle.setTypeOfService(self[kSetTOS]);
+    let handle;
+    if (self[kSetTOS] !== undefined && (handle = self._handle)?.setTypeOfService) {
+      handle.setTypeOfService(self[kSetTOS]);
     }
 
     if (!self[kupgraded]) {
@@ -419,11 +422,12 @@ const SocketHandlers: SocketHandler = {
         verifyError = checkServerIdentity(hostname, cert);
       }
     }
-    if (self._requestCert || self._rejectUnauthorized) {
+    let rejectUnauthorized;
+    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        if (self._rejectUnauthorized) {
+        if (rejectUnauthorized ?? self._rejectUnauthorized) {
           self.destroy(verifyError);
           return;
         }
@@ -484,13 +488,14 @@ function SocketEmitEndNT(self, _err?) {
     // that race from surfacing as an uncaught exception - the no-listener
     // case is already a documented silent close.
     self.once("error", () => {});
-    if (_err.code === undefined && typeof _err.errno === "number" && _err.errno !== 0) {
+    let errErrno;
+    if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
       // A codeless close error that still carries the errno (Windows IOCP
       // delivers some this way): derive the proper code from it, like Node's
       // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
       // errno table cannot name fall through to the reset shape below instead
       // of surfacing "Unknown system error N".
-      const er = new ErrnoException(_err.errno, "read") as Error & { code?: string };
+      const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
       if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
         self.destroy(er);
         return;
@@ -555,8 +560,9 @@ function consumeSNIResult(state, err, context) {
     return;
   }
   if (context == null) return;
-  if (typeof context === "object" && context.context) {
-    state.selected = context.context;
+  const innerContext = typeof context === "object" ? context.context : undefined;
+  if (innerContext) {
+    state.selected = innerContext;
   } else if (state.server?.[kNativeSecureContextCtor] && context instanceof state.server[kNativeSecureContextCtor]) {
     state.selected = context;
   } else {
@@ -680,13 +686,14 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       state.suspended = true;
       return true;
     }
-    if (state.failed !== undefined) {
+    const failed = state.failed;
+    if (failed !== undefined) {
       // Stash the error so the handshake-failure handler emits
       // 'tlsClientError' with it, and return it - the native dispatch
       // detects an Error return and aborts the handshake, dropping the
       // connection without a TLS alert the way Node does.
       stashSNIError(state);
-      return state.failed;
+      return failed;
     }
     return state.selected;
   },
@@ -744,8 +751,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // way Node does and tear the connection down. A connection that was
       // already reported (handshake timeout, explicit destroy) is not
       // reported a second time when its teardown unwinds the handshake.
-      if (self._hadError || self.destroyed) {
-        if (!self.destroyed) self.destroy();
+      let alreadyDestroyed;
+      if (self._hadError || (alreadyDestroyed = self.destroyed)) {
+        if (!(alreadyDestroyed ?? self.destroyed)) self.destroy();
         return;
       }
       // An SNICallback that reported an error (or returned an invalid
@@ -886,9 +894,10 @@ function onconnection(err, clientHandle) {
 
   _socket[kAttach](clientHandle.localPort, clientHandle);
 
-  if (self.blockList) {
+  const blockList = self.blockList;
+  if (blockList) {
     const addressType = isIP(clientHandle.remoteAddress);
-    if (addressType && self.blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
+    if (addressType && blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
       const data = {
         localAddress: _socket.localAddress,
         localPort: _socket.localPort || clientHandle.localPort,
@@ -948,14 +957,15 @@ function onconnection(err, clientHandle) {
   // accepted socket open forever: report it through tlsClientError after
   // handshakeTimeout the way Node does. The timer is cleared when the
   // handshake settles (either way) or the socket closes first.
-  if (isTLS && self._handshakeTimeout > 0) {
+  let handshakeTimeout;
+  if (isTLS && (handshakeTimeout = self._handshakeTimeout) > 0) {
     const timer = setTimeout(() => {
       _socket[khandshakeTimer] = undefined;
       const err = $ERR_TLS_HANDSHAKE_TIMEOUT();
       _socket._hadError = true;
       self.emit("tlsClientError", err, _socket);
       if (!_socket.destroyed) _socket.destroy();
-    }, self._handshakeTimeout);
+    }, handshakeTimeout);
     // Node's handshake timer is unref'd: a fully-unref'd server (the
     // graceful-shutdown pattern) must not be held open by a client that
     // stalls mid-handshake.
@@ -1068,22 +1078,25 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    if (
-      err &&
-      err.code === "ECONNRESET" &&
-      !self.destroyed &&
-      socket === self._handle &&
-      self.listenerCount("error") > 0
-    ) {
-      // Shape it like Node's errnoException(UV_ECONNRESET, 'read'): message,
-      // code, errno and syscall all populated.
+    if (err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       self.once("error", () => {});
-      const er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };
-      er.errno = err.errno;
-      er.syscall = "read";
-      self.destroy(er);
+      if (err.code === undefined || err.code === "ECONNRESET") {
+        // Shape it like Node's errnoException(UV_ECONNRESET, 'read').
+        const er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };
+        er.errno = err.errno;
+        er.syscall = "read";
+        self.destroy(er);
+      } else {
+        // Any other recv errno (ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, ...)
+        // keeps its identity — Node's onStreamRead does
+        // `stream.destroy(errnoException(nread, 'read'))` for any nread that
+        // is not UV_EOF. The native on_close only passes a non-undefined err
+        // when the close was driven by a recv() failure (libus close-code
+        // enum values are filtered out in NewSocket::on_close).
+        self.destroy(err);
+      }
       return;
     }
     self[kended] = true;
@@ -1145,11 +1158,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         verifyError = checkServerIdentity(hostname, cert);
       }
     }
-    if (self._requestCert || self._rejectUnauthorized) {
+    let rejectUnauthorized;
+    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        if (self._rejectUnauthorized) {
+        if (rejectUnauthorized ?? self._rejectUnauthorized) {
           self.destroy(verifyError);
           return;
         }
@@ -1195,8 +1209,15 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     $debug("Bun.Socket connectError");
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
-    req!.oncomplete(error.errno, self._handle, req, true, true);
     socket.data.req = undefined;
+    // doConnect dispatches this synchronously when connect()/bind() fails at
+    // the syscall; surface it as kConnectTcp/Pipe's return value (callers'
+    // Node-derived `if (err)` expects that) instead of re-entering oncomplete.
+    if (req!.dispatching) {
+      req.errno = error.errno || UV_ECANCELED;
+      return;
+    }
+    req!.oncomplete(error.errno, self._handle, req, true, true);
   },
 };
 
@@ -1225,7 +1246,7 @@ function serverHandlersFor(server) {
 
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
-  const promise = doConnect(self._handle, {
+  return kConnectDispatch(self, req, {
     hostname: address,
     port,
     localAddress: req.localAddress || undefined,
@@ -1241,16 +1262,11 @@ function kConnectTcp(self, addressType, req, address, port) {
     data: { self, req },
     socket: self[khandlers],
   });
-  promise.catch(_reason => {
-    // eat this so there's no unhandledRejection
-    // we already catch this in connectError and error
-  });
-  return 0;
 }
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
-  const promise = doConnect(self._handle, {
+  return kConnectDispatch(self, req, {
     hostname: address,
     unix: address,
     // Always half-open natively; see kConnect.
@@ -1259,10 +1275,24 @@ function kConnectPipe(self, req, address) {
     data: { self, req },
     socket: self[khandlers],
   });
+}
+
+function kConnectDispatch(self, req, opts) {
+  // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
+  // oncomplete; doConnect instead fires connectError inside this call. Bracket
+  // it so connectError hands the errno back here instead of re-entering.
+  req.dispatching = true;
+  const promise = doConnect(self._handle, opts);
+  req.dispatching = false;
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
   });
+  const errno = req.errno;
+  if (errno !== undefined) {
+    req.errno = undefined;
+    return errno;
+  }
   return 0;
 }
 
@@ -1366,16 +1396,17 @@ function Socket(options?) {
       // isSocket() covers stdio handed to a child as a socketpair (how spawn
       // implements pipes on unix); writable-only adoption with sync write(2)
       // is correct there too.
+      const optionsReadable = options.readable;
       if (
         stats.isFIFO() ||
         stats.isCharacterDevice() ||
         stats.isFile() ||
-        (stats.isSocket() && options.readable !== true)
+        (stats.isSocket() && optionsReadable !== true)
       ) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
-        if (options.readable !== true) {
+        if (optionsReadable !== true) {
           this.push(null);
           this.read(0);
         }
@@ -1415,11 +1446,12 @@ function Socket(options?) {
       signal.addEventListener("abort", destroyWhenAborted.bind(this));
     }
   }
-  if (opts.blockList) {
-    if (!BlockList.isBlockList(opts.blockList)) {
-      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", opts.blockList);
+  const optsBlockList = opts.blockList;
+  if (optsBlockList) {
+    if (!BlockList.isBlockList(optsBlockList)) {
+      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optsBlockList);
     }
-    this.blockList = opts.blockList;
+    this.blockList = optsBlockList;
   }
 }
 $toClass(Socket, "Socket", Duplex);
@@ -1488,8 +1520,9 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
 Socket.prototype[kAttach] = function (port, socket) {
   socket.data = this;
   socket[owner_symbol] = this;
-  if (this.timeout) {
-    this.setTimeout(this.timeout);
+  const timeout = this.timeout;
+  if (timeout) {
+    this.setTimeout(timeout);
   }
   // make sure to disable timeout on usocket and handle on TS side
   socket.timeout(0);
@@ -1594,8 +1627,9 @@ Socket.prototype.connect = function connect(...args) {
         }
         tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
         this[bunTLSConnectOptions] = tls;
-        if (!connection && tls.socket) {
-          connection = tls.socket;
+        let tlsSocket;
+        if (!connection && (tlsSocket = tls.socket)) {
+          connection = tlsSocket;
         }
       }
       if (connection) {
@@ -1742,8 +1776,9 @@ Socket.prototype.connect = function connect(...args) {
   if (this._parent?.connecting) {
     return this;
   }
-  if (this.write !== Socket.prototype.write) {
-    this.write = Socket.prototype.write;
+  const socketWrite = Socket.prototype.write;
+  if (this.write !== socketWrite) {
+    this.write = socketWrite;
   }
   if (this.destroyed) {
     this._handle = null;
@@ -1850,7 +1885,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     }
 
     if (!this._closeAfterHandlingError) {
-      if (this._handle) this._handle.onread = () => {};
+      const handle = this._handle;
+      if (handle) handle.onread = () => {};
       this._handle = null;
       this._sockname = null;
     }
@@ -1860,11 +1896,12 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     process.nextTick(emitCloseNT, this, !!err);
   }
 
-  if (this.server) {
+  const server = this.server;
+  if (server) {
     $debug("has server");
-    this.server._connections--;
-    if (this.server._emitCloseIfDrained) {
-      this.server._emitCloseIfDrained();
+    server._connections--;
+    if (server._emitCloseIfDrained) {
+      server._emitCloseIfDrained();
     }
   }
 };
@@ -2375,8 +2412,9 @@ function createConnection(...args) {
   const options = normalized[0];
   const socket = new Socket(options);
 
-  if (options.timeout) {
-    socket.setTimeout(options.timeout);
+  const optionsTimeout = options.timeout;
+  if (optionsTimeout) {
+    socket.setTimeout(optionsTimeout);
   }
 
   return socket.connect(normalized);
@@ -2433,7 +2471,8 @@ function lookupAndConnect(self, options) {
     return;
   }
 
-  if (options.lookup != null) validateFunction(options.lookup, "options.lookup");
+  const optionsLookup = options.lookup;
+  if (optionsLookup != null) validateFunction(optionsLookup, "options.lookup");
 
   if (dns === undefined) dns = require("node:dns");
   const dnsopts = {
@@ -2446,7 +2485,7 @@ function lookupAndConnect(self, options) {
 
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
-  const lookup = options.lookup || dns.lookup;
+  const lookup = optionsLookup || dns.lookup;
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {
     $debug("connect: autodetecting", host, port);
@@ -2615,8 +2654,9 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
   //TLS
   let connection = self[ksocket];
-  if (options.socket) {
-    connection = options.socket;
+  const optionsSocket = options.socket;
+  if (optionsSocket) {
+    connection = optionsSocket;
   }
   let tls = undefined;
   const bunTLS = self[bunTlsSymbol];
@@ -2636,8 +2676,9 @@ function internalConnect(self, options, address, port, addressType, localAddress
       self.servername = tls.servername;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
-      if (!connection && tls.socket) {
-        connection = tls.socket;
+      let tlsSocket;
+      if (!connection && (tlsSocket = tls.socket)) {
+        connection = tlsSocket;
       }
     }
     self.authorized = false;
@@ -2764,8 +2805,9 @@ function internalConnectMultiple(context, canceled?) {
 
   //TLS
   let connection = self[ksocket];
-  if (context.options.socket) {
-    connection = context.options.socket;
+  const contextOptionsSocket = context.options.socket;
+  if (contextOptionsSocket) {
+    connection = contextOptionsSocket;
   }
   let tls = undefined;
   const bunTLS = self[bunTlsSymbol];
@@ -2785,8 +2827,9 @@ function internalConnectMultiple(context, canceled?) {
       self.servername = tls.servername;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
-      if (!connection && tls.socket) {
-        connection = tls.socket;
+      let tlsSocket;
+      if (!connection && (tlsSocket = tls.socket)) {
+        connection = tlsSocket;
       }
     }
     self.authorized = false;
@@ -2820,7 +2863,15 @@ function internalConnectMultiple(context, canceled?) {
     ArrayPrototypePush.$call(context.errors, ex);
 
     self.emit("connectionAttemptFailed", address, port, addressType, ex);
-    internalConnectMultiple(context);
+    // A listener may destroy() on that event; same guard as afterConnectMultiple.
+    if (self.connecting) internalConnectMultiple(context);
+    return;
+  }
+
+  // The if(err) above covers sync failure; this catches a sync open or a
+  // destroy() from a 'connectionAttempt' listener. Arming the timer now
+  // would capture a stale handle and overwrite the next attempt's kTimeout.
+  if (!self.connecting || context.current !== current + 1) {
     return;
   }
 
@@ -2844,6 +2895,10 @@ function internalConnectMultiple(context, canceled?) {
 }
 
 function internalConnectMultipleTimeout(context, req, handle) {
+  // Socket._destroy can't reach the per-context timer, so destroy() mid-attempt
+  // leaves this armed; don't emit a spurious timeout or re-close the handle.
+  if (!context.socket.connecting) return;
+
   $debug("connect/multiple: connection to %s:%s timed out", req.address, req.port);
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 
@@ -2911,8 +2966,10 @@ function afterConnect(status, handle, req, readable, writable) {
     if (readable && !self.isPaused()) self.read(0);
   } else {
     let details;
-    if (req.localAddress && req.localPort) {
-      details = req.localAddress + ":" + req.localPort;
+    const localAddress = req.localAddress;
+    let localPort;
+    if (localAddress && (localPort = req.localPort)) {
+      details = localAddress + ":" + localPort;
     }
     const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port);
     if (details) {
@@ -2969,8 +3026,10 @@ function afterConnectMultiple(context, current, status, handle, req, readable, w
 function createConnectionError(req, status) {
   let details;
 
-  if (req.localAddress && req.localPort) {
-    details = req.localAddress + ":" + req.localPort;
+  const localAddress = req.localAddress;
+  let localPort;
+  if (localAddress && (localPort = req.localPort)) {
+    details = localAddress + ":" + localPort;
   }
 
   const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port);
@@ -3042,11 +3101,12 @@ function Server(options?, connectionListener?) {
   options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
 
-  if (options.blockList) {
-    if (!BlockList.isBlockList(options.blockList)) {
-      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", options.blockList);
+  const optionsBlockList = options.blockList;
+  if (optionsBlockList) {
+    if (!BlockList.isBlockList(optionsBlockList)) {
+      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optionsBlockList);
     }
-    this.blockList = options.blockList;
+    this.blockList = optionsBlockList;
   }
 }
 $toClass(Server, "Server", EventEmitter);
@@ -3197,8 +3257,9 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       readableAll = options.readableAll;
       writableAll = options.writableAll;
 
-      if (typeof options.fd === "number" && options.fd >= 0) {
-        fd = options.fd;
+      const optionsFd = options.fd;
+      if (typeof optionsFd === "number" && optionsFd >= 0) {
+        fd = optionsFd;
         port = 0;
       }
 
@@ -3603,15 +3664,17 @@ function initSocketHandle(self) {
   self[kended] = false;
 
   // Handle creation may be deferred to bind() or connect() time.
-  if (self._handle) {
-    self._handle[owner_symbol] = self;
+  const handle = self._handle;
+  if (handle) {
+    handle[owner_symbol] = self;
   }
 }
 
 function closeSocketHandle(self, isException, isCleanupPending = false) {
-  $debug("closeSocketHandle", isException, isCleanupPending, !!self._handle);
-  if (self._handle) {
-    self._handle.close();
+  const handle = self._handle;
+  $debug("closeSocketHandle", isException, isCleanupPending, !!handle);
+  if (handle) {
+    handle.close();
     setImmediate(() => {
       $debug("emit close", isCleanupPending);
       self.emit("close", isException);
@@ -3664,8 +3727,9 @@ function checkBindError(err, port, handle) {
   if (err === 0 && port > 0 && handle.getsockname) {
     const out = {};
     err = handle.getsockname(out);
-    if (err === 0 && port !== out.port) {
-      $debug(`checkBindError, bound to ${out.port} instead of ${port}`);
+    let outPort;
+    if (err === 0 && port !== (outPort = out.port)) {
+      $debug(`checkBindError, bound to ${outPort} instead of ${port}`);
       const UV_EADDRINUSE = -4091;
       err = UV_EADDRINUSE;
     }

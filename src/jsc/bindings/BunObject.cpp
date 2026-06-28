@@ -970,6 +970,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
+    isStandaloneExecutable                         BunObject_lazyPropCb_wrap_isStandaloneExecutable                    ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
     udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1

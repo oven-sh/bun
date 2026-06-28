@@ -1228,3 +1228,40 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   server.close();
   await once(server, "close");
 });
+
+describe("tls.Server socket destroySoon", () => {
+  // destroySoon() after end(big) must deliver every byte even when the TLS write
+  // batcher's final flush spills (#31584). The spill/kernel-buffer race hits ~4% of
+  // connections at this payload, so loop (mirrors test-tls-client-destroy-soon.js).
+  it("delivers the whole stream when destroySoon follows end", async () => {
+    const big = Buffer.alloc(2 * 1024 * 1024, "Y");
+    for (let i = 0; i < 64; i++) {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const server = createServer(COMMON_CERT, socket => {
+        socket.on("error", reject);
+        socket.end(big);
+        socket.destroySoon();
+      });
+      server.on("error", reject);
+      let client: TLSSocket | undefined;
+      server.listen(0, () => {
+        const c = connect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: false }, () => {
+          let bytesRead = 0;
+          c.on("readable", () => {
+            let d;
+            while ((d = c.read()) !== null) bytesRead += d.length;
+          });
+          c.on("end", () => resolve(bytesRead));
+        });
+        c.on("error", reject);
+        client = c;
+      });
+      try {
+        expect({ iteration: i, bytesRead: await promise }).toEqual({ iteration: i, bytesRead: big.length });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    }
+  });
+});

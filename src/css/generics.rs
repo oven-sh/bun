@@ -360,9 +360,8 @@ impl CssEql for () {
     }
 }
 
-// CustomIdent/DashedIdent/Ident wrapper structs are hoisted as data-only stubs
-// in `crate::values::ident` (lib.rs); the full impls live in gated
-// `values/ident.rs` and supersede these on un-gate.
+// `CssEql` impls for `CustomIdent`/`DashedIdent`/`Ident` (defined in
+// `values/ident.rs`, which does not depend on this trait).
 mod ident_eql {
     use super::CssEql;
     use crate::values::ident::{CustomIdent, DashedIdent, Ident};

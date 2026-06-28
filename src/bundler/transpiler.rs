@@ -1,7 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════
 // `Transpiler` — the legacy single-file transpile path (pre-`bundle_v2`).
-// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep so
-// the struct and all method bodies are un-gated and live at this tier.
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_alloc::Arena;
@@ -156,8 +154,8 @@ impl<'a> Transpiler<'a> {
     pub const IS_CACHE_ENABLED: bool = false;
 
     /// Takes `*mut Log` (not `&'a mut`) because the same
-    /// `*Log` is aliased into `linker.log` / `resolver.log`; the un-gated struct field is
-    /// already a raw pointer for that reason.
+    /// `*Log` is aliased into `linker.log` / `resolver.log`; the struct
+    /// field is a raw pointer for that reason.
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
         self.linker.log = log;
@@ -678,9 +676,8 @@ impl<'a> Transpiler<'a> {
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
         // `Linker::init` dropped its `arena` arg (linker.rs:172
-        // — global mimalloc). The
-        // un-gated `crate::linker::Linker` stores raw pointers so
-        // `&mut self.options` etc. coerce directly. Self-reference is
+        // — global mimalloc). `crate::linker::Linker` stores raw pointers
+        // so `&mut self.options` etc. coerce directly. Self-reference is
         // load-bearing — `linker.link()` reads back through these into the
         // owning `Transpiler` — hence raw `*mut`, not `&'a mut` (would alias
         // `&mut self` on every call).
@@ -1168,8 +1165,8 @@ impl<'a> Transpiler<'a> {
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///
     /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
-    /// match the un-gated struct field types — the same `*Log` is aliased
-    /// into `linker.log` / `resolver.log` (see `set_log`).
+    /// match the struct field types — the same `*Log` is aliased into
+    /// `linker.log` / `resolver.log` (see `set_log`).
     pub fn init(
         arena: &'a Arena,
         log: *mut bun_ast::Log,
@@ -1765,21 +1762,23 @@ impl<'a> Transpiler<'a> {
                                     const BYTECODE_EXT: &[u8] = b".jsc";
                                     let mut path_buf2 = bun_paths::PathBuffer::uninit();
                                     let n = path.text.len();
+                                    let total = n + BYTECODE_EXT.len();
+                                    // `ZStr::from_buf` needs `buf[total] == 0`
+                                    // in-bounds; fall back to re-parsing the
+                                    // source instead of panicking on an
+                                    // over-long path.
+                                    if total >= path_buf2.len() {
+                                        break 'brk default_value;
+                                    }
                                     path_buf2[..n].copy_from_slice(path.text);
                                     path_buf2[n..][..BYTECODE_EXT.len()]
                                         .copy_from_slice(BYTECODE_EXT);
-                                    let total = n + BYTECODE_EXT.len();
-                                    // PathBuffer is zero-initialized so
-                                    // `path_buf2[total] == 0` already; safe to
-                                    // borrow as a NUL-terminated ZStr.
+                                    path_buf2[total] = 0;
                                     let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
-                                    // spec calls
-                                    // `bun.sys.File.toSourceAt(...)` which is
+                                    // `bun.sys.File.toSourceAt(...)` is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
                                     // We only need `.contents`, so call
-                                    // `read_from` directly (the `to_source_at`
-                                    // wrapper is gated as a T1→T2 move-in,
-                                    // sys/File.rs:446).
+                                    // `read_from` directly.
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
                                     match bun_sys::File::read_from(dir, zpath) {
                                         Ok(contents) if !contents.is_empty() => {
@@ -2017,10 +2016,7 @@ fn parse_data_loader<'a>(
                         value: Some(prop.value.expect("infallible: prop has value")),
                     };
                     export_clauses[count] = bun_ast::ClauseItem {
-                        name: bun_ast::LocRef {
-                            ref_: Some(ref_),
-                            loc: key_loc,
-                        },
+                        name: bun_ast::LocRef { ref_, loc: key_loc },
                         alias: bun_ast::StoreStr::new(name),
                         alias_loc: key_loc,
                         ..Default::default()
@@ -2051,7 +2047,7 @@ fn parse_data_loader<'a>(
                         value: bun_ast::StmtOrExpr::Expr(expr),
                         default_name: bun_ast::LocRef {
                             loc: bun_ast::Loc::default(),
-                            ref_: Some(bun_ast::Ref::NONE),
+                            ref_: bun_ast::Ref::NONE,
                         },
                     },
                     bun_ast::Loc { start: 0 },
@@ -2072,7 +2068,7 @@ fn parse_data_loader<'a>(
                     value: bun_ast::StmtOrExpr::Expr(expr),
                     default_name: bun_ast::LocRef {
                         loc: bun_ast::Loc::default(),
-                        ref_: Some(bun_ast::Ref::NONE),
+                        ref_: bun_ast::Ref::NONE,
                     },
                 },
                 bun_ast::Loc { start: 0 },
@@ -2119,7 +2115,7 @@ fn parse_text_loader<'a>(
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
                 loc: bun_ast::Loc::default(),
-                ref_: Some(bun_ast::Ref::NONE),
+                ref_: bun_ast::Ref::NONE,
             },
         },
         bun_ast::Loc { start: 0 },
@@ -2177,7 +2173,7 @@ fn parse_md_loader<'a>(
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
                 loc: bun_ast::Loc::default(),
-                ref_: Some(bun_ast::Ref::NONE),
+                ref_: bun_ast::Ref::NONE,
             },
         },
         bun_ast::Loc { start: 0 },

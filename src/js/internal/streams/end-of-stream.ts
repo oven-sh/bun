@@ -159,8 +159,11 @@ function eos(stream, options, callback) {
         stream.removeListener("error", nop);
       };
     }
-  } else if (options.signal?.aborted) {
-    immediateResult = $makeAbortError(undefined, { cause: options.signal.reason });
+  } else {
+    const signal = options.signal;
+    if (signal?.aborted) {
+      immediateResult = $makeAbortError(undefined, { cause: signal.reason });
+    }
   }
   // null means "finished without error": invoke with no error argument at all,
   // not an explicit null/undefined.
@@ -281,7 +284,8 @@ function eos(stream, options, callback) {
     stream.removeListener("complete", onfinish);
     stream.removeListener("abort", onclose);
     stream.removeListener("request", onrequest);
-    if (stream.req) stream.req.removeListener("finish", onfinish);
+    const streamReq = stream.req;
+    if (streamReq) streamReq.removeListener("finish", onfinish);
     stream.removeListener("end", onlegacyfinish);
     stream.removeListener("close", onlegacyfinish);
     stream.removeListener("finish", onfinish);
@@ -290,15 +294,16 @@ function eos(stream, options, callback) {
     stream.removeListener("close", onclose);
   };
 
-  if (options.signal) {
+  const signal = options.signal;
+  if (signal) {
     const abort = () => {
       // Keep it because cleanup removes it.
       const endCallback = callback;
       cleanup();
-      endCallback.$call(stream, $makeAbortError(undefined, { cause: options.signal.reason }));
+      endCallback.$call(stream, $makeAbortError(undefined, { cause: signal.reason }));
     };
     addAbortListener ??= require("internal/abort_listener").addAbortListener;
-    const disposable = addAbortListener(options.signal, abort);
+    const disposable = addAbortListener(signal, abort);
     const originalCallback = callback;
     callback = once((...args) => {
       disposable[SymbolDispose]();
@@ -318,16 +323,17 @@ function eosWeb(stream, options, callback) {
 
   let isAborted = false;
   let abort = nop;
-  if (options.signal) {
+  const signal = options.signal;
+  if (signal) {
     abort = () => {
       isAborted = true;
-      callback.$call(stream, $makeAbortError(undefined, { cause: options.signal.reason }));
+      callback.$call(stream, $makeAbortError(undefined, { cause: signal.reason }));
     };
-    if (options.signal.aborted) {
+    if (signal.aborted) {
       process.nextTick(abort);
     } else {
       addAbortListener ??= require("internal/abort_listener").addAbortListener;
-      const disposable = addAbortListener(options.signal, abort);
+      const disposable = addAbortListener(signal, abort);
       const originalCallback = callback;
       callback = once((...args) => {
         disposable[SymbolDispose]();

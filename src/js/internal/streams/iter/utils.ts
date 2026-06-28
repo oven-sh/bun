@@ -57,10 +57,11 @@ function getMinCursor(consumers, fallback) {
   let minCursor = fallback;
   let minCursorConsumers = 0;
   for (const consumer of consumers) {
-    if (consumer.cursor < minCursor) {
-      minCursor = consumer.cursor;
+    const cursor = consumer.cursor;
+    if (cursor < minCursor) {
+      minCursor = cursor;
       minCursorConsumers = 1;
-    } else if (consumer.cursor === minCursor) {
+    } else if (cursor === minCursor) {
       minCursorConsumers++;
     }
   }

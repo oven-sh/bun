@@ -122,6 +122,7 @@ test/js/bun/http/bun-server.test.ts
 test/js/bun/import-attributes/import-attributes.test.ts
 test/js/bun/resolve/import-custom-condition.test.ts
 test/js/bun/s3/s3.leak.test.ts
+test/js/bun/s3/s3-stream-cancel-leak.test.ts
 test/js/bun/shell/bunshell.test.ts
 test/js/bun/shell/commands/ls.test.ts
 test/js/bun/shell/leak.test.ts
@@ -170,9 +171,7 @@ test/bake/dev/vfile.test.ts
 test/js/bun/http/serve.test.ts
 test/js/bun/resolve/import-meta.test.js
 test/js/node/worker_threads/worker_threads.test.ts
-test/js/third_party/@duckdb/node-api/duckdb.test.ts
 test/js/third_party/body-parser/express-bun-build-compile.test.ts
-test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 
 
 # ASSERTION FAILED: m_normalWorld->hasOneRef()
@@ -400,12 +399,14 @@ test/regression/issue/11664.test.ts
 
 # ASSERTION FAILED: m_cellState == CellState::DefinitelyWhite
 test/js/node/tls/node-tls-upgrade.test.ts
-test/js/third_party/duckdb/duckdb-basic-usage.test.ts
 
 # Bun::NapiExternal::~NapiExternal
 test/v8/v8.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
+# ~294 per-symbol subprocess spawns that intentionally crash on the stub;
+# LSAN per-spawn adds no coverage and slows the file significantly.
+test/napi/uv_stub.test.ts
 
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts

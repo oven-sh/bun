@@ -97,7 +97,7 @@ describe("when importing `.svelte.ts` files with CJS", () => {
     expect(ts).toBeDefined();
     const code = await ts!.text();
     expect(code).toContain("require_todo_cjs_svelte");
-    expect(code).toContain("var require_todo_cjs_svelte = __commonJS((exports, module) => {\n");
+    expect(code).toContain("var require_todo_cjs_svelte = __commonJS(function(exports, module) {\n");
   });
 });
 

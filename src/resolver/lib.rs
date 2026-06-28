@@ -10,12 +10,10 @@
 // crate::StandaloneModuleGraph trait; HardcodedModule -> bun_resolve_builtins.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is now un-gated as
+// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is mounted as
 // `fs_full`; the inline `pub mod fs` below remains the canonical type surface
 // (FileSystem, RealFS, Path, PathName, Entry, DirEntry, EntryLookup,
-// EntriesOption, Implementation) until the body switches to `fs_full::*`
-// wholesale. `fs_full` compiles to validate the port and is link-dead until
-// re-exported.
+// EntriesOption, Implementation) and re-exports from `fs_full`.
 pub mod data_url;
 pub mod dir_info;
 #[path = "fs.rs"]
@@ -56,9 +54,8 @@ pub use result::{
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 
-/// Minimal real subset of `fs.rs` so `bun_resolver::fs::X` paths
-/// resolve for downstream crates. The full draft remains in `fs.rs` (gated)
-/// until bun_alloc::BSSStringList / bun_output land.
+/// `bun_resolver::fs` namespace; re-exports from `fs_full` plus the
+/// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::io::Write as _;
@@ -1058,7 +1055,7 @@ pub mod fs {
         pub entries_mutex: Mutex,
         /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
-        /// `EntriesMap` until bun_alloc un-gates BSSMap.
+        /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
         pub cwd: &'static [u8],
         pub file_limit: usize,

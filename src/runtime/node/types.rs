@@ -1711,19 +1711,13 @@ impl FileSystemFlags {
 impl FileSystemFlags {
     pub fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
         if val.is_number() {
-            if !val.is_int32() {
-                return Err(ctx.throw_value(
-                    ctx.err(
-                        jsc::ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "The value of \"flags\" is out of range. It must be an integer. Received {}",
-                            val.as_number()
-                        ),
-                    )
-                    .to_js(),
-                ));
-            }
-            let number = val.coerce_to_i32(ctx)?;
+            // Match Node's stringToFlags, which runs validateInt32 on a numeric
+            // `flags`: accept any integer-valued number in the int32 range,
+            // regardless of whether JSC boxed it as an int32 or a double. Go's
+            // `syscall/js` bridge reads arguments out of wasm memory with
+            // getFloat64, so valid flags like 578 (O_RDWR|O_CREAT|O_TRUNC)
+            // arrive double-boxed and must not be rejected.
+            let number = validators::validate_int32(ctx, val, "flags", None, None)?;
             let flags = number.max(0);
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
             // use the platform's native MSVC/libuv values which differ from the

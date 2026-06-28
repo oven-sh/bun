@@ -45,6 +45,7 @@ public:
 
     ncrypto::ECKeyPointer m_key;
     const EC_GROUP* m_group;
+    size_t m_sizeForGC { 0 };
 
     JSC::EncodedJSValue getPublicKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue encodingValue, JSC::JSValue formatValue);
 

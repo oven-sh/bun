@@ -36,6 +36,7 @@ pub struct Stream {
     pub request_body_done: bool,
     pub is_streaming_body: bool,
     pub headers_delivered: bool,
+    pub read_paused: bool,
 }
 
 impl Stream {
@@ -54,6 +55,7 @@ impl Stream {
             request_body_done: false,
             is_streaming_body: false,
             headers_delivered: false,
+            read_paused: false,
         }))
     }
 

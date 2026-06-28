@@ -1948,7 +1948,7 @@ pub mod bv2_impl {
                 }
             }
 
-            if cfg!(debug_assertions) && ReachableFiles.is_visible() {
+            if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
                 bun_core::scoped_log!(
                     ReachableFiles,
                     "Reachable count: {} / {}",
@@ -2777,21 +2777,32 @@ pub mod bv2_impl {
             this.linker.graph.bump = bun_ptr::BackRef::new(this.graph.heap);
             this.transpiler.log_mut().clone_line_text = true;
 
-            // We don't expose an option to disable this. Bake forbids tree-shaking
-            // since every export must is always exist in case a future module
-            // starts depending on it.
-            if this.transpiler.options.output_format == options::Format::InternalBakeDev {
-                this.transpiler.options.tree_shaking = false;
-                this.transpiler.resolver.opts.tree_shaking = false;
-            } else {
-                this.transpiler.options.tree_shaking = true;
-                this.transpiler.resolver.opts.tree_shaking = true;
-            }
+            // Bake forbids tree-shaking since every export must always exist in
+            // case a future module starts depending on it. The override is only
+            // set by `Bun.build({ treeShaking })` for tests/debugging.
+            let tree_shaking = this.transpiler.options.tree_shaking_override.unwrap_or(
+                this.transpiler.options.output_format != options::Format::InternalBakeDev,
+            );
+            this.transpiler.options.tree_shaking = tree_shaking;
+            this.transpiler.resolver.opts.tree_shaking = tree_shaking;
 
             // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
             // the resolver lives in `transpiler` which outlives `self` (same `'a`).
             this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
             this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
+
+            // Cross-chunk imports/exports are only generated for ESM (see
+            // computeCrossChunkDependencies). Reject other formats up front
+            // rather than panicking later. Matches esbuild.
+            if this.transpiler.options.code_splitting
+                && this.transpiler.options.output_format != options::Format::Esm
+            {
+                this.transpiler.log_mut().add_error(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    "Code splitting is currently only supported when format is set to \"esm\"",
+                );
+            }
 
             this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
@@ -4818,6 +4829,15 @@ pub mod bv2_impl {
                     take_ast_cols!(&mut self.linker.graph.ast);
                 } else {
                     take_ast_cols!(&mut self.graph.ast);
+                }
+            }
+
+            // `File.entry_bits` is `AutoBitSet::Dynamic` (global-heap) when
+            // entry points exceed the 64-bit static inline. The slab-only
+            // `MultiArrayList::drop` won't run its destructor.
+            for b in self.linker.graph.files.items_entry_bits_mut() {
+                if let bun_collections::AutoBitSet::Dynamic(d) = b {
+                    d.deinit();
                 }
             }
 

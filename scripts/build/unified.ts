@@ -132,6 +132,8 @@ const noUnify: readonly string[] = [
   // image_resize.cpp: it must expand its own per-ISA namespaces so
   // HWY_EXPORT(HashLong) resolves the N_AVX2/N_AVX3/etc. variants.
   "src/jsc/bindings/xxhash3.cpp",
+  // Fourth highway TU — same foreach_target.h include-guard reason.
+  "src/jsc/bindings/highway_sourcemap.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.

@@ -77,7 +77,6 @@ impl<'a> HTMLScanner<'a> {
             tag: ImportRecordTag::default(),
             loader: None,
             source_index: AstIndex::default(),
-            module_id: 0,
             original_path: b"",
             flags: ImportRecordFlags::default(),
         };

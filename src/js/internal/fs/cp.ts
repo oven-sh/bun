@@ -14,7 +14,19 @@ const {
   isSrcSubdir,
 } = require("internal/fs/cp-sync");
 
-const { chmod, copyFile, lstat, mkdir, opendir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
+const {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  opendir,
+  readdir,
+  readlink,
+  stat,
+  symlink,
+  unlink,
+  utimes,
+} = require("node:fs/promises");
 const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
@@ -107,6 +119,35 @@ async function checkParentPaths(src, srcStat, dest) {
   return checkParentPaths(src, srcStat, destParent);
 }
 
+// The native recursive copy (a single clonefile() on macOS) copies symlinks
+// verbatim and clones special files, while node rewrites relative symlink
+// targets against the source tree and raises ERR_FS_CP_SOCKET /
+// ERR_FS_CP_FIFO_PIPE. It is therefore only node-equivalent for trees made of
+// regular files and directories; anything else — including entries whose type
+// the filesystem does not report — bails to the ported walker. Scan errors
+// also bail so the walker surfaces them the way node would.
+async function treeContainsOnlyFilesAndDirs(root) {
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (entry.isDirectory()) {
+        stack.push(join(dir, entry.name));
+      } else if (!entry.isFile()) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // node-correct validation before handing off to the native fast path
 // (which performs the copy but does not implement node's cp error codes).
 async function tryNativeFastPath(src, dest, opts) {
@@ -122,10 +163,20 @@ async function tryNativeFastPath(src, dest, opts) {
       code: "EISDIR",
     });
   }
-  // The native copy is only node-equivalent for regular-file -> regular-file
-  // (or missing dest). Symlinks (node resolves relative link targets),
-  // directories (may contain symlinks), and special files (node-specific
-  // error codes) must go through the ported implementation.
+  if (srcStat.isDirectory()) {
+    // On macOS the native path clones the whole tree with a single
+    // clonefile(). Only take it when the result is indistinguishable from
+    // node's walker: dest must not exist (no merge semantics) and the tree
+    // must contain only regular files and directories.
+    return {
+      ok: process.platform === "darwin" && !destStat && (await treeContainsOnlyFilesAndDirs(src)),
+      checked,
+    };
+  }
+  // The single-file native copy is only node-equivalent for regular-file ->
+  // regular-file (or missing dest). Symlinks (node resolves relative link
+  // targets) and special files (node-specific error codes) must go through
+  // the ported implementation.
   return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
 }
 

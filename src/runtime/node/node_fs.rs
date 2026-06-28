@@ -202,10 +202,8 @@ mod node {
     pub(super) use super::super::types::SliceWithUnderlyingString;
     pub(super) use super::super::{gid_t, uid_t};
 
-    /// `node::mode_from_js` — forwards to the real impl in
-    /// `super::types::mode_from_js` (now un-gated). Kept as a thin alias so
-    /// the dozens of call sites in `args::*::from_js` keep spelling
-    /// `node::mode_from_js`.
+    /// Thin alias to `super::types::mode_from_js` so the dozens of call
+    /// sites in `args::*::from_js` keep spelling `node::mode_from_js`.
     #[inline]
     pub(super) fn mode_from_js(
         ctx: &bun_jsc::JSGlobalObject,
@@ -500,9 +498,7 @@ pub enum Flavor {
 // ──────────────────────────────────────────────────────────────────────────
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
-// `cp` builtin). Un-gated so the sync `impl NodeFS` body — which references
-// `AsyncCpTask` / `AsyncReaddirRecursiveTask` directly — type-checks, and so
-// `ShellAsyncCpTask` is visible to `crate::shell::builtins::cp`.
+// `cp` builtin).
 mod _async_tasks {
     use super::*;
 
@@ -2430,7 +2426,7 @@ mod _async_tasks {
                                 <$T as ReaddirEntry>::destroy_entry(item);
                             }
                             {
-                                let _lock = self.pending_err_mutex.lock();
+                                let _lock = self.pending_err_mutex.lock_guard();
                                 if self.pending_err.is_none() {
                                     let err_path: &[u8] = if !err.path.is_empty() {
                                         &err.path[..]
@@ -5633,7 +5629,11 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err),
+            // `err.syscall` must be node's operation name, not `futimens(2)`.
+            Err(mut err) => {
+                err.syscall = sys::Tag::futime;
+                Err(err)
+            }
             Ok(_) => Ok(()),
         }
     }
@@ -8125,7 +8125,8 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err.with_path(args.path.slice())),
+            // `err.syscall` must be node's operation name, not `utimensat(2)`.
+            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), sys::Tag::utime)),
             Ok(_) => Ok(()),
         }
     }
@@ -8147,7 +8148,7 @@ impl NodeFS {
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error {
                     errno,
-                    syscall: sys::Tag::utime,
+                    syscall: sys::Tag::lutime,
                     path: args.path.slice().into(),
                     ..Default::default()
                 })
@@ -8161,7 +8162,8 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err.with_path(args.path.slice())),
+            // `err.syscall` must be node's operation name, not `utimensat(2)`.
+            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), sys::Tag::lutime)),
             Ok(_) => Ok(()),
         }
     }
@@ -9547,6 +9549,7 @@ impl ReaddirEntry for Buffer {
 fn map_anyerror_to_errno(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
+        "PermissionDenied" => E::EPERM,
         "FileTooBig" => E::EFBIG,
         "SymLinkLoop" => E::ELOOP,
         "ProcessFdQuotaExceeded" => E::ENFILE,
@@ -9569,6 +9572,7 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
 fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
+        "PermissionDenied" => E::EPERM,
         "FileTooBig" => E::EFBIG,
         "SymLinkLoop" => E::ELOOP,
         "ProcessFdQuotaExceeded" => E::ENFILE,

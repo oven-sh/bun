@@ -423,9 +423,11 @@ pub(crate) fn execute_query<Context: WriterContext>(
     query: &[u8],
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
+    // A simple Query ('Q') is its own sync point: the backend always answers it
+    // with exactly one ReadyForQuery. Do not append a Sync here: it would elicit
+    // a second, unaccounted ReadyForQuery that re-arms advance() mid-prepare.
     protocol::write_query(query, &mut writer)?;
     writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
     Ok(())
 }
 
@@ -498,10 +500,7 @@ pub(crate) fn on_data<Context: ReaderContext>(
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
                 let length = reader.length()?;
-                if length < 4 {
-                    return Err(AnyPostgresError::InvalidMessageLength);
-                }
-                let to_skip = length.saturating_sub(4);
+                let to_skip = length - 4;
                 bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
                 reader.skip(usize::try_from(to_skip).expect("int cast"))?;
             }

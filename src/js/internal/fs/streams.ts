@@ -503,8 +503,9 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
 
   Writable.$call(this, options);
 
-  if (options.encoding) {
-    this.setDefaultEncoding(options.encoding);
+  const encoding = options.encoding;
+  if (encoding) {
+    this.setDefaultEncoding(encoding);
   }
   return this as unknown as void;
 }

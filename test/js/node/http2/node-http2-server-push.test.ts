@@ -41,6 +41,38 @@ function makeBarriers() {
   return { barrier, failTest, beginTeardown };
 }
 
+type ClientFrame = { type: number; flags: number; streamId: number; payload: Buffer };
+
+// Parses the HTTP/2 frames the client writes to `socket` (skipping the 24-byte connection
+// preface) and hands each one to `onFrame`.
+function frameReader(
+  socket: net.Socket,
+  { onPreface, onFrame }: { onPreface?: () => void; onFrame: (frame: ClientFrame) => void },
+) {
+  let buffered = Buffer.alloc(0);
+  let sawPreface = false;
+  socket.on("data", chunk => {
+    buffered = Buffer.concat([buffered, chunk]);
+    if (!sawPreface) {
+      if (buffered.length < 24) return;
+      buffered = buffered.subarray(24);
+      sawPreface = true;
+      onPreface?.();
+    }
+    while (buffered.length >= 9) {
+      const length = buffered.readUIntBE(0, 3);
+      if (buffered.length < 9 + length) break;
+      onFrame({
+        type: buffered[3],
+        flags: buffered[4],
+        streamId: buffered.readUInt32BE(5) & 0x7fffffff,
+        payload: Buffer.from(buffered.subarray(9, 9 + length)),
+      });
+      buffered = buffered.subarray(9 + length);
+    }
+  });
+}
+
 test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) resets only that stream", async () => {
   // Refusing a push must reset only that stream: one RST_STREAM(REFUSED_STREAM), a coded
   // ERR_HTTP2_STREAM_ERROR on the pushed stream, and an untouched session (node behavior).
@@ -68,27 +100,8 @@ test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) r
   const proxy = net.createServer(socket => {
     const upstream = net.connect(serverPort, "127.0.0.1");
     proxySockets.push(socket, upstream);
-    let buffered = Buffer.alloc(0);
-    let sawPreface = false;
-    socket.on("data", chunk => {
-      upstream.write(chunk);
-      buffered = Buffer.concat([buffered, chunk]);
-      if (!sawPreface) {
-        if (buffered.length < 24) return;
-        buffered = buffered.subarray(24);
-        sawPreface = true;
-      }
-      while (buffered.length >= 9) {
-        const length = buffered.readUIntBE(0, 3);
-        if (buffered.length < 9 + length) break;
-        clientFrames.push({
-          type: buffered[3],
-          streamId: buffered.readUInt32BE(5) & 0x7fffffff,
-          payload: Buffer.from(buffered.subarray(9, 9 + length)),
-        });
-        buffered = buffered.subarray(9 + length);
-      }
-    });
+    socket.on("data", chunk => upstream.write(chunk));
+    frameReader(socket, { onFrame: frame => clientFrames.push(frame) });
     upstream.on("data", chunk => socket.write(chunk));
     socket.on("close", () => {
       upstream.destroy();
@@ -214,32 +227,17 @@ test("http2 client ignores the pushed response that races a push refusal", async
   const sockets = [];
   const server = net.createServer(socket => {
     sockets.push(socket);
-    let buffered = Buffer.alloc(0);
-    let sawPreface = false;
-    socket.on("data", chunk => {
-      buffered = Buffer.concat([buffered, chunk]);
-      if (!sawPreface) {
-        if (buffered.length < 24) return;
-        buffered = buffered.subarray(24);
-        sawPreface = true;
+    frameReader(socket, {
+      onPreface: () => {
         socket.write(new http2utils.SettingsFrame(false).data);
         socket.write(new http2utils.SettingsFrame(true).data);
-      }
-      while (buffered.length >= 9) {
-        const length = buffered.readUIntBE(0, 3);
-        if (buffered.length < 9 + length) break;
-        const frame = {
-          type: buffered[3],
-          flags: buffered[4],
-          streamId: buffered.readUInt32BE(5) & 0x7fffffff,
-          payload: Buffer.from(buffered.subarray(9, 9 + length)),
-        };
-        buffered = buffered.subarray(9 + length);
+      },
+      onFrame: frame => {
         clientFrames.push(frame);
         if (frame.type === 1 && frame.streamId === 1) gotRequest.resolve();
         if (frame.type === 3 && frame.streamId === 2) gotPushRst.resolve();
         if (frame.type === 6 && (frame.flags & 0x1) !== 0) gotPingAck.resolve();
-      }
+      },
     });
     socket.on("error", failTest);
     socket.on("close", () => failTest(new Error("socket closed before the test finished")));

@@ -21,6 +21,12 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
   // require). $overriddenModuleLoad stays `undefined` on the unpatched path.
   const customLoad = $overriddenModuleLoad;
   if (customLoad !== undefined) {
+    if ($argumentCount() > 1) {
+      // Bun's `require(id, options)` extension ({ type }, { paths }) rides as
+      // a 4th argument so `originalLoad.apply(this, arguments)` inside a patch
+      // preserves it. 1-argument requires keep Node's 3-argument shape.
+      return customLoad.$call($nodeModuleConstructor, originalId, this, false, $argument(1));
+    }
     return customLoad.$call($nodeModuleConstructor, originalId, this, false);
   }
   return $requireCommonJSModule.$apply(this, arguments);

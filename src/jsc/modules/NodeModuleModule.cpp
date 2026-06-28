@@ -820,6 +820,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
     ASSERT(requireFunction.isCallable());
     JSC::MarkedArgumentBuffer args;
     args.append(request);
+    // Bun's `require(id, options)` extension rides through the `Module._load`
+    // dispatch as a 4th argument; forward it so { type } / { paths } survive.
+    if (callFrame->argumentCount() > 3) {
+        args.append(callFrame->uncheckedArgument(3));
+    }
     ASSERT(!args.hasOverflowed());
     RELEASE_AND_RETURN(scope,
         JSValue::encode(JSC::profiledCall(globalObject, JSC::ProfilingReason::API, requireFunction,

@@ -149,7 +149,10 @@ describe("toThrow compares Error cause", () => {
 
   test("cause mismatch reports both causes", () => {
     expectAssertionFailure(
-      () => expect(thrower(new Error("m", { cause: "received-cause" }))).toThrow(new Error("m", { cause: "expected-cause" })),
+      () =>
+        expect(thrower(new Error("m", { cause: "received-cause" }))).toThrow(
+          new Error("m", { cause: "expected-cause" }),
+        ),
       "Expected cause:",
       "Received cause:",
       "expected-cause",

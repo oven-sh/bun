@@ -309,10 +309,8 @@ private:
 
             httpResponseData->fromAncientRequest = httpRequest->isAncient();
 
-            /* Per-request framing flags; writeHead/writeHeader only ever set
-             * them, so a stale true from a previous response on this keep-alive
-             * socket would strip the next response's body framing (or its
-             * Connection header). */
+            /* Reset per-request framing flags; stale values from a previous
+             * keep-alive response can suppress body framing or Connection. */
             httpResponseData->noBodyStatus = false;
             httpResponseData->closeDelimited = false;
             httpResponseData->wroteConnectionHeader = false;

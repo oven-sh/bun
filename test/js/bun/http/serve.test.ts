@@ -2791,11 +2791,9 @@ server.listen(0, "127.0.0.1", () => {
   expect(exitCode).toBe(0);
 });
 
-// RFC 9112 9.6: a request carrying the "close" connection option is the final
-// request on its connection. The server must close after the final response,
-// must not process anything pipelined behind that request, and should send a
-// "close" connection option back. The option is a case-insensitive token in a
-// comma-separated list, not the literal 5-byte value "close".
+// RFC 9112 9.6: the server must close after the final response to a request
+// carrying the "close" connection option, must not process anything pipelined
+// behind it, and should send a "close" connection option back.
 describe("Connection: close request header", () => {
   /**
    * Connects, writes `payload`, and reads until the server sends FIN or
@@ -2856,10 +2854,9 @@ describe("Connection: close request header", () => {
     },
   );
 
-  // Negative contract: without a "close" connection option the connection
-  // stays keep-alive and is reusable for a second request. "nope!" guards
-  // against matching any 5-byte Connection value; "closed"/"notclose" guard
-  // against prefix/substring matching of the token.
+  // Negative contract: without a "close" option the connection stays reusable.
+  // "nope!" guards against the old any-5-byte-value match; "closed"/"notclose"
+  // guard against prefix/substring matching of the token.
   it.each(["", "keep-alive", "nope!", "closed", "notclose"])(
     "Connection %p keeps the connection reusable",
     async value => {
@@ -2909,10 +2906,9 @@ describe("Connection: close request header", () => {
     });
   });
 
-  // A handler that responds asynchronously leaves the response pending while
-  // the parser still holds the pipelined bytes. Those must be discarded, not
-  // parsed (the old async-pipelining guard hard-closed the socket and lost
-  // the first response).
+  // An async handler leaves the response pending while the parser still holds
+  // the pipelined bytes; those must be discarded, not parsed (the old guard
+  // hard-closed the socket and lost the first response).
   it("discards the pipelined request when the close-flagged response is asynchronous", async () => {
     const seen: string[] = [];
     using server = serve({
@@ -2974,7 +2970,7 @@ describe("Connection: close request header", () => {
         serverClosed,
       }).toEqual({ connectionHeaders: ["\r\nConnection: close\r\n"], responses: 1, serverClosed: true });
     } finally {
-      nodeServer.close();
+      await new Promise<void>(resolve => nodeServer.close(() => resolve()));
     }
   });
 });

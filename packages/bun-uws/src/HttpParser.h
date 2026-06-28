@@ -237,10 +237,9 @@ namespace uWS
             return std::string_view(nullptr, 0);
         }
 
-        /* Whether any Connection header carries the given token in its
-         * comma-separated value list (case-insensitive, OWS trimmed), like
-         * llhttp's connection-token scanner. An exact-value compare would miss
-         * compound values such as "keep-alive, TE". */
+        /* Token scanner for Connection headers, including comma-separated
+         * values such as "keep-alive, TE"; compares OWS-trimmed tokens
+         * case-insensitively like llhttp. */
         bool hasConnectionToken(std::string_view token)
         {
             if (!bf.mightHave("connection")) {
@@ -457,10 +456,8 @@ namespace uWS
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
 
-        /* Set once a parsed request carries a "close" connection option (or is
-         * HTTP/1.0). RFC 9112 9.6: that request is the final one on the
-         * connection, so anything received after it must be discarded rather
-         * than dispatched as a pipelined request. */
+        /* Latches the final request for RFC 9112 9.6 so bytes after
+         * Connection: close or HTTP/1.0 are discarded, not pipelined. */
         bool sawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
@@ -945,11 +942,8 @@ namespace uWS
                 req->bf.add(h->key);
             }
 
-            /* RFC 9112 9.6: a request carrying a "close" connection option (or
-             * an HTTP/1.0 request) is the final one on this connection. Latch
-             * that before the handler runs so the loop above stops consuming
-             * pipelined data once this request's body is done, even when the
-             * response is produced asynchronously. */
+            /* Latch RFC 9112 9.6's final request before the handler so
+             * async responses still prevent later pipelined dispatch. */
             if (req->ancientHttp || req->hasConnectionToken("close")) {
                 sawConnectionClose = true;
             }

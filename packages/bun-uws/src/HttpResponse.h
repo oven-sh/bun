@@ -96,21 +96,9 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
-    /* Called once a response has been fully written (after markDone). Uncorks a
-     * corked socket so its bytes are handed to the kernel, then shuts the
-     * connection down if it was flagged close and nothing is left buffered.
-     * Returns true if the socket was closed.
-     *
-     * The uncork must come first: a corked end cannot decide to close (its
-     * bytes are still in the cork buffer), and nothing re-checks afterwards
-     * when the response is produced outside of onData (an async handler).
-     *
-     * While onData's parser is running (isParsingHttp) the close is deferred
-     * to onData's tail instead: the parser still has this request's remaining
-     * body to consume and validate, and closing the socket from inside the
-     * request handler would abort that (e.g. skip the 400 for an invalid
-     * chunk size). keepCorked callers (upgrade) stay corked to batch more
-     * writes, so they never close here. */
+    /* Uncorks a corked end, then closes if the response is done and flagged
+     * close; returns true when closed. Deferred to onData's tail while the
+     * parser runs (isParsingHttp) so it can still consume this request's body. */
     bool uncorkAndCloseIfNeeded(HttpResponseData<SSL> *httpResponseData, bool keepCorked) {
         if (Super::isCorked()) {
             if (keepCorked) {
@@ -168,11 +156,9 @@ public:
             /* We can only write the header once */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
 
-                /* RFC 9112 9.6: whichever side decided to close, the final
-                 * response should carry a "close" connection option. Skip it
-                 * once the body has started (HTTP_WRITE_CALLED, no more
-                 * headers) or when the application already wrote its own
-                 * Connection header (node:http does). */
+                /* RFC 9112 9.6: a closing response should carry a "close"
+                 * connection option, skipped once the body started or when the
+                 * application already wrote its own Connection header. */
                 if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED)) && !httpResponseData->wroteConnectionHeader) {
                     writeHeader("Connection", "close");
                 }

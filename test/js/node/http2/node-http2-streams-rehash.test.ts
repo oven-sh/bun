@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
+
+// The spawned fixtures take well under a second in release but several seconds
+// under debug+ASAN (the options-getter test needs ~6s; the deferred-task-queue
+// fixture ~8s when it crashes), so the default 5s per-test budget kills them.
+// Debug builds get the largest multiplier: they are ASAN-instrumented and
+// unoptimized.
+const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
 
 // H2FrameParser stored Stream by value in a HashMap. Any *Stream obtained
 // from getPtr/value_ptr/valueIterator pointed into the map's backing storage
@@ -20,8 +27,10 @@ test("session.request() from a stream 'timeout' listener during forEachStream do
   expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "OK", exitCode: 0 });
 });
 
-test("http2 client request() does not hold *Stream across user-controlled options getters", async () => {
-  const script = /* js */ `
+test(
+  "http2 client request() does not hold *Stream across user-controlled options getters",
+  async () => {
+    const script = /* js */ `
     const http2 = require("node:http2");
 
     const server = http2.createServer();
@@ -86,15 +95,17 @@ test("http2 client request() does not hold *Stream across user-controlled option
     });
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "done", exitCode: 0 });
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "done", exitCode: 0 });
+  },
+  10_000 * ASAN_MULTIPLIER,
+);
 
 test("http2 client write callback that opens new streams during flushQueue does not UAF", async () => {
   await using proc = Bun.spawn({
@@ -106,3 +117,23 @@ test("http2 client write callback that opens new streams during flushQueue does 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
 });
+
+// H2FrameParser::on_auto_flush calls flush -> uncork -> unregister_auto_flush,
+// removing its own entry from the DeferredTaskQueue mid-iteration and then
+// returning true. With a second auto-flusher (an HTTPServerWritable small
+// write) sitting after it in the map, DeferredTaskQueue::run would index past
+// the new length and panic.
+test(
+  "DeferredTaskQueue::run tolerates an on_auto_flush callback that unregisters itself and returns true",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "node-http2-deferred-task-queue.fixture.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "OK", exitCode: 0 });
+  },
+  10_000 * ASAN_MULTIPLIER,
+);

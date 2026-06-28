@@ -212,7 +212,8 @@ impl Stringifier {
         };
 
         // Pass 1: keyvals.
-        let mut iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
+        let mut iter =
+            jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
         while let Some(prop_name) = iter.next()? {
             let value = iter.value.unwrap_boxed_primitive(global)?;
             if value.is_null() {
@@ -229,7 +230,8 @@ impl Stringifier {
 
         // Pass 2: sections. Values are re-read; an array-of-tables element
         // that is no longer a plain object during emission gets an error.
-        let mut iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
+        let mut iter =
+            jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
         while let Some(prop_name) = iter.next()? {
             let value = iter.value.unwrap_boxed_primitive(global)?;
             match self.layout_of(global, value)? {
@@ -248,7 +250,11 @@ impl Stringifier {
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
                         let item = item.unwrap_boxed_primitive(global)?;
-                        if !item.is_object() || item.is_array() || item.is_date() || item.is_function() {
+                        if !item.is_object()
+                            || item.is_array()
+                            || item.is_date()
+                            || item.is_function()
+                        {
                             self.path.pop();
                             return Err(self.err_changed(global));
                         }
@@ -318,11 +324,7 @@ impl Stringifier {
                 }
                 first = false;
                 let item = item.unwrap_boxed_primitive(global)?;
-                if item.is_null()
-                    || item.is_undefined()
-                    || item.is_symbol()
-                    || item.is_function()
-                {
+                if item.is_null() || item.is_undefined() || item.is_symbol() || item.is_function() {
                     return Err(self.err_in_array(global, item));
                 }
                 self.stringify_inline_value(global, item)?;
@@ -422,8 +424,11 @@ impl Stringifier {
         if num == 0.0 {
             // A double-encoded zero (is_int32 is an encoding check, not a
             // value check); only the negative sign needs float form.
-            self.builder
-                .append_latin1(if num.is_sign_negative() { b"-0.0" } else { b"0" });
+            self.builder.append_latin1(if num.is_sign_negative() {
+                b"-0.0"
+            } else {
+                b"0"
+            });
             return;
         }
         self.builder.append_double(num);
@@ -440,7 +445,9 @@ impl Stringifier {
         let ms_f = value.get_unix_timestamp();
         if ms_f.is_nan() {
             return Err(global
-                .throw(format_args!("TOML.stringify cannot serialize an invalid Date"))
+                .throw(format_args!(
+                    "TOML.stringify cannot serialize an invalid Date"
+                ))
                 .into());
         }
         let ms = ms_f as i64;
@@ -534,11 +541,10 @@ fn is_bare_key(name: &BunString) -> bool {
     }
     for i in 0..name.length() {
         let c = name.char_at(i);
-        let ok = c < 0x80
-            && {
-                let b = c as u8;
-                b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
-            };
+        let ok = c < 0x80 && {
+            let b = c as u8;
+            b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
+        };
         if !ok {
             return false;
         }

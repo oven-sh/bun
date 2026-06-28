@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { gc as gcTrace, isASAN, withoutAggressiveGC } from "harness";
+import { Worker } from "node:worker_threads";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -657,4 +658,133 @@ it.each(["utf-16le", "utf-16be"])("TextDecoder(%s).decode() should not leak the 
   // ASAN's quarantine retains freed allocations (default 256 MB) so the delta
   // runs higher under bun-asan even with the fix; widen the threshold there.
   expect(deltaMiB).toBeLessThan(isASAN ? 128 : 48);
+});
+
+describe("SharedArrayBuffer input", () => {
+  // decode() snapshots shared/resizable inputs before reading them, so another
+  // agent can't mutate the bytes underneath the decoder. These cases also pin
+  // the behavior-preserving contract: SharedArrayBuffer stays accepted (Node
+  // accepts it too) and fixed unshared inputs keep the zero-copy path.
+  it("decodes a raw SharedArrayBuffer", () => {
+    const sab = new SharedArrayBuffer(6);
+    new Uint8Array(sab).set([0x41, 0x42, 0x43, 0x44, 0x45, 0x46]);
+    expect(new TextDecoder().decode(sab)).toBe("ABCDEF");
+  });
+
+  it("decodes a Uint8Array over a SharedArrayBuffer", () => {
+    const sab = new SharedArrayBuffer(6);
+    new Uint8Array(sab).set([0x41, 0x42, 0x43, 0x44, 0x45, 0x46]);
+    expect(new TextDecoder().decode(new Uint8Array(sab))).toBe("ABCDEF");
+  });
+
+  it("decodes only the view range of an offset SharedArrayBuffer view", () => {
+    const sab = new SharedArrayBuffer(6);
+    new Uint8Array(sab).set([0x41, 0x42, 0x43, 0x44, 0x45, 0x46]);
+    expect(new TextDecoder().decode(new Uint8Array(sab, 2, 3))).toBe("CDE");
+  });
+
+  it("decodes UTF-16LE over a SharedArrayBuffer view", () => {
+    const sab = new SharedArrayBuffer(6);
+    new Uint8Array(sab).set([0x61, 0x00, 0x62, 0x00, 0x63, 0x00]);
+    expect(new TextDecoder("utf-16le").decode(new Uint8Array(sab))).toBe("abc");
+  });
+
+  it("decodes UTF-16BE over a SharedArrayBuffer view", () => {
+    const sab = new SharedArrayBuffer(6);
+    new Uint8Array(sab).set([0x00, 0x61, 0x00, 0x62, 0x00, 0x63]);
+    expect(new TextDecoder("utf-16be").decode(new Uint8Array(sab))).toBe("abc");
+  });
+
+  it("decodes a zero-length SharedArrayBuffer to an empty string", () => {
+    expect(new TextDecoder().decode(new SharedArrayBuffer(0))).toBe("");
+    const sab = new SharedArrayBuffer(8);
+    expect(new TextDecoder().decode(new Uint8Array(sab, 4, 0))).toBe("");
+  });
+
+  const supportsGrowableSharedArrayBuffer = (() => {
+    try {
+      return new SharedArrayBuffer(8, { maxByteLength: 16 }).growable === true;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.skipIf(!supportsGrowableSharedArrayBuffer)("decodes a growable SharedArrayBuffer", () => {
+    const gsab = new SharedArrayBuffer(6, { maxByteLength: 16 });
+    new Uint8Array(gsab).set([0x41, 0x42, 0x43, 0x44, 0x45, 0x46]);
+    expect(new TextDecoder().decode(gsab)).toBe("ABCDEF");
+  });
+
+  const supportsResizableArrayBuffer = (() => {
+    try {
+      return new ArrayBuffer(8, { maxByteLength: 16 }).resizable === true;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.skipIf(!supportsResizableArrayBuffer)("decodes a resizable ArrayBuffer", () => {
+    const rab = new ArrayBuffer(6, { maxByteLength: 16 });
+    new Uint8Array(rab).set([0x41, 0x42, 0x43, 0x44, 0x45, 0x46]);
+    expect(new TextDecoder().decode(rab)).toBe("ABCDEF");
+  });
+
+  it("is safe while a worker concurrently mutates the SharedArrayBuffer", async () => {
+    const sab = new SharedArrayBuffer(64);
+    new Uint8Array(sab).fill(0x41);
+    // state[0]: 0 = wait, 1 = run, 2 = stop; state[1]: worker write counter.
+    const state = new Int32Array(new SharedArrayBuffer(8));
+
+    const worker = new Worker(
+      `
+        const { workerData } = require("node:worker_threads");
+        const bytes = new Uint8Array(workerData.sab);
+        const state = new Int32Array(workerData.state);
+
+        while (Atomics.load(state, 0) === 0) Atomics.wait(state, 0, 0);
+
+        let i = 0;
+        while (Atomics.load(state, 0) === 1) {
+          bytes[0] = i & 1 ? 0x41 : 0xc3;
+          bytes[1] = i & 1 ? 0x42 : 0x28;
+          Atomics.add(state, 1, 1);
+          i++;
+        }
+      `,
+      { eval: true, workerData: { sab, state: state.buffer } },
+    );
+
+    // If the worker fails to start or throws, surface it instead of polling
+    // forever below.
+    let workerError;
+    worker.on("error", err => {
+      workerError = err;
+    });
+
+    Atomics.store(state, 0, 1);
+    Atomics.notify(state, 0);
+
+    try {
+      // Wait until the worker is actively mutating before decoding. Poll the
+      // atomic write counter without blocking the test runner's main thread.
+      while (Atomics.load(state, 1) < 50) {
+        if (workerError) throw workerError;
+        await Bun.sleep(0);
+      }
+
+      const decoder = new TextDecoder("utf-8", { fatal: false });
+      for (let i = 0; i < 4000; i++) {
+        // Before the fix this reads a &[u8] over the mutating shared store and
+        // crashes the UTF-8 materializer; the snapshot makes every read stable.
+        expect(typeof decoder.decode(new Uint8Array(sab))).toBe("string");
+      }
+    } finally {
+      // Always stop and join the worker, even if an assertion above threw.
+      Atomics.store(state, 0, 2);
+      await worker.terminate();
+    }
+
+    // The worker really did mutate concurrently with the decode loop.
+    expect(Atomics.load(state, 1)).toBeGreaterThan(50);
+  });
 });

@@ -1085,3 +1085,66 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
     });
   }
 });
+
+// A system C library exporting qsort(), so that native code invokes a JSCallback
+// more than once inside a single FFI call. null skips the test: no reachable C
+// library, or bun:ffi itself is unavailable on this platform (Windows ARM64).
+const qsortLibPath = (() => {
+  const symbols = { qsort: { args: ["ptr", "u64", "u64", "function"], returns: "void" } };
+  for (const name of [
+    "/usr/lib/libSystem.B.dylib", // macOS
+    "msvcrt.dll", // Windows
+    "libc.so.6", // glibc
+    `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1`, // musl
+  ]) {
+    try {
+      _dlopen(name, symbols).close();
+      return name;
+    } catch {}
+  }
+  return null;
+})();
+
+// After a JSCallback throws, its exception stays pending in the VM until the
+// enclosing FFI call returns to JS. Native code cannot see it and keeps calling
+// the callback; re-entering JS then would trip JSC's assertNoException.
+it.if(!!qsortLibPath)("JSCallback that throws is not re-entered for the rest of the native call", async () => {
+  const code = `
+    import { dlopen, ptr, JSCallback } from "bun:ffi";
+    const lib = dlopen(${JSON.stringify(qsortLibPath)}, {
+      qsort: { args: ["ptr", "u64", "u64", "function"], returns: "void" },
+    });
+    let calls = 0;
+    const cb = new JSCallback(
+      () => {
+        calls++;
+        throw new Error("cb-throw");
+      },
+      { args: ["ptr", "ptr"], returns: "i32" },
+    );
+    const values = new Int32Array([5, 3, 8, 1, 9, 2, 7, 4]);
+    try {
+      lib.symbols.qsort(ptr(values), values.length, 4, cb.ptr);
+      console.log("did-not-throw");
+    } catch (e) {
+      console.log("caught:", e.message);
+    }
+    console.log("calls:", calls);
+    cb.close();
+    lib.close();
+    console.log("done");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is in the received object so failures show it (the JSC assertion
+  // text lands there), but it is not asserted empty: ASAN/debug builds warn.
+  // Only the first qsort comparison may reach JS, so calls stays 1.
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stdout: "caught: cb-throw\ncalls: 1\ndone\n",
+    exitCode: 0,
+  });
+});

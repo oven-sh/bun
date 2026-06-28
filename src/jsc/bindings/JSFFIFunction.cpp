@@ -191,6 +191,13 @@ static JSC::EncodedJSValue invokeFFICallback(Zig::GlobalObject* globalObject, JS
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // An earlier invocation during the same native call already threw. The native caller cannot
+    // unwind, so do not re-enter JS while that exception is pending (JSC asserts on entry); it
+    // surfaces once the enclosing FFI call returns to JS.
+    if (scope.exception()) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsNull());
+
     auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, JSC::getCallData(function), JSC::jsUndefined(), arguments);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsNull()));
     return JSC::JSValue::encode(result);

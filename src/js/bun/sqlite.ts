@@ -681,9 +681,11 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     try {
       before.run();
       const result = fn.$apply(this, args);
-      // Catches non-async callbacks that still return a promise. Throwing here lands
-      // in the catch below, which rolls back everything the callback ran so far.
+      // Catches non-async callbacks that still return a promise; the catch below rolls
+      // back. `result` is never handed to the caller, so mark it handled: nothing else
+      // can attach a rejection handler to it, and an unhandled rejection is fatal.
       if ($isPromise(result) || typeof result?.then === "function") {
+        if ($isPromise(result)) $markPromiseAsHandled(result);
         throw new TypeError(
           "db.transaction() callback cannot return a Promise. Run any awaited work before starting the transaction.",
         );

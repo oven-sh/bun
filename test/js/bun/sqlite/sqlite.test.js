@@ -897,6 +897,31 @@ it("db.transaction() rolls a nested Promise-returning callback back to its savep
   expect(db.prepare("SELECT id FROM t ORDER BY id").values()).toEqual([[1]]);
 });
 
+it("db.transaction() marks a discarded rejected Promise as handled", async () => {
+  // The Promise is never handed to the caller, so they cannot attach a rejection
+  // handler to it; left unmarked, its rejection would take down the process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { Database } from "bun:sqlite";
+const db = new Database(":memory:");
+const tx = db.transaction(() => Promise.reject(new Error("boom")));
+try { tx(); } catch (e) { console.log("caught", e.constructor.name); }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, unhandledBoom: stderr.includes("boom"), exitCode }).toEqual({
+    stdout: "caught TypeError\n",
+    unhandledBoom: false,
+    exitCode: 0,
+  });
+});
+
 // this bug was fixed by ensuring FinalObject has no more than 64 properties
 it("inlineCapacity #987", async () => {
   const db = new Database(":memory:");

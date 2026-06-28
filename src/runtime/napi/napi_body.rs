@@ -246,12 +246,9 @@ impl NapiHandleScope {
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
     pub(super) fn append(env: &NapiEnv, value: JSValue) {
-        // Only cells need to be kept alive by the handle scope. Non-cell values (numbers,
-        // booleans, null, undefined) are immediate values encoded directly in the JSValue and
-        // cannot be garbage collected, so tracking them wastes memory. This matches the isCell()
-        // check in the C++ toNapi() helper (napi.h). Without this, napi_create_int64 and friends
-        // would grow the handle scope's storage vector for every number returned, which is
-        // significant for native modules that return large arrays of numbers.
+        // Only cells need to be kept alive by the handle scope. Non-cell immediates (numbers,
+        // booleans, null, undefined) cannot be garbage collected, so tracking them wastes memory.
+        // Matches the isCell() check in C++ toNapi() (napi.h).
         if value.is_cell() {
             // SAFETY: env is valid; C++ appends to the current scope (interior mutability).
             unsafe { NapiHandleScope__append(env.as_mut_ptr(), value.encoded()) }

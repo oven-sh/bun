@@ -898,6 +898,85 @@ impl Request {
         }
     }
 
+    /// `true` if WHATWG-parsing `http(s)://<host><target>` provably returns
+    /// the `<target>` part byte-for-byte: every byte is in the identity LUT
+    /// and the path contains no `.`/`..` segments (the only rewrites the
+    /// parser applies to an origin-form target made of identity-safe bytes;
+    /// the query is never path-normalized).
+    fn target_is_parse_identity(target: &[u8]) -> bool {
+        /// Bytes that serialize back unchanged through the WHATWG URL parser
+        /// in both the path and the query of a special-scheme URL. Derived by
+        /// running every ASCII byte through `new URL(...)` (see the
+        /// "request.url identity bytes" test): rejected bytes are controls,
+        /// space, DEL, non-ASCII, and `"` `'` `<` `>` `\` `^` `` ` `` `{` `}`.
+        /// Everything else — including `%` (even invalid escapes), `#`, `?`,
+        /// `|`, `[`, `]` — passes through verbatim.
+        static URL_IDENTITY_SAFE: [bool; 256] = {
+            let mut t = [false; 256];
+            let mut b = 0x21usize;
+            while b <= 0x7e {
+                t[b] = !matches!(
+                    b as u8,
+                    b'"' | b'\'' | b'<' | b'>' | b'\\' | b'^' | b'`' | b'{' | b'}'
+                );
+                b += 1;
+            }
+            t
+        };
+
+        for &b in target {
+            if !URL_IDENTITY_SAFE[b as usize] {
+                return false;
+            }
+        }
+        // Reject `.` / `..` path segments; scan stops at the query.
+        let path_end = strings::index_of_char(target, b'?').map_or(target.len(), |i| i as usize);
+        let path = &target[..path_end];
+        let mut seg_start = 1usize; // target[0] == b'/'
+        let mut i = 1usize;
+        while i <= path.len() {
+            if i == path.len() || path[i] == b'/' {
+                let seg = &path[seg_start..i];
+                if seg == b"." || seg == b".." {
+                    return false;
+                }
+                seg_start = i + 1;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// 1-entry per-thread memo: does `http(s)://<host>` survive WHATWG
+    /// parsing unchanged (host already canonical, port non-default)? Keyed by
+    /// the exact header bytes, so it's a pure memo — correct across multiple
+    /// servers on the same thread, and workers get their own entry.
+    fn host_canonical_memo(https: bool, host: &[u8], verified: Option<bool>) -> Option<bool> {
+        std::thread_local! {
+            static LAST_HOST: core::cell::RefCell<(bool, Vec<u8>, bool)> =
+                const { core::cell::RefCell::new((false, Vec::new(), false)) };
+        }
+        LAST_HOST.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            match verified {
+                Some(canonical) => {
+                    memo.0 = https;
+                    memo.1.clear();
+                    memo.1.extend_from_slice(host);
+                    memo.2 = canonical;
+                    None
+                }
+                None => {
+                    if memo.0 == https && memo.1 == host {
+                        Some(memo.2)
+                    } else {
+                        None
+                    }
+                }
+            }
+        })
+    }
+
     pub fn ensure_url(&self) -> Result<(), AllocError> {
         if !self.url.get().is_empty() {
             return Ok(());
@@ -935,8 +1014,29 @@ impl Request {
                         #[cfg(debug_assertions)]
                         debug_assert!(self.size_of_url() == url.len());
 
+                        // Fast path: when the target provably round-trips the
+                        // parser unchanged and this exact host already
+                        // verified as canonical, `url` IS the href — skip the
+                        // WHATWG parse entirely.
+                        let target_identity = Self::target_is_parse_identity(&req_url);
+                        if target_identity
+                            && Self::host_canonical_memo(self.flags.https, host, None) == Some(true)
+                        {
+                            // ASCII by construction (LUT + verified host bytes).
+                            self.url.set(BunString::clone_latin1(url));
+                            return Ok(());
+                        }
+
                         let href = bun_url::href_from_string(&BunString::from_bytes(url));
                         if !href.is_empty() {
+                            let unchanged = core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr())
+                                || href.byte_slice() == url;
+                            if target_identity {
+                                // target is identity ⇒ href == url can only
+                                // hold when scheme+host serialize unchanged
+                                // too; remember that per host.
+                                Self::host_canonical_memo(self.flags.https, host, Some(unchanged));
+                            }
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url.set(BunString::clone_latin1(&url[..href.length()]));
                                 href.deref();

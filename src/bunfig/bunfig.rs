@@ -429,9 +429,8 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test_.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    // CLI --coverage takes precedence: don't let bunfig disable
-                    // coverage that was explicitly enabled via the CLI flag.
-                    if !self.ctx.test_options.coverage.enabled {
+                    // CLI --coverage takes precedence over bunfig.
+                    if !self.ctx.test_options.coverage_from_cli {
                         self.ctx.test_options.coverage.enabled =
                             expr.as_bool().expect("infallible: type checked");
                     }

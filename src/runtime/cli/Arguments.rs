@@ -1567,8 +1567,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
     }
 
-    if !ctx.test_options.coverage.enabled {
-        ctx.test_options.coverage.enabled = args.flag(b"--coverage");
+    if args.flag(b"--coverage") {
+        ctx.test_options.coverage.enabled = true;
+        ctx.test_options.coverage_from_cli = true;
     }
 
     if !args.options(b"--coverage-reporter").is_empty() {

@@ -89,7 +89,16 @@ fn unquote(value: &[u8]) -> &[u8] {
 /// In a response the parameter must carry a decimal value between 8 and 15
 /// (RFC 7692 §8.1.2); a missing, malformed, or out-of-range value is `None`.
 fn parse_window_bits(value: Option<&[u8]>) -> Option<u8> {
-    let bits = strings::parse_int::<u8>(unquote(value?), 10).ok()?;
+    let value = unquote(value?);
+    // The value's grammar is `1*DIGIT` without leading zeroes; `parse_int`
+    // alone would also accept a `+` sign, `_` separators, and leading zeroes.
+    if value.is_empty()
+        || !value.iter().all(u8::is_ascii_digit)
+        || (value.len() > 1 && value[0] == b'0')
+    {
+        return None;
+    }
+    let bits = strings::parse_int::<u8>(value, 10).ok()?;
     (WebSocketDeflate::Params::MIN_WINDOW_BITS..=WebSocketDeflate::Params::MAX_WINDOW_BITS)
         .contains(&bits)
         .then_some(bits)

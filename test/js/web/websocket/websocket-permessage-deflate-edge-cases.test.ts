@@ -654,6 +654,11 @@ describe("Sec-WebSocket-Extensions response validation", () => {
     "permessage-deflate; server_max_window_bits=potato",
     "permessage-deflate; server_max_window_bits",
     "permessage-deflate; server_max_window_bits=",
+    // The value's grammar is `1*DIGIT` without leading zeroes: no sign,
+    // no digit separators, no leading zero.
+    "permessage-deflate; server_max_window_bits=+10",
+    "permessage-deflate; server_max_window_bits=1_0",
+    "permessage-deflate; server_max_window_bits=08",
     "permessage-deflate; client_max_window_bits=16",
     "permessage-deflate; client_max_window_bits",
     // The no_context_takeover parameters never carry a value.

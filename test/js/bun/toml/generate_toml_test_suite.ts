@@ -54,7 +54,6 @@ const manifest = readFileSync(join(testsDir, "files-toml-1.1.0"), "utf8")
 // ignoreBOM keeps a leading U+FEFF in the decoded string — the BOM-acceptance
 // tests (valid/utf8-bom-*) are vacuous without it.
 const utf8Strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-const excluded: string[] = [];
 
 interface ValidCase {
   name: string;
@@ -66,9 +65,15 @@ interface RejectionCase {
   input: string;
   message: string | undefined;
 }
+interface ByteRejectionCase {
+  name: string;
+  base64: string;
+  message: string | undefined;
+}
 const validCases: ValidCase[] = [];
 const invalidCases: RejectionCase[] = [];
 const outOfRangeCases: RejectionCase[] = [];
+const invalidEncodingCases: ByteRejectionCase[] = [];
 
 // ---------------------------------------------------------------------------
 // 3. Decode toml-test tagged JSON into JS values
@@ -134,9 +139,9 @@ function containsBigInt(v: unknown): boolean {
 }
 
 // Exact message asserted by rejection tests; captured from the in-tree parser.
-function captureSyntaxErrorMessage(input: string): string | undefined {
+function captureSyntaxErrorMessage(input: string | Uint8Array): string | undefined {
   try {
-    (Bun as { TOML: { parse: (s: string) => unknown } }).TOML.parse(input);
+    (Bun as { TOML: { parse: (s: string | Uint8Array) => unknown } }).TOML.parse(input);
   } catch (e) {
     if (e instanceof SyntaxError) return e.message;
   }
@@ -149,14 +154,19 @@ function captureSyntaxErrorMessage(input: string): string | undefined {
 for (const rel of manifest) {
   const tomlPath = join(testsDir, rel);
   const bytes = readFileSync(tomlPath);
+  const name = rel.replace(/\.toml$/, "");
   let input: string;
   try {
     input = utf8Strict.decode(bytes);
   } catch {
-    excluded.push(rel);
+    // Not representable as a JS string: test it as raw bytes instead.
+    invalidEncodingCases.push({
+      name,
+      base64: bytes.toString("base64"),
+      message: captureSyntaxErrorMessage(bytes),
+    });
     continue;
   }
-  const name = rel.replace(/\.toml$/, "");
   if (rel.startsWith("valid/")) {
     const expected = decodeTagged(JSON.parse(readFileSync(tomlPath.replace(/\.toml$/, ".json"), "utf8")));
     if (containsBigInt(expected)) {
@@ -177,7 +187,10 @@ for (const rel of manifest) {
 // escape DEL/C1 controls, U+2028/U+2029, and U+FEFF so the generated source
 // stays visibly ASCII-clean where it matters.
 function jsString(s: string): string {
-  return JSON.stringify(s).replace(/[\u007f-\u009f\u2028\u2029\ufeff]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return JSON.stringify(s).replace(
+    /[\u007f-\u009f\u2028\u2029\ufeff]/g,
+    c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }
 
 function valueToJS(val: unknown, indent: number = 0): string {
@@ -206,8 +219,7 @@ function valueToJS(val: unknown, indent: number = 0): string {
     const parts = entries.map(([k, v]) => {
       // A literal "__proto__" key would set the prototype; the computed form
       // creates an own property.
-      const key =
-        k === "__proto__" ? '["__proto__"]' : /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : jsString(k);
+      const key = k === "__proto__" ? '["__proto__"]' : /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : jsString(k);
       return `${key}: ${valueToJS(v, indent + 1)}`;
     });
     const oneLine = `{ ${parts.join(", ")} }`;
@@ -226,7 +238,7 @@ const kindUnion = DATETIME_KINDS.map(k => JSON.stringify(k)).join(" | ");
 
 let output = `// Tests generated from the official toml-lang/toml-test conformance suite
 // Generated from toml-test commit: ${commit}
-// Scope: TOML v1.1.0 manifest (tests/files-toml-1.1.0): ${validCases.length} valid + ${outOfRangeCases.length} out-of-range-integer + ${invalidCases.length} invalid cases
+// Scope: TOML v1.1.0 manifest (tests/files-toml-1.1.0): ${validCases.length} valid + ${outOfRangeCases.length} out-of-range-integer + ${invalidCases.length} invalid + ${invalidEncodingCases.length} invalid-encoding cases
 // Regenerate with: bun bd test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test]
 //
 // TOML type encoding asserted by these tests:
@@ -239,9 +251,8 @@ let output = `// Tests generated from the official toml-lang/toml-test conforman
 //   - invalid documents throw SyntaxError; the exact full message is asserted
 //     where the in-tree parser produced a SyntaxError at generation time
 //
-// Excluded: ${excluded.length} invalid-encoding inputs that are not valid UTF-8. Bun.TOML.parse
-// takes a JS string, so byte-level encoding rejection cannot be tested here:
-${excluded.map(e => `//   ${e}`).join("\n")}
+// Inputs that are not valid UTF-8 cannot be JS strings; they are passed to
+// TOML.parse as raw bytes (base64-decoded) in the invalid-encoding block.
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
 
@@ -316,9 +327,9 @@ for (const tc of validCases) {
 }
 output += `});\n`;
 
-function emitRejectionTest(tc: RejectionCase): string {
-  let body = `  test(${jsString(tc.name)}, () => {\n`;
-  body += `    const input: string = ${jsString(tc.input)};\n`;
+function emitRejectionTest(name: string, inputDecl: string, message: string | undefined): string {
+  let body = `  test(${jsString(name)}, () => {\n`;
+  body += `    ${inputDecl}\n`;
   body += `    let err: unknown;\n`;
   body += `    try {\n`;
   body += `      TOML.parse(input);\n`;
@@ -326,8 +337,8 @@ function emitRejectionTest(tc: RejectionCase): string {
   body += `      err = e;\n`;
   body += `    }\n`;
   body += `    expect(err).toBeInstanceOf(SyntaxError);\n`;
-  if (tc.message !== undefined) {
-    body += `    expect((err as SyntaxError).message).toBe(${jsString(tc.message)});\n`;
+  if (message !== undefined) {
+    body += `    expect((err as SyntaxError).message).toBe(${jsString(message)});\n`;
   }
   body += `  });\n\n`;
   return body;
@@ -340,15 +351,31 @@ output += `
 // 64-bit range is a "should" in the spec (toml-lang/toml-test#154).
 describe("toml-test/valid-out-of-range-integer", () => {
 `;
-for (const tc of outOfRangeCases) output += emitRejectionTest(tc);
+for (const tc of outOfRangeCases) {
+  output += emitRejectionTest(tc.name, `const input: string = ${jsString(tc.input)};`, tc.message);
+}
 output += `});\n`;
 
 output += `\ndescribe("toml-test/invalid", () => {\n`;
-for (const tc of invalidCases) output += emitRejectionTest(tc);
+for (const tc of invalidCases) {
+  output += emitRejectionTest(tc.name, `const input: string = ${jsString(tc.input)};`, tc.message);
+}
+output += `});\n`;
+
+output += `
+// These inputs are not valid UTF-8, so they are passed as raw bytes; a TOML
+// document must be valid UTF-8 as a whole.
+describe("toml-test/invalid-encoding", () => {
+`;
+for (const tc of invalidEncodingCases) {
+  output += emitRejectionTest(tc.name, `const input = Buffer.from(${jsString(tc.base64)}, "base64");`, tc.message);
+}
 output += `});\n`;
 
 const committedPath = join(import.meta.dir, "toml-test-suite.test.ts");
-const outPath = checkMode ? join(mkdtempSync(join(tmpdir(), "toml-suite-check-")), "toml-test-suite.test.ts") : committedPath;
+const outPath = checkMode
+  ? join(mkdtempSync(join(tmpdir(), "toml-suite-check-")), "toml-test-suite.test.ts")
+  : committedPath;
 writeFileSync(outPath, output);
 // Same prettier invocation as the repo's `bun run prettier` script, pinned to
 // the repo config so output is byte-stable wherever it is written.
@@ -372,6 +399,6 @@ if (checkMode) {
   console.log(`OK: ${committedPath} is up to date.`);
 } else {
   console.log(
-    `Wrote ${outPath}: ${validCases.length} valid + ${invalidCases.length} invalid tests (${excluded.length} excluded)`,
+    `Wrote ${outPath}: ${validCases.length} valid + ${outOfRangeCases.length} out-of-range + ${invalidCases.length} invalid + ${invalidEncodingCases.length} invalid-encoding tests`,
   );
 }

@@ -1,6 +1,6 @@
 // Tests generated from the official toml-lang/toml-test conformance suite
 // Generated from toml-test commit: 4d77658d0f903a13454ece4dbfeafeb7c7f31c9f
-// Scope: TOML v1.1.0 manifest (tests/files-toml-1.1.0): 217 valid + 1 out-of-range-integer + 481 invalid cases
+// Scope: TOML v1.1.0 manifest (tests/files-toml-1.1.0): 217 valid + 1 out-of-range-integer + 481 invalid + 9 invalid-encoding cases
 // Regenerate with: bun bd test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test]
 //
 // TOML type encoding asserted by these tests:
@@ -13,17 +13,8 @@
 //   - invalid documents throw SyntaxError; the exact full message is asserted
 //     where the in-tree parser produced a SyntaxError at generation time
 //
-// Excluded: 9 invalid-encoding inputs that are not valid UTF-8. Bun.TOML.parse
-// takes a JS string, so byte-level encoding rejection cannot be tested here:
-//   invalid/encoding/bad-codepoint.toml
-//   invalid/encoding/bad-utf8-at-end.toml
-//   invalid/encoding/bad-utf8-in-array.toml
-//   invalid/encoding/bad-utf8-in-comment.toml
-//   invalid/encoding/bad-utf8-in-multiline-literal.toml
-//   invalid/encoding/bad-utf8-in-multiline.toml
-//   invalid/encoding/bad-utf8-in-string-literal.toml
-//   invalid/encoding/bad-utf8-in-string.toml
-//   invalid/encoding/utf16-bom.toml
+// Inputs that are not valid UTF-8 cannot be JS strings; they are passed to
+// TOML.parse as raw bytes (base64-decoded) in the invalid-encoding block.
 import { TOML } from "bun";
 import { describe, expect, test } from "bun:test";
 
@@ -8194,5 +8185,135 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ']' to close a table header but found '#'");
+  });
+});
+
+// These inputs are not valid UTF-8, so they are passed as raw bytes; a TOML
+// document must be valid UTF-8 as a whole.
+describe("toml-test/invalid-encoding", () => {
+  test("invalid/encoding/bad-codepoint", () => {
+    const input = Buffer.from("IyBJbnZhbGlkIGNvZGVwb2ludCBVK0Q4MDAgOiDtoIAK", "base64");
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
+  test("invalid/encoding/bad-utf8-at-end", () => {
+    const input = Buffer.from(
+      "IyBUaGVyZSBpcyBhIDB4ZGEgYXQgYWZ0ZXIgdGhlIHF1b3RlcywgYW5kIG5vIEVPTCBhdCB0aGUgZW5kIG9mIHRoZSBmaWxlLgojCiMgVGhpcyBpcyBhIGJpdCBvZiBhbiBlZGdlIGNhc2U6IFRoaXMgaW5kaWNhdGVzIHRoZXJlIHNob3VsZCBiZSB0d28gYnl0ZXMKIyAoMGIxMTAxXzEwMTApIGJ1dCB0aGVyZSBpcyBubyBieXRlIHRvIGZvbGxvdyBiZWNhdXNlIGl0J3MgdGhlIGVuZCBvZiB0aGUgZmlsZS4KeCA9ICIiIiIiIto=",
+      "base64",
+    );
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
+  test("invalid/encoding/bad-utf8-in-array", () => {
+    const input = Buffer.from(
+      "IyBodHRwczovL2dpdGh1Yi5jb20vbWFyemVyL3RvbWxwbHVzcGx1cy9pc3N1ZXMvMTAwCmZsID1bIFtbW1tbW1tbW1tbW1tbWzaAhgAAAC02wp8gAA==",
+      "base64",
+    );
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
+  test("invalid/encoding/bad-utf8-in-comment", () => {
+    const input = Buffer.from("IyDDCg==", "base64");
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
+  test("invalid/encoding/bad-utf8-in-multiline-literal", () => {
+    const input = Buffer.from(
+      "IyBUaGUgZm9sbG93aW5nIGxpbmUgY29udGFpbnMgYW4gaW52YWxpZCBVVEYtOCBzZXF1ZW5jZS4KYmFkID0gJycnwycnJwo=",
+      "base64",
+    );
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
+  test("invalid/encoding/bad-utf8-in-multiline", () => {
+    const input = Buffer.from(
+      "IyBUaGUgZm9sbG93aW5nIGxpbmUgY29udGFpbnMgYW4gaW52YWxpZCBVVEYtOCBzZXF1ZW5jZS4KYmFkID0gIiIiwyIiIgo=",
+      "base64",
+    );
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
+  test("invalid/encoding/bad-utf8-in-string-literal", () => {
+    const input = Buffer.from(
+      "IyBUaGUgZm9sbG93aW5nIGxpbmUgY29udGFpbnMgYW4gaW52YWxpZCBVVEYtOCBzZXF1ZW5jZS4KYmFkID0gJ8MnCg==",
+      "base64",
+    );
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
+  test("invalid/encoding/bad-utf8-in-string", () => {
+    const input = Buffer.from(
+      "IyBUaGUgZm9sbG93aW5nIGxpbmUgY29udGFpbnMgYW4gaW52YWxpZCBVVEYtOCBzZXF1ZW5jZS4KYmFkID0gIsMiCg==",
+      "base64",
+    );
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
+  test("invalid/encoding/utf16-bom", () => {
+    const input = Buffer.from("/v8AIwAgAFUAVABGAC0AMQA2ACAAdwBpAHQAaAAgAEIATwBNAAo=", "base64");
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
   });
 });

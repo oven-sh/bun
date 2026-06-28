@@ -783,14 +783,19 @@ declare module "bun" {
    */
   namespace TOML {
     /**
-     * Parse a TOML string into a JavaScript object.
+     * Parse a TOML (v1.1.0) document into a JavaScript object.
+     *
+     * Date/time values parse as strings of their source text. Integers
+     * outside `Number.MAX_SAFE_INTEGER` throw, since they cannot be
+     * represented losslessly as JavaScript numbers.
      *
      * @category Utilities
      *
-     * @param input The TOML string to parse
+     * @param input The TOML document to parse, as a string or UTF-8 bytes
      * @returns A JavaScript object
+     * @throws {SyntaxError} If the input is not valid TOML
      */
-    export function parse(input: string): object;
+    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): object;
   }
 
   /**

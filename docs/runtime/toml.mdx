@@ -45,14 +45,15 @@ console.log(data);
 
 #### Supported TOML Features
 
-Bun's TOML parser supports the [TOML v1.0 specification](https://toml.io/en/v1.0.0), including:
+Bun's TOML parser implements the full [TOML v1.1.0 specification](https://github.com/toml-lang/toml/releases/tag/1.1.0) and passes the complete official [toml-test](https://github.com/toml-lang/toml-test) conformance suite:
 
-- **Strings**: basic (`"..."`) and literal (`'...'`), including multi-line
-- **Integers**: decimal, hex (`0x`), octal (`0o`), and binary (`0b`)
+- **Strings**: basic (`"..."`) and literal (`'...'`), including multi-line, with all escapes (`\uXXXX`, `\UXXXXXXXX`, and TOML 1.1's `\xHH` and `\e`)
+- **Integers**: decimal, hex (`0x`), octal (`0o`), and binary (`0b`). Integers that cannot be represented losslessly as a JavaScript number — outside ±(2^53 − 1) — throw
 - **Floats**: including `inf` and `nan`
 - **Booleans**: `true` and `false`
+- **Date/times**: offset date-time, local date-time, local date, and local time, returned as strings of their source text
 - **Arrays**: including mixed types and nested arrays
-- **Tables**: standard (`[table]`) and inline (`{ key = "value" }`)
+- **Tables**: standard (`[table]`) and inline (`{ key = "value" }`), including TOML 1.1 multi-line inline tables
 - **Array of tables**: `[[array]]`
 - **Dotted keys**: `a.b.c = "value"`
 - **Comments**: using `#`
@@ -82,13 +83,14 @@ role = "backend"
 
 #### Error Handling
 
-`Bun.TOML.parse()` throws if the TOML is invalid:
+`Bun.TOML.parse()` throws a `SyntaxError` if the TOML is invalid:
 
 ```ts
 try {
   Bun.TOML.parse("invalid = = =");
 } catch (error) {
   console.error("Failed to parse TOML:", error.message);
+  // Failed to parse TOML: TOML Parse error: Expected a value but found '='
 }
 ```
 

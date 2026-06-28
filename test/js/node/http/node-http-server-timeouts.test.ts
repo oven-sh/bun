@@ -1,7 +1,7 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
 // few hundred ms and waits for the server to close the connection. A small

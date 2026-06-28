@@ -3726,10 +3726,8 @@ pub(super) fn server_set_on_node_socket_open_(
                         this.on_node_socket_open_callback(bun_opaque::opaque_deref_mut(socket));
                     }
                     // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).on_socket_open(
-                        thunk,
-                        core::ptr::from_mut::<$T>(this).cast::<c_void>(),
-                    );
+                    bun_opaque::opaque_deref_mut(app)
+                        .on_socket_open(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);
             }

@@ -2615,8 +2615,10 @@ export function readableStreamAsyncIterator(stream, preventCancel) {
 // next()/return() only serialize behind a still-pending step; chaining onto a
 // settled ongoingPromise would cost an extra microtask per chunk.
 export function readableStreamAsyncIteratorNext(this: unknown) {
+  // Streams store a number or a string in their own "state" private field, so
+  // requiring an object makes sure the receiver is one of our iterators.
   const state = $isObject(this) ? $getByIdDirectPrivate(this, "state") : undefined;
-  if (!state) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
+  if (!$isObject(state)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
 
   const ongoingPromise = state.ongoingPromise;
   if (ongoingPromise && !$isPromiseFulfilled(ongoingPromise)) {
@@ -2628,7 +2630,7 @@ export function readableStreamAsyncIteratorNext(this: unknown) {
 
 export function readableStreamAsyncIteratorReturn(this: unknown, value) {
   const state = $isObject(this) ? $getByIdDirectPrivate(this, "state") : undefined;
-  if (!state) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
+  if (!$isObject(state)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
 
   const ongoingPromise = state.ongoingPromise;
   if (ongoingPromise && !$isPromiseFulfilled(ongoingPromise)) {

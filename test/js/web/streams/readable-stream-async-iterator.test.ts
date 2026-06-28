@@ -213,6 +213,11 @@ test("next() and return() reject when called on the wrong receiver", async () =>
   const iterator = stream.values();
   await expect(iterator.next.call({})).rejects.toThrow(TypeError);
   await expect((iterator.return as Function).call({}, "x")).rejects.toThrow(TypeError);
+  // Streams keep a number or a string in their own "state" private field;
+  // they must reject as receivers instead of being mistaken for an iterator.
+  const foreign = new ReadableStream();
+  await expect(iterator.next.call(foreign)).rejects.toThrow(TypeError);
+  await expect((iterator.return as Function).call(foreign, "x")).rejects.toThrow(TypeError);
   // The detached calls did not consume or cancel the stream.
   expect(await iterator.next()).toEqual({ value: "a", done: false });
 });

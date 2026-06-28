@@ -409,6 +409,7 @@ it("teardown waits for every concurrent in-flight write", async () => {
 describe("AbortSignal rejections use node's AbortError shape", () => {
   function expectNodeAbortError(err, reason) {
     expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(DOMException);
     expect({ name: err.name, code: err.code, message: err.message }).toEqual({
       name: "AbortError",
       code: "ABORT_ERR",
@@ -420,7 +421,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   test("readFile with a pre-aborted signal", async () => {
     const dir = tempDirWithFiles("fs-abort-readfile", { "f.txt": "hello" });
     const signal = AbortSignal.abort();
-    expect.assertions(3);
+    expect.assertions(4);
     try {
       await fsPromises.readFile(join(dir, "f.txt"), { signal });
     } catch (err) {
@@ -431,7 +432,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   test("readFile with a custom abort reason", async () => {
     const dir = tempDirWithFiles("fs-abort-readfile-reason", { "f.txt": "hello" });
     const reason = new Error("my reason");
-    expect.assertions(3);
+    expect.assertions(4);
     try {
       await fsPromises.readFile(join(dir, "f.txt"), { signal: AbortSignal.abort(reason) });
     } catch (err) {
@@ -445,7 +446,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     const reason = new Error("stop");
     const promise = fsPromises.readFile(join(dir, "f.txt"), { signal: ac.signal });
     ac.abort(reason);
-    expect.assertions(3);
+    expect.assertions(4);
     try {
       await promise;
     } catch (err) {
@@ -453,10 +454,36 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     }
   });
 
+  // abort() with no reason stores the signal's lazily-created DOMException in a
+  // common-reason slot; the cause must still be that exact object, not a copy.
+  test("readFile aborted while in flight with the default abort reason", async () => {
+    const dir = tempDirWithFiles("fs-abort-readfile-inflight-default", { "f.txt": "hello" });
+    const ac = new AbortController();
+    const promise = fsPromises.readFile(join(dir, "f.txt"), { signal: ac.signal });
+    ac.abort();
+    expect.assertions(4);
+    try {
+      await promise;
+    } catch (err) {
+      expectNodeAbortError(err, ac.signal.reason);
+    }
+  });
+
+  test("appendFile with a pre-aborted signal", async () => {
+    const dir = tempDirWithFiles("fs-abort-appendfile", {});
+    const signal = AbortSignal.abort();
+    expect.assertions(4);
+    try {
+      await fsPromises.appendFile(join(dir, "f.txt"), "data", { signal });
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+  });
+
   test("writeFile with a pre-aborted signal", async () => {
     const dir = tempDirWithFiles("fs-abort-writefile", {});
     const signal = AbortSignal.abort();
-    expect.assertions(3);
+    expect.assertions(4);
     try {
       await fsPromises.writeFile(join(dir, "f.txt"), "data", { signal });
     } catch (err) {
@@ -467,7 +494,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   test("writeFile of an async iterable with a pre-aborted signal", async () => {
     const dir = tempDirWithFiles("fs-abort-writefile-iter", {});
     const signal = AbortSignal.abort();
-    expect.assertions(3);
+    expect.assertions(4);
     try {
       await fsPromises.writeFile(
         join(dir, "f.txt"),
@@ -484,7 +511,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   test("writeFile of an async iterable aborted between chunks", async () => {
     const dir = tempDirWithFiles("fs-abort-writefile-iter-inflight", {});
     const ac = new AbortController();
-    expect.assertions(3);
+    expect.assertions(4);
     try {
       await fsPromises.writeFile(
         join(dir, "f.txt"),

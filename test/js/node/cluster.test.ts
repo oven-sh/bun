@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 test("cloneable and transferable equals", () => {
@@ -211,3 +211,139 @@ test("worker.disconnect() with a net.Server exits instead of hanging", async () 
   });
   expect(stdout).toContain("[master] all workers exited");
 });
+
+// https://nodejs.org/api/cluster.html#workerdisconnect: in a worker,
+// disconnect() "will close all servers, wait for the 'close' event on those
+// servers, and then disconnect the IPC channel", after which the worker exits
+// on its own. These cover both server types a worker can open under cluster:
+// node:http (binds its own SO_REUSEPORT socket, never enters _getServer) and
+// net.Server (goes through _getServer's bookkeeping stub).
+test.concurrent(
+  "primary-initiated worker.disconnect() closes the worker's http server and the worker exits",
+  async () => {
+    using dir = tempDir("cluster-disconnect-http", {
+      "main.js": `
+        const cluster = require("node:cluster");
+        const http = require("node:http");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          const disconnected = new Promise(resolve => worker.once("disconnect", resolve));
+          const exited = new Promise(resolve => worker.once("exit", (code, signal) => resolve({ code, signal })));
+
+          worker.on("message", async msg => {
+            if (msg.cmd !== "listening") return;
+            const port = msg.port;
+            const before = await (await fetch(\`http://127.0.0.1:\${port}/\`)).text();
+
+            worker.disconnect();
+
+            // The worker must close its server, disconnect the channel and
+            // exit on its own. If it never does (the bug), kill it so it
+            // cannot outlive the test, and report the failure.
+            let timer;
+            const timedOut = new Promise(resolve => {
+              timer = setTimeout(resolve, 20_000, "timeout");
+            });
+            const exit = await Promise.race([Promise.all([exited, disconnected]).then(([e]) => e), timedOut]);
+            clearTimeout(timer);
+            if (exit === "timeout") {
+              worker.process.kill("SIGKILL");
+              console.log(JSON.stringify({ fail: "worker did not exit after disconnect()" }));
+              process.exit(1);
+            }
+
+            // The worker is gone, so nothing may be listening on its port.
+            const after = await new Promise(resolve => {
+              const socket = net.connect(port, "127.0.0.1");
+              socket.once("connect", () => {
+                socket.destroy();
+                resolve("still listening");
+              });
+              socket.once("error", () => resolve("refused"));
+            });
+
+            console.log(JSON.stringify({ before, exit, exitedAfterDisconnect: worker.exitedAfterDisconnect, after }));
+            process.exit(0);
+          });
+        } else {
+          const server = http.createServer((req, res) => res.end("served-by-worker"));
+          server.listen(0, "127.0.0.1", () => {
+            process.send({ cmd: "listening", port: server.address().port });
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      // Inherited so that on regression the worker's output reaches the
+      // runner log instead of filling an unread pipe.
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(
+      '{"before":"served-by-worker","exit":{"code":0,"signal":null},"exitedAfterDisconnect":true,"after":"refused"}',
+    );
+    expect(exitCode).toBe(0);
+  },
+  40_000,
+);
+
+test.concurrent(
+  "primary-initiated worker.disconnect() closes the worker's net.Server and the worker exits",
+  async () => {
+    using dir = tempDir("cluster-disconnect-net", {
+      "main.js": `
+        const cluster = require("node:cluster");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          const exited = new Promise(resolve => worker.once("exit", (code, signal) => resolve({ code, signal })));
+
+          worker.on("message", async msg => {
+            if (msg.cmd !== "listening") return;
+            worker.disconnect();
+
+            let timer;
+            const timedOut = new Promise(resolve => {
+              timer = setTimeout(resolve, 20_000, "timeout");
+            });
+            const exit = await Promise.race([exited, timedOut]);
+            clearTimeout(timer);
+            if (exit === "timeout") {
+              worker.process.kill("SIGKILL");
+              console.log(JSON.stringify({ fail: "worker did not exit after disconnect()" }));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({ exit }));
+            process.exit(0);
+          });
+        } else {
+          const server = net.createServer(socket => socket.end());
+          // disconnect() must close the worker's real listening socket, not
+          // just the cluster bookkeeping stub.
+          server.once("close", () => console.log("worker server closed"));
+          server.listen(0, "127.0.0.1", () => {
+            process.send({ cmd: "listening", port: server.address().port });
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      // Inherited so that on regression the worker's output reaches the
+      // runner log instead of filling an unread pipe.
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(["worker server closed", '{"exit":{"code":0,"signal":null}}']);
+    expect(exitCode).toBe(0);
+  },
+  40_000,
+);

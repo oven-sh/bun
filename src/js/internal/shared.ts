@@ -290,6 +290,9 @@ export default {
   NodeEntryObserver,
 
   kHandle: Symbol("kHandle"),
+  // Links a libuv-style handle back to the net.Server / net.Socket that owns
+  // it. node:net and node:cluster's worker side must agree on this symbol:
+  // the cluster disconnect protocol closes `handle[owner_symbol]`.
   owner_symbol: Symbol("owner_symbol"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kResistStopPropagation: Symbol("kResistStopPropagation"),

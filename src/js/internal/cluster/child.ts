@@ -112,6 +112,14 @@ cluster._getServer = function (obj, options, cb) {
   });
 };
 
+// node:http binds its own SO_REUSEPORT socket instead of going through
+// _getServer (handle passing over IPC is unsupported), so it never enters
+// `handles`. Register it here so _disconnect still closes it.
+cluster._trackServer = function (server) {
+  handles.set(server, server);
+  server.once("close", () => handles.delete(server));
+};
+
 function removeIndexesKey(indexesKey, index) {
   const indexSet = indexes.get(indexesKey);
   if (!indexSet) {

@@ -904,8 +904,9 @@ private:
             return jsBoolean(true);
         case V8Tag::kFalse:
             return jsBoolean(false);
-        case V8Tag::kTheHole:
-            return jsUndefined();
+        // kTheHole is only legal inside a dense array's element list, where
+        // readDenseArray consumes it via peekTag before calling readValue.
+        // Anywhere else V8 rejects the frame, so it falls to throwFormatError.
         case V8Tag::kInt32: {
             auto v = readZigZag();
             if (!v) break;
@@ -1281,7 +1282,8 @@ private:
         std::optional<uint32_t> maxByteLength;
         if (resizable) {
             maxByteLength = readVarint();
-            if (!maxByteLength) return {};
+            // V8 rejects an inconsistent pair as a format error, not an OOM.
+            if (!maxByteLength || *maxByteLength < *byteLength) return {};
         }
         const uint8_t* bytes = readRawBytes(*byteLength);
         if (!bytes) return {};

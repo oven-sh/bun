@@ -4,15 +4,9 @@ import { fork } from "child_process";
 import { bunEnv, bunExe, gcTick, isWindows, nodeExe, tempDir } from "harness";
 import path from "path";
 
-// Several tests below inject hand-crafted wire bytes onto the advanced IPC
-// channel by having the child `fs.writeSync()` directly to the channel fd.
-// That only works where the channel is a plain POSIX fd (a socketpair end):
-// on Windows the channel is a libuv named pipe whose handle the child-side
-// runtime has already claimed with `uv_pipe_open` + `uv_read_start` before
-// user code runs, so a raw synchronous write to the same fd is not a
-// supported operation and the frame never reaches the parent. The decoder
-// and frame-rejection paths these tests cover are platform-independent and
-// are exercised by the Linux, macOS, and ASAN lanes.
+// Tests that inject raw wire bytes via `fs.writeSync()` to the channel fd.
+// On Windows the channel is a libuv named pipe already claimed by uv_read_start,
+// so a raw write is unsupported; the decoder paths are platform-independent.
 const rawInjection = it.skipIf(isWindows);
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -64,18 +58,9 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 });
 
 describe("ipc mode advanced", () => {
-  // Spawns node as a raw injector that writes each hex payload to the channel
-  // fd as a complete advanced frame (4-byte big-endian length + bytes) in a
-  // single syscall, then exits. Resolves with every message the decoder
-  // delivered plus the injector's exit code, once the channel has closed.
-  //
-  // Ordering is what makes this sound: `ipc()` runs synchronously as each
-  // frame is decoded, and `onDisconnect` fires on a later task only after the
-  // socket's data has been fully drained (whether the close came from the
-  // injector exiting or from the decoder rejecting a frame). So `messages` is
-  // complete at disconnect, and a disconnect with nothing delivered can only
-  // mean the frame never reached the decoder or the decoder rejected it --
-  // that rejects, so those failures surface immediately instead of hanging.
+  // Writes each hex payload to the channel fd as a complete advanced frame
+  // (4-byte big-endian length + bytes). `onDisconnect` runs after all frames
+  // were decoded or rejected, so `messages` is final and an empty one rejects.
   async function injectFrames(...hexPayloads: string[]): Promise<{ messages: any[]; exitCode: number }> {
     const messages: any[] = [];
     const closed = Promise.withResolvers<void>();
@@ -103,14 +88,9 @@ describe("ipc mode advanced", () => {
   }
 
   rawInjection("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
-    // The advanced IPC framing is [u32-be length][payload]. Checking
-    // `data.len < header_length + message_len` in u32 arithmetic would let a
-    // peer-controlled length near u32::MAX wrap the sum past the guard and
-    // slice an enormous range into the deserializer; the decoder must compare
-    // the length against the *remaining* bytes instead.
-    //
-    // Run the receiver in its own subprocess so a crash is observed as a failing
-    // assertion here rather than taking out the test runner.
+    // A peer-controlled length near u32::MAX must not wrap the bounds check
+    // and slice an enormous range into the deserializer; the decoder compares
+    // against the *remaining* bytes. Run in a subprocess so a crash is a failure.
     // prettier-ignore
     const parent = `
       const child = Bun.spawn({
@@ -143,14 +123,9 @@ describe("ipc mode advanced", () => {
   });
 
   rawInjection("a payload that is not V8-serialized closes the channel instead of hanging", async () => {
-    // Every V8-serialized payload starts with the 0xFF format-version
-    // marker. An advanced-mode peer speaking a different protocol -- in
-    // particular an older bun, whose advanced mode opened with the private
-    // version packet [0x01, 0x01, 0x00, 0x00, 0x00] -- would otherwise be
-    // misread as a ~16 MB big-endian length that never arrives, leaving both
-    // sides waiting forever. The child injects exactly those bytes and then
-    // stays alive; the parent must notice the bad frame on its own and close
-    // the channel (observed as a `disconnect` event) rather than hang.
+    // An older bun's advanced mode opened with the private version packet
+    // [01 01 00 00 00], which reads as a ~16 MB length that never arrives.
+    // The parent must detect the bad frame and disconnect rather than hang.
     using dir = tempDir("ipc-adv-badframe", {
       "parent.cjs": /* js */ `
         const { fork } = require("child_process");
@@ -158,10 +133,9 @@ describe("ipc mode advanced", () => {
           execPath: process.execPath, execArgv: [], serialization: "advanced", stdio: "ignore",
         });
         child.on("message", m => console.error("UNEXPECTED_IPC_MESSAGE", JSON.stringify(m)));
-        // The injector keeps itself alive forever, so the only legitimate
-        // exit is the kill() after disconnect. An exit seen first means the
-        // writeSync to fd 3 failed and the child died -- that also produces a
-        // disconnect, but one the decoder never caused, so it must not pass.
+        // The injector never exits on its own. An exit seen before disconnect
+        // means its writeSync to fd 3 failed, not that the decoder rejected
+        // the frame, so that path must not pass.
         child.on("exit", (code, signal) => {
           console.log("FAIL injector exited before the decoder rejected the frame: " + code + ", " + signal);
           process.exitCode = 1;
@@ -225,14 +199,9 @@ describe("ipc mode advanced", () => {
   });
 
   it("a typed array larger than 4 GiB throws instead of truncating its length", async () => {
-    // The wire format stores lengths as 32-bit varints, so byteLength is
-    // narrowed from size_t. Without a guard, a 2**32-byte view wraps to 0 and
-    // the receiver silently gets an empty array. V8 throws DataCloneError.
-    //
-    // The 4 GiB allocation is lazy zero pages and is never read (the guard
-    // fires before any copy), so peak RSS stays low. Runners that still
-    // cannot allocate it report SKIP instead of failing, following the
-    // convention of the oversized-ArrayBuffer structuredClone tests.
+    // Wire lengths are 32-bit varints; without a guard a 2**32-byte view
+    // wraps to 0 and the receiver silently gets an empty array. The 4 GiB is
+    // lazy zero pages that are never read; runners that can't allocate it SKIP.
     using dir = tempDir("ipc-adv-huge", {
       "parent.cjs": /* js */ `
         const { fork } = require("child_process");
@@ -269,17 +238,9 @@ describe("ipc mode advanced", () => {
   });
 
   rawInjection("a dense array whose trailer property count disagrees with the stream is rejected", async () => {
-    // V8 (and Node) emit arrays with the dense tag 'A' and end them with
-    // kEndDenseJSArray followed by two redundant varints: the number of extra
-    // named properties and the length. Both must match what was actually
-    // read, or the payload is malformed and the whole frame is rejected;
-    // accepting it would mean a corrupt stream delivers a message.
-    //
-    // Both frames are the same [1,2,3] dense array; the first has the
-    // correct trailer (propertyCount=0, length=3) and the second has
-    // propertyCount corrupted to 5. The first must be delivered; the
-    // second must not be. `injectFrames` only resolves once the channel has
-    // closed, by which point both have been accepted or rejected.
+    // V8's dense-array trailer carries two redundant varints (extra property
+    // count, length). Both frames are [1,2,3]; the second corrupts the
+    // property count to 5. The first must arrive, the corrupt one must not.
     const valid = "ff0f4103490249044906240003";
     const corrupt = "ff0f4103490249044906240503";
     const { messages, exitCode } = await injectFrames(valid, corrupt);
@@ -287,12 +248,20 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Node's raw `new v8.Serializer()` (unlike the DefaultSerializer that IPC
-  // normally uses) does not treat views as host objects, so it emits a typed
-  // array as a kArrayBuffer record immediately followed by kArrayBufferView.
-  // This is the authoritative byte output of that serializer for
-  // `{ view: new Uint8Array([10, 20, 30]) }` at wire version 15, where the
-  // view record carries a trailing flags varint the reader must consume.
+  rawInjection("kTheHole anywhere but a dense array's element list is rejected", async () => {
+    // kTheHole ('-') only ever marks a hole inside a dense array. V8 rejects
+    // it in any other position, so `{a: <kTheHole>}` must close the channel
+    // rather than be delivered as `{a: undefined}`.
+    const valid = "ff0f6f22016149027b01"; // {a: 1}
+    const holeAsValue = "ff0f6f2201612d7b01"; // {a: <kTheHole>}
+    const { messages, exitCode } = await injectFrames(valid, holeAsValue);
+    expect(messages).toEqual([{ a: 1 }]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A raw `new v8.Serializer()` emits views as kArrayBuffer + kArrayBufferView
+  // (with a trailing flags varint), not as host objects. Payload is that
+  // serializer's v15 output for `{ view: new Uint8Array([10, 20, 30]) }`.
   rawInjection("a raw V8 ArrayBuffer plus ArrayBufferView record deserializes to a typed array", async () => {
     const { messages, exitCode } = await injectFrames("ff0f6f22047669657742030a141e56420003007b01");
     expect(messages).toEqual([{ view: new Uint8Array([10, 20, 30]) }]);
@@ -300,15 +269,9 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
-  // V8's reader consumes a trailing kArrayBufferView after ANY tag that
-  // resolved to an ArrayBuffer, including an object reference. A raw
-  // `new v8.Serializer()` emits the second of two views over the same
-  // ArrayBuffer as `kObjectReference(<buffer id>) kArrayBufferView ...`; the
-  // orphaned 'V' must be consumed as the referenced buffer's view, not read
-  // as the parent container's next value (which would reject the frame).
-  // Payload is `new v8.Serializer()` output for `{pair: [a, b]}` where
-  // `a = new Uint8Array(ab, 0, 2)` and `b = new Uint8Array(ab, 2, 2)` share
-  // an `ArrayBuffer([10, 20, 30, 40])`.
+  // A second view over an already-seen buffer arrives as `^<id> V<subtag>...`;
+  // the 'V' must be consumed as that buffer's view. Payload is v8.Serializer
+  // output for `{pair: [a, b]}`, both views over ArrayBuffer([10,20,30,40]).
   rawInjection("two views over one ArrayBuffer via kObjectReference share the buffer", async () => {
     const { messages, exitCode } = await injectFrames(
       "ff0f6f220470616972410242040a141e2856420002005e0256420202002400027b01",
@@ -323,13 +286,9 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
-  // V8 serializes a length-tracking view over a resizable ArrayBuffer with a
-  // wire byteLength of 0 and flags = isLengthTracking | isBackedByRab (0x03);
-  // the real extent is the whole buffer tail past byteOffset, and the view
-  // keeps tracking after the buffer is resized. Treating that byteLength 0
-  // literally produces an empty view.
-  // Payload is `new v8.Serializer()` output for `{view: t}` where
-  // `t = new Uint8Array(new ArrayBuffer(4, {maxByteLength: 8}))` over [1,2,3,4].
+  // A length-tracking view travels with wire byteLength 0 and flags 0x03;
+  // taking that 0 literally yields an empty view. Payload is v8.Serializer
+  // output for a Uint8Array over `new ArrayBuffer(4, {maxByteLength: 8})`.
   rawInjection("a length-tracking view over a resizable ArrayBuffer stays length-tracking", async () => {
     const { messages, exitCode } = await injectFrames("ff0f6f2204766965777e04080102030456420000037b01");
     const [got] = messages;
@@ -344,20 +303,13 @@ describe("ipc mode advanced", () => {
   });
 });
 
-// Node's "advanced" IPC uses V8's value-serializer format behind a 4-byte
-// big-endian length prefix. Bun previously framed advanced IPC with its own
-// JSC structured-clone bytes, so a bun process and a node process connected
-// over an advanced channel could not understand each other in either
-// direction: messages were silently never delivered.
-// https://nodejs.org/api/child_process.html#advanced-serialization
 // Structured-clone round trips over an advanced channel. The node-interop
 // cases (gated on node being installed) validate against V8 as the reference
 // implementation; the bun<->bun cases run unconditionally.
 describe("ipc mode advanced structured clone", () => {
-  // A CJS child that runs unchanged under node and bun: echo each message
-  // verbatim. It never exits on its own -- `process.send` is asynchronous
-  // under node, so a synchronous `process.exit` here would race the echo's
-  // flush. Every parent kills the child after receiving the echo.
+  // An echo child that runs under both node and bun. It never exits on its
+  // own (under node a sync `process.exit` races the async echo's flush), so
+  // every parent kills it after receiving the echo.
   const ECHO_CHILD = /* js */ `
     process.on("message", m => {
       process.send(m);
@@ -404,11 +356,9 @@ describe("ipc mode advanced structured clone", () => {
     };
   }
 
-  // Forks `childSource` with the given execPath over an advanced channel,
-  // sends `payload`, and resolves with the first echoed message. Every
-  // failure path (exit before echo, channel error, channel disconnect)
-  // rejects so a broken wire format fails the test immediately instead of
-  // just hanging. A reject that races in after the resolve is a no-op.
+  // Forks `childPath` with the given execPath over an advanced channel, sends
+  // `payload`, and resolves with the first echoed message. Every failure
+  // (exit / error / disconnect / a throwing send) rejects instead of hanging.
   function echoOnce(childPath: string, execPath: string, payload: unknown): Promise<any> {
     const child = fork(childPath, [], { execPath, execArgv: [], serialization: "advanced", stdio: "ignore" });
     const { promise, resolve, reject } = Promise.withResolvers<any>();
@@ -416,7 +366,13 @@ describe("ipc mode advanced structured clone", () => {
     child.on("error", reject);
     child.on("disconnect", () => reject(new Error("IPC channel disconnected before echoing")));
     child.on("exit", (code, signal) => reject(new Error(`child exited (${code}, ${signal}) before echoing`)));
-    child.send(payload as any);
+    // Route a synchronous serialization throw into the same reject path so the
+    // `finally` below still kills the (otherwise immortal) echo child.
+    try {
+      child.send(payload as any);
+    } catch (error) {
+      reject(error);
+    }
     return promise.finally(() => child.kill());
   }
 
@@ -444,10 +400,9 @@ describe("ipc mode advanced structured clone", () => {
     expect(got.shared[0]).toBe(got.shared[1]);
   });
 
-  // Same exchange with a bun child, driven by a node parent whose
-  // assert.deepStrictEqual is the reference comparison. This covers the
-  // child-side NODE_CHANNEL_FD setup path, which is distinct from the
-  // Subprocess path the previous test exercises.
+  // Same exchange with a bun child driven by a node parent, whose
+  // assert.deepStrictEqual is the reference. This covers the child-side
+  // NODE_CHANNEL_FD setup path, distinct from the Subprocess path above.
   it.skipIf(!nodeExe())("a node parent can exchange structured values with a bun child", async () => {
     using dir = tempDir("ipc-adv-node-bun", {
       "echo.cjs": ECHO_CHILD,
@@ -520,11 +475,9 @@ describe("ipc mode advanced structured clone", () => {
     expect(got.shared[0]).toBe(got.shared[1]);
   });
 
-  // V8's serializer snapshots the own key list, then re-checks own-ness
-  // before reading each value ("If the property is no longer found, do not
-  // serialize it"). A getter that deletes a sibling must therefore not
-  // produce an `undefined`-valued (or inherited) entry for the deleted key;
-  // a prototype-walking `[[Get]]` on the stale name list would.
+  // V8 snapshots the own key list and re-checks own-ness before each read,
+  // so a getter that deletes a sibling must omit it, not emit it as
+  // `undefined` (which a prototype-walking [[Get]] on the stale list would).
   it("a property deleted by an earlier getter is omitted, not serialized as undefined", async () => {
     using dir = tempDir("ipc-adv-deleted-prop", { "echo.cjs": ECHO_CHILD });
     const sent = {
@@ -544,14 +497,9 @@ describe("ipc mode advanced structured clone", () => {
     expect(got.a).toBe(1);
   });
 
-  // The serializer must enumerate only an array's own keys. Probing every
-  // index through the prototype chain would both turn a large holey array
-  // into an O(length) event-loop stall and serialize an inherited index as an
-  // own element. V8 enumerates own-only, so the node child is the reference
-  // for the hole surviving. The inherited index is injected by swapping just
-  // this array's prototype: assigning Array.prototype[1] globally would also
-  // make bun's own internal holey arrays (the process.nextTick FixedQueue)
-  // observe it, which is a different bug entirely.
+  // V8 enumerates only an array's own keys, so an inherited index must stay
+  // a hole. The index is injected via a per-array prototype swap rather than
+  // polluting Array.prototype, which bun's internal holey arrays also observe.
   it.skipIf(!nodeExe())("an inherited array index is not serialized as an own element", async () => {
     using dir = tempDir("ipc-adv-inherited-index", {
       "echo.cjs": ECHO_CHILD,
@@ -588,11 +536,9 @@ describe("ipc mode advanced structured clone", () => {
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "OK", exitCode: 0 });
   });
 
-  // V8 writes error sub-tags in the fixed order message, stack, cause and its
-  // reader walks them linearly, so emitting the cause before the stack makes
-  // node reject the whole frame. The node child then re-serializes the echo
-  // with real V8, so the return leg also proves the reader against genuine V8
-  // output for an Error carrying an object cause.
+  // V8's error reader walks the sub-tags in the fixed order message, stack,
+  // cause, so emitting the cause early makes node reject the frame. The node
+  // child re-serializes the echo, proving the reader against real V8 output too.
   it.skipIf(!nodeExe())("an Error with an object cause round-trips through a node child", async () => {
     using dir = tempDir("ipc-adv-err-node", { "echo.cjs": ECHO_CHILD });
     const e = new TypeError("boom");
@@ -607,13 +553,9 @@ describe("ipc mode advanced structured clone", () => {
     expect(got.pair[1]).toBe(got.e);
   });
 
-  // V8 gates kCause on HasOwnProperty: an inherited cause is never serialized,
-  // but an own `cause: undefined` is (kCause kUndefined). A prototype-walking
-  // read would stamp the inherited value onto every Error as an own property
-  // on the other end. The node child re-serializes the echo with real V8, so
-  // the node leg can't mask a wrong answer on the bun leg. The inherited cause
-  // is injected per-object via a prototype swap rather than by assigning
-  // Error.prototype.cause in the test runner process.
+  // V8 gates kCause on HasOwnProperty: an inherited cause is never serialized
+  // but an own `cause: undefined` is. The inherited cause is injected via a
+  // per-object prototype swap rather than polluting Error.prototype globally.
   it.skipIf(!nodeExe())("an inherited Error cause is not serialized but an own undefined one is", async () => {
     using dir = tempDir("ipc-adv-err-own-cause", { "echo.cjs": ECHO_CHILD });
     const noOwn = new TypeError("no own cause");

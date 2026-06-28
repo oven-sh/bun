@@ -894,11 +894,19 @@ it("fork with advanced serialization rejects a SharedArrayBuffer at send()", asy
             process.send(result);
             return;
           }
-          process.send({
-            tag: Object.prototype.toString.call(m),
-            buf: Object.prototype.toString.call(m.buffer),
-            bytes: Array.from(m),
-          });
+          if (ArrayBuffer.isView(m)) {
+            process.send({
+              tag: Object.prototype.toString.call(m),
+              buf: Object.prototype.toString.call(m.buffer),
+              bufByteLength: m.buffer.byteLength,
+              bufMaxByteLength: m.buffer.maxByteLength,
+              bytes: Array.from(m),
+            });
+            return;
+          }
+          // Before the fix the SharedArrayBuffer/object/array sends were delivered;
+          // report what arrived so the assertion diff shows it instead of timing out.
+          process.send("unexpected: " + Object.prototype.toString.call(m));
         });
         return;
       }
@@ -919,17 +927,20 @@ it("fork with advanced serialization rejects a SharedArrayBuffer at send()", asy
       const view = new Uint8Array(new SharedArrayBuffer(4));
       view.set([1, 2, 3, 4]);
       trySend("view", view);
-      let replies = 0;
+      // An auto-length view over a growable SharedArrayBuffer serializes its length as
+      // the auto-length marker, which only deserializes over a resizable buffer; the
+      // copy must be written as ResizableArrayBufferTag or the message never arrives.
+      const growable = new Uint8Array(new SharedArrayBuffer(4, { maxByteLength: 16 }));
+      growable.set([9, 8, 7, 6]);
+      trySend("growable", growable);
+      // Sent last; IPC is ordered, so its reply marks the end of all child replies.
+      child.send("try-sab");
       child.on("message", reply => {
-        replies++;
-        if (replies === 1) {
-          out.push("reply: " + JSON.stringify(reply));
-          child.send("try-sab");
-          return;
+        out.push(typeof reply === "string" ? reply : "reply: " + JSON.stringify(reply));
+        if (typeof reply === "string" && reply.startsWith("child-send:")) {
+          console.log(out.join("\\n"));
+          child.kill();
         }
-        out.push(String(reply));
-        console.log(out.join("\\n"));
-        child.kill();
       });
     `,
   });
@@ -947,7 +958,9 @@ it("fork with advanced serialization rejects a SharedArrayBuffer at send()", asy
       "nested: DataCloneError",
       "mixed: DataCloneError",
       "view: sent",
-      'reply: {"tag":"[object Uint8Array]","buf":"[object ArrayBuffer]","bytes":[1,2,3,4]}',
+      "growable: sent",
+      'reply: {"tag":"[object Uint8Array]","buf":"[object ArrayBuffer]","bufByteLength":4,"bufMaxByteLength":4,"bytes":[1,2,3,4]}',
+      'reply: {"tag":"[object Uint8Array]","buf":"[object ArrayBuffer]","bufByteLength":4,"bufMaxByteLength":16,"bytes":[9,8,7,6]}',
       "child-send: DataCloneError",
     ],
     stderr: "",

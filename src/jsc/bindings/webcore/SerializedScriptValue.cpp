@@ -1411,12 +1411,25 @@ private:
         return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
     }
 
-    // Writes ArrayBufferTag + byteLength + contents. The caller must have registered
-    // the buffer's wrapper via startObjectInternal so the deserializer's object pool
-    // stays in sync (it appends one entry per ArrayBufferTag it reads).
+    // Writes a byte copy of the buffer: ResizableArrayBufferTag when it is resizable or
+    // growable so an auto-length view over it still deserializes, ArrayBufferTag otherwise.
+    // The caller must have registered the buffer's wrapper via startObjectInternal so the
+    // deserializer's object pool stays in sync (it appends one entry per buffer it reads).
     bool writeArrayBufferAsCopy(ArrayBuffer& arrayBuffer, SerializationReturnCode& code)
     {
         uint64_t byteLength = arrayBuffer.byteLength();
+        if (arrayBuffer.isResizableOrGrowableShared()) {
+            if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength)) [[unlikely]] {
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
+            write(ResizableArrayBufferTag);
+            write(byteLength);
+            uint64_t maxByteLength = arrayBuffer.maxByteLength().value_or(0);
+            write(maxByteLength);
+            write(static_cast<const uint8_t*>(arrayBuffer.data()), byteLength);
+            return true;
+        }
         if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) + byteLength)) [[unlikely]] {
             code = SerializationReturnCode::DataCloneError;
             return true;
@@ -1861,20 +1874,6 @@ private:
                         write(index);
                         return true;
                     }
-                }
-
-                if (arrayBuffer->isResizableOrGrowableShared()) {
-                    uint64_t byteLength = arrayBuffer->byteLength();
-                    if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength)) [[unlikely]] {
-                        code = SerializationReturnCode::DataCloneError;
-                        return true;
-                    }
-                    write(ResizableArrayBufferTag);
-                    write(byteLength);
-                    uint64_t maxByteLength = arrayBuffer->maxByteLength().value_or(0);
-                    write(maxByteLength);
-                    write(static_cast<const uint8_t*>(arrayBuffer->data()), byteLength);
-                    return true;
                 }
 
                 return writeArrayBufferAsCopy(*arrayBuffer, code);

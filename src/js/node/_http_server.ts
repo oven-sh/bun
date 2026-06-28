@@ -1428,11 +1428,7 @@ function _writeHead(statusCode, reason, obj, response) {
         (te !== undefined && chunkExpression.test(te)) ||
         (te === undefined && !hasContentLength && response.useChunkedEncodingByDefault && !response._removedTE));
     if (!willBeChunked) {
-      if (hasContentLength) {
-        response.removeHeader("trailer");
-      } else {
-        response.removeHeader("content-length");
-      }
+      // Like Node.js's _storeHeader: throw with the headers left intact.
       throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
   }
@@ -2015,7 +2011,10 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // and will not throw or emit an error
     return true;
   }
-  const trailer = this._trailer;
+  // `_trailer` defaults to "", and res.end() is the per-request hot path: pass
+  // undefined so the native trailer decode is skipped entirely when there are
+  // no trailers, instead of round-tripping an empty JS string through the FFI.
+  const trailer = this._trailer || undefined;
   if (headerState !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       handle.writeHead(

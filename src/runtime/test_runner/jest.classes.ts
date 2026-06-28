@@ -125,6 +125,7 @@ export default [
       },
       customTesters: {
         getter: "getCustomTesters",
+        cache: true,
       },
       equals: {
         fn: "equals",

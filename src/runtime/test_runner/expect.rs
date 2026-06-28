@@ -2883,15 +2883,27 @@ impl ExpectMatcherUtils {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }
 
+    /// Jest's `iterableEquality` "out of domain" guard: not an object,
+    /// an Array, an `ArrayBuffer.isView`, or not iterable.
+    fn is_iterable_equality_operand(value: JSValue, global_this: &JSGlobalObject) -> JsResult<bool> {
+        if !value.is_cell() {
+            return Ok(false);
+        }
+        let ty = value.js_type();
+        Ok(ty.is_object()
+            && !ty.is_array()
+            && !ty.is_typed_array_or_array_buffer()
+            && value.is_iterable(global_this)?)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn iterable_equality(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         let args = arguments.slice();
         let a = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
         let b = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
-        if !a.is_cell() || !a.js_type().is_object() || a.is_array()
-            || !b.is_cell() || !b.js_type().is_object() || b.is_array()
-            || !a.is_iterable(global_this)? || !b.is_iterable(global_this)?
+        if !Self::is_iterable_equality_operand(a, global_this)?
+            || !Self::is_iterable_equality_operand(b, global_this)?
         {
             return Ok(JSValue::UNDEFINED);
         }
@@ -2904,8 +2916,18 @@ impl ExpectMatcherUtils {
         let args = arguments.slice();
         let object = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
         let subset = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
-        if !subset.is_cell() || !subset.js_type().is_object()
-            || subset.is_array() || subset.is_error() || subset.is_date()
+        // Jest's `isObjectWithKeys`: a plain-ish object, so not an Array,
+        // Error, Date, Set, or Map.
+        if !subset.is_cell() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let subset_ty = subset.js_type();
+        if !subset_ty.is_object()
+            || subset_ty.is_array()
+            || subset_ty.is_set()
+            || subset_ty.is_map()
+            || subset.is_error()
+            || subset.is_date()
         {
             return Ok(JSValue::UNDEFINED);
         }

@@ -117,6 +117,7 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
     _captureMatcherContext() {
       captured = {
         customTesters: this.customTesters,
+        customTestersStable: this.customTesters === this.customTesters,
         diff: this.utils.diff,
         iterableEquality: this.utils.iterableEquality,
         subsetEquality: this.utils.subsetEquality,
@@ -124,10 +125,13 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
         iterEqSets: this.utils.iterableEquality(new Set([1, 2]), new Set([2, 1])),
         iterEqSetsNe: this.utils.iterableEquality(new Set([1]), new Set([2])),
         iterEqArrays: this.utils.iterableEquality([1], [1]),
+        iterEqTypedArrays: this.utils.iterableEquality(new Uint8Array([1]), new Uint8Array([1])),
         iterEqNonIter: this.utils.iterableEquality({}, {}),
         subsetEqMatch: this.utils.subsetEquality({ a: 1, b: 2 }, { a: 1 }),
         subsetEqMiss: this.utils.subsetEquality({ a: 1 }, { b: 2 }),
         subsetEqArray: this.utils.subsetEquality({ a: 1 }, [1]),
+        subsetEqSet: this.utils.subsetEquality({ a: 1 }, new Set([1])),
+        subsetEqMap: this.utils.subsetEquality({ a: 1 }, new Map([[1, 2]])),
         subsetEqPrimitive: this.utils.subsetEquality(1, 1),
       };
       return { pass: true, message: () => "" };
@@ -136,6 +140,7 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
   expect(null)._captureMatcherContext();
 
   expect(Array.isArray(captured.customTesters)).toBe(true);
+  expect(captured.customTestersStable).toBe(true);
   expect(typeof captured.diff).toBe("function");
   expect(typeof captured.iterableEquality).toBe("function");
   expect(typeof captured.subsetEquality).toBe("function");
@@ -145,12 +150,17 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
 
   expect(captured.iterEqSets).toBe(true);
   expect(captured.iterEqSetsNe).toBe(false);
+  // Arrays and ArrayBuffer views are out of iterableEquality's domain in jest.
   expect(captured.iterEqArrays).toBe(undefined);
+  expect(captured.iterEqTypedArrays).toBe(undefined);
   expect(captured.iterEqNonIter).toBe(undefined);
 
   expect(captured.subsetEqMatch).toBe(true);
   expect(captured.subsetEqMiss).toBe(false);
+  // Only a plain-ish object subset is in subsetEquality's domain in jest.
   expect(captured.subsetEqArray).toBe(undefined);
+  expect(captured.subsetEqSet).toBe(undefined);
+  expect(captured.subsetEqMap).toBe(undefined);
   expect(captured.subsetEqPrimitive).toBe(undefined);
 });
 

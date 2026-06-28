@@ -501,15 +501,15 @@ export function locked(this) {
   return $isReadableStreamLocked(this);
 }
 
+// This function is also installed as ReadableStream.prototype[Symbol.asyncIterator].
 export function values(this, options) {
-  var prototype = ReadableStream.prototype;
-  $readableStreamDefineLazyIterators(prototype);
-  return prototype.values.$call(this, options);
-}
+  if (!$isReadableStream(this)) throw $ERR_INVALID_THIS("ReadableStream");
 
-$linkTimeConstant;
-export function lazyAsyncIterator(this) {
-  var prototype = ReadableStream.prototype;
-  $readableStreamDefineLazyIterators(prototype);
-  return prototype[globalThis.Symbol.asyncIterator].$call(this);
+  let preventCancel = false;
+  if (!$isUndefinedOrNull(options)) {
+    if (!$isObject(options)) throw $makeTypeError("ReadableStream.values takes an object as first argument");
+    preventCancel = !!options["preventCancel"];
+  }
+
+  return $readableStreamAsyncIterator(this, preventCancel);
 }

@@ -234,8 +234,10 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
     this->putDirectCustomAccessor(vm, clientData->builtinNames().disturbedPrivateName(), DOMAttributeGetterSetter::create(vm, JSReadableStreamPrototype__disturbedGetterWrap, JSReadableStreamPrototype__disturbedSetterWrap, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete);
 
     reifyStaticProperties(vm, JSReadableStream::info(), JSReadableStreamPrototypeTableValues, *this);
-    this->putDirectBuiltinFunction(vm, globalObject(), vm.propertyNames->asyncIteratorSymbol, readableStreamLazyAsyncIteratorCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
-    this->putDirectBuiltinFunction(vm, globalObject(), vm.propertyNames->builtinNames().valuesPublicName(), readableStreamValuesCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
+    // https://webidl.spec.whatwg.org/#define-the-asynchronous-iteration-methods
+    // @@asyncIterator must be the same function object as values().
+    auto* values = this->putDirectBuiltinFunction(vm, globalObject(), vm.propertyNames->builtinNames().valuesPublicName(), readableStreamValuesCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
+    this->putDirect(vm, vm.propertyNames->asyncIteratorSymbol, values, JSC::PropertyAttribute::DontDelete | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

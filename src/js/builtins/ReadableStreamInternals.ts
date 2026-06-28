@@ -2578,48 +2578,69 @@ export async function readableStreamToArrayDirect(stream, underlyingSource) {
   }
 }
 
-export function readableStreamDefineLazyIterators(prototype) {
-  var asyncIterator = globalThis.Symbol.asyncIterator;
+// https://streams.spec.whatwg.org/#rs-asynciterator
+export function readableStreamAsyncIterator(stream, preventCancel) {
+  // AcquireReadableStreamDefaultReader. Run the deferred start exactly once,
+  // the same way getReader() does, so lazy native streams are initialized.
+  var start = $getByIdDirectPrivate(stream, "start");
+  if (start) {
+    $putByIdDirectPrivate(stream, "start", undefined);
+    start.$call(stream);
+  }
+  var reader = new ReadableStreamDefaultReader(stream);
 
-  var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {
-    var reader = stream.getReader();
-    var deferredError;
-    try {
-      while (true) {
-        var done, value;
-        const firstResult = reader.readMany();
-        if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
-        } else {
-          ({ done, value } = firstResult);
-        }
+  var isFinished = false;
+  var ongoingPromise;
 
-        if (done) {
-          return;
-        }
-        yield* value;
-      }
-    } catch (e) {
-      deferredError = e;
-      throw e;
-    } finally {
-      reader.releaseLock();
+  // One read request per next() call, so chunks that were never delivered to
+  // the loop body stay queued in the stream (observable with preventCancel).
+  function nextSteps() {
+    if (isFinished) return $createFulfilledPromise({ value: undefined, done: true });
 
-      if (!preventCancel && !$isReadableStreamLocked(stream)) {
-        const promise = stream.cancel(deferredError);
-        if (Bun.peek.status(promise) === "rejected") {
-          $markPromiseAsHandled(promise);
+    return $readableStreamDefaultReaderRead(reader).$then(
+      function (result) {
+        if (result.done) {
+          isFinished = true;
+          $readableStreamDefaultReaderRelease(reader);
+          return { value: undefined, done: true };
         }
-      }
+        return { value: result.value, done: false };
+      },
+      function (error) {
+        isFinished = true;
+        $readableStreamDefaultReaderRelease(reader);
+        throw error;
+      },
+    );
+  }
+
+  async function returnSteps(value) {
+    if (isFinished) return { value, done: true };
+    isFinished = true;
+
+    if (!preventCancel) {
+      const cancelPromise = $readableStreamReaderGenericCancel(reader, value);
+      $readableStreamDefaultReaderRelease(reader);
+      await cancelPromise;
+      return { value, done: true };
     }
+
+    $readableStreamDefaultReaderRelease(reader);
+    return { value, done: true };
+  }
+
+  // Inherits from %AsyncIteratorPrototype% so the iterator is itself async
+  // iterable. next()/return() calls are serialized through ongoingPromise.
+  return {
+    __proto__: $getPrototypeOf($getPrototypeOf(async function* () {}).prototype),
+    next() {
+      return (ongoingPromise = ongoingPromise ? ongoingPromise.$then(nextSteps, nextSteps) : nextSteps());
+    },
+    return(value) {
+      const chainedReturnSteps = () => returnSteps(value);
+      return (ongoingPromise = ongoingPromise
+        ? ongoingPromise.$then(chainedReturnSteps, chainedReturnSteps)
+        : chainedReturnSteps());
+    },
   };
-  var createAsyncIterator = function asyncIterator() {
-    return ReadableStreamAsyncIterator(this, false);
-  };
-  var createValues = function values({ preventCancel = false } = { preventCancel: false }) {
-    return ReadableStreamAsyncIterator(this, preventCancel);
-  };
-  $Object.$defineProperty(prototype, asyncIterator, { value: createAsyncIterator });
-  $Object.$defineProperty(prototype, "values", { value: createValues });
-  return prototype;
 }

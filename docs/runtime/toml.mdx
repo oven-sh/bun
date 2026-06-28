@@ -45,7 +45,7 @@ console.log(data);
 
 #### Supported TOML Features
 
-Bun's TOML parser implements the full [TOML v1.1.0 specification](https://github.com/toml-lang/toml/releases/tag/1.1.0) and passes the complete official [toml-test](https://github.com/toml-lang/toml-test) conformance suite, with one deliberate deviation: integers beyond JavaScript's safely representable range throw instead of returning an imprecise number.
+Bun's TOML parser implements the full [TOML v1.1.0 specification](https://github.com/toml-lang/toml/releases/tag/1.1.0) and passes the complete official [toml-test](https://github.com/toml-lang/toml-test) conformance suite.
 
 - **Strings**: basic (`"..."`) and literal (`'...'`), including multi-line, with all escapes (`\uXXXX`, `\UXXXXXXXX`, and TOML 1.1's `\xHH` and `\e`)
 - **Integers**: decimal, hex (`0x`), octal (`0o`), and binary (`0b`). Integers that cannot be represented losslessly as a JavaScript number — outside ±(2^53 − 1) — throw

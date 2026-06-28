@@ -245,10 +245,8 @@ impl S3HttpSimpleTask {
     fn error_with_body(&self, error_type: ErrorType) -> JsTerminatedResult<()> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
-        let mut has_error_code = false;
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
-            has_error_code = true;
         } else {
             // HEAD responses never carry an XML error document (HTTP forbids a
             // body on HEAD), so seed code/message from the status. The body,
@@ -259,7 +257,6 @@ impl S3HttpSimpleTask {
                 {
                     code = status_err.code;
                     message = status_err.message;
-                    has_error_code = true;
                 }
             }
             if let Some(body) = &self.result.body {
@@ -271,7 +268,6 @@ impl S3HttpSimpleTask {
                         if let Some(end) = strings::index_of(bytes, b"</Code>") {
                             if end >= value_start {
                                 code = &bytes[value_start..end];
-                                has_error_code = true;
                             }
                         }
                     }
@@ -288,10 +284,6 @@ impl S3HttpSimpleTask {
         }
 
         if error_type == ErrorType::NotFound {
-            if !has_error_code {
-                code = b"NoSuchKey";
-                message = b"The specified key does not exist.";
-            }
             self.callback
                 .not_found(code, message, self.callback_context)?;
         } else {

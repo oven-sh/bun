@@ -513,6 +513,15 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
+        bool receivedIsArray = JSC::isArray(globalObject, otherProp);
+        RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+        if (receivedIsArray) {
+            // Jest rejects an array receiver before the "not" flag is applied, so
+            // an array satisfies neither objectContaining nor not.objectContaining.
+            flags = flags & ~FLAG_NOT;
+            return AsymmetricMatcherResult::FAIL;
+        }
+
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
         if (patternObject.isObject()) {
             if (otherProp.isObject()) {

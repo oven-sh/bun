@@ -2458,10 +2458,11 @@ declare module "bun" {
      * of `register` / `createSignatureFunctionForTransform` from `react-refresh/runtime`.
      * No-op on non-JSX loaders and on files that declare no components or hooks.
      *
-     * Components are keyed by the transpiler's synthetic source name, so every file
-     * registers as `"input.tsx:Name"`. When transpiling multiple files (e.g. a per-file
-     * HMR dev server) rewrite that prefix to the real module path, otherwise same-named
-     * components in different files share one refresh identity.
+     * Components are keyed by the transpiler's synthetic source name (`input.tsx` or
+     * `input.jsx`, by loader), so they register as e.g. `"input.tsx:Name"`. These keys
+     * are not unique across files: when transpiling multiple files (e.g. a per-file HMR
+     * dev server), rewrite the synthetic prefix to each file's real path so same-named
+     * components in different files don't share one refresh identity.
      *
      * @default false
      */

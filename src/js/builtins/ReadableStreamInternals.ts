@@ -2579,6 +2579,9 @@ export async function readableStreamToArrayDirect(stream, underlyingSource) {
 }
 
 // https://streams.spec.whatwg.org/#rs-asynciterator
+// The iterator's state lives in a plain object stored on the iterator under
+// the "state" private field, and next()/return() are shared hoisted functions,
+// so creating an iterator captures no lexical environment.
 export function readableStreamAsyncIterator(stream, preventCancel) {
   // AcquireReadableStreamDefaultReader. Run the deferred start exactly once,
   // the same way getReader() does, so lazy native streams are initialized.
@@ -2587,79 +2590,102 @@ export function readableStreamAsyncIterator(stream, preventCancel) {
     $putByIdDirectPrivate(stream, "start", undefined);
     start.$call(stream);
   }
-  var reader = new ReadableStreamDefaultReader(stream);
 
-  var isFinished = false;
-  var ongoingPromise;
+  const state = {
+    __proto__: null,
+    reader: new ReadableStreamDefaultReader(stream),
+    preventCancel: !!preventCancel,
+    isFinished: false,
+    ongoingPromise: undefined,
+    boundNextSteps: undefined,
+    onNextFulfilled: undefined,
+    onNextRejected: undefined,
+  };
 
-  // One read request per next() call, so chunks that were never delivered to
-  // the loop body stay queued in the stream (observable with preventCancel).
-  function nextSteps() {
-    if (isFinished) return $createFulfilledPromise({ value: undefined, done: true });
+  // Inherits from %AsyncIteratorPrototype% so the iterator is itself async iterable.
+  const iterator = {
+    __proto__: $getPrototypeOf($getPrototypeOf(async function* () {}).prototype),
+    next: $readableStreamAsyncIteratorNext,
+    return: $readableStreamAsyncIteratorReturn,
+  };
+  $putByIdDirectPrivate(iterator, "state", state);
+  return iterator;
+}
 
-    const readPromise = $readableStreamDefaultReaderRead(reader);
-    if ($isPromiseFulfilled(readPromise)) {
-      // The chunk (or close) was available synchronously, and the read promise
-      // already resolves to the { value, done } the iterator needs.
-      if ($peekPromiseSettledValue(readPromise).done) {
-        isFinished = true;
-        $readableStreamDefaultReaderRelease(reader);
-      }
-      return readPromise;
+// next()/return() only serialize behind a still-pending step; chaining onto a
+// settled ongoingPromise would cost an extra microtask per chunk.
+export function readableStreamAsyncIteratorNext(this: unknown) {
+  const state = $isObject(this) ? $getByIdDirectPrivate(this, "state") : undefined;
+  if (!state) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
+
+  const ongoingPromise = state.ongoingPromise;
+  if (ongoingPromise && !$isPromiseFulfilled(ongoingPromise)) {
+    const boundNextSteps = (state.boundNextSteps ??= $readableStreamAsyncIteratorNextSteps.bind(undefined, state));
+    return (state.ongoingPromise = ongoingPromise.$then(boundNextSteps, boundNextSteps));
+  }
+  return (state.ongoingPromise = $readableStreamAsyncIteratorNextSteps(state));
+}
+
+export function readableStreamAsyncIteratorReturn(this: unknown, value) {
+  const state = $isObject(this) ? $getByIdDirectPrivate(this, "state") : undefined;
+  if (!state) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
+
+  const ongoingPromise = state.ongoingPromise;
+  if (ongoingPromise && !$isPromiseFulfilled(ongoingPromise)) {
+    const returnSteps = $readableStreamAsyncIteratorReturnSteps.bind(undefined, state, value);
+    return (state.ongoingPromise = ongoingPromise.$then(returnSteps, returnSteps));
+  }
+  return (state.ongoingPromise = $readableStreamAsyncIteratorReturnSteps(state, value));
+}
+
+// One read request per next() call, so chunks that were never delivered to
+// the loop body stay queued in the stream (observable with preventCancel).
+export function readableStreamAsyncIteratorNextSteps(state) {
+  if (state.isFinished) return $createFulfilledPromise({ value: undefined, done: true });
+
+  const readPromise = $readableStreamDefaultReaderRead(state.reader);
+  if ($isPromiseFulfilled(readPromise)) {
+    // The chunk (or close) was available synchronously, and the read promise
+    // already resolves to the { value, done } the iterator needs.
+    if ($peekPromiseSettledValue(readPromise).done) {
+      state.isFinished = true;
+      $readableStreamDefaultReaderRelease(state.reader);
     }
-
-    return readPromise.$then(
-      function (result) {
-        if (result.done) {
-          isFinished = true;
-          $readableStreamDefaultReaderRelease(reader);
-          return { value: undefined, done: true };
-        }
-        return { value: result.value, done: false };
-      },
-      function (error) {
-        isFinished = true;
-        $readableStreamDefaultReaderRelease(reader);
-        throw error;
-      },
-    );
+    return readPromise;
   }
 
-  async function returnSteps(value) {
-    if (isFinished) return { value, done: true };
-    isFinished = true;
+  return readPromise.$then(
+    (state.onNextFulfilled ??= $readableStreamAsyncIteratorOnFulfilled.bind(state)),
+    (state.onNextRejected ??= $readableStreamAsyncIteratorOnRejected.bind(state)),
+  );
+}
 
-    if (!preventCancel) {
-      const cancelPromise = $readableStreamReaderGenericCancel(reader, value);
-      $readableStreamDefaultReaderRelease(reader);
-      await cancelPromise;
-      return { value, done: true };
-    }
+export function readableStreamAsyncIteratorOnFulfilled(this, result) {
+  if (result.done) {
+    this.isFinished = true;
+    $readableStreamDefaultReaderRelease(this.reader);
+    return { value: undefined, done: true };
+  }
+  return { value: result.value, done: false };
+}
 
-    $readableStreamDefaultReaderRelease(reader);
+export function readableStreamAsyncIteratorOnRejected(this, error) {
+  this.isFinished = true;
+  $readableStreamDefaultReaderRelease(this.reader);
+  throw error;
+}
+
+export async function readableStreamAsyncIteratorReturnSteps(state, value) {
+  if (state.isFinished) return { value, done: true };
+  state.isFinished = true;
+
+  if (!state.preventCancel) {
+    const cancelPromise = $readableStreamReaderGenericCancel(state.reader, value);
+    $readableStreamDefaultReaderRelease(state.reader);
+    await cancelPromise;
     return { value, done: true };
   }
 
-  // Inherits from %AsyncIteratorPrototype% so the iterator is itself async
-  // iterable. next()/return() only serialize behind a still-pending step;
-  // chaining onto a settled ongoingPromise would cost a microtask per chunk.
-  const iterator = {
-    __proto__: $getPrototypeOf($getPrototypeOf(async function* () {}).prototype),
-    next() {
-      if (this !== iterator) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
-      return (ongoingPromise =
-        ongoingPromise && !$isPromiseFulfilled(ongoingPromise)
-          ? ongoingPromise.$then(nextSteps, nextSteps)
-          : nextSteps());
-    },
-    return(value) {
-      if (this !== iterator) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
-      const chainedReturnSteps = () => returnSteps(value);
-      return (ongoingPromise =
-        ongoingPromise && !$isPromiseFulfilled(ongoingPromise)
-          ? ongoingPromise.$then(chainedReturnSteps, chainedReturnSteps)
-          : chainedReturnSteps());
-    },
-  };
-  return iterator;
+  $readableStreamDefaultReaderRelease(state.reader);
+  return { value, done: true };
 }

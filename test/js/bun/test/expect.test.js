@@ -1003,6 +1003,18 @@ describe("expect()", () => {
     await expect(Promise.reject(inheritsErrorPrototype)).rejects.toThrow("proto");
     await expect(Promise.resolve(new Error("res"))).resolves.toThrow("res");
 
+    // The check runs user traps. `value instanceof Error` on a Proxy whose
+    // getPrototypeOf throws propagates that error, same as Jest.
+    const hostileProxy = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("trap");
+        },
+      },
+    );
+    expect(await failureMessage(() => expect(Promise.reject(hostileProxy)).rejects.toThrow())).toBe("trap");
+
     if (isBun) {
       // ResolveMessage and BuildMessage are error-like but do not extend Error
       // (https://github.com/oven-sh/bun/issues/11780); they still count as thrown,
@@ -1011,20 +1023,8 @@ describe("expect()", () => {
       await expect(import(missingModule)).rejects.toThrow("Cannot find module");
       await expect(new Bun.Transpiler().transform("}")).rejects.toThrow();
 
-      // A throwing getPrototypeOf trap must not crash the error check.
-      const hostileProxy = new Proxy(
-        {},
-        {
-          getPrototypeOf() {
-            throw new Error("trap");
-          },
-        },
-      );
-      expect(await failureMessage(() => expect(Promise.reject(hostileProxy)).rejects.toThrow())).toContain(
-        "did not throw",
-      );
-
-      // ...and a cyclic getPrototypeOf trap must not spin the prototype walk forever.
+      // A cyclic getPrototypeOf trap must not spin the prototype walk forever.
+      // (Jest's `instanceof Error` genuinely hangs on this, so it is bun-only.)
       const cyclicProxy = new Proxy(
         {},
         {

@@ -3819,31 +3819,33 @@ bool JSC__JSValue__isJestError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject
     if (!value.isObject())
         return false;
 
+    // Called from Rust through from_js_host_call_generic, which turns a pending
+    // exception into an Err; a ThrowScope's destructor would simulate a throw
+    // that no C++ caller is around to check. Same idiom as isInstanceOf below.
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* object = value.getObject();
 
     // A string Symbol.toStringTag overrides the builtin tag.
     JSC::JSValue tagValue = object->get(globalObject, vm.propertyNames->toStringTagSymbol);
-    CLEAR_IF_EXCEPTION(scope);
-    if (tagValue && tagValue.isString()) {
+    RETURN_IF_EXCEPTION(scope, {});
+    if (tagValue.isString()) {
         String tag = asString(tagValue)->value(globalObject);
-        CLEAR_IF_EXCEPTION(scope);
+        RETURN_IF_EXCEPTION(scope, {});
         if (tag == "Error"_s || tag == "Exception"_s || tag == "DOMException"_s)
             return true;
     }
 
     // `value instanceof Error`: does the prototype chain reach Error.prototype?
-    // A throwing Proxy getPrototypeOf trap yields an empty JSValue (hence `proto &&`),
-    // and a trap returning a cycle would otherwise spin forever (hence the depth bound).
+    // A Proxy getPrototypeOf trap returning a cycle would otherwise spin forever.
     JSC::JSValue proto = object->getPrototype(globalObject);
-    CLEAR_IF_EXCEPTION(scope);
-    for (unsigned depth = 0; proto && proto.isObject() && depth < 64; depth++) {
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned depth = 0; proto.isObject() && depth < 64; depth++) {
         JSC::JSCell* protoCell = proto.asCell();
         if (protoCell->inherits<JSC::ErrorPrototype>() || protoCell->type() == JSC::ErrorInstanceType)
             return true;
         proto = proto.getObject()->getPrototype(globalObject);
-        CLEAR_IF_EXCEPTION(scope);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return false;

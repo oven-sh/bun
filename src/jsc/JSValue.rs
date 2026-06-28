@@ -364,13 +364,13 @@ impl JSValue {
     }
     /// Jest's `isError` from `@jest/expect-utils`: `Object.prototype.toString.call(v)`
     /// is `[object Error|Exception|DOMException]`, or `v instanceof Error`.
-    /// Exceptions raised by user traps during the check are swallowed.
-    #[inline]
-    pub fn is_jest_error(self, global: &JSGlobalObject) -> bool {
+    /// Can throw: reads `Symbol.toStringTag` and walks `getPrototypeOf`, both of
+    /// which may run user traps.
+    pub fn is_jest_error(self, global: &JSGlobalObject) -> JsResult<bool> {
         if !self.is_cell() {
-            return false;
+            return Ok(false);
         }
-        JSC__JSValue__isJestError(self, global)
+        host_fn::from_js_host_call_generic(global, || JSC__JSValue__isJestError(self, global))
     }
     /// `JSValue.isError()` — true iff this is an
     /// `ErrorInstance` cell (does NOT match `Exception`).

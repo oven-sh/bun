@@ -824,7 +824,7 @@ impl Expect {
             if self.flags.get().promise() != Promise::None {
                 // Jest only counts a `.rejects`/`.resolves` settled value as "thrown"
                 // when it is an Error; any other value fails with "did not throw".
-                if value.is_jest_error(global_this) {
+                if value.is_jest_error(global_this)? {
                     return Ok((Some(value), return_value_from_function));
                 }
                 return Ok((None, value));
@@ -892,7 +892,7 @@ impl Expect {
         let Some(mut err_value_res) = err_value else { return Ok(None) };
         // Same predicate as get_value_as_to_throw: anything Jest counts as thrown
         // (e.g. DOMException, ResolveMessage) has its message read, not `undefined`.
-        if err_value_res.is_jest_error(global_this) {
+        if err_value_res.is_jest_error(global_this)? {
             let message: JSValue = err_value_res
                 .get_truthy(global_this, "message")?
                 .unwrap_or(JSValue::UNDEFINED);

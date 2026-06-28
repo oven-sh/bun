@@ -92,14 +92,25 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     // is never drained. Parent floods ~64 KiB messages; send() must flip to
     // false once queued bytes exceed the 128 KiB threshold instead of
     // buffering without bound.
-    const { promise: ready, resolve } = Promise.withResolvers<void>();
+    //
+    // The child only enters the busy-loop from the send() callback (which
+    // fires once "ready" has actually been written): the first send() lazily
+    // opens the IPC socket and, in advanced mode on Windows, queues a version
+    // packet behind an async uv_write, so "ready" would otherwise sit unsent
+    // forever once the event loop stops running.
+    const { promise: ready, resolve, reject } = Promise.withResolvers<void>();
     await using child = spawn({
-      cmd: [bunExe(), "-e", `process.send("ready"); const end = Date.now() + 120000; while (Date.now() < end) {}`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.send("ready", () => { const end = Date.now() + 10000; while (Date.now() < end) {} })`,
+      ],
       env: bunEnv,
       stdio: ["ignore", "ignore", "ignore"],
       serialization: mode,
       ipc: () => resolve(),
     });
+    child.exited.then(code => reject(new Error(`exited ${code} before ready`)));
     await ready;
     const payload = { s: Buffer.alloc(65536, "z").toString() };
     let trueCount = 0;
@@ -112,11 +123,10 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
       trueCount++;
     }
     child.kill("SIGKILL");
-    expect({ falseCount, total: trueCount + falseCount }).toEqual({
-      falseCount: 1,
-      total: trueCount + 1,
-    });
-    expect(trueCount).toBeLessThan(500);
+    // Exactly one send() must have returned false (the loop breaks on it).
+    // trueCount is included so a regression's failure output shows how many
+    // sends went through before the loop gave up.
+    expect(`true=${trueCount} false=${falseCount}`).toMatch(/^true=\d+ false=1$/);
   });
 });
 

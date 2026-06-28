@@ -23,13 +23,21 @@ describe("send() returns false when the IPC write queue backs up", () => {
   // The parent floods ~64 KiB messages until send() returns false (or gives
   // up after 500 sends, ~32 MiB). Printed as "true=N false=M" so the
   // assertion shows the actual split on failure.
+  //
+  // The child only enters the busy-loop from the send() callback (which fires
+  // once "ready" has actually been written), not immediately after the call:
+  // the first send() lazily opens the IPC socket and, in advanced mode on
+  // Windows, queues a version packet behind an async uv_write, so "ready"
+  // would otherwise sit unsent forever once the event loop stops running.
   const fixture = `
     const cp = require("child_process");
     if (process.argv[2] === "--child") {
-      process.send("ready");
-      const end = Date.now() + 120000;
-      while (Date.now() < end) {}
-      process.exit(0);
+      process.send("ready", () => {
+        const end = Date.now() + 10000;
+        while (Date.now() < end) {}
+        process.exit(0);
+      });
+      return;
     }
     const child = cp.fork(__filename, ["--child"], { serialization: process.argv[2] });
     child.on("message", () => {
@@ -61,7 +69,6 @@ describe("send() returns false when the IPC write queue backs up", () => {
     // The count of true returns before that depends on the kernel socket
     // buffer size, so only the false count is fixed.
     expect(stdout.trim()).toMatch(/^true=\d+ false=1$/);
-    expect(stdout.trim()).not.toBe("true=500 false=0");
     expect(exitCode).toBe(0);
   });
 
@@ -76,15 +83,17 @@ describe("send() returns false when the IPC write queue backs up", () => {
         const path = require("path");
         const resultPath = path.join(__dirname, "result.txt");
         const child = cp.fork(path.join(__dirname, "child.js"), [resultPath]);
-        child.send("go");
-        // Spin synchronously until the child has written its result. The
-        // event loop does not run during sync fs calls, so the IPC socket is
-        // never read here.
-        const deadline = Date.now() + 30000;
-        while (!fs.existsSync(resultPath) && Date.now() < deadline) {}
-        process.stdout.write(fs.readFileSync(resultPath, "utf8"));
-        child.kill("SIGKILL");
-        child.on("close", () => process.exit(0));
+        // Enter the busy-spin only once "go" has actually been written (the
+        // send callback fires on write completion), then never yield again.
+        // The event loop does not run during sync fs calls, so the IPC
+        // socket is never read here.
+        child.send("go", () => {
+          const deadline = Date.now() + 15000;
+          while (!fs.existsSync(resultPath) && Date.now() < deadline) {}
+          process.stdout.write(fs.existsSync(resultPath) ? fs.readFileSync(resultPath, "utf8") : "");
+          child.kill("SIGKILL");
+          child.on("close", () => process.exit(0));
+        });
       `,
       "child.js": `
         const fs = require("fs");
@@ -96,7 +105,11 @@ describe("send() returns false when the IPC write queue backs up", () => {
             if (process.send(payload) === false) { f++; break; }
             t++;
           }
-          fs.writeFileSync(resultPath, "true=" + t + " false=" + f + "\\n");
+          // writeFileSync is open(O_CREAT) + write + close, so the parent's
+          // existsSync spin could observe the name before the bytes land.
+          // Publish atomically with a rename instead.
+          fs.writeFileSync(resultPath + ".tmp", "true=" + t + " false=" + f + "\\n");
+          fs.renameSync(resultPath + ".tmp", resultPath);
           process.exit(0);
         });
       `,

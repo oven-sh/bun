@@ -1154,4 +1154,43 @@ describe("inbound flow control (RFC 9113 §6.9)", () => {
       raw.close();
     }
   });
+
+  // The server-side consequence of consumption-driven windows. RFC 9113 §8.1: a server that sent
+  // a complete response and never consumed the request body MUST tell the client to stop sending
+  // it, via RST_STREAM(NO_ERROR). Without it, an upload larger than the stream window deadlocks:
+  // the server will never re-open a window nothing is reading. Node closes the stream from
+  // Http2Stream[kMaybeDestroy] in exactly this case.
+  test("a server that responds without reading the request body resets the stream with NO_ERROR", async () => {
+    const srv = http2.createServer();
+    srv.on("stream", stream => {
+      // Respond without ever touching the request body: no data listener, no resume, no pipe.
+      setImmediate(() => {
+        stream.respond({ ":status": 400 });
+        stream.end();
+      });
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // HPACK static-table request block (RFC 7541 appendix A): `:method POST` (3), `:path /` (4),
+      // `:scheme http` (6) as indexed fields, plus `:authority` (name index 1) as a
+      // literal-without-indexing with a 9-octet non-Huffman value.
+      const request = Buffer.concat([Buffer.from([0x83, 0x84, 0x86, 0x01, 0x09]), Buffer.from("localhost")]);
+      // END_HEADERS only, no END_STREAM: the request body is still incoming and is never sent.
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, request);
+
+      const headers = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
+      // The reset follows the complete response, it does not replace it.
+      expect(c.frames.indexOf(headers)).toBeLessThan(c.frames.indexOf(rst));
+      expect(c.frames.some(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0)).toBe(true);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
 });

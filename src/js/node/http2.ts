@@ -369,6 +369,10 @@ const kRequestHeaders = Symbol("requestHeaders");
 let priorityDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
+// True once Http2Stream._read has run at least once, i.e. something is reading this stream.
+// node keeps the same flag (kState.didRead); it gates both the Readable read-ahead and the
+// server-side "responded without consuming the request body" reset below.
+const kDidRead = Symbol("didRead");
 const kNeverAnnounced = Symbol("neverAnnounced");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
@@ -2095,9 +2099,33 @@ function rstNextTick(id: number, rstCode: number) {
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
 }
+// 'finish' handler registered from _final (node: Http2Stream[kMaybeDestroy], server branch).
+// RFC 9113 8.1: a server that sent a complete response (any trailers included: _final resolves
+// the wantTrailers path before the writable can finish) and never attempted to read the request
+// body closes the stream with RST_STREAM(NO_ERROR) so the client stops uploading. Without the
+// reset an upload larger than the stream's receive window deadlocks: the server will never
+// consume the body, so it never re-opens the window. node defers to setImmediate so pushStreams
+// submitted from the same tick reach the wire first; we match.
+function maybeResetUnreadRequest() {
+  const session = this[bunHTTP2Session];
+  if (
+    session != null &&
+    session.type === NGHTTP2_SESSION_SERVER &&
+    (this[bunHTTP2StreamStatus] & StreamState.Closed) === 0 &&
+    this.headersSent &&
+    !this[kDidRead] &&
+    this.readableFlowing === null
+  ) {
+    setImmediate(resetUnreadRequestNT, this);
+  }
+}
+function resetUnreadRequestNT(stream: ServerHttp2Stream) {
+  // The stream may have closed naturally in the meantime (the peer finished or reset it).
+  if (!stream.closed && !stream.destroyed) stream.close(NGHTTP2_NO_ERROR);
+}
 class Http2Stream extends Duplex {
   #id: number;
-  #didRead: boolean = false;
+  [kDidRead]: boolean = false;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
   [bunHTTP2StreamFinal]: VoidFunction | null = null;
   [bunHTTP2StreamStatus]: number = 0;
@@ -2432,6 +2460,10 @@ class Http2Stream extends Duplex {
       const native = session[bunHTTP2Native];
       if (native) {
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+        // The writable side is shutting down at the protocol level. Once it finishes, a server
+        // stream that sent a complete response without ever consuming the request body must
+        // reset the stream (node registers the same hook from its afterShutdown).
+        this.once("finish", maybeResetUnreadRequest);
         // When waitForTrailers is active, writing an empty DATA frame with
         // close=true emits a bare empty DATA frame (flags=0) to the wire
         // before the trailer/noTrailers path runs, which then emits ANOTHER
@@ -2481,9 +2513,9 @@ class Http2Stream extends Duplex {
     // HTTP/2 receive window, granting back bytes that arrived while nothing was reading (node's
     // handle.readStart()). A pending request has no wire stream yet; the _read triggered by its
     // first delivered chunk runs with the id assigned.
-    if (!this.#didRead) {
+    if (!this[kDidRead]) {
       this._readableState.readingMore = false;
-      this.#didRead = true;
+      this[kDidRead] = true;
     }
     const id = this.#id;
     if (id) this[bunHTTP2Session]?.[bunHTTP2Native]?.readStart(id);

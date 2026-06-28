@@ -4985,22 +4985,12 @@ impl H2FrameParser {
         data.len()
     }
 
-    /// Create (or fetch) the bookkeeping entry for `stream_identifier`, updating the
-    /// last-stream-id high-water marks. Returns the heap-allocated entry (owned by the
-    /// `streams` map) and whether it was just created.
+    /// Create (or fetch) the bookkeeping entry for `stream_identifier`. Returns the heap-allocated
+    /// entry (owned by the `streams` map) and whether it was just created. The stream-id
+    /// high-water marks stay with the callers: they advance on different events.
     fn register_stream(&self, stream_identifier: u32, state: StreamState) -> (*mut Stream, bool) {
         if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
             return (stream, false);
-        }
-
-        if stream_identifier > self.last_stream_id.get() {
-            self.last_stream_id.set(stream_identifier);
-        }
-        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
-        if stream_identifier % 2 == peer_parity
-            && stream_identifier > self.last_peer_stream_id.get()
-        {
-            self.last_peer_stream_id.set(stream_identifier);
         }
 
         let local_window_size = if self.outstanding_settings.get() > 0 {
@@ -5034,6 +5024,16 @@ impl H2FrameParser {
         let (stream, is_new) = self.register_stream(stream_identifier, StreamState::OPEN);
         if !is_new {
             return Some(stream);
+        }
+
+        if stream_identifier > self.last_stream_id.get() {
+            self.last_stream_id.set(stream_identifier);
+        }
+        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
+        if stream_identifier % 2 == peer_parity
+            && stream_identifier > self.last_peer_stream_id.get()
+        {
+            self.last_peer_stream_id.set(stream_identifier);
         }
 
         let Some(this_value) = self.strong_this.get().try_get() else {
@@ -5713,6 +5713,11 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // getStreamState) see it like any other stream. A client can never send on a promised
         // stream (RFC 9113 §5.1: reserved (remote)), so its sending half starts closed.
         self.register_stream(promised_id, StreamState::HALF_CLOSED_LOCAL);
+        // A client GOAWAY carries the highest server-initiated id it acted on (§6.8). The local
+        // high-water mark is left alone: request ids stay dense like node's, pushes don't skip them.
+        if promised_id > self.last_peer_stream_id.get() {
+            self.last_peer_stream_id.set(promised_id);
+        }
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
         self.rewrite_pending_push.set(promised_id);
@@ -6841,10 +6846,9 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            // Streams the legacy bookkeeping never registered (e.g. peer-initiated pushed streams
-            // surfaced by the rewrite engine) get the RST_STREAM written directly. The frame is
-            // built here rather than through the engine so this stays callable from inside an
-            // engine dispatch (the engine cell may already be borrowed).
+            // Streams whose entry was already evicted get the RST_STREAM written directly. The
+            // frame is built here rather than through the engine so this stays callable from
+            // inside an engine dispatch (the engine cell may already be borrowed).
             //
             // A NO_ERROR reset for an unknown id is always a no-op: it reaches here from the
             // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed

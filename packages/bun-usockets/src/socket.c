@@ -182,14 +182,6 @@ static void us_internal_connecting_socket_detach(struct us_connecting_socket_t *
 }
 
 void us_connecting_socket_free(struct us_connecting_socket_t *c) {
-    /* Neutralize the address list: a connect_timer tick already queued in the
-     * current ready-poll batch still dereferences `c` (valid until
-     * us_internal_free_closed_sockets below) and must not start new connects
-     * on a connecting socket that is done. A still-armed timer is closed there
-     * as well, after the batch, NOT here: closing it from inside another
-     * poll's dispatch would free a timer whose own tick may still be pending
-     * in the same kqueue batch. */
-    c->addrinfo_head = NULL;
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration
     us_internal_connecting_socket_detach(c, c->loop);
@@ -200,12 +192,6 @@ void us_connecting_socket_free(struct us_connecting_socket_t *c) {
 void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->closed) return;
     c->closed = 1;
-    /* Neutralize the address list BEFORE Bun__addrinfo_freeRequest (which may
-     * free the result buffer addrinfo_head points into) and before
-     * us_dispatch_connecting_error runs user JS. That JS can re-enter the
-     * event loop; a connect_timer tick dispatched from the inner tick must
-     * not read a dangling list or start connects on a closed socket. */
-    c->addrinfo_head = NULL;
     for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
         us_internal_socket_group_unlink_socket(s->group, s);
 

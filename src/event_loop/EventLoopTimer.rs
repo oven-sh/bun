@@ -205,6 +205,8 @@ pub enum Tag {
     CronJob,
     GcOneShot,
     GcRepeating,
+    /// RFC 8305 happy-eyeballs connection-attempt delay on `FetchTasklet`.
+    FetchConnectAttempt,
 }
 
 impl Tag {

@@ -146,7 +146,7 @@ test.skipIf(skip)(
 );
 
 test.skipIf(skip)(
-  "an armed per-attempt timer is torn down on both the success and the abort path",
+  "a live first address succeeds from the initial batch and an abort with attempts still pending tears down cleanly",
   async () => {
     const { out, stderr, exitCode, signal } = await runFixture(/* js */ `
       using server = Bun.serve({
@@ -159,12 +159,11 @@ test.skipIf(skip)(
       for (const ip of dead) blackhole(ip, port);
 
       // (A) Live address FIRST, 5 addresses. The connect succeeds from the
-      // initial CONCURRENT_CONNECTIONS (4) batch, so the connecting socket is
-      // retired while the 300 ms attempt timer is still armed and has NEVER
-      // ticked (one address is left untried). The deferred us_timer_close in
-      // us_internal_free_closed_sockets is the only thing that reaps it; if it
-      // leaked, its next tick would dereference the freed connecting socket.
-      // This is the most common production shape for a >4-address hostname.
+      // initial CONCURRENT_CONNECTIONS (4) batch, so the request settles with
+      // one address still untried and its per-attempt work still pending.
+      // That pending work must be torn down with the request: a stale attempt
+      // ticking afterwards would start spurious connects or crash. This is
+      // the most common production shape for a >4-address hostname.
       const hostA = "he-first-" + port + ".test";
       seedOrFail(hostA, ["127.0.0.100", ...dead.slice(0, 4)]);
       const resA = await fetch("http://" + hostA + ":" + port + "/", {
@@ -172,11 +171,10 @@ test.skipIf(skip)(
       });
       const a = { ok: true, body: await resA.text() };
 
-      // (B) Every address blackholed; abort at 700 ms with the timer still
-      // armed and addresses untried. This exercises us_connecting_socket_close
-      // with a live timer, and it keeps the event loop alive well past (A)'s
-      // 300 ms timer deadline, so a timer leaked by (A) fires here and its
-      // use-after-free of the freed connecting socket aborts the process
+      // (B) Every address blackholed; abort at 700 ms with attempts still in
+      // flight and addresses still untried. The abort must win promptly and
+      // cleanly. It also keeps the event loop alive well past (A)'s request,
+      // so any per-attempt work (A) leaked would surface here as a crash
       // under the ASAN build.
       const hostB = "he-abort-" + port + ".test";
       seedOrFail(hostB, dead);

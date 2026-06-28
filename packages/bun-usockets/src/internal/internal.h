@@ -332,16 +332,6 @@ struct us_connecting_socket_t {
     uint16_t port;
     int error;
     struct addrinfo *addrinfo_head;
-    /* RFC 8305 connection-attempt delay: fires while the first batch of
-     * concurrent connects is still in EINPROGRESS (blackholed SYN) and starts
-     * the next untried address instead of waiting for kernel SYN-retry
-     * exhaustion. Lifetime: the timer's own callback may close it (its
-     * ready_polls slot has already been consumed). No OTHER callback may: when
-     * the connecting socket is retired with the timer still armed, the close is
-     * deferred to us_internal_free_closed_sockets, after the dispatch batch,
-     * because kqueue's us_timer_close does not scrub a still-pending same-batch
-     * timer event the way us_poll_stop does for fds. */
-    struct us_timer_t *connect_timer;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
     struct us_connecting_socket_t* prev_pending;

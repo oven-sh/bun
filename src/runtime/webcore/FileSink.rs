@@ -975,8 +975,9 @@ impl FileSink {
     }
 
     /// Credit one accepted chunk's emitted UTF-8 length into `received_bytes`.
-    /// `Wrote`/`Pending` mean the writer took the whole chunk (buffering any
-    /// remainder); `Done`/`Err` mean it took nothing.
+    /// `Wrote`/`Pending` mean the writer took the whole chunk, buffering any
+    /// remainder. A `Done(n)` is an EOF mid-chunk whose `n` can include a drain
+    /// of already-credited buffered bytes, so it (and `Err`) credits nothing.
     fn count_received(&self, rc: &WriteResult, emitted_len: usize) {
         if matches!(rc, WriteResult::Wrote(_) | WriteResult::Pending(_)) {
             self.received_bytes

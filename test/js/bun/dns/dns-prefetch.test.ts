@@ -49,8 +49,9 @@ describe("dns.prefetch", () => {
 
     const currentStats = dns.getCacheStats();
     dns.prefetch("localhost", server.port);
-    await Bun.sleep(32);
 
+    // No wait is needed: the fetch cannot connect until the prefetched DNS
+    // resolution lands, and the check below accepts an inflight or completed hit.
     // Must set keepalive: false to ensure it doesn't reuse the socket.
     await fetch(url, { method: "HEAD", redirect: "manual", keepalive: false });
     const newStats = dns.getCacheStats();

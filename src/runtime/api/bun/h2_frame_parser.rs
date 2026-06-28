@@ -8846,9 +8846,20 @@ impl H2FrameParser {
             stream.weight = u16::from(weight);
         }
         // `signal_arg` already passed `AbortSignal::from_js` above; re-derive from the rooted value.
+        // Re-check `aborted()`: the header encode loops can run arbitrary JS (a header value's
+        // toString) which can abort the signal after the pre-encode check, and attaching an
+        // already-aborted signal fires its listener synchronously, which would write RST_STREAM
+        // for a stream the peer has never seen and re-enter the `stream` held `&mut` here.
+        let mut abort_after_write: Option<JSValue> = None;
         if let Some(signal_ptr) = signal.and_then(AbortSignal::from_js) {
             // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal` on the stack.
-            stream.attach_signal(this, unsafe { &mut *signal_ptr });
+            let signal_ = unsafe { &mut *signal_ptr };
+            if signal_.aborted() {
+                abort_after_write =
+                    Some(Bun__wrapAbortError(global_object, signal_.abort_reason()));
+            } else {
+                stream.attach_signal(this, signal_);
+            }
         }
 
         let mut length: usize = encoded_size;
@@ -8936,6 +8947,12 @@ impl H2FrameParser {
             };
             let _ = frame.write(&mut writer);
 
+            // RFC 7540 §6.2: whenever PADDED is set the Pad Length octet is the FIRST payload
+            // byte, before the optional priority fields.
+            if padding != 0 {
+                let _ = writer.write_all(&[padding]);
+            }
+
             // Write priority data if present
             if has_priority {
                 let stream_identifier = UInt31WithReserved::init(parent.unwrap_or(0), exclusive);
@@ -8946,27 +8963,17 @@ impl H2FrameParser {
                 let _ = priority_data.write(&mut writer);
             }
 
-            // Handle padding
             if padding != 0 {
-                if encoded_headers
-                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
-                    .is_err()
-                {
+                if encoded_headers.try_reserve(padding as usize).is_err() {
                     return Err(
                         global_object.throw(format_args!("Failed to allocate padding buffer"))
                     );
                 }
                 // Zero-fill the padding region (RFC 7540 §6.2: padding octets MUST be zero) and
                 // ensure the slice we hand to writer covers only initialized bytes.
-                encoded_headers.resize(encoded_size + padding_overhead, 0);
-                let buffer = encoded_headers.as_mut_slice();
-                // memmove: shift right by 1 to make room for the pad-length byte
-                buffer.copy_within(0..encoded_size, 1);
-                buffer[0] = padding;
-                let _ = writer.write_all(buffer);
-            } else {
-                let _ = writer.write_all(&encoded_headers);
+                encoded_headers.resize(encoded_size + padding as usize, 0);
             }
+            let _ = writer.write_all(&encoded_headers);
         } else {
             bun_output::scoped_log!(
                 H2FrameParser,
@@ -9024,6 +9031,14 @@ impl H2FrameParser {
 
                 offset += chunk_size;
             }
+        }
+
+        // The signal aborted while user JS ran inside the header encode. The block is already
+        // committed to the shared encoder so the HEADERS frame had to go out; now abort the
+        // stream, exactly like an abort that arrives one tick after request() returns.
+        if let Some(reason) = abort_after_write {
+            this.abort_stream(&mut stream, reason);
+            return Ok(JSValue::js_number(stream_id as f64));
         }
 
         if end_stream {

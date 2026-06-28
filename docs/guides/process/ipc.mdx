@@ -54,7 +54,7 @@ process.on("message", message => {
 
 ---
 
-All messages are serialized using the JSC `serialize` API, which allows for the same set of [transferrable types](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) supported by `postMessage` and `structuredClone`, including strings, typed arrays, streams, and objects.
+All messages are serialized using the JSC `serialize` API, which allows for the same set of [transferable types](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) supported by `postMessage` and `structuredClone`, including strings, typed arrays, streams, and objects.
 
 ```ts child.ts icon="/icons/typescript.svg"
 // send a string

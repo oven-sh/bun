@@ -149,7 +149,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./app";
 
 const root = (import.meta.hot.data.root ??= createRoot(elem));
-root.render(<App />); // re-use an existing root
+root.render(<App />); // reuse an existing root
 ```
 
 In production, `data` is inlined to be `{}`, meaning it cannot be used as a state holder.
@@ -187,7 +187,7 @@ This can be used to clean up resources that were created when the module was loa
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import { something } from "./something";
 
-// Initialize or re-use a WebSocket connection
+// Initialize or reuse a WebSocket connection
 export const ws = (import.meta.hot.data.ws ??= new WebSocket(location.origin));
 
 // If the module's import is removed, clean up the WebSocket connection.

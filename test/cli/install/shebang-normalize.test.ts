@@ -7,13 +7,8 @@ import { bunExe, bunEnv as env, isPosix, isWindows, runBunInstall, tempDirWithFi
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/31387
-// The Windows bin-shim shebang parser (`BinLinkingShim::parse`) only runs on
-// Windows during `bun install`, so drive it directly through the testing
-// binding to assert `env -S` (and the joined `-Sbun`) don't end up as the
-// launcher program. Without the fix, the launcher kept the `-S` token and the
-// shim tried to spawn `-S`, failing with `interpreter executable "-S" not found`.
-// Namespace import so the binding being absent surfaces as a per-test
-// assertion failure rather than a module-load error.
+// `BinLinkingShim::parse` only runs on Windows during `bun install`; drive it
+// via the testing binding (namespace import so an absent binding fails the test).
 test.each([
   ["#!/usr/bin/env -S bun --no-env-file\n", "bun --no-env-file", true],
   ["#!/usr/bin/env -S node --experimental-vm-modules\n", "node --experimental-vm-modules", true],
@@ -143,9 +138,7 @@ test("bun install handles `#!/usr/bin/env -S bun ...` shebangs in bin scripts", 
   expect(installExit).toBe(0);
 
   // Invoke the installed bin through `bun run`. On Windows this goes through
-  // the generated `.bunx` shim — which is exactly the code path the fix
-  // changes. Previously this would fail with
-  // `interpreter executable "-S" not found in %PATH%`.
+  // the generated `.bunx` shim — exactly the code path the fix changes.
   await using run = spawn({
     cmd: [bunExe(), "run", "env-dash-s-pkg"],
     cwd: consumer,

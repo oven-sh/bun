@@ -142,8 +142,8 @@ describe("expect()", () => {
   });
 
   // `.resolves` / `.rejects` accept any thenable (duck-typed `.then`), not only
-  // Promise instances. `.rejects` also accepts a function returning a promise.
-  test("resolves accepts a thenable", async () => {
+  // Promise instances. Both also accept a function returning a promise or thenable.
+  test("resolves accepts a thenable and a function returning a promise", async () => {
     await expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(42) }).resolves.toBe(42);
     await expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(42) }).resolves.not.toBe(43);
 
@@ -158,6 +158,11 @@ describe("expect()", () => {
         Promise.resolve({ rows: [1, 2] }).then(onFulfilled, onRejected),
     }).resolves.toEqual({ rows: [1, 2] });
 
+    // a function returning a promise or thenable
+    await expect(() => Promise.resolve(1)).resolves.toBe(1);
+    await expect(async () => "from async fn").resolves.toBe("from async fn");
+    await expect(() => ({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(1) })).resolves.toBe(1);
+
     if (isBun) {
       // a thenable that rejects is still a `.resolves` failure
       await expectFailure(() =>
@@ -165,10 +170,18 @@ describe("expect()", () => {
           then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected(new Error("nope")),
         }).resolves.toBe(1),
       ).toThrow();
-      // `.resolves` does not call functions (only `.rejects` does)
-      await expectFailure(() => expect(ANY(() => Promise.resolve(1))).resolves.toBe(1)).toThrow();
+      // a function returning a non-promise is still a usage error
+      await expectFailure(() => expect(ANY(() => 42)).resolves.toBe(42)).toThrow();
       // a plain object without a callable `.then` is still rejected
       await expectFailure(() => expect(ANY({ then: 1 })).resolves.toBe(1)).toThrow();
+      // a function that throws synchronously propagates its error (it is not a resolution)
+      await expectFailure(() =>
+        expect(
+          ANY(() => {
+            throw new Error("sync throw");
+          }),
+        ).resolves.toBe(1),
+      ).toThrow("sync throw");
     }
   });
 

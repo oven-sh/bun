@@ -401,9 +401,10 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                // Jest's `.rejects` accepts a function returning a promise or thenable;
-                // call it first. The usage error below reports the original `value`.
-                let received = if resolution == Promise::Rejects && value.is_callable() {
+                // Jest's `.resolves` and `.rejects` both accept a function returning a
+                // promise or thenable; call it first and await what it returns. The usage
+                // error below still reports the original `value`.
+                let received = if value.is_callable() {
                     value.call(global_this, JSValue::UNDEFINED, &[])?
                 } else {
                     value
@@ -482,10 +483,6 @@ impl Expect {
                 } else {
                     if !silent {
                         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-                        let expected = match resolution {
-                            Promise::Rejects => "Expected promise or a function returning a promise",
-                            _ => "Expected promise",
-                        };
                         return Err(Self::throw_pretty_matcher_error(
                             global_this,
                             custom_label,
@@ -493,7 +490,7 @@ impl Expect {
                             matcher_params,
                             flags,
                             format_args!(
-                                "{expected}<r>\nReceived: <red>{}<r>\n",
+                                "Expected a promise or a function returning a promise<r>\nReceived: <red>{}<r>\n",
                                 value.to_fmt(&mut formatter),
                             ),
                         ));

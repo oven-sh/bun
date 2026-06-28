@@ -1322,7 +1322,26 @@ impl<'a, 'log> Parser<'a, 'log> {
         Ok((run, run >= 3))
     }
 
-    /// Returns (decoded bytes, is_ascii).
+    /// Copies the borrowed prefix `src[start..end]` into a buffer the first
+    /// time decoding has to diverge from the source bytes.
+    fn materialize<'b>(
+        bump: &'a Bump,
+        src: &'a [u8],
+        start: usize,
+        end: usize,
+        buf: &'b mut Option<ArenaVec<'a, u8>>,
+    ) -> &'b mut ArenaVec<'a, u8> {
+        if buf.is_none() {
+            let mut b: ArenaVec<'a, u8> = ArenaVec::with_capacity_in(end - start + 16, bump);
+            b.extend_from_slice(&src[start..end]);
+            *buf = Some(b);
+        }
+        buf.as_mut().expect("just set")
+    }
+
+    /// Returns (decoded bytes, is_ascii). The content borrows the source
+    /// until an escape, CRLF normalization, or quote-run handling forces a
+    /// copy — most strings have neither.
     fn parse_basic_string(&mut self, multiline: bool) -> PResult<(&'a [u8], bool)> {
         let open_pos = self.pos;
         self.pos += if multiline { 3 } else { 1 };
@@ -1336,7 +1355,8 @@ impl<'a, 'log> Parser<'a, 'log> {
             }
         }
 
-        let mut buf: ArenaVec<'a, u8> = ArenaVec::with_capacity_in(0, self.bump);
+        let start = self.pos;
+        let mut buf: Option<ArenaVec<'a, u8>> = None;
         let mut is_ascii = true;
         loop {
             if self.at_eof() {
@@ -1346,19 +1366,32 @@ impl<'a, 'log> Parser<'a, 'log> {
             match c {
                 b'"' => {
                     if !multiline {
+                        let text = match buf {
+                            Some(b) => b.into_bump_slice(),
+                            None => &self.src[start..self.pos],
+                        };
                         self.pos += 1;
-                        return Ok((buf.into_bump_slice(), is_ascii));
+                        return Ok((text, is_ascii));
                     }
                     let (run, closes) = self.quote_run_close(b'"')?;
                     if closes {
-                        for _ in 0..run - 3 {
-                            buf.push(b'"');
-                        }
+                        let extra = run - 3;
+                        let text = match buf.take() {
+                            Some(mut b) => {
+                                for _ in 0..extra {
+                                    b.push(b'"');
+                                }
+                                b.into_bump_slice()
+                            }
+                            None => &self.src[start..self.pos + extra],
+                        };
                         self.pos += run;
-                        return Ok((buf.into_bump_slice(), is_ascii));
+                        return Ok((text, is_ascii));
                     }
-                    for _ in 0..run {
-                        buf.push(b'"');
+                    if let Some(b) = &mut buf {
+                        for _ in 0..run {
+                            b.push(b'"');
+                        }
                     }
                     self.pos += run;
                 }
@@ -1376,6 +1409,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                             _ => false,
                         };
                         if at_line_end {
+                            Self::materialize(self.bump, self.src, start, self.pos, &mut buf);
                             self.pos = i;
                             loop {
                                 match self.peek() {
@@ -1387,7 +1421,8 @@ impl<'a, 'log> Parser<'a, 'log> {
                             continue;
                         }
                     }
-                    self.parse_escape(&mut buf, &mut is_ascii)?;
+                    let b = Self::materialize(self.bump, self.src, start, self.pos, &mut buf);
+                    self.parse_escape(b, &mut is_ascii)?;
                 }
                 b'\n' => {
                     if !multiline {
@@ -1396,20 +1431,25 @@ impl<'a, 'log> Parser<'a, 'log> {
                             b"Unterminated string; newlines must be escaped in basic strings",
                         ));
                     }
-                    buf.push(b'\n');
+                    if let Some(b) = &mut buf {
+                        b.push(b'\n');
+                    }
                     self.pos += 1;
                 }
                 b'\r' => {
                     if multiline && self.peek_at(self.pos + 1) == b'\n' {
                         // CRLF normalizes to LF in multi-line strings.
-                        buf.push(b'\n');
+                        Self::materialize(self.bump, self.src, start, self.pos, &mut buf)
+                            .push(b'\n');
                         self.pos += 2;
                     } else {
                         return Err(self.err(self.pos, BARE_CR));
                     }
                 }
                 b'\t' => {
-                    buf.push(b'\t');
+                    if let Some(b) = &mut buf {
+                        b.push(b'\t');
+                    }
                     self.pos += 1;
                 }
                 c if c < 0x20 || c == 0x7F => {
@@ -1421,7 +1461,9 @@ impl<'a, 'log> Parser<'a, 'log> {
                     if c >= 0x80 {
                         is_ascii = false;
                     }
-                    buf.push(c);
+                    if let Some(b) = &mut buf {
+                        b.push(c);
+                    }
                     self.pos += 1;
                 }
             }

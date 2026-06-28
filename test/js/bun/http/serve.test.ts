@@ -1359,6 +1359,8 @@ describe("should support Content-Range with Bun.file()", () => {
       async server => {
         const response = await fetch(server.url.origin);
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        // A `.slice()` has no resolved total, so the range is reported as `*`.
+        expect(response.headers.get("content-range")).toBe("bytes 0-9/*");
         expect(response.status).toBe(206);
       },
     );
@@ -1375,6 +1377,7 @@ describe("should support Content-Range with Bun.file()", () => {
         const response = await fetch(server.url.origin);
         expect(response.headers.get("x-custom")).toBe("1");
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        expect(response.headers.get("content-range")).toBeNull();
         expect(response.status).toBe(200);
       },
     );
@@ -1396,6 +1399,7 @@ describe("should support Content-Range with Bun.file()", () => {
         const response = await fetch(server.url.origin);
         expect(response.headers.get("x-custom")).toBe("1");
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        expect(response.headers.get("content-range")).toBeNull();
         expect(response.status).toBe(200);
       },
     );

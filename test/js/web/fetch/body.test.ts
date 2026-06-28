@@ -56,6 +56,22 @@ const utf8 = [
   },
 ];
 
+// Body types whose extracted Blob carries a Content-Type that the
+// Request/Response headers must reflect.
+const bodyContentTypeCases: Array<[label: string, makeBody: () => BodyInit, pattern: RegExp]> = [
+  [
+    "FormData",
+    () => {
+      const f = new FormData();
+      f.append("n", "V");
+      return f;
+    },
+    /^multipart\/form-data; boundary=/,
+  ],
+  ["URLSearchParams", () => new URLSearchParams({ a: "b" }), /^application\/x-www-form-urlencoded/],
+  ["Blob with type", () => new Blob(["x"], { type: "application/json" }), /^application\/json/],
+];
+
 for (const { body, fn } of bodyTypes) {
   describe(body.name, () => {
     describe("constructor", () => {
@@ -665,21 +681,7 @@ for (const { body, fn } of bodyTypes) {
     // Content-Type (multipart boundary, urlencoded, blob type) must be the
     // same whether the body or the headers is read first.
     describe("content-type survives reading the body before the headers", () => {
-      const cases: Array<[string, () => BodyInit, RegExp]> = [
-        [
-          "FormData",
-          () => {
-            const f = new FormData();
-            f.append("n", "V");
-            return f;
-          },
-          /^multipart\/form-data; boundary=/,
-        ],
-        ["URLSearchParams", () => new URLSearchParams({ a: "b" }), /^application\/x-www-form-urlencoded/],
-        ["Blob with type", () => new Blob(["x"], { type: "application/json" }), /^application\/json/],
-      ];
-
-      for (const [label, makeBody, pattern] of cases) {
+      for (const [label, makeBody, pattern] of bodyContentTypeCases) {
         for (const consume of ["arrayBuffer", "bytes", "text", "blob"] as const) {
           test(`${label} via .${consume}()`, async () => {
             const obj = fn(makeBody());
@@ -701,12 +703,22 @@ for (const { body, fn } of bodyTypes) {
           });
         }
 
-        // json()/formData() may reject (the body is not valid for them);
+        // json() rejects for these non-JSON bodies but still consumes them;
         // the header must be intact regardless of how the call settled.
-        for (const consume of ["json", "formData"] as const) {
-          test(`${label} via .${consume}()`, async () => {
+        test(`${label} via .json()`, async () => {
+          const obj = fn(makeBody());
+          await obj.json().catch(() => {});
+          expect(obj.headers.get("content-type")).toMatch(pattern);
+        });
+
+        // formData() must actually parse the multipart / urlencoded body. The
+        // typed Blob is excluded: its formData() rejects on the MIME check
+        // before consuming the body, so nothing new would be observed.
+        if (label !== "Blob with type") {
+          test(`${label} via .formData()`, async () => {
             const obj = fn(makeBody());
-            await obj[consume]().catch(() => {});
+            const parsed = await obj.formData();
+            expect(Array.from(parsed.keys())).toHaveLength(1);
             expect(obj.headers.get("content-type")).toMatch(pattern);
           });
         }
@@ -741,30 +753,35 @@ for (const { body, fn } of bodyTypes) {
 
 // fetch(request) extracts the body Blob directly, without going through the
 // BodyMixin body-consuming methods. The user-held Request's headers must still
-// carry the multipart boundary afterwards, and it must be the boundary that
-// was actually sent on the wire.
-test("Request content-type survives fetch(request) and matches the wire", async () => {
-  const { promise, resolve } = Promise.withResolvers<{ contentType: string | null; body: string }>();
-  await using server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      resolve({ contentType: req.headers.get("content-type"), body: await req.text() });
-      return new Response("ok");
-    },
-  });
+// carry the body-derived Content-Type afterwards (it is what a proxy or
+// middleware forwards), and it must match what was actually sent on the wire.
+describe("Request content-type survives fetch(request) and matches the wire", () => {
+  for (const [label, makeBody, pattern] of bodyContentTypeCases) {
+    test(label, async () => {
+      const { promise, resolve } = Promise.withResolvers<{ contentType: string | null; body: string }>();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          resolve({ contentType: req.headers.get("content-type"), body: await req.text() });
+          return new Response("ok");
+        },
+      });
 
-  const fd = new FormData();
-  fd.append("n", "V");
-  const req = new Request(server.url, { method: "POST", body: fd });
-  const res = await fetch(req);
-  expect(await res.text()).toBe("ok");
+      const req = new Request(server.url, { method: "POST", body: makeBody() });
+      const res = await fetch(req);
+      expect(await res.text()).toBe("ok");
 
-  const received = await promise;
-  const ct = req.headers.get("content-type");
-  expect(ct).toMatch(/^multipart\/form-data; boundary=/);
-  expect(received.contentType).toBe(ct);
-  const boundary = ct!.slice("multipart/form-data; boundary=".length);
-  expect(received.body).toContain("--" + boundary);
+      const received = await promise;
+      const ct = req.headers.get("content-type");
+      expect(ct).toMatch(pattern);
+      expect(received.contentType).toBe(ct);
+      if (label === "FormData") {
+        const boundary = ct!.slice("multipart/form-data; boundary=".length);
+        expect(boundary.length).toBeGreaterThan(0);
+        expect(received.body).toContain("--" + boundary);
+      }
+    });
+  }
 });
 
 // Responses fetched from data:, file:, and blob: URLs derive their Content-Type

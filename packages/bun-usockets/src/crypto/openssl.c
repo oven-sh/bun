@@ -1306,6 +1306,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
   s->ssl_shutdown_after_spill = 0;
+  s->ssl_close_after_spill = 0;
   s->ssl_in_use = 0;
   s->ssl_pending_detach = 0;
   s->ssl_pending_close_code = 0;
@@ -1549,17 +1550,30 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
 }
 
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
-  ssl_release_spill(s->group->loop, s);
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Reaching ssl_set_loop_data /
      * SSL_do_handshake here would re-enter BoringSSL on the same SSL* while
      * the outer ssl_run_handshake is still on the stack; defer to the SSL
-     * driver's epilogue (the same protocol close_raw and ssl_detach honor). */
+     * driver's epilogue (the same protocol close_raw and ssl_detach honor),
+     * releasing the spill now so the re-issued close cannot itself defer. */
+    ssl_release_spill(s->group->loop, s);
     s->ssl_pending_detach = 1;
     s->ssl_pending_close_code = (unsigned char) code;
     return s;
   }
+  /* node's `_handle.close()` (FAST_SHUTDOWN, no reason) must not cut off spilled
+   * ciphertext already reported as written: SSL sealed it, so it can only be
+   * delivered, never re-sent. Mirror ssl_shutdown_after_spill; defer at most once. */
+  if (code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN && !reason
+      && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
+    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
+      s->ssl_close_after_spill = 1;
+      return s;
+    }
+  }
+  ssl_release_spill(s->group->loop, s);
   /* SEMI_SOCKET never connected — SSL was attached eagerly on the fast-path
    * connect, but no bytes were ever exchanged. Firing on_handshake(0) here
    * lands in JS after onConnectError already tore down `this`/its handlers. */
@@ -1721,6 +1735,10 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
       s->ssl_shutdown_after_spill = 0;
       us_internal_ssl_shutdown(s);
       if (ssl_gone(s)) return s;
+    }
+    if (s->ssl_close_after_spill) {
+      s->ssl_close_after_spill = 0;
+      return us_internal_ssl_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
     }
   }
   ssl_update_handshake(s);

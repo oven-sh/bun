@@ -1192,6 +1192,193 @@ it("does not write body bytes for null body statuses", async () => {
   }
 });
 
+describe("response framing", () => {
+  type RawResponse = { statusLine: string; headerNames: string[]; headers: Record<string, string>; body: string };
+  // Read the raw response so that `Content-Length: 0` and an absent
+  // Content-Length are distinguishable (fetch normalizes the two cases away),
+  // and so body bytes smuggled after a no-body status's header block show up.
+  async function rawRequest(port: number, method: string): Promise<RawResponse> {
+    const received: Buffer[] = [];
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+    await using connection = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+        },
+        end() {
+          resolve();
+        },
+        error(socket, error) {
+          reject(error);
+        },
+        close() {
+          resolve();
+        },
+      },
+    });
+    connection.write(`${method} / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    connection.flush();
+    await promise;
+    const raw = Buffer.concat(received).toString();
+    const headEnd = raw.indexOf("\r\n\r\n");
+    const headLines = raw.slice(0, headEnd).split("\r\n");
+    const headers: Record<string, string> = {};
+    for (const line of headLines.slice(1)) {
+      const colon = line.indexOf(":");
+      headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
+    }
+    return {
+      statusLine: headLines[0],
+      headerNames: Object.keys(headers),
+      headers,
+      body: raw.slice(headEnd + 4),
+    };
+  }
+
+  // https://github.com/oven-sh/bun/issues/20676
+  // RFC 9110 8.6: a server MUST NOT send a Content-Length header field in any
+  // response with a status code of 1xx or 204. The Response constructor only
+  // accepts 101 out of the 1xx range, so that is the 1xx witness.
+  describe.each(["GET", "HEAD"])("%s", method => {
+    it.each([101, 204])("a %i response carries no Content-Length header", async status => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(null, { status }),
+      });
+      const { statusLine, headerNames } = await rawRequest(server.port, method);
+      expect(statusLine).toStartWith(`HTTP/1.1 ${status} `);
+      expect(headerNames).not.toContain("content-length");
+      expect(headerNames).not.toContain("transfer-encoding");
+    });
+
+    // 205 MUST indicate a zero-length body (RFC 9110 15.3.6) and 304 MAY carry
+    // a Content-Length (RFC 9110 15.4.5) -- both keep the explicit 0.
+    it.each([205, 304])("a %i response keeps Content-Length: 0", async status => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(null, { status }),
+      });
+      const { statusLine, headerNames } = await rawRequest(server.port, method);
+      expect(statusLine).toStartWith(`HTTP/1.1 ${status} `);
+      expect(headerNames).toContain("content-length");
+    });
+  });
+
+  // RFC 9112 6.3 terminates a 1xx/204/304 at the blank line after the header
+  // fields, so a stray Response body desyncs keep-alive. `render` already drops
+  // it on the `fetch` path; the static `routes:` path must too.
+  describe.each(["routes", "fetch"] as const)("%s: a Response body on a null-body status is dropped", kind => {
+    const cases: [status: number, method: string, contentLength: string | null][] = [
+      [101, "GET", null],
+      [101, "HEAD", null],
+      [204, "GET", null],
+      [204, "HEAD", null],
+      [205, "GET", "0"],
+      [205, "HEAD", "0"],
+      [304, "GET", "0"],
+      [304, "HEAD", "0"],
+    ];
+    it.each(cases)("%i %s", async (status, method, contentLength) => {
+      const makeResponse = () => new Response("data", { status });
+      using server = Bun.serve(
+        kind === "routes"
+          ? {
+              port: 0,
+              hostname: "127.0.0.1",
+              routes: { "/": makeResponse() },
+              fetch: () => new Response("unreachable", { status: 500 }),
+            }
+          : { port: 0, hostname: "127.0.0.1", fetch: makeResponse },
+      );
+      const { statusLine, headers, body } = await rawRequest(server.port, method);
+      expect({
+        statusLine: statusLine.slice(0, 12),
+        contentLength: headers["content-length"] ?? null,
+        body,
+      }).toEqual({ statusLine: `HTTP/1.1 ${status}`, contentLength, body: "" });
+    });
+  });
+
+  // `FileRoute` ships its body via sendfile / `HttpResponse::write()`, neither
+  // of which goes through `internalEnd`, so it needs its own null-body-status
+  // drop. 101 is the one null-body status its bodiless list was missing.
+  it.each(["GET", "HEAD"])("a Bun.file route on a null-body status serves no body bytes (%s)", async method => {
+    using dir = tempDir("framing-file-route", { "f.bin": "data" });
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/": new Response(Bun.file(join(String(dir), "f.bin")), { status: 101 }) },
+      fetch: () => new Response("unreachable", { status: 500 }),
+    });
+    const { statusLine, headers, body } = await rawRequest(server.port, method);
+    expect({ statusLine: statusLine.slice(0, 12), contentLength: headers["content-length"] ?? null, body }).toEqual({
+      statusLine: "HTTP/1.1 101",
+      contentLength: null,
+      body: "",
+    });
+  });
+
+  // RFC 9110 9.3.2: a HEAD response carries the same header fields a GET of
+  // the same target would have, minus the body. Each body form below used to
+  // derive HEAD's framing from a different source than GET's.
+  describe("HEAD mirrors GET", () => {
+    type Framing = { status: number; contentLength: string | null; transferEncoding: string | null; body: string };
+    async function framing(makeResponse: () => Response) {
+      using server = Bun.serve({ port: 0, fetch: () => makeResponse() });
+      const results: Record<string, Framing> = {};
+      for (const method of ["GET", "HEAD"]) {
+        const response = await fetch(server.url, { method });
+        results[method] = {
+          status: response.status,
+          contentLength: response.headers.get("content-length"),
+          transferEncoding: response.headers.get("transfer-encoding"),
+          body: await response.text(),
+        };
+      }
+      return results;
+    }
+
+    it("a handler-supplied Content-Length loses to the body's byte count on HEAD, same as GET", async () => {
+      const { GET, HEAD } = await framing(() => new Response("hi", { headers: { "Content-Length": "999" } }));
+      expect(GET).toEqual({ status: 200, contentLength: "2", transferEncoding: null, body: "hi" });
+      expect(HEAD).toEqual({ status: 200, contentLength: "2", transferEncoding: null, body: "" });
+    });
+
+    it("a handler-supplied Transfer-Encoding loses to the body's framing on HEAD, same as GET", async () => {
+      const { GET, HEAD } = await framing(() => new Response("hi", { headers: { "Transfer-Encoding": "chunked" } }));
+      expect(GET).toEqual({ status: 200, contentLength: "2", transferEncoding: null, body: "hi" });
+      expect(HEAD).toEqual({ status: 200, contentLength: "2", transferEncoding: null, body: "" });
+    });
+
+    // A null-body Response carries no framing of its own, so the
+    // handler-supplied Content-Length is the only description of what GET
+    // would have sent. HEAD handlers rely on that (issue #15355).
+    it("a handler-supplied Content-Length on a null body is still forwarded on HEAD", async () => {
+      const { GET, HEAD } = await framing(() => new Response(null, { headers: { "Content-Length": "999" } }));
+      expect(GET).toEqual({ status: 200, contentLength: "0", transferEncoding: null, body: "" });
+      expect(HEAD).toEqual({ status: 200, contentLength: "999", transferEncoding: null, body: "" });
+    });
+
+    it("a body on a no-body status is dropped from HEAD's framing, same as GET", async () => {
+      const { GET, HEAD } = await framing(() => new Response("body", { status: 204 }));
+      expect(GET).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
+      expect(HEAD).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
+    });
+
+    it("a handler-supplied Content-Length on a 204 is dropped on HEAD, same as GET", async () => {
+      const { GET, HEAD } = await framing(
+        () => new Response(null, { status: 204, headers: { "Content-Length": "999" } }),
+      );
+      expect(GET).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
+      expect(HEAD).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
+    });
+  });
+});
+
 it("should support multiple Set-Cookie headers", async () => {
   await runTest(
     {

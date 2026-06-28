@@ -433,7 +433,17 @@ impl ReadableStream {
             .reader()
             .from(buffered_reader, ctx_ptr.cast::<c_void>());
 
-        source.to_readable_stream(global_this)
+        let stream = source.to_readable_stream(global_this)?;
+
+        // The transferred poll's owner now points into this box; root the
+        // wrapper before JS can GC it. `on_start` skips a second ref via the
+        // same `waiting_for_on_reader_done` flag; `on_reader_done` releases.
+        if !source.context.reader().is_done() {
+            source.context.waiting_for_on_reader_done.set(true);
+            source.increment_count();
+        }
+
+        Ok(stream)
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {

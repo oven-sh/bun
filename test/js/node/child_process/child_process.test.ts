@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -57,6 +58,72 @@ describe("ChildProcess.spawn()", () => {
       proc.kill();
     });
     expect(result).toBe(true);
+  });
+
+  // `errors` collects every "error" the child emits, including ones emitted by
+  // kill() after the awaited lifecycle events, and is asserted empty.
+  it("kill() on a running process returns true and sets .killed", async () => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+    const errors: unknown[] = [];
+    child.on("error", err => errors.push(err));
+    await once(child, "spawn");
+    const closed = once(child, "close");
+    try {
+      expect(child.killed).toBe(false);
+      expect(child.kill(0)).toBe(true);
+      expect(child.kill()).toBe(true);
+      expect(child.killed).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+    }
+    await closed;
+    expect(errors).toEqual([]);
+  });
+
+  it("kill() after the process has exited returns false and does not set .killed", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { stdio: "ignore", env: bunEnv });
+    const errors: unknown[] = [];
+    child.on("error", err => errors.push(err));
+    await once(child, "close");
+
+    expect({
+      exitCode: child.exitCode,
+      "kill()": child.kill(),
+      "kill(0)": child.kill(0),
+      "kill('SIGTERM')": child.kill("SIGTERM"),
+      killed: child.killed,
+      errors,
+    }).toEqual({
+      exitCode: 0,
+      "kill()": false,
+      "kill(0)": false,
+      "kill('SIGTERM')": false,
+      killed: false,
+      errors: [],
+    });
+  });
+
+  it("kill() after the process was killed returns false but .killed stays true", async () => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: bunEnv });
+    const errors: unknown[] = [];
+    child.on("error", err => errors.push(err));
+    await once(child, "spawn");
+    const closed = once(child, "close");
+    expect(child.kill()).toBe(true);
+    expect(child.killed).toBe(true);
+    await closed;
+
+    expect({
+      "kill()": child.kill(),
+      "kill(0)": child.kill(0),
+      killed: child.killed,
+      errors,
+    }).toEqual({
+      "kill()": false,
+      "kill(0)": false,
+      killed: true,
+      errors: [],
+    });
   });
 });
 
@@ -354,6 +421,20 @@ describe("spawnSync()", () => {
     const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
     expect(isValidSemver(stdout.trim())).toBe(true);
   });
+
+  it.if(isLinux)("detached: true starts the child in a new process group", () => {
+    // /proc/self/stat field 5 is pgrp; parse after the last ')' since comm may contain spaces.
+    const pgrp = (stat: string) => stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2];
+    const childPgid = (detached: boolean) =>
+      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" }).stdout);
+    const parentPgid = pgrp(fs.readFileSync("/proc/self/stat", "utf8"));
+
+    expect(parentPgid).toMatch(/^\d+$/);
+    expect(childPgid(false)).toBe(parentPgid);
+    const detachedPgid = childPgid(true);
+    expect(detachedPgid).toMatch(/^\d+$/);
+    expect(detachedPgid).not.toBe(parentPgid);
+  });
 });
 
 describe("execFileSync()", () => {
@@ -608,4 +689,42 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
+});
+
+// For fd 0-2, "ignore" opens /dev/null. For fd >= 3, Node leaves the fd
+// closed; Bun used to open /dev/null on the slot, so children probing
+// "is fd N open?" observed a different answer than under Node.
+it.if(!isWindows)("stdio[i] = 'ignore' for i >= 3 leaves the fd closed in the child", async () => {
+  // Portable open/closed probe via shell redirection: redirecting a closed
+  // fd fails with EBADF. Uses "true" (not ":") because redirection errors on
+  // POSIX special built-ins abort the shell.
+  const probe = `
+for fd in 0 3 4 5; do
+  if { true >&$fd; } 2>/dev/null || { true <&$fd; } 2>/dev/null; then
+    echo "fd$fd=OPEN"
+  else
+    echo "fd$fd=CLOSED"
+  fi
+done
+`;
+
+  // fd 3 and 4 are ignored; fd 5 is a pipe so the close-range floor is
+  // above the ignored slots and cannot mask the bug.
+  const stdio = ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe"] as const;
+  const expected = ["fd0=OPEN", "fd3=CLOSED", "fd4=CLOSED", "fd5=OPEN"];
+
+  const sync = spawnSync("sh", ["-c", probe], { stdio: [...stdio], env: bunEnv });
+  expect(sync.stderr?.toString()).toBe("");
+  expect(sync.stdout?.toString().trim().split("\n")).toEqual(expected);
+  expect(sync.status).toBe(0);
+
+  // Async spawn goes through the same native path.
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const child = spawn("sh", ["-c", probe], { stdio: [...stdio], env: bunEnv });
+  let out = "";
+  child.stdout!.on("data", d => (out += d));
+  child.on("error", reject);
+  child.on("close", () => resolve(out));
+  const asyncOut = await promise;
+  expect(asyncOut.trim().split("\n")).toEqual(expected);
 });

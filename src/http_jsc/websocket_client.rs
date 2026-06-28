@@ -2464,13 +2464,16 @@ pub enum ReceiveState {
 }
 
 /// Map a status code received in a Close frame to the `(wire echo, JS dispatch)`
-/// pair. RFC 6455 §7.4.1: codes outside the legal on-wire set (`<1000`, the
-/// reserved `1004`–`1006`, and `1016`–`2999`) are a protocol error, so JS sees
-/// 1002. §7.1.5: the JS-visible code is otherwise the received one. The wire
-/// echo acknowledges a 1001 ("going away") with a normal-closure frame.
+/// pair. RFC 6455 §7.4.1-§7.4.2: codes outside the legal on-wire set (`<1000`,
+/// the reserved `1004`–`1006` and `1015`–`2999`, and the undefined `>4999`) are
+/// a protocol error, so JS sees 1002. §7.1.5: the JS-visible code is otherwise
+/// the received one. The wire echo acknowledges a 1001 ("going away") with a
+/// normal-closure frame.
 fn received_close_codes(received: u16) -> (u16, u16) {
-    let is_invalid =
-        received < 1000 || (1004..1007).contains(&received) || (1016..=2999).contains(&received);
+    let is_invalid = received < 1000
+        || (1004..1007).contains(&received)
+        || (1015..=2999).contains(&received)
+        || received > 4999;
     let dispatch = if is_invalid { 1002 } else { received };
     let echo = if dispatch == 1001 { 1000 } else { dispatch };
     (echo, dispatch)

@@ -421,6 +421,15 @@ pub struct HTTPClientResult<'a> {
     pub is_http2: bool,
 
     pub fail: Option<bun_core::Error>,
+    /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
+    /// 0 otherwise. Lets the JS side report the resolver error (`ENOTFOUND`,
+    /// ...) with `syscall`/`hostname` instead of a generic connect failure.
+    pub dns_error: i32,
+    /// Owned copy of the hostname the failed lookup was for (the proxy's
+    /// when one is configured, else the post-redirect target). Owned so the
+    /// JS side never dereferences the client's borrowed URL buffers, which
+    /// the HTTP thread frees after the result callback returns.
+    pub dns_hostname: Option<Box<[u8]>>,
 
     /// Owns the response metadata aka headers, url and status code
     pub metadata: Option<HTTPResponseMetadata>,
@@ -478,6 +487,8 @@ impl<'a> HTTPClientResult<'a> {
             can_stream: self.can_stream,
             is_http2: self.is_http2,
             fail: self.fail,
+            dns_error: self.dns_error,
+            dns_hostname: self.dns_hostname,
             metadata: self.metadata,
             body_size: self.body_size,
             certificate_info: self.certificate_info,
@@ -998,6 +1009,29 @@ pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> 
     // SAFETY: same single-thread invariant as http_thread(). Every call site
     // is a per-statement reborrow (audited in r3); no two `&mut` overlap.
     unsafe { (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) }
+}
+
+/// Remove every abort-tracker entry whose stored socket is `socket`.
+///
+/// Backstop for the per-client `unregister_abort_tracker()` calls: when
+/// `Handler::on_close` fires on a socket whose ext has already been retagged
+/// to `DeadSocket`/`PooledSocket`, the client/session dispatch is skipped and
+/// any stale entry would survive into `us_internal_free_closed_sockets`,
+/// leaving `drain_queued_shutdowns` to dereference freed memory on a later
+/// abort. O(n) over live abortable requests; no-op on a `Detached` socket.
+pub(crate) fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
+    if socket.is_detached() {
+        return;
+    }
+    let tracker = abort_tracker();
+    let mut i = 0usize;
+    while i < tracker.count() {
+        if *tracker.values()[i].socket() == socket {
+            let _ = tracker.swap_remove_at(i);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// Returns the hostname to use for TLS SNI and certificate verification.
@@ -1899,6 +1933,10 @@ impl<'a> HTTPClient<'a> {
 
         if self.allow_retry
             && self.method.is_idempotent()
+            // Only a Bytes body can be rebuilt from `original_request_body`.
+            // Stream/Sendfile bodies are consumed as they are written, so a
+            // retry would silently replay a truncated request.
+            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
         {
@@ -1928,8 +1966,25 @@ impl<'a> HTTPClient<'a> {
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
     }
 
-    pub fn on_connect_error(&mut self) {
-        bun_core::scoped_log!(fetch, "onConnectError  {}\n", BStr::new(self.url.href));
+    /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
+    /// lookup itself failed; 0 for a connect failure past name resolution.
+    pub fn on_connect_error(&mut self, dns_error: i32) {
+        bun_core::scoped_log!(
+            fetch,
+            "onConnectError  {} dns_error={}\n",
+            BStr::new(self.url.href),
+            dns_error
+        );
+        if dns_error != 0 {
+            self.state.dns_error = dns_error;
+            // `connected_url.hostname` is the exact name the connect resolved
+            // (the proxy's when one is set, else the post-redirect `url`), set
+            // by `HTTPContext::connect` and valid for the connect attempt.
+            // Copy it: the JS side outlives this client's borrowed URL buffers.
+            self.state.dns_hostname = Some(self.connected_url.hostname.into());
+            self.fail(err!(DNSResolveFailed));
+            return;
+        }
         self.fail(err!(ConnectionRefused));
     }
 
@@ -2102,7 +2157,20 @@ impl<'a> HTTPClient<'a> {
     pub fn header_str(&self, ptr: StringPointer) -> &'a [u8] {
         // Reborrow at `'a` so the returned slice doesn't tie up `&self`.
         let buf: &'a [u8] = self.header_buf;
-        &buf[ptr.offset as usize..][..ptr.length as usize]
+        let end = (ptr.offset as usize).wrapping_add(ptr.length as usize);
+        // Match `Headers::as_str`: return empty on a desynced `header_entries`
+        // / `header_buf` rather than slice-panicking on the HTTP thread.
+        debug_assert!(
+            end <= buf.len() && ptr.offset as usize <= end,
+            "HTTPClient::header_str: StringPointer {{ offset: {}, length: {} }} out of range for header_buf of length {}",
+            ptr.offset,
+            ptr.length,
+            buf.len(),
+        );
+        if end > buf.len() || ptr.offset as usize > end {
+            return b"";
+        }
+        &buf[ptr.offset as usize..end]
     }
 
     pub fn build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
@@ -2882,6 +2950,15 @@ impl<'a> HTTPClient<'a> {
 
     pub fn write_to_stream<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>, data: &[u8]) {
         bun_core::scoped_log!(fetch, "flushStream");
+        // Never write body bytes before the request headers: drain_queued_writes can
+        // reach this via the not-yet-opened socket start_() puts in the abort tracker,
+        // and request_sent_len still indexes headers. on_writable's Body arm re-flushes.
+        if !matches!(
+            self.state.request_stage,
+            RequestStage::Body | RequestStage::ProxyBody
+        ) {
+            return;
+        }
         // reshaped for borrowck — copy out the Copy bits we need
         // (`upgrade_state`, the stream-buffer NonNull, `ended`) so the
         // `&mut self.state.original_request_body` borrow is dropped before any
@@ -2908,6 +2985,12 @@ impl<'a> HTTPClient<'a> {
         let was_empty = buffer.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
+            //
+            // An earlier flush already drained the terminating 0\r\n\r\n, so
+            // the request message is complete. Mark the stage Done for the
+            // keep-alive / redirect pooling gates, matching the
+            // `ended && !has_backpressure` exit below.
+            self.state.request_stage = RequestStage::Done;
             stream_buffer.release();
             self.request_stream_detach();
             if upgrade_state == HTTPUpgradeState::Upgraded {
@@ -3891,6 +3974,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -3902,6 +3987,8 @@ impl<'a> HTTPClient<'a> {
                 r.can_stream,
                 r.is_http2,
                 r.fail,
+                r.dns_error,
+                r.dns_hostname,
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
@@ -3947,14 +4034,21 @@ impl<'a> HTTPClient<'a> {
             // wire, which the server then mis-parses. The redirect path
             // (do_redirect) already gates on request_stage == Done for exactly
             // this reason; mirror that gate here for the non-redirect
-            // completion path. `request_stage` alone is insufficient because
-            // a fully-sent small request parks at `.body` (see on_writable),
-            // so for byte-buffer bodies check the unsent slice instead.
-            // Stream/Sendfile are left as-is (they don't track an
-            // unsent slice here).
+            // completion path. `request_stage` alone is insufficient for
+            // byte-buffer bodies because a fully-sent small request parks at
+            // `.body` (see on_writable), so check the unsent slice instead.
+            //
+            // For a Stream the socket carries an incomplete chunked message
+            // (no terminating 0\r\n\r\n), so a pooled reuse writes the next
+            // request's line and credential headers INTO that body (RFC 9112
+            // section 9.3: the client must close instead). Both of
+            // write_to_stream's stream-complete exits set request_stage =
+            // Done, so Done is the reliable signal for Stream and Sendfile.
             let request_side_drained = match &self.state.original_request_body {
                 HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
-                _ => true,
+                HTTPRequestBody::Stream(_) | HTTPRequestBody::Sendfile(_) => {
+                    self.state.request_stage == RequestStage::Done
+                }
             };
 
             // The uSockets paused bit survives `state.reset()`; never hand a
@@ -4036,6 +4130,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -4079,6 +4175,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -4090,6 +4188,8 @@ impl<'a> HTTPClient<'a> {
                 r.can_stream,
                 r.is_http2,
                 r.fail,
+                r.dns_error,
+                r.dns_hostname,
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
@@ -4117,6 +4217,8 @@ impl<'a> HTTPClient<'a> {
             can_stream,
             is_http2,
             fail,
+            dns_error,
+            dns_hostname,
             metadata,
             body_size,
             certificate_info,
@@ -4281,6 +4383,8 @@ impl<'a> HTTPClient<'a> {
                 body: body_out::opt_mut(self.state.body_out_str),
                 redirected: self.flags.redirected,
                 fail: self.state.fail,
+                dns_error: self.state.dns_error,
+                dns_hostname: self.state.dns_hostname.take(),
                 // check if we are reporting cert errors, do not have a fail state and we are not done
                 has_more: certificate_info.is_some()
                     || (self.state.fail.is_none() && !self.state.is_done()),
@@ -4297,6 +4401,8 @@ impl<'a> HTTPClient<'a> {
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
+            dns_error: self.state.dns_error,
+            dns_hostname: self.state.dns_hostname.take(),
             // check if we are reporting cert errors, do not have a fail state and we are not done
             has_more: certificate_info.is_some()
                 || (self.state.fail.is_none() && !self.state.is_done()),

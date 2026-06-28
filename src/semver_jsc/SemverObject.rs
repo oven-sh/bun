@@ -89,8 +89,15 @@ pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
         return Ok(JSValue::FALSE);
     }
 
-    let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
-    if left_result.wildcard != query::token::Wildcard::None {
+    // node-semver trims the version and requires the whole remainder to parse:
+    // an invalid version ("1.2.3.4", "", "1.2.3 x") never satisfies any range
+    // instead of being truncated or coerced to 0.0.0 and matched anyway.
+    let left_trimmed = strings::trim_spaces(left.slice());
+    let left_result = Version::parse(SlicedString::init(left.slice(), left_trimmed));
+    if !left_result.valid
+        || left_result.wildcard != query::token::Wildcard::None
+        || left_result.len as usize != left_trimmed.len()
+    {
         return Ok(JSValue::FALSE);
     }
 

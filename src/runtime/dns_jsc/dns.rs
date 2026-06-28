@@ -3013,9 +3013,8 @@ pub mod internal {
         // `length` is JS-controlled and a sparse array can claim an arbitrarily
         // large one; cap it before the native allocation below.
         if count > 64 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "addresses has too many entries (max 64)"
-            )));
+            return Err(global
+                .throw_invalid_arguments(format_args!("addresses has too many entries (max 64)")));
         }
 
         let mut results: Box<[MaybeUninit<ResultEntry>]> = Box::new_uninit_slice(count);

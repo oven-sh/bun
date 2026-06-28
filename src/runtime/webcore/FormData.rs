@@ -7,8 +7,8 @@ use bun_jsc::{
     AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
     ZigStringJsc as _,
 };
-use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
+use std::borrow::Cow;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
@@ -79,28 +79,16 @@ impl AsyncFormDataExt for AsyncFormData {
     }
 }
 
-/// Raw slice into the input buffer. Not using `bun.Semver.String` because
-/// file bodies are binary data that can contain null bytes, which
-/// Semver.String's inline storage treats as terminators.
+/// Raw slices into the input buffer (`filename` may instead borrow a per-entry
+/// percent-decode buffer). Not `bun.Semver.String` because the bytes are
+/// binary and can contain null bytes, which its inline storage treats as
+/// terminators.
 pub struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
-    pub filename: bun_semver::String,
-    pub content_type: bun_semver::String,
+    pub filename: &'a [u8],
+    pub content_type: &'a [u8],
     pub is_file: bool,
-    pub zero_count: u8,
-}
-
-impl Default for Field<'_> {
-    fn default() -> Self {
-        Field {
-            value: b"",
-            filename: bun_semver::String::default(),
-            content_type: bun_semver::String::default(),
-            is_file: false,
-            zero_count: 0,
-        }
-    }
 }
 
 pub enum FieldEntry<'a> {
@@ -216,18 +204,18 @@ pub fn to_js_from_multipart_data(
     }
 
     impl<'a> Wrapper<'a> {
-        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
+        fn on_entry(wrap: &mut Self, name: &[u8], field: &Field<'_>) {
             let value_str: &[u8] = field.value;
-            let key = ZigString::init_utf8(name.slice(buf));
+            let key = ZigString::init_utf8(name);
 
             if field.is_file {
-                let filename_str = field.filename.slice(buf);
+                let filename_str = field.filename;
 
                 let mut blob = Blob::create(value_str, wrap.global, false);
                 let filename = ZigString::init_utf8(filename_str);
 
                 if !field.content_type.is_empty() {
-                    let ct = field.content_type.slice(buf);
+                    let ct = field.content_type;
                     blob.content_type
                         .set(crate::webcore::blob::BlobContentType::Owned(ct.into()));
                     blob.content_type_was_set.set(true);
@@ -292,10 +280,9 @@ pub fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
-    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field<'_>, &[u8]),
+    mut iterator: impl FnMut(&mut C, &[u8], &Field<'_>),
 ) -> crate::Result<()> {
     let mut slice = input;
-    let subslicer = SlicedString::init(input, input);
 
     let mut buf = [0u8; 76];
     {
@@ -334,12 +321,12 @@ pub fn for_each_multipart_entry<C>(
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
-        let mut field = Field::default();
-        let mut name = bun_semver::String::default();
-        let mut filename: Option<bun_semver::String> = None;
+        let mut name: &[u8] = b"";
+        let mut filename: Option<&[u8]> = None;
+        let mut content_type: &[u8] = b"";
         let mut header_chunk = header;
         let mut is_file = false;
-        while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
+        while !header_chunk.is_empty() && (filename.is_none() || name.is_empty()) {
             let line_end = strings::index_of(header_chunk, b"\r\n")
                 .ok_or(crate::Error::IsMissingHeaderLineEnd)?;
             let line = &header_chunk[..line_end];
@@ -389,9 +376,9 @@ pub fn for_each_multipart_entry<C>(
                     }
 
                     if strings::eql_case_insensitive_ascii(eql_key, b"name", true) {
-                        name = subslicer.sub(field_value).value();
+                        name = field_value;
                     } else if strings::eql_case_insensitive_ascii(eql_key, b"filename", true) {
-                        filename = Some(subslicer.sub(field_value).value());
+                        filename = Some(field_value);
                         is_file = true;
                     }
 
@@ -406,7 +393,7 @@ pub fn for_each_multipart_entry<C>(
                     }
                 }
             } else if !value.is_empty()
-                && field.content_type.is_empty()
+                && content_type.is_empty()
                 && strings::eql_case_insensitive_ascii(key, b"content-type", true)
             {
                 let trimmed = strings::trim(value, b"; \t");
@@ -420,12 +407,12 @@ pub fn for_each_multipart_entry<C>(
                     .iter()
                     .all(|&b| b == b'\t' || (0x20..=0x7E).contains(&b))
                 {
-                    field.content_type = subslicer.sub(trimmed).value();
+                    content_type = trimmed;
                 }
             }
         }
 
-        if name.len() + field.zero_count as usize == 0 {
+        if name.is_empty() {
             continue;
         }
 
@@ -433,12 +420,43 @@ pub fn for_each_multipart_entry<C>(
         if body.ends_with(b"\r\n") {
             body = &body[..body.len() - 2];
         }
-        field.value = body;
-        field.filename = filename.unwrap_or_default();
-        field.is_file = is_file;
 
-        iterator(ctx, name, &field, input);
+        // The serializer percent-escapes `"`, CR and LF in entry names and
+        // filenames; the parse algorithm undoes that.
+        let name = decode_multipart_name(name);
+        let filename = filename.map(decode_multipart_name);
+        let field = Field {
+            value: body,
+            filename: filename.as_deref().unwrap_or_default(),
+            content_type,
+            is_file,
+        };
+
+        iterator(ctx, &name, &field);
     }
 
     Ok(())
+}
+
+/// Replaces `%0A`/`%0D`/`%22` (hex digits case-insensitive) in a
+/// `Content-Disposition` name or filename with LF, CR and `"`.
+/// <https://andreubotella.github.io/multipart-form-data/#parse-a-multipart-form-data-name>
+fn decode_multipart_name(raw: &[u8]) -> Cow<'_, [u8]> {
+    if !strings::contains_char(raw, b'%') {
+        return Cow::Borrowed(raw);
+    }
+
+    let mut decoded = Vec::with_capacity(raw.len());
+    let mut remain = raw;
+    while !remain.is_empty() {
+        let (byte, advance) = match remain {
+            [b'%', b'0', b'A' | b'a', ..] => (b'\n', 3),
+            [b'%', b'0', b'D' | b'd', ..] => (b'\r', 3),
+            [b'%', b'2', b'2', ..] => (b'"', 3),
+            _ => (remain[0], 1),
+        };
+        decoded.push(byte);
+        remain = &remain[advance..];
+    }
+    Cow::Owned(decoded)
 }

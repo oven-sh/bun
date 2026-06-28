@@ -44,6 +44,10 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 flush: false,
                 quote_strings: true,
             };
+            // A thrown/non-primitive `toString` leaves a pending JS exception.
+            // Clear it (termination excepted, which stays pending to tear the VM
+            // down) so the next format and the caller's throw don't trip
+            // assertNoException. Mirrors `JSGlobalObject::throw_pretty`.
             if JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
@@ -53,9 +57,8 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 fmt_options,
             )
             .is_err()
-                && !global_this.clear_exception_except_termination()
             {
-                return Err(fmt::Error);
+                let _ = global_this.clear_exception_except_termination();
             }
 
             if JestPrettyFormat::format(
@@ -67,9 +70,8 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 fmt_options,
             )
             .is_err()
-                && !global_this.clear_exception_except_termination()
             {
-                return Err(fmt::Error);
+                let _ = global_this.clear_exception_except_termination();
             }
         }
 

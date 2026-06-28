@@ -2413,7 +2413,13 @@ mod posix_impl {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), 0, mask, Tag::stat)
+        statx_impl(
+            Fd::from_native(libc::AT_FDCWD),
+            Some(path),
+            0,
+            mask,
+            Tag::stat,
+        )
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {

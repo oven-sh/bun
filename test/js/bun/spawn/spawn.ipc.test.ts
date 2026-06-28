@@ -104,6 +104,43 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
+  rawInjection("a payload that is not V8-serialized closes the channel instead of hanging", async () => {
+    // Every V8-serialized payload starts with the 0xFF format-version
+    // marker. An advanced-mode peer speaking a different protocol -- in
+    // particular an older bun, whose advanced mode opened with the private
+    // version packet [0x01, 0x01, 0x00, 0x00, 0x00] -- would otherwise be
+    // misread as a ~16 MB big-endian length that never arrives, leaving both
+    // sides waiting forever. The child injects exactly those bytes and then
+    // stays alive; the parent must notice the bad frame on its own and close
+    // the channel (observed as a `disconnect` event) rather than hang.
+    using dir = tempDir("ipc-adv-badframe", {
+      "parent.cjs": /* js */ `
+        const { fork } = require("child_process");
+        const child = fork(require("path").join(__dirname, "inject.cjs"), [], {
+          execPath: process.execPath, execArgv: [], serialization: "advanced", stdio: "ignore",
+        });
+        child.on("message", m => console.error("UNEXPECTED_IPC_MESSAGE", JSON.stringify(m)));
+        child.on("disconnect", () => {
+          console.log("DISCONNECTED");
+          child.kill();
+        });
+      `,
+      "inject.cjs": /* js */ `
+        require("fs").writeSync(3, Buffer.from([0x01, 0x01, 0x00, 0x00, 0x00]));
+        setInterval(() => {}, 1000);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "parent.cjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "DISCONNECTED", exitCode: 0 });
+  });
+
   it("a deeply nested message is a catchable RangeError, not a stack overflow", async () => {
     // The serializer recurses once per nesting level of the message, so it
     // must bound recursion by the native stack and throw, exactly like Node.

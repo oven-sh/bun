@@ -345,6 +345,18 @@ mod advanced {
 
         log!("Received advanced IPC message of len {}", message_len);
 
+        // Every V8-serialized payload starts with the 0xFF format-version
+        // marker. A peer speaking a different protocol (such as an older bun
+        // whose advanced mode used a private 5-byte framing) would otherwise
+        // be misread as a multi-megabyte big-endian length and leave both
+        // sides waiting forever: the exact silent hang this wire format
+        // change exists to eliminate. Reject the frame as soon as its first
+        // payload byte is visible so the mismatch closes the channel instead.
+        if message_len != 0 && data.len() > HEADER_LENGTH && data[HEADER_LENGTH] != 0xFF {
+            log!("Advanced IPC payload does not start with V8's format marker");
+            return Err(IPCDecodeError::InvalidFormat);
+        }
+
         // Compare against the remaining bytes so a peer-controlled
         // `message_len` close to u32::MAX cannot wrap `HEADER_LENGTH +
         // message_len` into a small value that passes the bounds check.

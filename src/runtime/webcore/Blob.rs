@@ -5355,7 +5355,9 @@ pub fn write_file_internal(
                         locked.readable.get(global_this)
                     });
                     if let Some(readable) = readable_opt {
-                        if readable.is_disturbed(global_this) {
+                        // An unusable (locked or disturbed) source must be rejected
+                        // before the pipe opens, and truncates, the destination.
+                        if readable.is_locked(global_this) || readable.is_disturbed(global_this) {
                             destination_blob.detach();
                             return Err(global_this.throw_invalid_arguments(format_args!(
                                 "ReadableStream has already been used"

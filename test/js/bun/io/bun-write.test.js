@@ -479,6 +479,36 @@ const IS_UV_FS_COPYFILE_DISABLED =
       await Bun.write(dest, new Response(rs), { mode: 0o600 });
       expect(fs.statSync(dest).mode & 0o777).toBe(0o600);
     });
+
+    it("rejects a locked source without truncating the destination", async () => {
+      using dir = tempDir("bun-write-response-rs-locked", {
+        "out.txt": "PRECIOUS-EXISTING-CONTENTS",
+      });
+      const dest = path.join(String(dir), "out.txt");
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hi"));
+          c.close();
+        },
+      });
+      const resp = new Response(rs);
+      rs.getReader(); // locks the body's stream without disturbing it
+      let caught;
+      try {
+        await Bun.write(dest, resp);
+      } catch (e) {
+        caught = e;
+      }
+      expect({
+        message: caught?.message,
+        text: await Bun.file(dest).text(),
+        bodyUsed: resp.bodyUsed,
+      }).toEqual({
+        message: "ReadableStream has already been used",
+        text: "PRECIOUS-EXISTING-CONTENTS",
+        bodyUsed: false,
+      });
+    });
   });
 
   it("Bun.write('output.html', '')", async () => {

@@ -301,19 +301,21 @@ private:
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
 
-            /* Mark this response as connectionClose if ancient or connection: close */
-            if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
+            /* Mark this response as connectionClose if ancient (HTTP/1.0) or the
+             * request carries a "close" connection option (RFC 9112 9.6). */
+            if (httpRequest->isAncient() || httpRequest->hasConnectionToken("close")) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             }
 
             httpResponseData->fromAncientRequest = httpRequest->isAncient();
 
-            /* Per-request framing flags; writeHead only ever sets them, so a
-             * stale true from a previous 204/304 (or close-delimited) response
-             * on this keep-alive socket would strip the next response's body
-             * framing. */
+            /* Per-request framing flags; writeHead/writeHeader only ever set
+             * them, so a stale true from a previous response on this keep-alive
+             * socket would strip the next response's body framing (or its
+             * Connection header). */
             httpResponseData->noBodyStatus = false;
             httpResponseData->closeDelimited = false;
+            httpResponseData->wroteConnectionHeader = false;
 
             /* Select the router based on SNI (only possible for SSL) */
             auto *selectedRouter = &httpContextData->router;

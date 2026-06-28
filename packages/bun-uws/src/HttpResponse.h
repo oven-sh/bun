@@ -96,6 +96,48 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
+    /* Called once a response has been fully written (after markDone). Uncorks a
+     * corked socket so its bytes are handed to the kernel, then shuts the
+     * connection down if it was flagged close and nothing is left buffered.
+     * Returns true if the socket was closed.
+     *
+     * The uncork must come first: a corked end cannot decide to close (its
+     * bytes are still in the cork buffer), and nothing re-checks afterwards
+     * when the response is produced outside of onData (an async handler).
+     *
+     * While onData's parser is running (isParsingHttp) the close is deferred
+     * to onData's tail instead: the parser still has this request's remaining
+     * body to consume and validate, and closing the socket from inside the
+     * request handler would abort that (e.g. skip the 400 for an invalid
+     * chunk size). keepCorked callers (upgrade) stay corked to batch more
+     * writes, so they never close here. */
+    bool uncorkAndCloseIfNeeded(HttpResponseData<SSL> *httpResponseData, bool keepCorked) {
+        if (Super::isCorked()) {
+            if (keepCorked) {
+                return false;
+            }
+            this->uncork();
+        }
+
+        if (HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->flags.isParsingHttp) {
+            return false;
+        }
+
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                    ((AsyncSocket<SSL> *) this)->shutdown();
+                    /* We need to force close after sending FIN since we want to hinder
+                     * clients from keeping to send their huge data */
+                    ((AsyncSocket<SSL> *) this)->close();
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure.
      * keepCorked: if true, skip the trailing uncork so the caller can batch
@@ -126,12 +168,12 @@ public:
             /* We can only write the header once */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
 
-                /* HTTP 1.1 must send this back unless the client already sent it to us.
-                * It is a connection close when either of the two parties say so but the
-                * one party must tell the other one so.
-                *
-                * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                /* RFC 9112 9.6: whichever side decided to close, the final
+                 * response should carry a "close" connection option. Skip it
+                 * once the body has started (HTTP_WRITE_CALLED, no more
+                 * headers) or when the application already wrote its own
+                 * Connection header (node:http does). */
+                if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED)) && !httpResponseData->wroteConnectionHeader) {
                     writeHeader("Connection", "close");
                 }
 
@@ -153,21 +195,8 @@ public:
             Super::write("0\r\n\r\n", 5);
             httpResponseData->markDone(this);
 
-            /* We need to check if we should close this socket here now */
-            if (!Super::isCorked()) {
-                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
-                    if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                        if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
-                            ((AsyncSocket<SSL> *) this)->shutdown();
-                            /* We need to force close after sending FIN since we want to hinder
-                                * clients from keeping to send their huge data */
-                            ((AsyncSocket<SSL> *) this)->close();
-                            return true;
-                        }
-                    }
-                }
-            } else if (!keepCorked) {
-                this->uncork();
+            if (uncorkAndCloseIfNeeded(httpResponseData, keepCorked)) {
+                return true;
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
@@ -218,22 +247,7 @@ public:
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
-
-                /* We need to check if we should close this socket here now */
-                if (!Super::isCorked()) {
-                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
-                        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                            if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
-                                ((AsyncSocket<SSL> *) this)->shutdown();
-                                /* We need to force close after sending FIN since we want to hinder
-                                * clients from keeping to send their huge data */
-                                ((AsyncSocket<SSL> *) this)->close();
-                            }
-                        }
-                    }
-                }  else if (!keepCorked) {
-                    this->uncork();
-                }
+                uncorkAndCloseIfNeeded(httpResponseData, keepCorked);
             }
 
             return success;
@@ -447,6 +461,12 @@ public:
     /* Write an HTTP header with string value */
     HttpResponse *writeHeader(std::string_view key, std::string_view value) {
         writeStatus(HTTP_200_OK);
+
+        /* Remember that a Connection header was written so a closing response
+         * does not append a second, possibly contradicting one (see internalEnd). */
+        if (key.length() == 10 && !strncasecmp(key.data(), "connection", 10)) [[unlikely]] {
+            getHttpResponseData()->wroteConnectionHeader = true;
+        }
 
         Super::write(key.data(), (int) key.length());
         Super::write(": ", 2);

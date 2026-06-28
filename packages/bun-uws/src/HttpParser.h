@@ -237,6 +237,45 @@ namespace uWS
             return std::string_view(nullptr, 0);
         }
 
+        /* Whether any Connection header carries the given token in its
+         * comma-separated value list (case-insensitive, OWS trimmed), like
+         * llhttp's connection-token scanner. An exact-value compare would miss
+         * compound values such as "keep-alive, TE". */
+        bool hasConnectionToken(std::string_view token)
+        {
+            if (!bf.mightHave("connection")) {
+                return false;
+            }
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() != 10 || strncasecmp(h->key.data(), "connection", 10)) {
+                    continue;
+                }
+                const auto value = h->value;
+                size_t pos = 0;
+                while (pos < value.length()) {
+                    while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
+                        pos++;
+                    }
+                    size_t tokenStart = pos;
+                    while (pos < value.length() && value[pos] != ',') {
+                        pos++;
+                    }
+                    size_t tokenEnd = pos;
+                    while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
+                        tokenEnd--;
+                    }
+                    if (tokenEnd - tokenStart == token.length()
+                        && !strncasecmp(value.data() + tokenStart, token.data(), token.length())) {
+                        return true;
+                    }
+                    if (pos < value.length() && value[pos] == ',') {
+                        pos++;
+                    }
+                }
+            }
+            return false;
+        }
+
         struct TransferEncoding {
             bool has: 1 = false;
             bool chunked: 1 = false;
@@ -310,7 +349,6 @@ namespace uWS
 
             return te;
         }
-
 
         std::string_view getUrl()
         {
@@ -418,6 +456,12 @@ namespace uWS
         std::string fallback;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
+
+        /* Set once a parsed request carries a "close" connection option (or is
+         * HTTP/1.0). RFC 9112 9.6: that request is the final one on the
+         * connection, so anything received after it must be discarded rather
+         * than dispatched as a pipelined request. */
+        bool sawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
@@ -868,6 +912,14 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
+            /* RFC 9112 9.6: a previously parsed request on this connection
+             * carried a "close" connection option, so it was the final request.
+             * Discard anything received after it instead of dispatching it. */
+            if (sawConnectionClose) {
+                consumedTotal += length;
+                break;
+            }
+
             auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
             if(result.isError()) {
                 return result;
@@ -892,6 +944,16 @@ namespace uWS
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
+
+            /* RFC 9112 9.6: a request carrying a "close" connection option (or
+             * an HTTP/1.0 request) is the final one on this connection. Latch
+             * that before the handler runs so the loop above stops consuming
+             * pipelined data once this request's body is done, even when the
+             * response is produced asynchronously. */
+            if (req->ancientHttp || req->hasConnectionToken("close")) {
+                sawConnectionClose = true;
+            }
+
             /* Break if no host header (but we can have empty string which is different from nullptr).
              * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
              * 'upgrade'/'connect' events before its Host requirement is enforced. */

@@ -1340,7 +1340,11 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        /* RFC 9112 9.6: the final response on a closing connection should
+         * carry a "close" connection option. Skip it once the body has started
+         * (HTTP_WRITE_CALLED terminated the header block) or when the
+         * application already wrote its own Connection header. */
+        if (!(data->state & uWS::HttpResponseData<true>::HTTP_WRITE_CALLED) && !data->wroteConnectionHeader)
         {
           uwsRes->writeHeader("Connection", "close");
         }
@@ -1360,7 +1364,11 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        /* RFC 9112 9.6: the final response on a closing connection should
+         * carry a "close" connection option. Skip it once the body has started
+         * (HTTP_WRITE_CALLED terminated the header block) or when the
+         * application already wrote its own Connection header. */
+        if (!(data->state & uWS::HttpResponseData<false>::HTTP_WRITE_CALLED) && !data->wroteConnectionHeader)
         {
           uwsRes->writeHeader("Connection", "close");
         }

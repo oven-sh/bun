@@ -126,6 +126,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * no Content-Length and no chunked framing, then close. Used by node:http
      * when the user removed the framing headers. */
     bool closeDelimited = false;
+    /* A Connection header was already written for this response (by the
+     * application, e.g. node:http's own "Connection: close"). Suppresses the
+     * automatic "Connection: close" a closing response would otherwise add. */
+    bool wroteConnectionHeader = false;
 
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;

@@ -121,7 +121,7 @@ This page is updated regularly and reflects the latest version of Bun's compatib
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. `module._extensions`, `module._pathCache`, `module._cache` are no-ops. `module.register` is not implemented; we recommend [`Bun.plugin`](/runtime/plugins) instead.
+🟡 Missing `syncBuiltinESMExports`, `Module#load()`. Overriding `require.cache` is supported for ESM & CJS modules. Overriding `Module._load` or `Module._resolveFilename` is supported and intercepts CJS `require()`. `module._pathCache` and `module._cache` are no-ops. `module.register` is not implemented; we recommend [`Bun.plugin`](/runtime/plugins) instead.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 

@@ -988,14 +988,10 @@ impl<'a> ShellSrcBuilder<'a> {
         if invalid {
             return Ok(false);
         }
-        // Empty interpolated values must still produce an argument (e.g. `${''}` should
-        // pass "" as an arg). Route through appendJSStrRef so the \x08 marker is recognized
-        // by the lexer regardless of quote context (e.g. inside single quotes).
-        if ALLOW_ESCAPE && bunstr.length() == 0 {
-            self.append_js_str_ref(bunstr)?;
-            return Ok(true);
-        }
         if ALLOW_ESCAPE {
+            // `needs_escape_bunstr` is true for empty strings: `${''}` must still
+            // produce an argument. Routing through appendJSStrRef makes the \x08
+            // marker recognized regardless of quote context (e.g. inside single quotes).
             if needs_escape_bunstr(bunstr) || is_if_clause_keyword_bunstr(bunstr) {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);

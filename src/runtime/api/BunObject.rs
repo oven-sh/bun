@@ -470,9 +470,7 @@ pub(crate) fn shell_escape(
 
     let mut outbuf: Vec<u8> = Vec::new();
 
-    // An empty string still has to become a shell word (`""`): returning it
-    // unchanged would contribute no argument at all when used with `{ raw: }`.
-    if bunstr.is_empty() || bun_shell_parser::needs_escape_bunstr(*bunstr) {
+    if bun_shell_parser::needs_escape_bunstr(*bunstr) {
         let result = bun_shell_parser::escape_bun_str::<true>(*bunstr, &mut outbuf)?;
         if !result {
             return Err(global_this.throw(format_args!(

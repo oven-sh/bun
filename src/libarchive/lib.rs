@@ -1937,7 +1937,11 @@ impl Archiver {
                                             return Err(err.into());
                                         }
                                         let _ = dir.make_path_u8(dirname);
-                                        let _ = bun_sys::mkdirat_z(dir_fd, path_z, 0o777);
+                                        let _ = bun_sys::mkdirat_z(
+                                            dir_fd,
+                                            path_z,
+                                            bun_sys::Mode::try_from(mode).expect("int cast"),
+                                        );
                                     }
                                 }
                             }

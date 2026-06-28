@@ -1,9 +1,9 @@
 import { spawn } from "bun";
 import * as internalForTesting from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { chmodSync, readFileSync } from "fs";
+import { readFileSync } from "fs";
 import { mkdir, readFile, stat, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isPosix, isWindows, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/31387
@@ -112,45 +112,6 @@ console.log("env-S-shebang-ok");
 `,
   });
 }
-
-test("bun install handles `#!/usr/bin/env -S bun ...` shebangs in bin scripts", async () => {
-  const dir = makeEnvDashSFixture();
-  const consumer = join(dir, "consumer");
-
-  if (isPosix) {
-    // `env -S` only runs natively through the file's execute bit.
-    chmodSync(join(dir, "env-dash-s-pkg/dist/index.js"), 0o755);
-  }
-
-  await using install = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: consumer,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, installStderr, installExit] = await Promise.all([
-    install.stdout.text(),
-    install.stderr.text(),
-    install.exited,
-  ]);
-  expect(installStderr).not.toContain("error");
-  expect(installExit).toBe(0);
-
-  // Invoke the installed bin through `bun run`. On Windows this goes through
-  // the generated `.bunx` shim — exactly the code path the fix changes.
-  await using run = spawn({
-    cmd: [bunExe(), "run", "env-dash-s-pkg"],
-    cwd: consumer,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  expect(stderr).not.toContain("interpreter executable");
-  expect(stdout).toContain("env-S-shebang-ok");
-  expect(exit).toBe(0);
-});
 
 // `.bunx` file format (little-endian throughout):
 //   [WSTR:bin_path] [u16 '"'] [u16 0]

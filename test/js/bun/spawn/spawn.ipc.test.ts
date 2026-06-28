@@ -125,6 +125,90 @@ describe("ipc mode advanced", () => {
     expect(stdout.trim()).toBe("SURVIVED RangeError");
     expect(exitCode).toBe(0);
   });
+
+  it("a typed array larger than 4 GiB throws instead of truncating its length", async () => {
+    // The wire format stores lengths as 32-bit varints, so byteLength is
+    // narrowed from size_t. Without a guard, a 2**32-byte view wraps to 0 and
+    // the receiver silently gets an empty array. V8 throws DataCloneError.
+    //
+    // The 4 GiB allocation is lazy zero pages and is never read (the guard
+    // fires before any copy), so peak RSS stays low. Runners that still
+    // cannot allocate it report SKIP instead of failing, following the
+    // convention of the oversized-ArrayBuffer structuredClone tests.
+    using dir = tempDir("ipc-adv-huge", {
+      "parent.cjs": /* js */ `
+        const { fork } = require("child_process");
+        let huge;
+        try {
+          huge = new Uint8Array(2 ** 32);
+        } catch {
+          console.log("SKIP");
+          process.exit(0);
+        }
+        const child = fork(require("path").join(__dirname, "echo.cjs"), [], {
+          execPath: process.execPath, execArgv: [], serialization: "advanced", stdio: "ignore",
+        });
+        let name = "no-error";
+        try {
+          child.send(huge);
+        } catch (e) {
+          name = e.name;
+        }
+        child.kill();
+        console.log("SURVIVED " + name);
+      `,
+      "echo.cjs": `process.on("message", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "parent.cjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(["SURVIVED DataCloneError", "SKIP"]).toContain(stdout.trim());
+    expect(exitCode).toBe(0);
+  });
+
+  it("a dense array whose trailer property count disagrees with the stream is rejected", async () => {
+    // V8 (and Node) emit arrays with the dense tag 'A' and end them with
+    // kEndDenseJSArray followed by two redundant varints: the number of extra
+    // named properties and the length. Both must match what was actually
+    // read, or the payload is malformed and the whole frame is rejected;
+    // accepting it would mean a corrupt stream delivers a message.
+    //
+    // The child writes two complete frames to the channel fd in one syscall:
+    // the same [1,2,3] dense array twice, first with the correct trailer
+    // (propertyCount=0, length=3) and then with propertyCount corrupted to 5.
+    // The first must be delivered; the second must not be.
+    const valid = "ff0f4103490249044906240003";
+    const corrupt = "ff0f4103490249044906240503";
+    const got: unknown[] = [];
+    const first = Promise.withResolvers<void>();
+    await using child = Bun.spawn({
+      cmd: [
+        process.execPath,
+        "-e",
+        `const v = Buffer.from("${valid}", "hex"), c = Buffer.from("${corrupt}", "hex");
+         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+         require("fs").writeSync(3, Buffer.concat([be(v.length), v, be(c.length), c]));`,
+      ],
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      env: bunEnv,
+      ipc(message) {
+        got.push(message);
+        first.resolve();
+      },
+    });
+    // Both frames arrive in one write and are decoded in the same pass, so by
+    // the time the first message is observed the second has already been
+    // accepted or rejected; awaiting exit then bounds the whole exchange.
+    await first.promise;
+    const exitCode = await child.exited;
+    expect(got).toEqual([[1, 2, 3]]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Node's "advanced" IPC uses V8's value-serializer format behind a 4-byte

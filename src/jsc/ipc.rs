@@ -359,9 +359,22 @@ mod advanced {
 
         let message = &data[HEADER_LENGTH..][..message_len as usize];
         // SAFETY: `global` is live; `message` valid for the duration of the call.
-        let deserialized = crate::host_fn::from_js_host_call(global, || unsafe {
+        let deserialized = match crate::host_fn::from_js_host_call(global, || unsafe {
             Bun__NodeIPC__deserialize(global, message.as_ptr(), message.len())
-        })?;
+        }) {
+            Ok(v) => v,
+            // A malformed payload from the peer is a protocol error, not a JS
+            // exception this process should observe: the decoder runs from an
+            // I/O callback with no JS frame above it to catch it, so leaving
+            // it pending trips the next ThrowScope. Take it off the VM and
+            // report InvalidFormat so the caller closes the channel, exactly
+            // like the Json decoder on an unparseable line.
+            Err(JsError::Thrown) | Err(JsError::Terminated) => {
+                global.clear_exception();
+                return Err(IPCDecodeError::InvalidFormat);
+            }
+            Err(JsError::OutOfMemory) => return Err(IPCDecodeError::OutOfMemory),
+        };
 
         Ok(DecodeIPCMessageResult {
             bytes_consumed: HEADER_LENGTH_U32 + message_len,

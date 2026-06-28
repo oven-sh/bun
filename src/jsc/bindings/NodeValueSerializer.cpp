@@ -454,6 +454,13 @@ private:
             throwDataCloneError("An ArrayBuffer is detached and could not be cloned."_s);
             return false;
         }
+        // The wire format stores the length as a 32-bit varint. Narrowing a
+        // larger size_t would silently truncate, so refuse it like V8 does.
+        size_t byteLength = view->byteLength();
+        if (byteLength > UINT32_MAX) {
+            throwDataCloneError("An ArrayBuffer view is larger than 4 GiB and could not be cloned."_s);
+            return false;
+        }
         writeTag(V8Tag::kHostObject);
         if (m_forIPC)
             writeVarint(kChildProcessArrayBufferViewTag);
@@ -501,8 +508,7 @@ private:
             break;
         }
         writeVarint(typeIndex);
-        uint32_t byteLength = static_cast<uint32_t>(view->byteLength());
-        writeVarint(byteLength);
+        writeVarint(static_cast<uint32_t>(byteLength));
         writeRawBytes(static_cast<const uint8_t*>(view->vector()), byteLength);
         return true;
     }
@@ -518,14 +524,20 @@ private:
             throwDataCloneError("A SharedArrayBuffer could not be cloned over IPC."_s);
             return false;
         }
-        uint32_t byteLength = static_cast<uint32_t>(buffer->byteLength());
+        // Both lengths travel as 32-bit varints; see writeHostArrayBufferView.
+        size_t byteLength = buffer->byteLength();
+        size_t maxByteLength = buffer->maxByteLength().value_or(byteLength);
+        if (byteLength > UINT32_MAX || maxByteLength > UINT32_MAX) {
+            throwDataCloneError("An ArrayBuffer is larger than 4 GiB and could not be cloned."_s);
+            return false;
+        }
         if (buffer->isResizableOrGrowableShared()) {
             writeTag(V8Tag::kResizableArrayBuffer);
-            writeVarint(byteLength);
-            writeVarint(static_cast<uint32_t>(buffer->maxByteLength().value_or(byteLength)));
+            writeVarint(static_cast<uint32_t>(byteLength));
+            writeVarint(static_cast<uint32_t>(maxByteLength));
         } else {
             writeTag(V8Tag::kArrayBuffer);
-            writeVarint(byteLength);
+            writeVarint(static_cast<uint32_t>(byteLength));
         }
         writeRawBytes(static_cast<const uint8_t*>(buffer->data()), byteLength);
         return true;
@@ -1139,7 +1151,7 @@ private:
         if (!ok) return {};
         auto expectedProps = readVarint();
         auto expectedLength = readVarint();
-        if (!expectedProps || !expectedLength || *expectedLength != *length) return {};
+        if (!expectedProps || !expectedLength || *expectedProps != propsRead || *expectedLength != *length) return {};
         return array;
     }
 

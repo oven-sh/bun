@@ -1857,8 +1857,37 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
+            // Forward everything after the template name to the create script,
+            // but:
+            //   1. drop a single leading `--` — the npm/yarn convention is that
+            //      the first bare `--` is an argument separator (so `bun create
+            //      foo -- -t v3` is equivalent to `bun create foo -t v3`). Any
+            //      subsequent `--` is a literal argument and must be preserved.
+            //   2. consume `--bun` that appears before the separator — the
+            //      positional-scanning loop may have exited before seeing it, so
+            //      we consume it here into `dash_dash_bun` (which re-inserts it
+            //      as a real bunx arg below). A `--bun` after the separator is a
+            //      literal argument intended for the create script and must be
+            //      preserved.
+            let forwarded = &args[template_name_start..];
+
+            let mut forwarded_count: usize = 0;
+            let mut seen_separator = false;
+            for arg in forwarded {
+                let slice = arg.as_bytes();
+                if !seen_separator && slice == b"--" {
+                    seen_separator = true;
+                    continue;
+                }
+                if !seen_separator && slice == b"--bun" {
+                    dash_dash_bun = true;
+                    continue;
+                }
+                forwarded_count += 1;
+            }
+
             let mut bunx_args: Vec<&ZStr> =
-                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
+                Vec::with_capacity(2 + forwarded_count + (dash_dash_bun as usize));
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
@@ -1871,8 +1900,18 @@ To create a project with the official Next.js scaffolding tool, run\n\
             static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
             bunx_args.push(CREATE_PREFIX.get_or_init(|| prefixed).as_zstr());
-            for src in &args[template_name_start..] {
-                bunx_args.push(*src);
+
+            seen_separator = false;
+            for arg in forwarded {
+                let slice = arg.as_bytes();
+                if !seen_separator && slice == b"--" {
+                    seen_separator = true;
+                    continue;
+                }
+                if !seen_separator && slice == b"--bun" {
+                    continue;
+                }
+                bunx_args.push(*arg);
             }
             return BunxCommand::exec(ctx, &bunx_args);
         }

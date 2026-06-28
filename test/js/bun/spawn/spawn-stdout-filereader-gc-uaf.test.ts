@@ -173,31 +173,11 @@ test.skipIf(isWindows)(
   60_000,
 );
 
-// FileReader::on_read_chunk resolves the pending read promise from inside
-// PosixBufferedReader::read_with_fn, while that function still holds `&mut`
-// into the NewSource<FileReader> box. Resolving it drains microtasks, so user
-// JS runs mid-dispatch; if it calls reader.cancel() there, on_reader_done
-// releases the across-read ref (taken in from_pipe) and the box's count drops
-// to the JS wrapper's own ref, downgrading the wrapper's native Strong to
-// Weak. A GC in that same microtask drain then sweeps the wrapper, whose
-// finalizer frees the box, and the io caller's next access to it
-// (register_poll / on_error / _offset) is a heap-use-after-free.
-//
-// This asserts the lifetime invariant directly rather than racing for the
-// crash (which needs a GC to land in the short window before read_with_fn
-// returns, and conservative stack scanning makes that non-deterministic):
-// the source wrapper must still be Strong-protected immediately after the
-// re-entrant cancel, because on_read_chunk holds its own ref across p.run()
-// so the re-entrant release never reaches the downgrade-at-one threshold.
-// The from_pipe pin from the test above is what makes it Strong to begin
-// with; protectedBefore proves that precondition held.
-//
-// The chunk must exceed the 128 KiB mid-loop flush threshold in read_with_fn,
-// otherwise the flush happens on the tail retry path and nothing touches the
-// reader afterwards. A detached grandchild fills the stdout socketpair buffer
-// while the fixture is blocked in sleepSync so the whole payload arrives in
-// one poll dispatch, and keeps the write end open so received_hup stays false.
-//
+// Asserts the lifetime invariant rather than racing for the crash: the actual
+// free needs a GC to land inside the microtask drain, which conservative stack
+// scanning makes non-deterministic. Instead, the source wrapper must still be
+// Strong-protected right after a re-entrant reader.cancel(), because
+// on_read_chunk's own pin keeps it above the downgrade-at-one threshold.
 // Windows uses libuv for pipe I/O; the read_with_fn path under test is POSIX.
 test.skipIf(isWindows)(
   "re-entrant cancel inside a subprocess stdout read keeps the FileReader pinned for the rest of the dispatch",
@@ -248,7 +228,18 @@ test.skipIf(isWindows)(
       globalThis.__s = proc.stdout;
       await proc.exited; // sh has exited; only the grandchild holds the pipe
       globalThis.__r = globalThis.__s.getReader();
-      globalThis.__r.read().then(globalThis.__onchunk);
+      // Wire every failure into __done so a rejected read or a throwing
+      // handler fails the fixture with the real error instead of hanging.
+      globalThis.__r.read().then(
+        chunk => {
+          try {
+            globalThis.__onchunk(chunk);
+          } catch (err) {
+            globalThis.__done.reject(err);
+          }
+        },
+        err => globalThis.__done.reject(err),
+      );
 
       // Release the grandchild, then block without ticking the event loop so
       // it fills the socketpair buffer past the 128 KiB flush threshold

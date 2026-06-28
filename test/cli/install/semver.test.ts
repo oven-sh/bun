@@ -194,6 +194,21 @@ describe("Bun.semver.order()", () => {
       expect(order(right, left)).toBe(0);
     }
   });
+
+  test("a '-' inside an implicit prerelease stays in the prerelease", () => {
+    // "1.0.0rc-1" is the loose spelling of "1.0.0-rc-1"; node-semver's loose
+    // parser keeps "rc-1" as the whole prerelease identifier.
+    const tests = [
+      ["1.0.0rc-1", "1.0.0-rc-1"],
+      ["1.0.0alpha-2", "1.0.0-alpha-2"],
+      ["1.0.0rc.1", "1.0.0-rc.1"],
+    ];
+
+    for (const [left, right] of tests) {
+      expect(order(left, right)).toBe(0);
+      expect(order(right, left)).toBe(0);
+    }
+  });
 });
 
 describe("Bun.semver.satisfies()", () => {
@@ -781,6 +796,13 @@ describe("Bun.semver.satisfies()", () => {
     for (const [range, version] of failing) {
       expect(satisfies(version, range)).toBeFalse();
     }
+  });
+
+  test("a '-' inside an implicit prerelease stays in the prerelease", () => {
+    expect(satisfies("1.0.0rc-1", "1.0.0-rc-1")).toBeTrue();
+    expect(satisfies("1.0.0alpha-2", "1.0.0-alpha-2")).toBeTrue();
+    // A different prerelease still does not satisfy.
+    expect(satisfies("1.0.0rc-2", "1.0.0-rc-1")).toBeFalse();
   });
 
   test("pre-release snapshot", () => {

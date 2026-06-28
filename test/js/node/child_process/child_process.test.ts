@@ -487,7 +487,7 @@ describe("spawnSync()", () => {
     `const fs = require("fs");`,
     `const s = fs.fstatSync(0);`,
     `process.stdout.write(JSON.stringify({`,
-    `  fifo: s.isFIFO(), socket: s.isSocket(), file: s.isFile(),`,
+    `  fifo: s.isFIFO(), socket: s.isSocket(), file: s.isFile(), chr: s.isCharacterDevice(),`,
     `  data: fs.readFileSync(0, "utf8"),`,
     `}));`,
   ].join("");
@@ -503,20 +503,25 @@ describe("spawnSync()", () => {
       fifo: false,
       socket: true,
       file: false,
+      chr: false,
       data: "hello",
       status: 0,
     });
   });
 
-  it.skipIf(!isLinux)("stdin 'pipe' without input is not a regular file", () => {
+  // With no input there are no bytes to stage, so the sync path redirects
+  // fd 0 to /dev/null (a char device), same as on non-Linux platforms.
+  it.skipIf(!isLinux)("stdin 'pipe' without input is /dev/null, not a regular file", () => {
     const { stdout, stderr, status } = spawnSync(bunExe(), ["-e", fstatScript], {
       env: bunEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const out = JSON.parse(stdout.toString());
-    expect({ stderr: stderr.toString(), file: out.file, data: out.data, status }).toEqual({
+    expect({ stderr: stderr.toString(), ...JSON.parse(stdout.toString()), status }).toEqual({
       stderr: "",
+      fifo: false,
+      socket: false,
       file: false,
+      chr: true,
       data: "",
       status: 0,
     });

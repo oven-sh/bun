@@ -2453,9 +2453,15 @@ declare module "bun" {
 
     autoImportJSX?: boolean;
     /**
-     * Inject React Fast Refresh transforms (`$RefreshReg$` / `$RefreshSig$`) for JSX/TSX.
-     * The consumer must provide the refresh runtime globals (e.g. `react-refresh/runtime`).
-     * No-op on non-JSX loaders.
+     * Inject React Fast Refresh transforms for JSX/TSX: `$RefreshReg$` registration
+     * calls for top-level components and `$RefreshSig$` hook signatures, plus an import
+     * of `register` / `createSignatureFunctionForTransform` from `react-refresh/runtime`.
+     * No-op on non-JSX loaders and on files that declare no components.
+     *
+     * Components are keyed by the transpiler's synthetic source name, so every file
+     * registers as `"input.tsx:Name"`. When transpiling multiple files (e.g. a per-file
+     * HMR dev server) rewrite that prefix to the real module path, otherwise same-named
+     * components in different files share one refresh identity.
      *
      * @default false
      */

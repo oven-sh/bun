@@ -3604,9 +3604,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if cfg!(debug_assertions) {
-            // Enforce that scope locations are strictly increasing to help catch bugs
-            // where the pushed scopes are mismatched between the first and second passes
-            if !self.scopes_in_order.is_empty() {
+            // Enforce strictly increasing scope locations to catch parse/visit pass
+            // mismatches. Skip once a parse error is logged: error recovery can push
+            // two scopes at one loc and the visit pass won't run anyway.
+            if self.log().errors == 0 && !self.scopes_in_order.is_empty() {
                 let mut last_i = self.scopes_in_order.len() - 1;
                 while self.scopes_in_order[last_i].is_none() && last_i > 0 {
                     last_i -= 1;
@@ -6979,37 +6980,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
 
-                        if prop.flags.contains(Flags::Property::IsComputed)
-                            || matches!(
-                                prop.key.expect("infallible: prop has key").data,
-                                js_ast::ExprData::ENumber(_)
-                            )
-                        {
-                            target = self.new_expr(
+                        let key = prop.key.expect("infallible: prop has key");
+                        target = match &key.data {
+                            js_ast::ExprData::EString(s)
+                                if s.is_utf8()
+                                    && !prop.flags.contains(Flags::Property::IsComputed) =>
+                            {
+                                self.new_expr(
+                                    E::Dot {
+                                        target,
+                                        name: s.data,
+                                        name_loc: key.loc,
+                                        ..Default::default()
+                                    },
+                                    key.loc,
+                                )
+                            }
+                            _ => self.new_expr(
                                 E::Index {
                                     target,
-                                    index: prop.key.expect("infallible: prop has key"),
+                                    index: key,
                                     optional_chain: None,
                                 },
-                                prop.key.expect("infallible: prop has key").loc,
-                            );
-                        } else {
-                            target = self.new_expr(
-                                E::Dot {
-                                    target,
-                                    name: prop
-                                        .key
-                                        .expect("infallible: prop has key")
-                                        .data
-                                        .e_string()
-                                        .expect("infallible: variant checked")
-                                        .data,
-                                    name_loc: prop.key.expect("infallible: prop has key").loc,
-                                    ..Default::default()
-                                },
-                                prop.key.expect("infallible: prop has key").loc,
-                            );
-                        }
+                                key.loc,
+                            ),
+                        };
 
                         // remove fields with decorators from class body. Move static members outside of class.
                         if prop.flags.contains(Flags::Property::IsStatic) {

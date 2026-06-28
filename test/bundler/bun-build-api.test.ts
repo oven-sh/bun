@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
+import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -906,6 +907,46 @@ describe.concurrent("sourcemap boolean values", () => {
 
     const jsText = await jsOutput!.text();
     expect(jsText).toContain("//# sourceMappingURL=index.js.map");
+  });
+});
+
+describe.concurrent("sourcemap positions", () => {
+  // Source-map columns count UTF-16 code units. Tokens after the first
+  // non-ASCII character on a line (Latin-1, astral, CJK) must still map to
+  // their exact original column.
+  test("original columns after non-ASCII characters on the same line", async () => {
+    const source = [
+      `export function a1() { throw new Error("A"); } export const za = "e";`,
+      `export const zb = "é"; export function b1() { throw new Error("B"); }`,
+      `export const zc = "🎉"; export function c1() { throw new Error("C"); }`,
+      `export const zd = "汉字 wörld"; export function d1() { throw new Error("D"); }`,
+      ``,
+    ].join("\n");
+    const dir = tempDirWithFiles("build-sourcemap-unicode-columns", { "in.ts": source });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "in.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
+    });
+    expect(build.success).toBe(true);
+
+    const generated = await build.outputs.find(o => o.kind === "entry-point")!.text();
+    const map = await build.outputs.find(o => o.kind === "sourcemap")!.json();
+
+    // 1-based line, 0-based UTF-16 column: the convention `source-map` uses on
+    // both sides of originalPositionFor.
+    const lineColumn = (text: string, index: number) => {
+      const before = text.slice(0, index);
+      return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+    };
+
+    await SourceMapConsumer.with(map, null, consumer => {
+      for (const token of ['new Error("A")', 'new Error("B")', 'new Error("C")', 'new Error("D")']) {
+        const { line, column } = consumer.originalPositionFor(lineColumn(generated, generated.indexOf(token)));
+        expect({ token, line, column }).toEqual({ token, ...lineColumn(source, source.indexOf(token)) });
+      }
+    });
   });
 });
 

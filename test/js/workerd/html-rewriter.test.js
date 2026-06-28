@@ -796,3 +796,191 @@ payloads.forEach(type => {
     expect(calls).toBeGreaterThan(0);
   });
 });
+
+// lol-html reports an absent attribute with a NULL pointer and a
+// present-but-empty one with an empty string; they are not the same thing.
+describe("getAttribute distinguishes empty from absent", () => {
+  it("returns '' for present-but-empty and boolean attributes", async () => {
+    let got;
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          got = {
+            explicitEmpty: el.getAttribute("a"),
+            boolean: el.getAttribute("b"),
+            valued: el.getAttribute("c"),
+            absent: el.getAttribute("zzz"),
+            hasExplicitEmpty: el.hasAttribute("a"),
+            hasBoolean: el.hasAttribute("b"),
+            hasAbsent: el.hasAttribute("zzz"),
+          };
+        },
+      })
+      .transform(new Response('<div a="" b c="v">t</div>'))
+      .text();
+    expect(got).toEqual({
+      explicitEmpty: "",
+      boolean: "",
+      valued: "v",
+      absent: null,
+      hasExplicitEmpty: true,
+      hasBoolean: true,
+      hasAbsent: false,
+    });
+  });
+
+  it("agrees with the attributes iterator", async () => {
+    let got;
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          got = { iter: [...el.attributes], get: el.getAttribute("a") };
+        },
+      })
+      .transform(new Response('<div a="">t</div>'))
+      .text();
+    expect(got).toEqual({ iter: [["a", ""]], get: "" });
+  });
+
+  it("round-trips an attribute set to the empty string", async () => {
+    let got;
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.setAttribute("x", "");
+          got = { value: el.getAttribute("x"), has: el.hasAttribute("x") };
+        },
+      })
+      .transform(new Response("<div>t</div>"))
+      .text();
+    expect(got).toEqual({ value: "", has: true });
+  });
+
+  it("removeAttribute works on a present-but-empty attribute", async () => {
+    let got;
+    await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.removeAttribute("a");
+          got = { value: el.getAttribute("a"), has: el.hasAttribute("a") };
+        },
+      })
+      .transform(new Response('<div a="">t</div>'))
+      .text();
+    expect(got).toEqual({ value: null, has: false });
+  });
+});
+
+describe("doctype publicId/systemId distinguish empty from absent", () => {
+  function readDoctype(html) {
+    let got;
+    new HTMLRewriter()
+      .onDocument({
+        doctype(d) {
+          got = { name: d.name, publicId: d.publicId, systemId: d.systemId };
+        },
+      })
+      .transform(html);
+    return got;
+  }
+
+  it("present but empty", () => {
+    expect(readDoctype('<!DOCTYPE html PUBLIC "" ""><div></div>')).toEqual({
+      name: "html",
+      publicId: "",
+      systemId: "",
+    });
+  });
+
+  it("absent", () => {
+    expect(readDoctype("<!DOCTYPE html><div></div>")).toEqual({
+      name: "html",
+      publicId: null,
+      systemId: null,
+    });
+  });
+
+  it("present with values", () => {
+    expect(
+      readDoctype(
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd"><div></div>',
+      ),
+    ).toEqual({
+      name: "html",
+      publicId: "-//W3C//DTD HTML 4.01//EN",
+      systemId: "http://www.w3.org/TR/html4/strict.dtd",
+    });
+  });
+});
+
+describe("invalid arguments throw instead of returning an error value", () => {
+  it("setAttribute with a forbidden character in the name throws", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.setAttribute("a b", "1");
+          },
+        })
+        .transform(new Response("<div>t</div>")),
+    ).toThrow("character is forbidden in the attribute name");
+  });
+
+  it("setAttribute with an empty name throws", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.setAttribute("", "1");
+          },
+        })
+        .transform(new Response("<div>t</div>")),
+    ).toThrow("Attribute name can't be empty.");
+  });
+
+  it("setAttribute failure leaves the element unchanged", async () => {
+    let after;
+    const out = await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          try {
+            el.setAttribute("a b", "1");
+          } catch {}
+          after = [...el.attributes];
+        },
+      })
+      .transform(new Response('<div x="1">t</div>'))
+      .text();
+    expect(after).toEqual([["x", "1"]]);
+    expect(out).toBe('<div x="1">t</div>');
+  });
+
+  it("setAttribute with an invalid name throws on string input too", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.setAttribute("a b", "1");
+          },
+        })
+        .transform("<div>t</div>"),
+    ).toThrow("character is forbidden in the attribute name");
+  });
+
+  it("onEndTag with a non-function throws a TypeError", () => {
+    let err;
+    try {
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.onEndTag("nope");
+          },
+        })
+        .transform(new Response("<div>t</div>"));
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.message).toBe("Expected a function");
+  });
+});

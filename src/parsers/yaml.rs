@@ -5465,25 +5465,47 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    // TODO: should this append replacement characters instead of erroring?
-    fn decode_hex_code_point(
-        &mut self,
-        escape: Escape,
-        text: &mut Vec<Enc::Unit>,
-    ) -> Result<(), ParseError> {
+    fn read_hex_digits(&mut self, count: u8) -> Result<u32, ParseError> {
         let mut value: u32 = 0;
-        for _ in 0..(escape as u8) {
+        for _ in 0..count {
             self.inc(1);
             let digit = Enc::wide(self.next());
             let num =
                 bun_core::fmt::hex_digit_value_u32(digit).ok_or(ParseError::UnexpectedCharacter)?;
             value = value * 16 + num as u32;
         }
+        Ok(value)
+    }
 
-        if value > 0x10_FFFF {
+    fn decode_hex_code_point(
+        &mut self,
+        escape: Escape,
+        text: &mut Vec<Enc::Unit>,
+    ) -> Result<(), ParseError> {
+        let mut cp = self.read_hex_digits(escape as u8)?;
+
+        if cp > 0x10_FFFF {
             return Err(ParseError::UnexpectedCharacter);
         }
-        let cp = value;
+
+        // JSON encodes supplementary code points as a `\uD8xx\uDCxx` surrogate
+        // pair; YAML 1.2 is a JSON superset. Lone surrogates remain an error.
+        if (0xD800..=0xDFFF).contains(&cp) {
+            if !matches!(escape, Escape::LowerU)
+                || !bun_core::strings::u16_is_lead(cp as u16)
+                || Enc::wide(self.peek(1)) != 0x5C /* '\\' */
+                || Enc::wide(self.peek(2)) != 0x75
+            /* 'u' */
+            {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            self.inc(2);
+            let low = self.read_hex_digits(Escape::LowerU as u8)?;
+            if !bun_core::strings::u16_is_trail(low as u16) {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+            cp = bun_core::strings::u16_get_supplementary(cp as u16, low as u16);
+        }
 
         match Enc::KIND {
             EncodingKind::Utf8 => {
@@ -5495,10 +5517,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
             }
             EncodingKind::Utf16 => {
-                // Surrogate code points are rejected.
-                if (0xD800..=0xDFFF).contains(&cp) {
-                    return Err(ParseError::UnexpectedCharacter);
-                }
                 if cp < 0x10000 {
                     text.push(Enc::unit_from_u16(cp as u16));
                 } else {

@@ -203,7 +203,10 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 continue;
             }
             int events = loop->ready_polls[loop->current_ready_poll].events;
-            const int error = events & EPOLLERR;
+            /* Normalize to 0/1 like the kqueue path's EV_ERROR: the value is
+             * forwarded as a libus close code, and a raw EPOLLERR (8) would
+             * read as errno 8 (ENOEXEC) in the JS error path. */
+            const int error = !!(events & EPOLLERR);
             const int eof = events & EPOLLHUP;
             events &= us_poll_events(poll);
             if (events || error || eof) {
@@ -464,6 +467,13 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     } while (IS_EINTR(ret));
 
     // ret should be 0 in most cases (not guaranteed when removing async)
+
+    /* KEVENT_FLAG_ERROR_EVENTS reports per-filter failures as EV_ERROR entries
+     * with the errno in .data; kevent64 itself returns the count and does not
+     * set errno. Mirror epoll's contract so us_poll_start_rc callers can read it. */
+    if (ret > 0) {
+        errno = (int) change_list[0].data;
+    }
 
     return ret;
 }

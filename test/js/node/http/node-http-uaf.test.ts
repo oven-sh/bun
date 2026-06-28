@@ -22,18 +22,26 @@ function uafTest(fixture, iterations = 2) {
   });
 }
 
-test("should not crash when drain fires after the onWritable slot was cleared", async () => {
+test.concurrent.each([
+  ["undefined", "undefined"],
+  ["null", "null"],
+  ["0", "0"],
+  ["false", "false"],
+])("should not crash when drain fires after onWritable slot is set to %s", async (_, slotExpr) => {
   const src = /* js */ `
     import http from "node:http";
     import net from "node:net";
     import { once } from "node:events";
+
+    let caught;
+    process.on("uncaughtException", err => { caught = String(err); });
 
     const server = http.createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "application/octet-stream" });
       res.write(Buffer.alloc(8 * 1024 * 1024, "a"));
       const sym = Object.getOwnPropertySymbols(res).find(s => s.description === "handle");
       const handle = res[sym];
-      handle.onwritable = undefined;
+      handle.onwritable = ${slotExpr};
       while (handle.bufferedAmount > 0) await new Promise(r => setImmediate(r));
       res.end();
     });
@@ -45,7 +53,7 @@ test("should not crash when drain fires after the onWritable slot was cleared", 
     let received = 0;
     sock.on("data", d => (received += d.length));
     await once(sock, "close");
-    console.log(JSON.stringify({ received }));
+    console.log(JSON.stringify({ received, caught }));
     server.close();
   `;
   await using proc = Bun.spawn({

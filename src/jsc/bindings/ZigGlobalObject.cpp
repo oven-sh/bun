@@ -1053,6 +1053,18 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
             return unhandledPromise.get() == promise;
         });
         if (removed) break;
+        // handleRejectedPromises() drains the list into a local buffer before
+        // running any handler. A handler may .catch() a later still-queued
+        // promise; that promise is no longer in m_aboutToBeNotifiedRejectedPromises
+        // but has not yet had 'unhandledRejection' fired, so it must not get
+        // 'rejectionHandled'. Check every in-flight tail (handlers can re-enter
+        // handleRejectedPromises(), so there may be more than one).
+        for (auto* inflight = globalObj->m_rejectedPromisesBeingProcessed; inflight; inflight = inflight->outer) {
+            for (size_t i = inflight->index, n = inflight->buffer->size(); i < n; ++i) {
+                if (inflight->buffer->at(i).asCell() == promise)
+                    return;
+            }
+        }
         // The promise rejection has already been notified, now we need to queue it for the rejectionHandled event
         Bun__handleHandledPromise(globalObj, promise);
         break;
@@ -3282,18 +3294,41 @@ extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JS
 
 void GlobalObject::handleRejectedPromises()
 {
+    if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
+        return;
+
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
-    while (auto* promise = m_aboutToBeNotifiedRejectedPromises.takeFirst(this)) {
-        if (promise->isHandled())
-            continue;
+    do {
+        // Move the whole list out under one cellLock, then iterate linearly —
+        // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
+        // RejectedPromiseTracker use.
+        JSC::MarkedArgumentBuffer promises;
+        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises);
+        RELEASE_ASSERT(!promises.hasOverflowed());
+        // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
+        // can tell "still pending" apart from "already notified". Linked as a
+        // stack so a re-entrant handleRejectedPromises() (a handler that ticks
+        // the event loop) restores the outer frame instead of nulling it.
+        InFlightRejections inflight { &promises, 0, m_rejectedPromisesBeingProcessed };
+        WTF::SetForScope inflightScope(m_rejectedPromisesBeingProcessed, &inflight);
+        for (size_t i = 0, size = promises.size(); i < size; ++i) {
+            auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());
+            if (promise->isHandled())
+                continue;
+            inflight.index = i + 1;
 
-        Bun__handleRejectedPromise(this, promise);
-        if (auto ex = scope.exception()) {
-            (void)scope.tryClearException();
-            this->reportUncaughtExceptionAtEventLoop(this, ex);
+            Bun__handleRejectedPromise(this, promise);
+            if (auto ex = scope.exception()) {
+                if (virtual_machine.isTerminationException(ex)) [[unlikely]]
+                    return;
+                (void)scope.tryClearException();
+                this->reportUncaughtExceptionAtEventLoop(this, ex);
+            }
         }
-    }
+        // An unhandledRejection handler may itself reject a promise; loop
+        // until the list stays empty.
+    } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);

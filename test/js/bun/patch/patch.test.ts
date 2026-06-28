@@ -893,6 +893,14 @@ describe("parse", () => {
     });
   });
 
+  // After stripping the "index " prefix the remainder can itself start with "index ",
+  // which used to trip a bogus debug assertion in parse_diff_hashes.
+  test("does not crash when an index line repeats the 'index ' prefix", () => {
+    for (const line of ["index index ", "index index \n", "index index 2de83dd..842652c 100644\n"]) {
+      expect(removeCapacity(JSON.parse(parse(line)))).toEqual({ parts: { items: [] } });
+    }
+  });
+
   // A `---`/`+++` header line can be shorter than "--- a/"/"+++ b/" (no path after the marker).
   // This used to crash the parser with an out-of-bounds slice.
   test("does not crash on truncated ---/+++ header lines", () => {

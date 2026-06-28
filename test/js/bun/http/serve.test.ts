@@ -2961,6 +2961,34 @@ describe("Connection: close request header", () => {
     }).toEqual({ servedA: true, closeHeader: true, serverClosed: true });
   });
 
+  // A ReadableStream body goes through the HTTPServerWritable sink, which
+  // must thread the close flag through so the header is sent too.
+  it("sends Connection: close on a streamed Response body", async () => {
+    using server = serve({
+      port: 0,
+      async fetch() {
+        await Bun.sleep(0);
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue("saw /a");
+              c.close();
+            },
+          }),
+        );
+      },
+    });
+    const { raw, serverClosed } = await exchange(server.port, `${A}Connection: close\r\n\r\n${B}`, r =>
+      r.includes("saw /b"),
+    );
+    expect({
+      servedA: raw.includes("saw /a"),
+      servedB: raw.includes("saw /b"),
+      closeHeader: hasCloseHeader(raw),
+      serverClosed,
+    }).toEqual({ servedA: true, servedB: false, closeHeader: true, serverClosed: true });
+  });
+
   // HEAD responses go through the separate end-without-body path.
   it("closes after a HEAD response to a close-flagged request", async () => {
     const seen: string[] = [];

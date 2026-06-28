@@ -9363,8 +9363,10 @@ for (const linker of ["hoisted", "isolated"] as const) {
       const binEntries = async () => {
         try {
           return (await readdirSorted(join(packageDir, "node_modules", ".bin"))).filter(e => e.startsWith("what-bin"));
-        } catch {
-          return [];
+        } catch (err: any) {
+          // only a missing .bin directory counts as "no bin entries"
+          if (err?.code === "ENOENT") return [];
+          throw err;
         }
       };
       expect(await exists(join(packageDir, "node_modules", "what-bin", "package.json"))).toBe(true);

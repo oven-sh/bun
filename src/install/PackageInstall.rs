@@ -2643,8 +2643,11 @@ pub(crate) fn prune_dangling_bin_links(bin_dir: Fd) {
         let Ok(Some(entry)) = iter.next() else { break };
         match entry.kind {
             EntryKind::SymLink => {
-                // Any symlink we cannot open is assumed dangling. `access`
-                // would not work here because it does not resolve symlinks.
+                // A symlink whose target no longer exists cannot be opened.
+                // `access` would not work here because it does not resolve
+                // symlinks. Only a missing target makes a link dangling;
+                // other open failures (EACCES, EMFILE, transient I/O) can
+                // happen to a perfectly good shim and must not delete it.
                 let name = entry.name.slice_u8();
                 name_buf[..name.len()].copy_from_slice(name);
                 name_buf[name.len()] = 0;
@@ -2654,10 +2657,14 @@ pub(crate) fn prune_dangling_bin_links(bin_dir: Fd) {
                     Ok(file) => {
                         let _ = file.close();
                     }
-                    Err(_) => {
+                    Err(err)
+                        if err.get_errno() == sys::E::ENOENT
+                            || err.get_errno() == sys::E::ENOTDIR =>
+                    {
                         let _ = sys::unlinkat(bin_dir, buf);
                         continue 'iterator;
                     }
+                    Err(_) => {}
                 }
             }
             _ => {}

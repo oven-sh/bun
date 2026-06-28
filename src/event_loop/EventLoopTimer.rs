@@ -217,6 +217,7 @@ impl Tag {
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
             | Tag::GcOneShot | Tag::GcRepeating // internal GC pacing
+            | Tag::FetchConnectAttempt // internal network pacing, never user-visible
             => false,
             _ => true,
         }

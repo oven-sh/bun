@@ -2291,9 +2291,12 @@ impl FetchTasklet {
     /// Link `connect_attempt_timer` into the VM heap for
     /// `CONNECT_ATTEMPT_DELAY_MS` from now. JS-thread only; the node must not
     /// currently be linked (freshly PENDING, or popped by the timer drain).
+    /// Real time on purpose: this is internal connection pacing, and under
+    /// `useFakeTimers()` a mocked deadline would stall address fallback
+    /// (`Tag::FetchConnectAttempt` is excluded from fake timers to match).
     fn arm_connect_attempt_timer(&mut self) {
         let deadline = bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::AllowMockedTime,
+            bun_core::TimespecMockMode::ForceRealTime,
             CONNECT_ATTEMPT_DELAY_MS,
         );
         self.connect_attempt_timer.next = ElTimespec {

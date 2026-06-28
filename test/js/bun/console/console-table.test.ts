@@ -306,6 +306,6 @@ console.log("calls=" + calls);`,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });

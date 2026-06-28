@@ -1219,7 +1219,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                 };
                 self.pos += 1;
             } else if c == b'_' {
-                self.check_underscore(&is_digit)?;
+                self.check_underscore(is_digit)?;
             } else if c.is_ascii_alphanumeric() {
                 return Err(self.err_char(self.pos, "Invalid digit in number:"));
             } else {

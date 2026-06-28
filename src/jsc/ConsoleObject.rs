@@ -995,7 +995,7 @@ impl<'a> TablePrinter<'a> {
                         columns: &'c mut Vec<Column>,
                         rows: &'c mut Vec<CollectedRow>,
                         idx: u32,
-                        err: bool,
+                        err: Option<jsc::JsError>,
                     }
                     // Capture before constructing `ctx` (which mutably borrows `*self`).
                     let tabular_data = self.tabular_data;
@@ -1005,7 +1005,7 @@ impl<'a> TablePrinter<'a> {
                         columns,
                         rows: &mut rows,
                         idx: 0,
-                        err: false,
+                        err: None,
                     };
                     extern "C" fn callback(
                         _: *mut jsc::VM,
@@ -1015,6 +1015,12 @@ impl<'a> TablePrinter<'a> {
                     ) {
                         // SAFETY: ctx points to the stack `Ctx` above.
                         let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
+                        // Once a cell failed, a JS exception may be pending (or
+                        // the VM terminating); don't re-enter user code for the
+                        // remaining elements.
+                        if ctx.err.is_some() {
+                            return;
+                        }
                         match ctx.this.collect_row(
                             ctx.roots,
                             ctx.columns,
@@ -1022,7 +1028,7 @@ impl<'a> TablePrinter<'a> {
                             value,
                         ) {
                             Ok(row) => ctx.rows.push(row),
-                            Err(_) => ctx.err = true,
+                            Err(err) => ctx.err = Some(err),
                         }
                         ctx.idx += 1;
                     }
@@ -1031,8 +1037,8 @@ impl<'a> TablePrinter<'a> {
                         (&raw mut ctx).cast::<c_void>(),
                         callback,
                     )?;
-                    if ctx.err {
-                        return Err(jsc::JsError::Thrown);
+                    if let Some(err) = ctx.err {
+                        return Err(err);
                     }
                 } else {
                     let tabular_obj = self.tabular_data.to_object(global_object)?;

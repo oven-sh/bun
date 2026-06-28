@@ -25,27 +25,14 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 /// Local extension shims for `JSValue` methods not yet surfaced on the
 /// `bun_jsc::JSValue` type.
 trait JSValueNapiExt {
-    fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool>;
     fn is_async_context_frame(self) -> bool;
 }
 
 unsafe extern "C" {
-    fn JSC__JSValue__isStrictEqual(
-        this: JSValue,
-        other: JSValue,
-        global: *mut JSGlobalObject,
-    ) -> bool;
     fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
 }
 
 impl JSValueNapiExt for JSValue {
-    fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool> {
-        // SAFETY: FFI; may run JS (getters on Proxy etc.); `call_check_slow!` opens the
-        // exception scope before the call and propagates any pending exception.
-        bun_jsc::call_check_slow!(global, || unsafe {
-            JSC__JSValue__isStrictEqual(self, other, global.as_mut_ptr())
-        })
-    }
     #[inline]
     fn is_async_context_frame(self) -> bool {
         // SAFETY: trivial FFI.

@@ -222,7 +222,7 @@ console.log("How...dashing?");
   "content-length": "316",
   "content-type": "text/javascript;charset=utf-8",
   "date": "<date>",
-  "etag": "0f2405c506dd6bd3",
+  "etag": ""0f2405c506dd6bd3"",
   "sourcemap": "/chunk-HASH.js.map",
 }
 `);
@@ -908,3 +908,188 @@ for (let development of [true, false, { hmr: false }]) {
     }
   });
 }
+
+describe("production headers and import.meta.env", () => {
+  async function collect(development: string) {
+    const dir = tempDirWithFiles("html-prod-headers", {
+      "index.html": /*html*/ `<!DOCTYPE html>
+<html><head><link rel="stylesheet" href="./app.css">
+<script type="module" src="./app.ts"></script></head>
+<body><h1>hi</h1><img src="./logo.svg"></body></html>`,
+      "app.css": /*css*/ `body { color: red; }`,
+      "logo.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>`,
+      "app.ts": /*js*/ `
+        globalThis.result = {
+          MODE: import.meta.env.MODE,
+          DEV: import.meta.env.DEV,
+          PROD: import.meta.env.PROD,
+          SSR: import.meta.env.SSR,
+        };
+      `,
+      "serve.ts": /*js*/ `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+        const base = server.url.href;
+        const htmlRes = await fetch(base);
+        const html = await htmlRes.text();
+        const htmlETag = htmlRes.headers.get("etag");
+        const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+        const cssPath = html.match(/href="([^"]+\\.css)"/)[1];
+        const svgPath = html.match(/src="([^"]+\\.svg)"/)[1];
+        const jsRes = await fetch(new URL(jsPath, base));
+        const js = await jsRes.text();
+        const cssRes = await fetch(new URL(cssPath, base));
+        const svgRes = await fetch(new URL(svgPath, base));
+        const mapRes = await fetch(new URL(jsPath + ".map", base));
+        const conditional = await fetch(base, { headers: { "If-None-Match": htmlETag ?? "missing" } });
+        // Evaluate the bundle as a browser module would (no import.meta.env in scope).
+        let evalError = null;
+        try { new Function(js.replace(/^\\/\\/# (sourceMappingURL|debugId)=.*$/gm, ""))(); }
+        catch (e) { evalError = String(e); }
+        console.log(JSON.stringify({
+          jsContainsImportMetaEnv: js.includes("import.meta.env"),
+          evalError,
+          result: globalThis.result ?? null,
+          htmlETag,
+          htmlCacheControl: htmlRes.headers.get("cache-control"),
+          htmlConditionalStatus: conditional.status,
+          jsETag: jsRes.headers.get("etag"),
+          jsCacheControl: jsRes.headers.get("cache-control"),
+          cssETag: cssRes.headers.get("etag"),
+          cssCacheControl: cssRes.headers.get("cache-control"),
+          svgPath,
+          svgETag: svgRes.headers.get("etag"),
+          svgCacheControl: svgRes.headers.get("cache-control"),
+          mapStatus: mapRes.status,
+          mapETag: mapRes.headers.get("etag"),
+          mapCacheControl: mapRes.headers.get("cache-control"),
+        }));
+        await server.stop(true);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      throw new Error("child failed:\n" + stdout + "\n" + stderr);
+    }
+    return JSON.parse(stdout) as {
+      jsContainsImportMetaEnv: boolean;
+      evalError: string | null;
+      result: Record<string, unknown> | null;
+      htmlETag: string | null;
+      htmlCacheControl: string | null;
+      htmlConditionalStatus: number;
+      jsETag: string | null;
+      jsCacheControl: string | null;
+      cssETag: string | null;
+      cssCacheControl: string | null;
+      svgPath: string;
+      svgETag: string | null;
+      svgCacheControl: string | null;
+      mapStatus: number;
+      mapETag: string | null;
+      mapCacheControl: string | null;
+    };
+  }
+
+  test("development: false inlines import.meta.env.* and sets quoted ETag/Cache-Control", async () => {
+    const out = await collect("false");
+
+    // import.meta.env.* must be folded to constants in the production bundle;
+    // shipping it verbatim throws in the browser.
+    expect(out.jsContainsImportMetaEnv).toBe(false);
+    expect(out.evalError).toBeNull();
+    expect(out.result).toEqual({ MODE: "production", DEV: false, PROD: true, SSR: false });
+
+    // Copied-file assets must be served at a content-hashed path.
+    expect(out.svgPath).toMatch(/^\/logo-[a-z0-9]+\.svg$/);
+
+    // ETags must be RFC 9110 quoted strings, content-derived (not all zeros).
+    expect(out.htmlETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.cssETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.svgETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.mapStatus).toBe(200);
+    expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.mapETag).not.toBe('"0000000000000000"');
+    expect(out.mapETag).not.toBe(out.jsETag);
+
+    // Production: HTML revalidates via ETag; content-hashed assets cache forever.
+    expect({
+      html: out.htmlCacheControl,
+      js: out.jsCacheControl,
+      css: out.cssCacheControl,
+      svg: out.svgCacheControl,
+      map: out.mapCacheControl,
+    }).toEqual({
+      html: "no-cache",
+      js: "public, max-age=31536000, immutable",
+      css: "public, max-age=31536000, immutable",
+      svg: "public, max-age=31536000, immutable",
+      map: "public, max-age=31536000, immutable",
+    });
+
+    // A conditional request with the HTML ETag returns 304.
+    expect(out.htmlConditionalStatus).toBe(304);
+  });
+
+  test("development: { hmr: false } inlines import.meta.env.* and quotes ETags", async () => {
+    const out = await collect("{ hmr: false }");
+
+    expect(out.jsContainsImportMetaEnv).toBe(false);
+    expect(out.evalError).toBeNull();
+    expect(out.result).toEqual({ MODE: "development", DEV: true, PROD: false, SSR: false });
+
+    expect(out.htmlETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.jsETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.mapETag).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(out.mapETag).not.toBe('"0000000000000000"');
+
+    // Dev mode should not set aggressive Cache-Control.
+    expect(out.htmlCacheControl).toBeNull();
+    expect(out.jsCacheControl).toBeNull();
+  });
+
+  test("distinct source maps get distinct ETags", async () => {
+    const serveTs = /*js*/ `
+      import index from "./index.html";
+      const server = Bun.serve({ port: 0, development: false, routes: { "/": index } });
+      const base = server.url.href;
+      const html = await (await fetch(base)).text();
+      const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+      const mapRes = await fetch(new URL(jsPath + ".map", base));
+      console.log(JSON.stringify({ etag: mapRes.headers.get("etag") }));
+      await server.stop(true);
+    `;
+    const run = async (appBody: string) => {
+      const dir = tempDirWithFiles("html-map-etag", {
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+        "app.ts": appBody,
+        "serve.ts": serveTs,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "serve.ts"],
+        env: { ...bunEnv, NODE_ENV: undefined },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+      return JSON.parse(stdout).etag as string;
+    };
+
+    const a = await run(`console.log("one statement");`);
+    const b = await run(`console.log("first");\nconsole.log("second");\nconsole.log("third");`);
+    expect(a).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(b).toMatch(/^"[0-9a-f]{16}"$/);
+    expect(a).not.toBe(b);
+  });
+});

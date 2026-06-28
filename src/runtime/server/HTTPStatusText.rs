@@ -1,3 +1,9 @@
+/// WHATWG Fetch "null body status": a Response with one of these status codes
+/// has a null body, so no body bytes reach the wire and HEAD frames like GET.
+pub const fn is_null_body(code: u16) -> bool {
+    matches!(code, 101 | 103 | 204 | 205 | 304)
+}
+
 pub fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),

@@ -1681,19 +1681,20 @@ where
         let compress = compress_js.to_boolean();
 
         if let Some(buffer) = message_value.as_array_buffer(global) {
-            return Ok(JSValue::js_number(f64::from(
-                // if 0, return 0
-                // else return number of bytes sent
-                (AnyWebSocket::publish_with_options(
-                    SSL,
-                    app,
-                    topic_slice.slice(),
-                    buffer.slice(),
-                    uws_sys::Opcode::Binary,
-                    compress,
-                ) as i32)
-                    * ((buffer.len as u32 & 0x7FFF_FFFF) as i32), // length truncated to a non-negative i32
-            )));
+            let status = AnyWebSocket::publish_with_options(
+                SSL,
+                app,
+                topic_slice.slice(),
+                buffer.slice(),
+                uws_sys::Opcode::Binary,
+                compress,
+            );
+            return Ok(super::server_web_socket::send_status_to_js(
+                status,
+                buffer.slice().len(),
+                "publish",
+                "bytes",
+            ));
         }
 
         {
@@ -1706,19 +1707,22 @@ where
             // GC during `publish_with_options` could otherwise reclaim the bytes
             // `slice` borrows.
             let buffer = slice.slice();
-            let result = (AnyWebSocket::publish_with_options(
+            let status = AnyWebSocket::publish_with_options(
                 SSL,
                 app,
                 topic_slice.slice(),
                 buffer,
                 uws_sys::Opcode::Text,
                 compress,
-            ) as i32)
-                * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32);
+            );
+            let result = super::server_web_socket::send_status_to_js(
+                status,
+                buffer.len(),
+                "publish",
+                "bytes",
+            );
             js_string.ensure_still_alive();
-            // if 0, return 0
-            // else return number of bytes sent
-            return Ok(JSValue::js_number(f64::from(result)));
+            return Ok(result);
         }
     }
 

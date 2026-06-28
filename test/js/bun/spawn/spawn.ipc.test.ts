@@ -250,7 +250,10 @@ describe("ipc mode advanced", () => {
 // over an advanced channel could not understand each other in either
 // direction: messages were silently never delivered.
 // https://nodejs.org/api/child_process.html#advanced-serialization
-describe.skipIf(!nodeExe())("ipc mode advanced node interop", () => {
+// Structured-clone round trips over an advanced channel. The node-interop
+// cases (gated on node being installed) validate against V8 as the reference
+// implementation; the bun<->bun cases run unconditionally.
+describe("ipc mode advanced structured clone", () => {
   // A CJS child that runs unchanged under node and bun: echo each message
   // verbatim, then exit after the sentinel so the parent's channel closes.
   const ECHO_CHILD = /* js */ `
@@ -309,7 +312,7 @@ describe.skipIf(!nodeExe())("ipc mode advanced node interop", () => {
   // The node child both deserializes what bun serialized and re-serializes the
   // echo with real V8, so one round trip exercises both halves of the format
   // against the reference implementation.
-  it("a bun parent can exchange structured values with a node child", async () => {
+  it.skipIf(!nodeExe())("a bun parent can exchange structured values with a node child", async () => {
     using dir = tempDir("ipc-adv-bun-node", { "echo.cjs": ECHO_CHILD });
     const sent = richPayload();
     const got = await echoOnce(path.join(String(dir), "echo.cjs"), nodeExe()!, sent);
@@ -332,7 +335,7 @@ describe.skipIf(!nodeExe())("ipc mode advanced node interop", () => {
   // assert.deepStrictEqual is the reference comparison. This covers the
   // child-side NODE_CHANNEL_FD setup path, which is distinct from the
   // Subprocess path the previous test exercises.
-  it("a node parent can exchange structured values with a bun child", async () => {
+  it.skipIf(!nodeExe())("a node parent can exchange structured values with a bun child", async () => {
     using dir = tempDir("ipc-adv-node-bun", {
       "echo.cjs": ECHO_CHILD,
       // prettier-ignore
@@ -405,7 +408,7 @@ describe.skipIf(!nodeExe())("ipc mode advanced node interop", () => {
   // into an O(length) event-loop stall and serialize an inherited
   // Array.prototype index as an own element of every array. V8 enumerates
   // own-only, so the node child is the reference for the hole surviving.
-  it("an inherited array index is not serialized as an own element", async () => {
+  it.skipIf(!nodeExe())("an inherited array index is not serialized as an own element", async () => {
     using dir = tempDir("ipc-adv-inherited-index", {
       "echo.cjs": ECHO_CHILD,
       // prettier-ignore
@@ -445,7 +448,7 @@ describe.skipIf(!nodeExe())("ipc mode advanced node interop", () => {
   // node reject the whole frame. The node child then re-serializes the echo
   // with real V8, so the return leg also proves the reader against genuine V8
   // output for an Error carrying an object cause.
-  it("an Error with an object cause round-trips through a node child", async () => {
+  it.skipIf(!nodeExe())("an Error with an object cause round-trips through a node child", async () => {
     using dir = tempDir("ipc-adv-err-node", { "echo.cjs": ECHO_CHILD });
     const e = new TypeError("boom");
     e.cause = { x: 1 };

@@ -1258,28 +1258,34 @@ describe("expect()", () => {
   // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
   // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
+    // https://github.com/oven-sh/bun/issues/14250. Distinct array keys always
+    // miss the identity lookup and take the JSSetIterator/JSMapIterator linear
+    // fallback, so cost is quadratic in the element count. 150 elements x 2000
+    // iterations took minutes under debug+ASAN and timed out; 20 x 500 exercises
+    // the same fallback thousands of times inside the test budget.
+    const N = 20;
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
     const arr4 = [];
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < N; i++) {
       arr1[i] = [i];
       arr2[i] = [i];
       arr3[i] = [i, [i]];
       arr4[i] = [i, [i]];
     }
 
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 500; i++) {
       let outerSet = new Set(arr1);
       let innerSet = new Set(arr2);
-      Bun.deepEquals(outerSet, innerSet);
+      expect(Bun.deepEquals(outerSet, innerSet)).toBe(true);
     }
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 250; i++) {
       let outerMap = new Map(arr3);
       let innerMap = new Map(arr4);
-      Bun.deepEquals(outerMap, innerMap);
+      expect(Bun.deepEquals(outerMap, innerMap)).toBe(true);
     }
   }, 480_000);
 

@@ -3159,9 +3159,9 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
-        // The CSS tokenizer requires well-formed UTF-8; see
-        // `bun_css::replace_invalid_utf8`.
-        let code = bun_css::replace_invalid_utf8(entry.contents(), alloc);
+        // The CSS tokenizer requires well-formed UTF-8 (token payloads are raw
+        // sub-slices of the source).
+        let code = strings::replace_invalid_utf8(entry.contents(), alloc);
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
             code,

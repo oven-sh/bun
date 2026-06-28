@@ -2300,12 +2300,12 @@ pub mod parse_worker {
         }
         *step = Step::Parse;
 
-        // CSS must be decoded before tokenizing (see
-        // `bun_css::replace_invalid_utf8`). Do it here, before `source` is
-        // built, so `source.contents`, token positions, error line text, and
-        // source maps all index the same buffer.
+        // The CSS tokenizer requires well-formed UTF-8 (token payloads are raw
+        // sub-slices of the source). Decode here, before `source` is built, so
+        // `source.contents`, token positions, error line text, and source maps
+        // all index the same buffer.
         let entry_contents: &[u8] = if loader == Loader::Css {
-            bun_css::replace_invalid_utf8(entry.contents.as_slice(), bump)
+            strings::replace_invalid_utf8(entry.contents.as_slice(), bump)
         } else {
             entry.contents.as_slice()
         };

@@ -114,4 +114,44 @@ describe("css with invalid utf-8", () => {
     expect(Buffer.from(out).includes(Buffer.from('content: "caf\uFFFD"'))).toBe(true);
     expect(Buffer.from(out).includes(0xe9)).toBe(false);
   });
+
+  test.concurrent("escaped invalid byte does not swallow the bytes after it", async () => {
+    using dir = tempDir("css-invalid-utf8-escape", {});
+    // `\` followed by a lone 0xC3 lead byte. The escape must decode to U+FFFD
+    // and consume exactly that byte; it used to consume three (the UTF-8
+    // length of U+FFFD), eating ident characters, string content, or the
+    // closing quote.
+    writeFileSync(
+      join(String(dir), "in.css"),
+      Buffer.concat([
+        Buffer.from(".x\\"),
+        Buffer.from([0xc3]),
+        Buffer.from('yz { content: "\\'),
+        Buffer.from([0xc3]),
+        Buffer.from('x AFTER"; }\n.a { content: "\\'),
+        Buffer.from([0xc3]),
+        Buffer.from('"; color: green; }\n'),
+      ]),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./in.css", "--outdir=out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const out = await Bun.file(join(String(dir), "out", "in.css")).text();
+    // Selector: `yz` used to be eaten out of the class name.
+    expect(out).toContain(".x\uFFFDyz");
+    // String content: the `x ` after the escape used to be eaten.
+    expect(out).toContain('content: "\uFFFDx AFTER"');
+    // The closing quote used to be eaten, absorbing the rest of the rule.
+    expect(out).toContain('content: "\uFFFD";');
+    expect(out).toContain("color: green;");
+  });
 });

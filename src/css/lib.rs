@@ -207,7 +207,7 @@ pub use dependencies::Dependency;
 // for css_jsc / bundler.
 pub use css_parser::{
     DefaultAtRule, LocalsResultsMap, MinifyOptions, Parser, ParserFlags, ParserInput,
-    ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult, replace_invalid_utf8,
+    ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
 };
 pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
 /// Dependent crates name this `ImportRecordHandler`; the surviving type is

@@ -973,7 +973,7 @@ declare module "bun" {
      * @param data The data to send
      * @param compress Should the data be compressed? Ignored if the client does not support compression.
      *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
+     * @returns 0 if the message was dropped for any subscriber (or there were no subscribers), -1 if backpressure was applied for any subscriber, or the number of bytes sent.
      *
      * @example
      *

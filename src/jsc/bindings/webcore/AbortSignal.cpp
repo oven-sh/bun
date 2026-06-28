@@ -122,7 +122,7 @@ JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
         if (m_commonReason != CommonAbortReason::None) {
             existingValue = toJS(&globalObject, m_commonReason);
             m_commonReason = CommonAbortReason::None;
-            m_reason.setWeakly(existingValue);
+            m_reason.set(globalObject.vm(), wrapper(), existingValue);
         }
     }
 
@@ -159,10 +159,11 @@ void AbortSignal::markAborted(JSC::JSValue reason)
     applyFlags(static_cast<uint8_t>(AbortSignalFlags::Aborted) | static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners));
     m_sourceSignals.clear();
 
-    // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
-    // https://bugs.webkit.org/show_bug.cgi?id=236353
     ASSERT(reason);
-    m_reason.setWeakly(reason);
+    if (auto* context = scriptExecutionContext())
+        m_reason.set(context->vm(), wrapper(), reason);
+    else
+        m_reason.setWeakly(reason);
 
     cancelTimer();
 }

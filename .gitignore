@@ -22,7 +22,6 @@ Library/Caches
 .vs
 .vscode/clang*
 .vscode/cpp*
-.zig-cache
 .bake-debug
 *.a
 *.bc
@@ -64,7 +63,6 @@ Library/Caches
 /test-report.md
 /test.js
 /test.ts
-/test.zig
 /testdir
 /build/
 cmake/sources
@@ -127,15 +125,8 @@ scripts/env.local
 sign.*.json
 sign.json
 src/bake/generated.ts
-src/generated_enum_extractor.zig
 src/jsc/bindings-obj
-src/jsc/bindings/GeneratedJS2Native.zig
-src/jsc/bindings/GeneratedBindings.zig
 src/bun.js/debug-bindings-obj
-src/deps/zig-clap/.gitattributes
-src/deps/zig-clap/.github
-src/deps/zig-clap/example
-src/deps/zig-clap/README.md
 src/fallback.version
 src/js/out/DebugPath.h
 src/js/out/functions*
@@ -144,7 +135,6 @@ src/js/out/tmp
 src/node-fallbacks/node_modules
 src/node-fallbacks/out/*
 src/runtime.version
-src/tests.zig
 test.txt
 test/js/bun/glob/fixtures
 test/node.js/upstream
@@ -152,10 +142,7 @@ tsconfig.tsbuildinfo
 txt.js
 x64
 yarn.lock
-zig-cache
-zig-out
 test/node.js/upstream
-.zig-cache
 scripts/env.local
 *.generated.ts
 src/bake/generated.ts
@@ -207,3 +194,7 @@ test/integration/bun-types/fixture/bun.lock
 src/runtime/bake/generated.ts
 /target/
 *.heapsnapshot
+# Legacy codegen outputs (no longer written, but old build trees still have
+# them on disk; keep ignored so they don't show as untracked).
+src/jsc/bindings/GeneratedJS2Native.zig
+src/jsc/bindings/GeneratedBindings.zig

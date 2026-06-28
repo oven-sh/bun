@@ -472,7 +472,7 @@ function asyncWrap(fn: any, name: string) {
 
     async read(bufferOrParams, offset, length, position) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("fsync", fd);
+      throwEBADFIfNecessary("read", fd);
 
       let buffer = bufferOrParams;
       if (!types.isArrayBufferView(buffer)) {

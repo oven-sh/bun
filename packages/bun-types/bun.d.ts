@@ -4443,8 +4443,10 @@ declare module "bun" {
 
     /**
      * Closes the WebSocket connection
-     * @param code A numeric value indicating the status code
-     * @param reason A human-readable string explaining why the connection is closing
+     * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
+     * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
+     * @param reason A human-readable string explaining why the connection is closing. Throws a
+     * `SyntaxError` if longer than 123 bytes of UTF-8
      */
     close(code?: number, reason?: string): void;
 

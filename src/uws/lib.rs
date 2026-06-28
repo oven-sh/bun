@@ -158,7 +158,7 @@ pub mod ssl_wrapper {
             SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_NONE,
             SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio,
-            SSL_get_shutdown, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_read,
+            SSL_get_shutdown, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending, SSL_read,
             SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
             SSL_set_renegotiate_mode, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
             SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
@@ -672,12 +672,15 @@ pub mod ssl_wrapper {
             unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) }
         }
 
-        /// Return if we have pending data to be read or write
+        /// Return if we have pending data to be read or write. Covers both
+        /// BIOs and `SSL_pending` — decrypted bytes of a partially-returned
+        /// record are buffered inside the SSL, invisible to either BIO.
         pub fn has_pending_data(&self) -> bool {
             let Some(ssl) = self.ssl else { return false };
             // SAFETY: ssl is a live SSL*; rbio/wbio bound in init_with_ctx.
             unsafe {
-                boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) > 0
+                boring_sys::SSL_pending(ssl.as_ptr()) > 0
+                    || boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) > 0
                     || boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_rbio(ssl.as_ptr())) > 0
             }
         }

@@ -126,6 +126,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // Racing an in-flight async write would alias `&mut Context`
+            // across threads; a closed `Context` cannot be re-initialized.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let init_params_array_value = arguments[0];
             let pledged_src_size_value = arguments[1];
@@ -174,6 +177,9 @@ mod _impl {
                     .with_mut(|s| s.set_params(c_uint::try_from(i).expect("int cast"), x));
                 if err_.is_error() {
                     self.stream.with_mut(|s| s.close());
+                    // The Context is torn down (`mode` is `NONE`); reject any
+                    // further operation the way `close()` does.
+                    self.closed.set(true);
                     // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
                     let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
                     return Err(global
@@ -361,6 +367,11 @@ mod _impl {
         }
 
         pub fn do_work(&mut self) {
+            // A handle driven before `init()` has no CCtx/DCtx; zstd
+            // dereferences the context pointer unconditionally.
+            if self.state.is_none() {
+                return;
+            }
             self.remaining = match self.mode {
                 // SAFETY: state is a valid CCtx; input/output point to caller-kept-alive buffers (set_buffers).
                 NodeMode::ZSTD_COMPRESS => unsafe {
@@ -455,30 +466,30 @@ mod _impl {
         }
 
         pub fn close(&mut self) {
-            // `init()` may never have run (handle constructed but `init`
-            // failed argument validation or was never called);
-            // `ZSTD_*Ctx_reset` dereferences the context, so there is nothing
-            // to reset or free then.
-            if self.state.is_some() {
-                let _ = match self.mode {
-                    // SAFETY: state is a valid CCtx/DCtx for this mode.
-                    NodeMode::ZSTD_COMPRESS => unsafe {
-                        c::ZSTD_CCtx_reset(
-                            self.state_ptr().cast(),
-                            c::ZSTD_reset_session_and_parameters,
-                        )
-                    },
-                    // SAFETY: state is a valid DCtx set by init() for this mode.
-                    NodeMode::ZSTD_DECOMPRESS => unsafe {
-                        c::ZSTD_DCtx_reset(
-                            self.state_ptr().cast(),
-                            c::ZSTD_reset_session_and_parameters,
-                        )
-                    },
-                    _ => unreachable!(),
-                };
-                self.deinit_state();
+            // Idempotent: a handle that was never (successfully) initialized,
+            // or that was already closed, has no CCtx/DCtx to reset or free.
+            if self.state.is_none() {
+                self.mode = NodeMode::NONE;
+                return;
             }
+            let _ = match self.mode {
+                // SAFETY: state is a valid CCtx/DCtx for this mode.
+                NodeMode::ZSTD_COMPRESS => unsafe {
+                    c::ZSTD_CCtx_reset(
+                        self.state_ptr().cast(),
+                        c::ZSTD_reset_session_and_parameters,
+                    )
+                },
+                // SAFETY: state is a valid DCtx set by init() for this mode.
+                NodeMode::ZSTD_DECOMPRESS => unsafe {
+                    c::ZSTD_DCtx_reset(
+                        self.state_ptr().cast(),
+                        c::ZSTD_reset_session_and_parameters,
+                    )
+                },
+                _ => unreachable!(),
+            };
+            self.deinit_state();
             self.mode = NodeMode::NONE;
         }
 

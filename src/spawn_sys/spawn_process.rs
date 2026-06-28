@@ -905,7 +905,10 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ignore => {
-                actions.open_z(fileno, c"/dev/null", bun_sys::O::RDWR as u32, 0o664)?;
+                // Node leaves "ignore" at an extra slot closed in the child;
+                // only fds 0-2 need a /dev/null placeholder. Close explicitly:
+                // the post-exec close-range floor only covers higher fds.
+                actions.close(fileno)?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Path(path) => {

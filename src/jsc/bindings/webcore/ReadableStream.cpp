@@ -319,12 +319,9 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
         auto callData = JSC::getCallData(function);
         auto result = JSC::call(lexicalGlobalObject, function, callData, thisValue, arguments);
-#if ASSERT_ENABLED
-        if (scope.exception()) [[unlikely]] {
-            Bun__reportError(lexicalGlobalObject, JSC::JSValue::encode(scope.exception()));
-        }
-#endif
-        EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
+        // readableStreamTee throws a catchable TypeError when the stream is already
+        // locked (reachable from Request/Response.clone()). Propagate it; reporting
+        // it as uncaught here would clear it and set a nonzero exit code.
         RETURN_IF_EXCEPTION(scope, {});
         return result;
     };

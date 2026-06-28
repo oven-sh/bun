@@ -382,8 +382,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
         }
     case POLL_TYPE_SEMI_SOCKET: {
             /* Both connect and listen sockets are semi-sockets
-             * but they poll for different events */
-            if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
+             * but they poll for different events. A connecting socket starts
+             * out polling WRITABLE only, but a write issued before the connect
+             * completes (the kernel buffers it) can partial-write and call
+             * us_poll_change(R|W) from us_socket_write*. Test the WRITABLE bit
+             * rather than exact equality so the connect-complete is still
+             * recognized; listen sockets only ever poll READABLE. */
+            if (us_poll_events(p) & LIBUS_SOCKET_WRITABLE) {
                 /* The connecting fd became writable with an error/HUP flag also
                  * set: the handshake may have completed and then been reset
                  * before we collected the event. Report the kernel's actual
@@ -415,7 +420,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-                        us_poll_start(accepted_p, loop, LIBUS_SOCKET_READABLE);
+                        if (us_poll_start_rc(accepted_p, loop, LIBUS_SOCKET_READABLE) != 0) {
+                            /* EPOLL_CTL_ADD failed (e.g. ENOSPC). Close the fd so the
+                             * peer sees a RST instead of a connection that silently
+                             * never answers. */
+                            bsd_close_socket(client_fd);
+                            us_poll_free(accepted_p, loop);
+                            continue;
+                        }
 
                         struct us_socket_t *s = (struct us_socket_t *) accepted_p;
 
@@ -609,10 +621,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
+                        /* Stop if on_data paused us (us_socket_pause from the data
+                         * handler, e.g. fetch() receive backpressure or
+                         * net.Socket#pause) — keep honoring the pause instead of
+                         * pulling bytes the caller asked to defer. */
                         if (
                             s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH &&
                             (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) &&
-                            !us_socket_is_closed(s)
+                            !us_socket_is_closed(s) && !s->flags.is_paused
                         ) {
                             repeat_recv_count += error == 0;
 
@@ -698,8 +714,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (error && s) {
                 /* Peer-initiated error event — same rationale as the recv-error
                  * branch above: bypass us_internal_ssl_close so on_handshake
-                 * isn't fired for a passive close. */
-                s = us_internal_socket_close_raw(s, error, NULL);
+                 * isn't fired for a passive close. The poll flag only says THAT
+                 * the socket failed; fetch the real errno (like the connect-error
+                 * path) so the close code is ECONNRESET and not a poll bit that
+                 * callers would either misread as an errno or drop entirely.
+                 * Values 0..2 collide with the libus CloseCode enum that JS
+                 * filters out as self-initiated; SO_ERROR can't be EPERM/ENOENT
+                 * for an established TCP socket, so clamp them defensively. */
+                int socket_error = us_socket_get_error(s);
+                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : ECONNRESET, NULL);
                 return;
             }
             break;

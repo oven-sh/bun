@@ -966,3 +966,21 @@ _ZN9bun_image9N_AVX3_DLL18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image9N_AVX3_DLL8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
 _ZN9bun_image9N_AVX3_DLL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image9N_AVX3_DLL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
+
+
+# ----------------------------------------------------------------------------
+# JSC LLInt. Data-in-.text false positive, NOT a gate.
+#
+# ENABLE(LLINT_EMBEDDED_OPCODE_ID) is on for x86_64 (WTF/wtf/PlatformEnable.h),
+# so every LLInt opcode handler starts with a raw 4-byte ".int <opcode_id>"
+# (LowLevelInterpreter.cpp: EMBED_OPCODE_ID_IF_NEEDED). The linear-sweep
+# decoder desyncs on those embedded ints and, depending on how preceding .text
+# code aligns, can decode a stray VEX-encoded instruction out of the garbage.
+# offlineasm's x86 backend emits SSE2 (not VEX), and the Intel SDE Nehalem
+# emulation step in this same job exercises the LLInt and passes, so any
+# single-digit hit here is decode noise. Ceiling [AVX] so a multi-feature leak
+# still fails. On ELF each opcode handler has its own symbol, so layout shifts
+# can move the desync between llint_op_* siblings; add them here as they trip.
+# (1 symbol)
+# ----------------------------------------------------------------------------
+llint_op_enter_wide32  [AVX]

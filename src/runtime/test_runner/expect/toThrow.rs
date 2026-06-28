@@ -19,10 +19,9 @@ fn get_truthy_cause(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<
     Ok(value.get_own_truthy(global, "cause")?.filter(|v| v.to_boolean()))
 }
 
-// Jest 30 compares `cause` in addition to `message` for `toThrow(errorInstance)`.
-// Error-instance causes are compared by message and the walk descends into their
-// own causes (Jest's serializer sees only own properties, so it cannot tell
-// `Error` subclasses apart either). Non-Error causes are compared structurally.
+// Jest 30 compares `cause` alongside `message` for `toThrow(errorInstance)`.
+// Error-instance causes use the message walk (not deep equality) because Jest's
+// own-property serializer cannot tell `Error` subclasses apart either.
 fn error_causes_equal(
     expected: JSValue,
     received: JSValue,

@@ -64,8 +64,8 @@ test("tearing down hundreds of spawned subprocesses at exit does not overflow th
 
 // https://github.com/oven-sh/bun/issues/28175
 // Exercises us_loop_free on the per-VM spawnSync libuv loop at Worker teardown
-// under the debug build, where libuv's assert()s are live: a teardown that
-// frees a still-registered (uv_loop_close == UV_EBUSY) loop aborts the child.
+// under the debug build, which aborts the child (BUN_PANIC) if the loop drain
+// leaves uv_loop_close() unable to deregister the loop from uv__loops[].
 test.skipIf(!isWindows)(
   "the per-worker spawnSync libuv loop is fully drained and closed at worker teardown",
   async () => {

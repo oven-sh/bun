@@ -442,14 +442,11 @@ impl Loop {
                 // failure code.
                 if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                    // One uv_run is not enough: if `loop.stop_flag` is set the
-                    // body is skipped (only clearing the flag), and an endgame
-                    // gated on an in-flight IOCP completion needs extra turns.
-                    let mut spins = 16;
-                    // SAFETY: `loop_` is live; `uv_run` returns 0 once dead.
-                    while unsafe { uv_run(loop_, RunMode::Default) } != 0 && spins > 0 {
-                        spins -= 1;
-                    }
+                    // `uv_run(Default)` returns 0 once the loop is dead and
+                    // nonzero only when `uv_stop` cut it short, so re-enter;
+                    // with every handle closed above it must drain to empty.
+                    // SAFETY: `loop_` is the live per-thread loop.
+                    while unsafe { uv_run(loop_, RunMode::Default) } != 0 {}
                     // Unconditional (not debug-only): removing the loop from
                     // libuv's global uv__loops[] registry is what makes it safe
                     // to release the TLS storage when this thread exits.

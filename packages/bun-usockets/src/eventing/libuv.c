@@ -200,6 +200,16 @@ struct us_loop_t *us_create_loop(void *hint,
   return loop;
 }
 
+/* uv_walk callback for us_loop_free: close every handle still registered on
+ * the loop. Their owners are gone by the time us_loop_free runs, so there is
+ * no close callback to invoke. uv_walk already skips libuv-internal handles. */
+static void close_walk_cb(uv_handle_t *handle, void *arg) {
+  (void)arg;
+  if (!uv_is_closing(handle)) {
+    uv_close(handle, 0);
+  }
+}
+
 // based on if this was default loop or not
 void us_loop_free(struct us_loop_t *loop) {
   // ref and close down prepare and check
@@ -219,19 +229,25 @@ void us_loop_free(struct us_loop_t *loop) {
   // we cannot do this if we do not own the loop, default
   if (!loop->is_default) {
     uv_loop_t *uv_loop = loop->uv_loop;
-    /* Closing handles only retire from inside uv_run, and one turn is not
-     * enough when an endgame waits on an in-flight IOCP completion. Bounded so
-     * a handle that can never retire cannot hang teardown. */
-    int spins = 16;
-    do {
-      uv_run(uv_loop, UV_RUN_NOWAIT);
-    } while (uv_loop_alive(uv_loop) && --spins > 0);
-    /* uv_loop_close() succeeding is what removes the loop from libuv's global
-     * uv__loops[] registry, walked by uv__wake_all_loops() on Windows resume.
-     * Never free a loop it refused (UV_EBUSY); leaking it is strictly safer. */
-    if (uv_loop_close(uv_loop) == 0) {
-      free(uv_loop);
+    /* A handle nothing ever closes would keep the loop registered in libuv
+     * forever; everything else is already closing and only needs uv_run. */
+    uv_walk(uv_loop, close_walk_cb, 0);
+    /* uv_run retires closing handles as their in-flight IOCP completions
+     * arrive; with every handle closed it drains to empty and returns 0. It
+     * returns nonzero only when uv_stop cut it short, so re-enter. */
+    while (uv_run(uv_loop, UV_RUN_DEFAULT)) {
     }
+    int close_rc = uv_loop_close(uv_loop);
+    /* The loop is empty here so the close cannot return UV_EBUSY. Succeeding
+     * is what removes the loop from libuv's global uv__loops[] registry,
+     * which uv__wake_all_loops() walks on every Windows suspend/resume. */
+#if ASSERT_ENABLED
+    if (close_rc != 0) {
+      BUN_PANIC("us_loop_free: uv_loop_close failed after draining the loop");
+    }
+#endif
+    (void)close_rc;
+    free(uv_loop);
   }
 
   // now we can free our part

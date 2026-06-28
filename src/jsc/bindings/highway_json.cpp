@@ -565,7 +565,8 @@ struct Stage2 {
         const size_t digits = static_cast<size_t>(s - int_start);
         if (!fexp && digits <= 15) {
             uint64_t n = 0;
-            for (const uint8_t* q = int_start; q < s; ++q) n = n * 10 + (*q - '0');
+            for (const uint8_t* q = int_start; q < s; ++q)
+                n = n * 10 + (*q - '0');
             v = static_cast<double>(n);
             if (neg) v = -v;
         } else {

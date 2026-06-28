@@ -135,13 +135,10 @@ pub(crate) fn js_bench_manifest_parse(
             match which(&scope, &mut log, json, name, b"", b"", 0, false) {
                 Ok(Some(m)) => {
                     versions = m.versions.len();
-                    string_buf_hash =
-                        npm::registry::Scope::hash(&m.string_buf);
+                    string_buf_hash = npm::registry::Scope::hash(&m.string_buf);
                 }
                 Ok(None) => {
-                    return Err(
-                        global.throw(format_args!("PackageManifest::parse returned None"))
-                    );
+                    return Err(global.throw(format_args!("PackageManifest::parse returned None")));
                 }
                 Err(e) => {
                     return Err(global.throw(format_args!(

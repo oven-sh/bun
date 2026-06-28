@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { simdJSONInternals } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
 
 const { parse, index, cursorGet } = simdJSONInternals;
 
@@ -124,7 +124,7 @@ describe("simdjson stage-2 — containers", () => {
     '{"a":[1,2,{"b":[true,false,null]}]}',
     '{"":""}',
     "[1, 2 ,3 ]",
-    " { \"a\" : 1 } ",
+    ' { "a" : 1 } ',
     "[\n  1,\n  2\n]",
   ])("parses %s", ok);
 

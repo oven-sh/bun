@@ -1970,7 +1970,7 @@ impl PackageManifest {
         // `IntoStr`; the Source only lives for the duration of this function,
         // so pass the caller's buffers through directly without manufacturing
         // `'static` references here (PORTING.md §Forbidden lifetime extension).
-let _t0 = std::time::Instant::now();
+        let _t0 = std::time::Instant::now();
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
         // `initialize_mini_store` deliberately keeps the allocator pushed
@@ -1993,7 +1993,7 @@ let _t0 = std::time::Instant::now();
             }
         };
 
-let _t_json = _t0.elapsed();
+        let _t_json = _t0.elapsed();
 
         if let Some(error_q) = json.as_property(b"error") {
             if let Some(err) = error_q.expr.as_string(&bump) {
@@ -2379,7 +2379,7 @@ let _t_json = _t0.elapsed();
         string_builder.cap += (string_builder.cap % 64) + 64;
         string_builder.cap *= 2;
 
-let _t_count = _t0.elapsed();
+        let _t_count = _t0.elapsed();
 
         string_builder.allocate()?;
 
@@ -3485,7 +3485,7 @@ let _t_count = _t0.elapsed();
 
         let _ = all_tarball_url_strings; // suppress unused-mut warnings
 
-{
+        {
             let total = _t0.elapsed();
             PARSE_TOTAL_NS.fetch_add(
                 total.as_nanos() as u64,
@@ -3819,8 +3819,11 @@ impl PackageManifest {
             vec![PackageVersion::default(); release_versions_len + pre_versions_len]
                 .into_boxed_slice();
         let mut all_semver_versions: Box<[Semver::Version]> =
-            vec![Semver::Version::default(); release_versions_len + pre_versions_len + dist_tags_count]
-                .into_boxed_slice();
+            vec![
+                Semver::Version::default();
+                release_versions_len + pre_versions_len + dist_tags_count
+            ]
+            .into_boxed_slice();
         let mut all_extern_strings: Box<[ExternalString]> =
             vec![ExternalString::default(); extern_string_count + tarball_urls_count]
                 .into_boxed_slice();
@@ -4013,13 +4016,11 @@ impl PackageManifest {
                                             let Some(k) = decode_key(k_raw, &bump) else {
                                                 break 'bin;
                                             };
-                                            let cur =
-                                                string_builder.append::<ExternalString>(k);
+                                            let cur = string_builder.append::<ExternalString>(k);
                                             all_extern_strings_bin_entries
                                                 [group_start + group_i as usize] = cur;
                                             if is_identical {
-                                                let prev =
-                                                    prev_extern_bin_group.as_ref().unwrap();
+                                                let prev = prev_extern_bin_group.as_ref().unwrap();
                                                 is_identical = cur.hash
                                                     == all_extern_strings_bin_entries
                                                         [prev.start + group_i as usize]
@@ -4029,13 +4030,11 @@ impl PackageManifest {
                                             let Some(v) = v.as_str_decoded(&bump) else {
                                                 break 'bin;
                                             };
-                                            let cur =
-                                                string_builder.append::<ExternalString>(v);
+                                            let cur = string_builder.append::<ExternalString>(v);
                                             all_extern_strings_bin_entries
                                                 [group_start + group_i as usize] = cur;
                                             if is_identical {
-                                                let prev =
-                                                    prev_extern_bin_group.as_ref().unwrap();
+                                                let prev = prev_extern_bin_group.as_ref().unwrap();
                                                 is_identical = cur.hash
                                                     == all_extern_strings_bin_entries
                                                         [prev.start + group_i as usize]
@@ -4054,12 +4053,10 @@ impl PackageManifest {
                                         package_version.bin = Bin {
                                             tag: bin::Tag::Map,
                                             _padding_tag: [0; 3],
-                                            value: bin::Value::init_map(
-                                                ExternalStringList::init(
-                                                    &all_extern_strings_bin_entries,
-                                                    &all_extern_strings_bin_entries[final_range],
-                                                ),
-                                            ),
+                                            value: bin::Value::init_map(ExternalStringList::init(
+                                                &all_extern_strings_bin_entries,
+                                                &all_extern_strings_bin_entries[final_range],
+                                            )),
                                         };
                                     }
                                 }
@@ -4090,9 +4087,7 @@ impl PackageManifest {
                         package_version.bin = Bin {
                             tag: bin::Tag::Dir,
                             _padding_tag: [0; 3],
-                            value: bin::Value::init_dir(
-                                string_builder.append::<SemverString>(s),
-                            ),
+                            value: bin::Value::init_dir(string_builder.append::<SemverString>(s)),
                         };
                         break 'bin;
                     }
@@ -4170,17 +4165,14 @@ impl PackageManifest {
                             {
                                 optional_peer_dep_names.reserve(meta_c.len());
                                 for (mk_raw, mv) in meta_c.iter_object() {
-                                    if mv.get(b"optional").and_then(|c| c.as_bool())
-                                        != Some(true)
-                                    {
+                                    if mv.get(b"optional").and_then(|c| c.as_bool()) != Some(true) {
                                         continue;
                                     }
                                     let Some(mk) = decode_key(mk_raw, &bump) else {
                                         continue;
                                     };
-                                    optional_peer_dep_names.push(
-                                        Semver::semver_string::Builder::string_hash(mk),
-                                    );
+                                    optional_peer_dep_names
+                                        .push(Semver::semver_string::Builder::string_hash(mk));
                                 }
                             }
                         }
@@ -4204,37 +4196,32 @@ impl PackageManifest {
                                 if !bundle_all_deps && bundled_deps_set.swap_remove(name_str) {
                                     // SAFETY: bundled_deps_buf sized in counting pass.
                                     unsafe {
-                                        *bundled_deps_buf
-                                            .as_mut_ptr()
-                                            .add(bundled_deps_offset) =
+                                        *bundled_deps_buf.as_mut_ptr().add(bundled_deps_offset) =
                                             all_extern_strings[names_base + i].hash;
                                     }
                                     bundled_deps_offset += 1;
                                 }
 
                                 if is_peer {
-                                    if optional_peer_dep_names.iter().any(|h| {
-                                        *h == all_extern_strings[names_base + i].hash
-                                    }) {
+                                    if optional_peer_dep_names
+                                        .iter()
+                                        .any(|h| *h == all_extern_strings[names_base + i].hash)
+                                    {
                                         if non_optional_peer_dependency_offset != i {
                                             all_extern_strings.swap(
                                                 names_base + i,
-                                                names_base
-                                                    + non_optional_peer_dependency_offset,
+                                                names_base + non_optional_peer_dependency_offset,
                                             );
                                             version_extern_strings.swap(
                                                 values_base + i,
-                                                values_base
-                                                    + non_optional_peer_dependency_offset,
+                                                values_base + non_optional_peer_dependency_offset,
                                             );
                                         }
                                         non_optional_peer_dependency_offset += 1;
                                     }
                                     if optional_peer_dep_names.is_empty() {
                                         name_hasher.update(
-                                            &all_extern_strings[names_base + i]
-                                                .hash
-                                                .to_ne_bytes(),
+                                            &all_extern_strings[names_base + i].hash.to_ne_bytes(),
                                         );
                                         version_hasher.update(
                                             &version_extern_strings[values_base + i]
@@ -4244,14 +4231,10 @@ impl PackageManifest {
                                     }
                                 } else {
                                     name_hasher.update(
-                                        &all_extern_strings[names_base + i]
-                                            .hash
-                                            .to_ne_bytes(),
+                                        &all_extern_strings[names_base + i].hash.to_ne_bytes(),
                                     );
                                     version_hasher.update(
-                                        &version_extern_strings[values_base + i]
-                                            .hash
-                                            .to_ne_bytes(),
+                                        &version_extern_strings[values_base + i].hash.to_ne_bytes(),
                                     );
                                 }
                                 i += 1;
@@ -4269,10 +4252,8 @@ impl PackageManifest {
                                 let Some(mk) = decode_key(mk_raw, &bump) else {
                                     continue;
                                 };
-                                let meta_hash =
-                                    Semver::semver_string::Builder::string_hash(mk);
-                                for existing in &all_extern_strings[names_base..names_base + i]
-                                {
+                                let meta_hash = Semver::semver_string::Builder::string_hash(mk);
+                                for existing in &all_extern_strings[names_base..names_base + i] {
                                     if existing.hash == meta_hash {
                                         continue 'outer;
                                     }
@@ -4309,8 +4290,7 @@ impl PackageManifest {
                                 package_version.bundled_dependencies =
                                     ExternalPackageNameHashList::init(
                                         &bundled_deps_buf,
-                                        &bundled_deps_buf
-                                            [bundled_deps_begin..bundled_deps_offset],
+                                        &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
                                     );
                             }
                         }
@@ -4336,8 +4316,8 @@ impl PackageManifest {
                                 *name_entry.value_ptr = name_list;
                                 dependency_names_cursor += count;
                             }
-                            let version_entry = version_extern_strings_dedupe_map
-                                .get_or_put(version_map_hash)?;
+                            let version_entry =
+                                version_extern_strings_dedupe_map.get_or_put(version_map_hash)?;
                             if version_entry.found_existing {
                                 version_list = *version_entry.value_ptr;
                             } else {
@@ -4363,8 +4343,8 @@ impl PackageManifest {
                     }
                 }
 
-                if let Some(t) = time_map
-                    .get(&Semver::semver_string::Builder::string_hash(version_name))
+                if let Some(t) =
+                    time_map.get(&Semver::semver_string::Builder::string_hash(version_name))
                     && let Some(s) = t.as_str_decoded(&bump)
                     && let Ok(ms) = bun_core::wtf::parse_es5_date(s)
                 {
@@ -4372,14 +4352,12 @@ impl PackageManifest {
                 }
 
                 if !parsed_version.version.tag.has_pre() {
-                    all_semver_versions[release_versions_cursor] =
-                        parsed_version.version.min();
+                    all_semver_versions[release_versions_cursor] = parsed_version.version.min();
                     versioned_packages[versioned_package_releases_start] = package_version;
                     release_versions_cursor += 1;
                     versioned_package_releases_start += 1;
                 } else {
-                    all_semver_versions[prerelease_versions_cursor] =
-                        parsed_version.version.min();
+                    all_semver_versions[prerelease_versions_cursor] = parsed_version.version.min();
                     versioned_packages[versioned_package_prereleases_start] = package_version;
                     prerelease_versions_cursor += 1;
                     versioned_package_prereleases_start += 1;
@@ -4404,8 +4382,7 @@ impl PackageManifest {
                 let Some(version_name) = value.as_str_decoded(&bump) else {
                     continue;
                 };
-                let dist_tag_value_literal =
-                    string_builder.append::<ExternalString>(version_name);
+                let dist_tag_value_literal = string_builder.append::<ExternalString>(version_name);
                 let sliced_string = dist_tag_value_literal
                     .value
                     .sliced(string_builder.allocated_slice());
@@ -4612,14 +4589,11 @@ thread_local! {
 
 static USE_CURSOR_PARSE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
-static USE_SCALAR_JSON: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static USE_SCALAR_JSON: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static PARSE_BENCH_INIT: std::sync::Once = std::sync::Once::new();
 pub static PARSE_TOTAL_NS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-pub static PARSE_TOTAL_BYTES: core::sync::atomic::AtomicU64 =
-    core::sync::atomic::AtomicU64::new(0);
-pub static PARSE_CALL_COUNT: core::sync::atomic::AtomicU64 =
-    core::sync::atomic::AtomicU64::new(0);
+pub static PARSE_TOTAL_BYTES: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+pub static PARSE_CALL_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 fn parse_bench_init() {
     PARSE_BENCH_INIT.call_once(|| {

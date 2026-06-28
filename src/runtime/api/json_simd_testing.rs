@@ -80,23 +80,31 @@ pub fn js_bench(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     };
 
     let mut bufs = bun_parsers::json_simd::SimdJSONBuffers::default();
-    let simd_ns = if which == 1 { 0 } else { time_iters(iters, || {
-        let mut log = bun_ast::Log::init();
-        let arena = bun_alloc::Arena::new();
-        let mut g = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _s = g.enter();
-        let _ = std::hint::black_box(SimdJSON::parse_into(
-            &mut bufs, &source, &mut log, &arena, true,
-        ));
-    }) };
+    let simd_ns = if which == 1 {
+        0
+    } else {
+        time_iters(iters, || {
+            let mut log = bun_ast::Log::init();
+            let arena = bun_alloc::Arena::new();
+            let mut g = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+            let _s = g.enter();
+            let _ = std::hint::black_box(SimdJSON::parse_into(
+                &mut bufs, &source, &mut log, &arena, true,
+            ));
+        })
+    };
 
-    let scalar_ns = if which == 0 { 0 } else { time_iters(iters, || {
-        let mut log = bun_ast::Log::init();
-        let arena = bun_alloc::Arena::new();
-        let mut g = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _s = g.enter();
-        let _ = std::hint::black_box(json::parse_utf8_scalar(&source, &mut log, &arena));
-    }) };
+    let scalar_ns = if which == 0 {
+        0
+    } else {
+        time_iters(iters, || {
+            let mut log = bun_ast::Log::init();
+            let arena = bun_alloc::Arena::new();
+            let mut g = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+            let _s = g.enter();
+            let _ = std::hint::black_box(json::parse_utf8_scalar(&source, &mut log, &arena));
+        })
+    };
 
     let result = bun_jsc::JSValue::create_empty_object(global, 4);
     result.put(global, b"bytes", JSValue::js_number(bytes.len() as f64));
@@ -193,9 +201,7 @@ pub fn js_bench_cursor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
                             }
                         }
                         b"bin" | b"directories" => fields_read += 1,
-                        b"dependencies"
-                        | b"peerDependencies"
-                        | b"optionalDependencies" => {
+                        b"dependencies" | b"peerDependencies" | b"optionalDependencies" => {
                             for (_, dv) in v.iter_object() {
                                 fields_read += dv.as_str().is_some() as u64;
                             }
@@ -209,7 +215,11 @@ pub fn js_bench_cursor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     });
     let result = bun_jsc::JSValue::create_empty_object(global, 4);
     result.put(global, b"ns", JSValue::js_number(ns as f64));
-    result.put(global, b"versions", JSValue::js_number(versions_seen as f64));
+    result.put(
+        global,
+        b"versions",
+        JSValue::js_number(versions_seen as f64),
+    );
     result.put(global, b"fields", JSValue::js_number(fields_read as f64));
     result.put(global, b"bytes", JSValue::js_number(bytes.len() as f64));
     Ok(result)

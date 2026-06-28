@@ -34,7 +34,11 @@ impl<'a> JsonDoc<'a> {
         let src = &source.contents;
         let len = src.len();
         if len > i32::MAX as usize {
-            log.add_error(Some(source), js_ast::Loc::default(), b"JSON input too large");
+            log.add_error(
+                Some(source),
+                js_ast::Loc::default(),
+                b"JSON input too large",
+            );
             return Err(bun_core::err!("ParserError"));
         }
         let cap = len + 64 + 4;

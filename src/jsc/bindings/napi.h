@@ -276,7 +276,16 @@ public:
 
     const auto& addFinalizer(napi_finalize callback, void* hint, void* data)
     {
-        return *m_finalizers.add({ callback, hint, data }).iterator;
+        // add() deduplicates on (callback, hint, data). During cleanup() a dying
+        // owner's entry is only marked inactive, not erased, and NapiRef is
+        // TZone-allocated, so a finalizer that deletes a ref and registers a new
+        // one can get the freed address back and alias that dead entry. It then
+        // belongs exclusively to the new owner (only a freed address can collide),
+        // so reactivate it; otherwise the drain never runs it and clear() frees it
+        // while the new owner's boundCleanup still points at it.
+        const auto& bound = *m_finalizers.add({ callback, hint, data }).iterator;
+        bound.active = true;
+        return bound;
     }
 
     bool hasFinalizers() const

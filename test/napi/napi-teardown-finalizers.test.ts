@@ -159,3 +159,28 @@ it.skipIf(!canBuildNodeAddons())(
   },
   30_000,
 );
+
+it.skipIf(!canBuildNodeAddons())(
+  "a finalizer registered after deleting a ref during teardown still runs",
+  async () => {
+    // recycle_finalize runs at teardown, napi_delete_references the "saved" ref
+    // (freeing its NapiRef, whose entry in the env's finalizer list is only
+    // tombstoned while that list is being drained), then registers a new
+    // finalizer. The allocator commonly returns the just-freed NapiRef address,
+    // so the new entry's identity collides with the tombstone; it must be
+    // revived, or "recycled" never runs and the new ref is left pointing at a
+    // freed list node. Deleting the ref also cancels "saved", which must not run.
+    const { exitCode, finalized, childOutputIfNothingFinalized } = await runFixture(`
+      const o1 = {}, o2 = {};
+      addon.addFinalizerSaveRef(o2, "saved");
+      addon.wrapRecycling(o1, "outer", "recycled");
+      globalThis.__keep = [o1, o2];
+    `);
+    expect({ exitCode, finalized, childOutputIfNothingFinalized }).toEqual({
+      exitCode: 0,
+      finalized: ["outer", "recycled"],
+      childOutputIfNothingFinalized: null,
+    });
+  },
+  30_000,
+);

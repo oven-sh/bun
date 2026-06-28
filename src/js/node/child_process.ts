@@ -566,6 +566,7 @@ function spawnSync(file, args, options) {
       env: options[kBunEnv] || options.env || undefined,
       cwd: options.cwd || undefined,
       stdio: bunStdio,
+      detached: options.detached,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],
@@ -1552,9 +1553,11 @@ class ChildProcess extends EventEmitter {
 
     const handle = this.#handle;
     if (handle) {
+      // Bun.spawn's `killed` is true once the process has exited or been
+      // terminated by a signal. Node treats kill() on a dead process as
+      // ESRCH: return false and leave `.killed` untouched.
       if (handle.killed) {
-        this.killed = true;
-        return true;
+        return false;
       }
 
       try {

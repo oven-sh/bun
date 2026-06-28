@@ -8,7 +8,6 @@ import {
   CFunction,
   CString,
   JSCallback,
-  linkSymbols,
   ptr,
   read,
   suffix,

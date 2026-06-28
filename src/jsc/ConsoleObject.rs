@@ -643,9 +643,13 @@ impl Default for Column {
 }
 
 enum RowKey {
-    /// Pre-rendered property-name bytes + visible width (plain-object
-    /// tabular data). Owned, so no WTF refcount outlives the iterator.
-    Str { text: Vec<u8>, width: u32 },
+    /// Property-name UTF-8 slice + visible width (plain-object tabular data).
+    /// `to_utf8` refs the WTF impl (or owns a transcoded copy) and Drop
+    /// releases it, so the slice is safe to keep past the property iterator.
+    Str {
+        text: bun_core::ZigStringSlice,
+        width: u32,
+    },
     /// Row index (array / iterable tabular data). Rendered on demand.
     Num(u32),
 }
@@ -654,7 +658,7 @@ impl RowKey {
     fn str(name: &BunString) -> Self {
         Self::Str {
             width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
-            text: name.to_utf8_bytes(),
+            text: name.to_utf8(),
         }
     }
 
@@ -904,7 +908,7 @@ impl<'a> TablePrinter<'a> {
                 .ok();
             match &row.key {
                 RowKey::Str { text, .. } => {
-                    writer.write_all(text).ok();
+                    writer.write_all(text.slice()).ok();
                 }
                 RowKey::Num(value) => {
                     write!(writer, "{value}").ok();

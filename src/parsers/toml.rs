@@ -638,8 +638,28 @@ impl<'a, 'log> Parser<'a, 'log> {
             b'[' => self.parse_array(),
             b'{' => self.parse_inline_table(),
             b'i' | b'n' | b'+' | b'-' | b'0'..=b'9' => self.parse_number_or_datetime(),
+            c if c.is_ascii_alphabetic() => Err(self.err_unquoted_string(pos)),
             _ => Err(self.err_char(pos, "Expected a value but found")),
         }
+    }
+
+    /// A bare word in value position is almost always an unquoted string,
+    /// which the old parser silently accepted; name the fix directly.
+    fn err_unquoted_string(&mut self, pos: usize) -> PErr {
+        let mut end = pos;
+        while end < self.src.len() && is_bare_key_char(self.peek_at(end)) && end - pos < 64 {
+            end += 1;
+        }
+        if self.redact || end == pos {
+            return self.err(pos, b"Strings must be quoted");
+        }
+        self.err_fmt(
+            pos,
+            format_args!(
+                "Strings must be quoted: \"{}\"",
+                bstr::BStr::new(&self.src[pos..end])
+            ),
+        )
     }
 
     fn string_expr(&self, text: &'a [u8], is_ascii: bool, loc: Loc) -> Expr {
@@ -661,7 +681,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                 return Ok(());
             }
         }
-        Err(self.err_char(pos, "Expected a value but found"))
+        Err(self.err_unquoted_string(pos))
     }
 
     // ── arrays and inline tables ───────────────────────────────────────────
@@ -1078,6 +1098,11 @@ impl<'a, 'log> Parser<'a, 'log> {
         }
 
         if !self.peek().is_ascii_digit() {
+            // An unsigned bare word (`linker = isolated`) is an unquoted
+            // string; anything after a sign is a malformed number.
+            if start == self.pos && self.peek().is_ascii_alphabetic() {
+                return Err(self.err_unquoted_string(start));
+            }
             return Err(self.err_char(self.pos, "Expected a number but found"));
         }
 

@@ -417,6 +417,14 @@ describe("error contract", () => {
     );
   });
 
+  test("unquoted string values name the fix", () => {
+    // The old parser silently accepted bare words as strings; this is the
+    // most common spec violation in real-world bunfig.toml files.
+    expect(syntaxError("linker = isolated").message).toBe('TOML Parse error: Strings must be quoted: "isolated"');
+    expect(syntaxError("a = tru").message).toBe('TOML Parse error: Strings must be quoted: "tru"');
+    expect(syntaxError("a = nope").message).toBe('TOML Parse error: Strings must be quoted: "nope"');
+  });
+
   test("common mistakes produce specific messages", () => {
     expect(syntaxError("a = 1\na = 2").message).toBe("TOML Parse error: Cannot redefine key 'a'");
     expect(syntaxError("[a]\n[a]").message).toBe("TOML Parse error: Cannot redefine table 'a'");

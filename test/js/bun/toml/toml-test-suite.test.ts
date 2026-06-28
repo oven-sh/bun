@@ -2476,7 +2476,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'N'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "No"');
   });
 
   test("invalid/array/text-before-array-separator", () => {
@@ -2500,7 +2500,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'I'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "I"');
   });
 
   test("invalid/bool/almost-false-with-extra", () => {
@@ -2512,7 +2512,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "falsify"');
   });
 
   test("invalid/bool/almost-false", () => {
@@ -2524,7 +2524,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "fals"');
   });
 
   test("invalid/bool/almost-true-with-extra", () => {
@@ -2536,7 +2536,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "truthy"');
   });
 
   test("invalid/bool/almost-true", () => {
@@ -2548,7 +2548,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "tru"');
   });
 
   test("invalid/bool/capitalized-false", () => {
@@ -2560,7 +2560,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'F'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "False"');
   });
 
   test("invalid/bool/capitalized-true", () => {
@@ -2572,7 +2572,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "True"');
   });
 
   test("invalid/bool/just-f", () => {
@@ -2584,7 +2584,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "f"');
   });
 
   test("invalid/bool/just-t", () => {
@@ -2596,7 +2596,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "t"');
   });
 
   test("invalid/bool/mixed-case-false", () => {
@@ -2608,7 +2608,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "falsE"');
   });
 
   test("invalid/bool/mixed-case-true", () => {
@@ -2620,7 +2620,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "trUe"');
   });
 
   test("invalid/bool/mixed-case", () => {
@@ -2632,7 +2632,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'v'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "valid"');
   });
 
   test("invalid/bool/starting-same-false", () => {
@@ -2644,7 +2644,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'f'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "falsey"');
   });
 
   test("invalid/bool/starting-same-true", () => {
@@ -2656,7 +2656,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 't'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "truer"');
   });
 
   test("invalid/bool/wrong-case-false", () => {
@@ -2668,7 +2668,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'F'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "FALSE"');
   });
 
   test("invalid/bool/wrong-case-true", () => {
@@ -2680,7 +2680,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "TRUE"');
   });
 
   test("invalid/control/bare-cr", () => {
@@ -3547,7 +3547,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "T"');
   });
 
   test("invalid/datetime/only-TZ", () => {
@@ -3559,7 +3559,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "TZ"');
   });
 
   test("invalid/datetime/only-Tdot", () => {
@@ -3571,7 +3571,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'T'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "T"');
   });
 
   test("invalid/datetime/second-over", () => {
@@ -3945,7 +3945,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'I'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "Inf"');
   });
 
   test("invalid/float/inf-incomplete-01", () => {
@@ -3957,7 +3957,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'i'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "in"');
   });
 
   test("invalid/float/inf-incomplete-02", () => {
@@ -3993,7 +3993,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'i'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "in_f"');
   });
 
   test("invalid/float/leading-dot-neg", () => {
@@ -4089,7 +4089,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'N'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "NaN"');
   });
 
   test("invalid/float/nan-incomplete-01", () => {
@@ -4101,7 +4101,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'n'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "na"');
   });
 
   test("invalid/float/nan-incomplete-02", () => {
@@ -4137,7 +4137,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a number but found 'n'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "na_n"');
   });
 
   test("invalid/float/trailing-dot-01", () => {
@@ -5825,7 +5825,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'b'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "b"');
   });
 
   test("invalid/key/without-value-01", () => {
@@ -6925,7 +6925,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'v'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "value"');
   });
 
   test("invalid/string/missing-quotes-inline-table", () => {
@@ -6937,7 +6937,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'v'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "value"');
   });
 
   test("invalid/string/missing-quotes", () => {
@@ -6949,7 +6949,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'v'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "value"');
   });
 
   test("invalid/string/multiline-bad-escape-01", () => {
@@ -7285,7 +7285,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "a"');
   });
 
   test("invalid/string/no-open-02", () => {
@@ -7297,7 +7297,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "a"');
   });
 
   test("invalid/string/no-open-03", () => {
@@ -7309,7 +7309,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "a"');
   });
 
   test("invalid/string/no-open-04", () => {
@@ -7321,7 +7321,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "a"');
   });
 
   test("invalid/string/no-open-05", () => {
@@ -7333,7 +7333,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "a"');
   });
 
   test("invalid/string/no-open-06", () => {
@@ -7345,7 +7345,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "a"');
   });
 
   test("invalid/string/no-open-07", () => {
@@ -7357,7 +7357,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "a"');
   });
 
   test("invalid/string/no-open-08", () => {
@@ -7369,7 +7369,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected a value but found 'a'");
+    expect((err as SyntaxError).message).toBe('TOML Parse error: Strings must be quoted: "a"');
   });
 
   test("invalid/string/text-after-string", () => {

@@ -19,12 +19,7 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-// Bun: upstream runs this under the --expose_externalize_string V8 flag and
-// uses the createExternalizableString / externalizeString / isOneByteString
-// globals it exposes. Externalized strings are a V8 representation with no
-// JavaScriptCore equivalent, so that flag comment and those calls are
-// removed here; every fs assertion (the writeSync latin1/utf8/ucs2 writes
-// and their read-backs) is kept unchanged from upstream.
+// Flags: --expose_externalize_string
 'use strict';
 const common = require('../common');
 const assert = require('assert');
@@ -40,9 +35,32 @@ const fn4 = tmpdir.resolve('write4.txt');
 const expected = 'ümlaut.';
 const constants = fs.constants;
 
+const {
+  createExternalizableString,
+  createExternalizableTwoByteString,
+  externalizeString,
+  isOneByteString,
+} = globalThis;
+
+assert.notStrictEqual(createExternalizableString, undefined);
+assert.notStrictEqual(createExternalizableTwoByteString, undefined);
+assert.notStrictEqual(externalizeString, undefined);
+assert.notStrictEqual(isOneByteString, undefined);
+
+// Account for extra globals exposed by --expose_externalize_string.
+common.allowGlobals(
+  createExternalizableString,
+  createExternalizableTwoByteString,
+  externalizeString,
+  isOneByteString,
+  globalThis.x,
+);
+
 {
   // Must be a unique string.
-  const expected = 'ümlaut sechzig';
+  const expected = createExternalizableString('ümlaut sechzig');
+  externalizeString(expected);
+  assert.strictEqual(isOneByteString(expected), true);
   const fd = fs.openSync(fn, 'w');
   fs.writeSync(fd, expected, 0, 'latin1');
   fs.closeSync(fd);
@@ -51,7 +69,9 @@ const constants = fs.constants;
 
 {
   // Must be a unique string.
-  const expected = 'ümlaut neunzig';
+  const expected = createExternalizableString('ümlaut neunzig');
+  externalizeString(expected);
+  assert.strictEqual(isOneByteString(expected), true);
   const fd = fs.openSync(fn, 'w');
   fs.writeSync(fd, expected, 0, 'utf8');
   fs.closeSync(fd);
@@ -60,7 +80,9 @@ const constants = fs.constants;
 
 {
   // Must be a unique string.
-  const expected = 'Zhōngwén 1';
+  const expected = createExternalizableString('Zhōngwén 1');
+  externalizeString(expected);
+  assert.strictEqual(isOneByteString(expected), false);
   const fd = fs.openSync(fn, 'w');
   fs.writeSync(fd, expected, 0, 'ucs2');
   fs.closeSync(fd);
@@ -69,7 +91,9 @@ const constants = fs.constants;
 
 {
   // Must be a unique string.
-  const expected = 'Zhōngwén 2';
+  const expected = createExternalizableString('Zhōngwén 2');
+  externalizeString(expected);
+  assert.strictEqual(isOneByteString(expected), false);
   const fd = fs.openSync(fn, 'w');
   fs.writeSync(fd, expected, 0, 'utf8');
   fs.closeSync(fd);

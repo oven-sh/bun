@@ -999,15 +999,13 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
                 written: 0,
             };
         }
+        // `trim::utf16` strips a single trailing lone high surrogate so simdutf's
+        // length estimate never sees invalid input. If that empties the input, it
+        // was exactly one unpaired surrogate: 3 bytes of U+FFFD, not nothing.
         let trimmed = simdutf::trim::utf16(utf16);
-        if trimmed.is_empty() {
-            return EncodeIntoResult {
-                read: 0,
-                written: 0,
-            };
-        }
-
-        let out_len = if buf.len() <= (trimmed.len() * 3 + 2) {
+        let out_len = if trimmed.is_empty() {
+            3
+        } else if buf.len() <= (trimmed.len() * 3 + 2) {
             simdutf::length::utf8::from::utf16::le(trimmed)
         } else {
             buf.len()

@@ -441,6 +441,14 @@ describe("bunshell", () => {
       TestBuilder.command`echo ${" à"}`.stdout(" à\n").runAsTest("latin-1 character preceded by space");
       TestBuilder.command`echo ${"à¿"}`.stdout("à¿\n").runAsTest("multiple latin-1 characters");
       TestBuilder.command`echo ${'"à¿"'}`.stdout('"à¿"\n').runAsTest("latin-1 characters in quotes");
+      // An ASCII run before the first non-ASCII code unit must not be emitted
+      // twice. This shape (ASCII prefix + Latin-1 + no shell metacharacters)
+      // takes the no-escape append_latin1_impl path, unlike every case above.
+      TestBuilder.command`echo ${"café"}`.stdout("café\n").runAsTest("ascii prefix before a latin-1 character");
+      TestBuilder.command`echo ${"résumé"}`.stdout("résumé\n").runAsTest("interleaved ascii and latin-1 runs");
+      TestBuilder.command`echo ${{ raw: "café" }}`
+        .stdout("café\n")
+        .runAsTest("ascii prefix before a latin-1 character via raw");
     });
   });
 

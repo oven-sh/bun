@@ -79,6 +79,19 @@ const cases: Record<string, () => Promise<unknown>> = {
   "wrapKey via encrypt": () => crypto.subtle.wrapKey("raw", hm, aes, { name: "AES-GCM", iv }),
   "wrapKey bogus": () => crypto.subtle.wrapKey("raw", hm, kw, bad),
   "wrapKey thrower": () => crypto.subtle.wrapKey("raw", hm, kw, thrower),
+  // wrapKey("jwk", ...) serializes the exported JWK with JSON.stringify, which invokes an
+  // inherited Object.prototype.toJSON. That throw lands between the synchronous export
+  // callback's toJS<IDLDictionary<JsonWebKey>> and the AES-KW wrap.
+  "wrapKey jwk with throwing Object.prototype.toJSON": async () => {
+    (Object.prototype as any).toJSON = () => {
+      throw new Error("poisoned toJSON");
+    };
+    try {
+      return await crypto.subtle.wrapKey("jwk", hm, kw, "AES-KW");
+    } finally {
+      delete (Object.prototype as any).toJSON;
+    }
+  },
 
   "unwrapKey raw": async () => {
     const wrapped = await crypto.subtle.wrapKey("raw", hm, kw, "AES-KW");

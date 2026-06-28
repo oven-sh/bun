@@ -99,6 +99,22 @@ describe("Bun.Cookie validation tests", () => {
   });
 });
 
+describe("Expires weekday", () => {
+  test("serializes the unix epoch with the correct weekday", () => {
+    expect(new Bun.Cookie("name", "value", { expires: 0 }).toString()).toBe(
+      "name=value; Path=/; Expires=Thu, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+    );
+  });
+
+  test("matches Date#toUTCString for every day of the week", () => {
+    for (let day = 7; day < 14; day++) {
+      const date = new Date(Date.UTC(2024, 0, day)); // 2024-01-07 is a Sunday
+      const cookie = new Bun.Cookie("name", "value", { expires: date });
+      expect(cookie.toString()).toContain(`; Expires=${date.toUTCString().slice(0, 3)}, ${day} Jan 2024`);
+    }
+  });
+});
+
 console.log("describe Bun.serve() cookies");
 describe("Bun.serve() cookies", () => {
   const server = Bun.serve({
@@ -181,7 +197,7 @@ describe("Bun.serve() cookies", () => {
     expect(body).toMatchInlineSnapshot(`{}`);
     expect(res.headers.getAll("Set-Cookie")).toMatchInlineSnapshot(`
       [
-        "test=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "test=; Path=/; Expires=Thu, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
       ]
     `);
   });
@@ -238,7 +254,7 @@ describe("Bun.serve() cookies", () => {
     map.set("do_modify", "FIVE");
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "do_delete=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "do_delete=; Path=/; Expires=Thu, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
         "do_modify=FIVE; Path=/; SameSite=Lax",
       ]
     `);
@@ -352,10 +368,10 @@ test("delete cookie path option", () => {
   map.delete("d", { path: "/" });
   expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
     [
-      "a=; Path=/b; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "b=; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "c=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
-      "d=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "a=; Path=/b; Expires=Thu, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "b=; Expires=Thu, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "c=; Path=/; Expires=Thu, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+      "d=; Path=/; Expires=Thu, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
     ]
   `);
 });

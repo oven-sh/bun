@@ -267,11 +267,11 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
     // Add expires if present
     if (hasExpiry()) {
         builder.append("; Expires="_s);
-        // In a real implementation, this would convert the timestamp to a proper date string
-        // For now, just use a numeric timestamp
         WTF::GregorianDateTime dateTime;
         vm.dateCache.msToGregorianDateTime(m_expires, WTF::TimeType::UTCTime, dateTime);
-        builder.append(WTF::makeRFC2822DateString(dateTime.weekDay(), dateTime.monthDay(), dateTime.month(), dateTime.year(), dateTime.hour(), dateTime.minute(), dateTime.second(), dateTime.utcOffsetInMinute()));
+        // GregorianDateTime::weekDay() is 0 = Sunday, but makeRFC2822DateString's
+        // day-name table starts at Monday, so the index has to be rotated.
+        builder.append(WTF::makeRFC2822DateString((dateTime.weekDay() + 6) % 7, dateTime.monthDay(), dateTime.month(), dateTime.year(), dateTime.hour(), dateTime.minute(), dateTime.second(), dateTime.utcOffsetInMinute()));
     }
 
     // Add Max-Age if present

@@ -1,6 +1,7 @@
 /* globals AbortController */
 
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createHash, randomFillSync } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
@@ -399,12 +400,71 @@ test("post FormData with File", async () => {
   expect(/filename123/.test(result)).toBeTrue();
 });
 
-test("invalid url", async () => {
+test("unresolvable hostname rejects with the resolver error", async () => {
+  // A DNS label longer than 63 bytes is illegal (RFC 1035 section 2.3.4), so
+  // getaddrinfo rejects it locally without touching the network. The cases,
+  // each of which must name the hostname getaddrinfo actually failed on:
+  //   1-3. Direct fetches: the second hits the in-process DNS cache, which
+  //        used to take a different path and report a different wrong error.
+  //   4.   An explicit unresolvable proxy: the error must name the proxy,
+  //        not the origin, since the proxy is what gets resolved.
+  //   5.   A redirect to an unresolvable host: the error must name the
+  //        redirect target, not the original (resolvable) origin.
+  // Runs in a subprocess with the proxy env cleared so the direct fetches
+  // actually resolve their hostnames.
+  const host = Buffer.alloc(64, "a").toString() + ".com";
+  const proxyHost = Buffer.alloc(64, "b").toString() + ".com";
+  const redirectHost = Buffer.alloc(64, "c").toString() + ".com";
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const out = [];
+       const report = p => p.then(
+         () => "resolved",
+         ({ name, code, syscall, hostname, message }) => ({ name, code, syscall, hostname, message }),
+       );
+       for (let i = 0; i < 3; i++) {
+         out.push(await report(fetch("http://" + ${JSON.stringify(host)} + "/")));
+       }
+       out.push(await report(fetch("http://origin.invalid/", { proxy: "http://" + ${JSON.stringify(proxyHost)} + ":3128" })));
+       using server = Bun.serve({
+         port: 0,
+         fetch: () => Response.redirect("http://" + ${JSON.stringify(redirectHost)} + "/", 302),
+       });
+       out.push(await report(fetch(server.url)));
+       console.log(JSON.stringify(out));`,
+    ],
+    env: {
+      ...bunEnv,
+      HTTP_PROXY: undefined,
+      HTTPS_PROXY: undefined,
+      http_proxy: undefined,
+      https_proxy: undefined,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const notFound = (hostname: string) => ({
+    name: "Error",
+    code: "ENOTFOUND",
+    syscall: "getaddrinfo",
+    hostname,
+    message: `getaddrinfo ENOTFOUND ${hostname}`,
+  });
+  // `out` is the raw stdout if it is not JSON (the subprocess crashed), so the
+  // failure diff shows what the child actually printed alongside stderr.
+  let out: unknown = stdout;
   try {
-    await fetch("http://invalid");
-  } catch (e) {
-    expect(e.message).toBe("Unable to connect. Is the computer able to access the url?");
-  }
+    out = JSON.parse(stdout);
+  } catch {}
+  expect({ out, stderr, exitCode }).toEqual({
+    out: [notFound(host), notFound(host), notFound(host), notFound(proxyHost), notFound(redirectHost)],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("do not decode redirect body", async () => {

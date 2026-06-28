@@ -74,6 +74,100 @@ pub(crate) struct DeflateNegotiationResult {
     pub params: WebSocketDeflate::Params,
 }
 
+/// Strips one layer of `"…"` quoting from an extension parameter value.
+/// RFC 6455 §9.1 requires the unescaped content of a quoted-string value to
+/// conform to the `token` ABNF, so no inner escapes need handling.
+fn unquote(value: &[u8]) -> &[u8] {
+    if value.len() >= 2 && value[0] == b'"' && value[value.len() - 1] == b'"' {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+/// Parses a `…_max_window_bits` value from an extension negotiation response.
+/// In a response the parameter must carry a decimal value between 8 and 15
+/// (RFC 7692 §8.1.2); a missing, malformed, or out-of-range value is `None`.
+fn parse_window_bits(value: Option<&[u8]>) -> Option<u8> {
+    let bits = strings::parse_int::<u8>(unquote(value?), 10).ok()?;
+    (WebSocketDeflate::Params::MIN_WINDOW_BITS..=WebSocketDeflate::Params::MAX_WINDOW_BITS)
+        .contains(&bits)
+        .then_some(bits)
+}
+
+/// Validates one `Sec-WebSocket-Extensions` response header value against the
+/// single `permessage-deflate; client_max_window_bits` offer we sent and
+/// accumulates the accepted parameters into `deflate`.
+///
+/// Returns `false` when the server lists an extension the client did not
+/// offer (RFC 6455 §4.1), accepts `permessage-deflate` more than once, or
+/// sends a `permessage-deflate` parameter that is unknown, repeated, or
+/// carries an invalid value (RFC 7692 §8.1). The caller must then fail the
+/// connection. The response may span several header lines; `deflate.enabled`
+/// persists across calls so a repeated `permessage-deflate` element anywhere
+/// in the response is rejected.
+fn accept_extensions_response(value: &[u8], deflate: &mut DeflateNegotiationResult) -> bool {
+    let mut elements = HeaderValueIterator::init(value);
+    while let Some(element) = elements.next() {
+        let mut parts = element.split(|b| *b == b';');
+        let name = strings::trim(parts.next().unwrap_or(b""), b" \t");
+        if name != b"permessage-deflate" || deflate.enabled {
+            return false;
+        }
+        deflate.enabled = true;
+
+        let mut seen_server_no_context_takeover = false;
+        let mut seen_client_no_context_takeover = false;
+        let mut seen_server_max_window_bits = false;
+        let mut seen_client_max_window_bits = false;
+        for part in parts {
+            let part = strings::trim(part, b" \t");
+            let (key, value) = match strings::index_of_char_usize(part, b'=') {
+                Some(i) => (
+                    strings::trim(&part[..i], b" \t"),
+                    Some(strings::trim(&part[i + 1..], b" \t")),
+                ),
+                None => (part, None),
+            };
+
+            match key {
+                // The `…_no_context_takeover` parameters carry no value
+                // (RFC 7692 §8.1.1).
+                b"server_no_context_takeover"
+                    if value.is_none() && !seen_server_no_context_takeover =>
+                {
+                    seen_server_no_context_takeover = true;
+                    deflate.params.server_no_context_takeover = 1;
+                }
+                b"client_no_context_takeover"
+                    if value.is_none() && !seen_client_no_context_takeover =>
+                {
+                    seen_client_no_context_takeover = true;
+                    deflate.params.client_no_context_takeover = 1;
+                }
+                b"server_max_window_bits" if !seen_server_max_window_bits => {
+                    seen_server_max_window_bits = true;
+                    let Some(bits) = parse_window_bits(value) else {
+                        return false;
+                    };
+                    deflate.params.server_max_window_bits = bits;
+                }
+                b"client_max_window_bits" if !seen_client_max_window_bits => {
+                    seen_client_max_window_bits = true;
+                    let Some(bits) = parse_window_bits(value) else {
+                        return false;
+                    };
+                    deflate.params.client_max_window_bits = bits;
+                }
+                // Anything else is a parameter that is not defined for use in
+                // a response, is repeated, or carries an unexpected value.
+                _ => return false,
+            }
+        }
+    }
+    true
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Initializing,
@@ -1386,103 +1480,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         header.name(),
                         b"Sec-WebSocket-Extensions",
                     ) {
-                        // Per RFC 6455 §9.1, the server MUST NOT respond with an
-                        // extension the client did not offer. Match upstream `ws`
-                        // (lib/websocket.js: "Server sent a Sec-WebSocket-Extensions
-                        // header but no extension was requested") and fail the
-                        // handshake instead of silently accepting it.
+                        // RFC 6455 §4.1 and RFC 7692 §8.1 require failing the
+                        // connection on an extension we did not offer or an
+                        // invalid `permessage-deflate` parameter, like `ws` does.
                         // SAFETY: short-lived read.
-                        if !unsafe { (*this).offered_permessage_deflate } {
+                        if !unsafe { (*this).offered_permessage_deflate }
+                            || !accept_extensions_response(header.value(), &mut deflate_result)
+                        {
                             // SAFETY: no `&mut Self` is live across this call.
-                            unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                            unsafe { Self::terminate(this, ErrorCode::InvalidExtensionsHeader) };
                             return;
-                        }
-                        // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
-                        for ext_str in header.value().split(|b| *b == b',') {
-                            let mut ext_it = strings::trim(ext_str, b" \t").split(|b| *b == b';');
-                            let ext_name = strings::trim(ext_it.next().unwrap_or(b""), b" \t");
-                            if ext_name == b"permessage-deflate" {
-                                // RFC 7692 §5: the response must not list
-                                // permessage-deflate more than once (whether in
-                                // one header value or across several headers).
-                                if deflate_result.enabled {
-                                    // SAFETY: no `&mut Self` is live across this call.
-                                    unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                                    return;
-                                }
-                                deflate_result.enabled = true;
-                                for param_str in ext_it {
-                                    let mut param_it =
-                                        strings::trim(param_str, b" \t").split(|b| *b == b'=');
-                                    let key = strings::trim(param_it.next().unwrap_or(b""), b" \t");
-                                    let value =
-                                        strings::trim(param_it.next().unwrap_or(b""), b" \t");
-
-                                    if key == b"server_no_context_takeover" {
-                                        deflate_result.params.server_no_context_takeover = 1;
-                                    } else if key == b"client_no_context_takeover" {
-                                        deflate_result.params.client_no_context_takeover = 1;
-                                    } else if key == b"server_max_window_bits" {
-                                        if !value.is_empty() {
-                                            // Remove quotes if present
-                                            let trimmed_value = if value.len() >= 2
-                                                && value[0] == b'"'
-                                                && value[value.len() - 1] == b'"'
-                                            {
-                                                &value[1..value.len() - 1]
-                                            } else {
-                                                value
-                                            };
-
-                                            if let Ok(bits) =
-                                                strings::parse_int::<u8>(trimmed_value, 10)
-                                            {
-                                                if bits >= WebSocketDeflate::Params::MIN_WINDOW_BITS
-                                                    && bits
-                                                        <= WebSocketDeflate::Params::MAX_WINDOW_BITS
-                                                {
-                                                    deflate_result.params.server_max_window_bits =
-                                                        bits;
-                                                }
-                                            }
-                                        }
-                                    } else if key == b"client_max_window_bits" {
-                                        if !value.is_empty() {
-                                            // Remove quotes if present
-                                            let trimmed_value = if value.len() >= 2
-                                                && value[0] == b'"'
-                                                && value[value.len() - 1] == b'"'
-                                            {
-                                                &value[1..value.len() - 1]
-                                            } else {
-                                                value
-                                            };
-
-                                            if let Ok(bits) =
-                                                strings::parse_int::<u8>(trimmed_value, 10)
-                                            {
-                                                if bits >= WebSocketDeflate::Params::MIN_WINDOW_BITS
-                                                    && bits
-                                                        <= WebSocketDeflate::Params::MAX_WINDOW_BITS
-                                                {
-                                                    deflate_result.params.client_max_window_bits =
-                                                        bits;
-                                                }
-                                            }
-                                        } else {
-                                            // client_max_window_bits without value means use default (15)
-                                            deflate_result.params.client_max_window_bits = 15;
-                                        }
-                                    }
-                                }
-                            } else if !ext_name.is_empty() {
-                                // RFC 6455 §4.1: fail on an extension the client did
-                                // not offer; permessage-deflate is the only one we
-                                // offer. Empty elements (a trailing comma) are ok.
-                                // SAFETY: no `&mut Self` is live across this call.
-                                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                                return;
-                            }
                         }
                     }
                 }

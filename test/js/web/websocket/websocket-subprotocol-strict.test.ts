@@ -275,22 +275,22 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
 describe("WebSocket strict RFC 6455 extension handling", () => {
   it("should reject an extension the client never offered", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Extensions: x-bogus-ext"]);
-    await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
+    await expectConnectionFailure(server.port, undefined, 1002, "Invalid Sec-WebSocket-Extensions header");
   });
 
   it("should reject an unoffered extension listed after permessage-deflate", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Extensions: permessage-deflate, x-bogus-ext"]);
-    await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
+    await expectConnectionFailure(server.port, undefined, 1002, "Invalid Sec-WebSocket-Extensions header");
   });
 
   it("should reject an unoffered extension listed before permessage-deflate", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Extensions: x-bogus-ext, permessage-deflate"]);
-    await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
+    await expectConnectionFailure(server.port, undefined, 1002, "Invalid Sec-WebSocket-Extensions header");
   });
 
   it("should reject an unoffered extension carrying parameters", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Extensions: x-bogus-ext; foo=bar"]);
-    await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
+    await expectConnectionFailure(server.port, undefined, 1002, "Invalid Sec-WebSocket-Extensions header");
   });
 
   // RFC 7692 §5: the response must not list permessage-deflate more than once.
@@ -298,7 +298,7 @@ describe("WebSocket strict RFC 6455 extension handling", () => {
     await using server = await createTestServer([
       "Sec-WebSocket-Extensions: permessage-deflate; server_max_window_bits=12, permessage-deflate; server_max_window_bits=10",
     ]);
-    await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
+    await expectConnectionFailure(server.port, undefined, 1002, "Invalid Sec-WebSocket-Extensions header");
   });
 
   it("should reject permessage-deflate repeated across two Sec-WebSocket-Extensions headers", async () => {
@@ -306,7 +306,7 @@ describe("WebSocket strict RFC 6455 extension handling", () => {
       "Sec-WebSocket-Extensions: permessage-deflate",
       "Sec-WebSocket-Extensions: permessage-deflate",
     ]);
-    await expectConnectionFailure(server.port, undefined, 1002, "Invalid response");
+    await expectConnectionFailure(server.port, undefined, 1002, "Invalid Sec-WebSocket-Extensions header");
   });
 
   it("should still accept a plain permessage-deflate response", async () => {

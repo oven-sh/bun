@@ -1832,6 +1832,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         didReceiveClose(CleanStatus::NotClean, 1006, "Proxy tunnel failed"_s, true);
         break;
     }
+    case Bun::WebSocketErrorCode::invalid_extensions_header: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid Sec-WebSocket-Extensions header"_s, true);
+        break;
+    }
     }
 
     // didReceiveClose already set m_state = CLOSED. The connect() ref

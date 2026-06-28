@@ -362,6 +362,16 @@ impl JSValue {
         }
         JSC__JSValue__isAnyError(self)
     }
+    /// Jest's `isError` from `@jest/expect-utils`: `Object.prototype.toString.call(v)`
+    /// is `[object Error|Exception|DOMException]`, or `v instanceof Error`.
+    /// Exceptions raised by user traps during the check are swallowed.
+    #[inline]
+    pub fn is_jest_error(self, global: &JSGlobalObject) -> bool {
+        if !self.is_cell() {
+            return false;
+        }
+        JSC__JSValue__isJestError(self, global)
+    }
     /// `JSValue.isError()` — true iff this is an
     /// `ErrorInstance` cell (does NOT match `Exception`).
     #[inline]
@@ -2083,6 +2093,7 @@ unsafe extern "C" {
         promise: &JSPromise,
     );
     safe fn JSC__JSValue__isAnyError(this: JSValue) -> bool;
+    safe fn JSC__JSValue__isJestError(this: JSValue, global: &JSGlobalObject) -> bool;
     // safe: `JSValue` is a by-value scalar; `&mut *const u8` / `&mut usize` are
     // ABI-identical to non-null `*mut` out-params the C++ side fills on success.
     safe fn JSC__JSValue__getClassInfoName(

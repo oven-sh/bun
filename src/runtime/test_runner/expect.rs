@@ -822,7 +822,12 @@ impl Expect {
 
         if !value.js_type().is_function() {
             if self.flags.get().promise() != Promise::None {
-                return Ok((Some(value), return_value_from_function));
+                // Jest only counts a `.rejects`/`.resolves` settled value as "thrown"
+                // when it is an Error; any other value fails with "did not throw".
+                if value.is_jest_error(global_this) {
+                    return Ok((Some(value), return_value_from_function));
+                }
+                return Ok((None, value));
             }
             return Err(global_this.throw(format_args!("Expected value must be a function")));
         }

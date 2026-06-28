@@ -776,8 +776,9 @@ describe("reference pool survives a process boundary", () => {
 });
 
 // Version 13 payloads were written before Date, RegExp, Error, and the other terminal
-// types were entered into the object reference pool. The deserializer must not pool
-// them for version < 14 or its indices stop matching what the writer counted.
+// types were entered into the object reference pool (FirstVersionWithPooledTerminals).
+// The deserializer must not pool them for older versions or its indices stop matching
+// what the writer counted.
 describe("deserializing a version 13 payload", () => {
   const version13 = (base64: string) => {
     const bytes = Buffer.from(base64, "base64");

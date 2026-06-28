@@ -3539,8 +3539,9 @@ private:
         m_objectPool.appendWithCrashOnOverflow(value);
     }
 
-    // Date, RegExp, Error, and the other version 14 terminal types are only counted by
-    // the serializer's pool from version 14 on, so older payloads must not pool them here.
+    // Date, RegExp, Error, and the other pooled terminal types are only counted by the
+    // serializer's pool from FirstVersionWithPooledTerminals on, so older payloads must
+    // not pool them here or the pool indices stop matching what the writer counted.
     void addTerminalToObjectPool(JSValue value)
     {
         if (m_version >= FirstVersionWithPooledTerminals)

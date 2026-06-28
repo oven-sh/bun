@@ -212,6 +212,36 @@ describe("ipc mode advanced", () => {
     expect(got).toEqual([[1, 2, 3]]);
     expect(exitCode).toBe(0);
   });
+
+  // Node's raw `new v8.Serializer()` (unlike the DefaultSerializer that IPC
+  // normally uses) does not treat views as host objects, so it emits a typed
+  // array as a kArrayBuffer record immediately followed by kArrayBufferView.
+  // This is the authoritative byte output of that serializer for
+  // `{ view: new Uint8Array([10, 20, 30]) }` at wire version 15, where the
+  // view record carries a trailing flags varint the reader must consume.
+  it("a raw V8 ArrayBuffer plus ArrayBufferView record deserializes to a typed array", async () => {
+    const payload = "ff0f6f22047669657742030a141e56420003007b01";
+    const { promise, resolve } = Promise.withResolvers<any>();
+    await using child = Bun.spawn({
+      cmd: [
+        process.execPath,
+        "-e",
+        `const p = Buffer.from("${payload}", "hex");
+         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+         require("fs").writeSync(3, Buffer.concat([be(p.length), p]));`,
+      ],
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      env: bunEnv,
+      ipc(message) {
+        resolve(message);
+      },
+    });
+    const got = await promise;
+    expect(got).toEqual({ view: new Uint8Array([10, 20, 30]) });
+    expect(got.view).toBeInstanceOf(Uint8Array);
+    expect(await child.exited).toBe(0);
+  });
 });
 
 // Node's "advanced" IPC uses V8's value-serializer format behind a 4-byte
@@ -368,6 +398,46 @@ describe.skipIf(!nodeExe())("ipc mode advanced node interop", () => {
     expect(Buffer.isBuffer(got.buf)).toBe(true);
     expect(got.cyclic[1]).toBe(got.cyclic);
     expect(got.shared[0]).toBe(got.shared[1]);
+  });
+
+  // The serializer must enumerate only an array's own keys. Probing every
+  // index through the prototype chain would both turn a large holey array
+  // into an O(length) event-loop stall and serialize an inherited
+  // Array.prototype index as an own element of every array. V8 enumerates
+  // own-only, so the node child is the reference for the hole surviving.
+  it("an inherited array index is not serialized as an own element", async () => {
+    using dir = tempDir("ipc-adv-inherited-index", {
+      "echo.cjs": ECHO_CHILD,
+      // prettier-ignore
+      "parent.cjs": /* js */ `
+        Array.prototype[1] = 99;
+        const { fork } = require("child_process");
+        const child = fork(require("path").join(__dirname, "echo.cjs"), [], {
+          execPath: process.argv[2], execArgv: [], serialization: "advanced", stdio: "ignore",
+        });
+        child.on("exit", () => { console.log("FAIL child exited before echoing"); process.exit(1); });
+        child.on("message", got => {
+          child.removeAllListeners("exit");
+          // "1 in got" would find the polluted Array.prototype[1] in this
+          // process, so only an own-property check proves the hole survived
+          // the round trip through node's V8 serializer.
+          const own = [Object.hasOwn(got, 0), Object.hasOwn(got, 1), Object.hasOwn(got, 2)].join();
+          const vals = [got[0], got[2], got.length].join();
+          console.log(own === "true,false,true" && vals === "0,2,3" ? "OK" : "FAIL own=" + own + " vals=" + vals);
+          child.kill();
+          process.exit(0);
+        });
+        child.send([0, , 2]);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "parent.cjs"), nodeExe()!],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "OK", exitCode: 0 });
   });
 
   // V8 writes error sub-tags in the fixed order message, stack, cause and its

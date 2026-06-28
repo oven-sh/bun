@@ -665,30 +665,23 @@ private:
         writeTag(V8Tag::kBeginSparseJSArray);
         writeVarint(length);
 
-        uint32_t propsWritten = 0;
-        for (uint32_t i = 0; i < length; i++) {
-            bool hasProp = array->hasProperty(m_globalObject, i);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!hasProp) continue;
-            JSValue element = array->getIndex(m_globalObject, i);
-            RETURN_IF_EXCEPTION(scope, false);
-            writeTag(V8Tag::kUint32);
-            writeVarint(i);
-            bool ok = writeValue(element);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!ok) return false;
-            propsWritten++;
-        }
-
+        // Enumerate own enumerable keys like V8's sparse path, rather than
+        // probing every index in 0..length: that would make new Array(1e8)
+        // block the event loop and serialize inherited indices as own.
         PropertyNameArrayBuilder names(m_vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         array->methodTable()->getOwnPropertyNames(array, m_globalObject, names, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
+        uint32_t propsWritten = 0;
         for (auto& name : names) {
             if (name == m_vm.propertyNames->length) continue;
-            if (parseIndex(name)) continue;
             JSValue propValue = array->get(m_globalObject, name);
             RETURN_IF_EXCEPTION(scope, false);
-            writeStringView(StringView(name.string()));
+            if (auto index = parseIndex(name)) {
+                writeTag(V8Tag::kUint32);
+                writeVarint(*index);
+            } else {
+                writeStringView(StringView(name.string()));
+            }
             bool ok = writeValue(propValue);
             RETURN_IF_EXCEPTION(scope, false);
             if (!ok) return false;
@@ -756,7 +749,10 @@ public:
         auto tag = peekTag();
         if (!tag || *tag != V8Tag::kVersion) return false;
         m_position++;
-        return readVarint().has_value();
+        auto version = readVarint();
+        if (!version) return false;
+        m_version = *version;
+        return true;
     }
 
     JSValue readValue()
@@ -1259,9 +1255,10 @@ private:
         auto subtag = readByte();
         auto byteOffset = readVarint();
         auto byteLength = readVarint();
-        // V8 versions >= 14 append a flags varint; older do not. Consume it
-        // greedily since nothing else follows a view inside an ArrayBuffer.
-        readVarint();
+        // V8 appends a flags varint only for wire version >= 14. Reading it
+        // unconditionally on an older stream would eat the parent container's
+        // next tag byte when the buffer+view pair is nested in an object.
+        if (m_version >= 14 && !readVarint()) return {};
         if (!subtag || !byteOffset || !byteLength) return {};
         RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
         if (*byteOffset > buffer->byteLength() || *byteLength > buffer->byteLength() - *byteOffset) return {};
@@ -1574,6 +1571,8 @@ private:
     const uint8_t* m_end;
     const uint8_t* m_position;
     bool m_forIPC;
+    // Wire version from the header; some trailing fields are version-gated.
+    uint32_t m_version { 0 };
     MarkedArgumentBuffer m_objectIds;
 };
 

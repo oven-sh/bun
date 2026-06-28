@@ -108,15 +108,13 @@ describe("HTMLRewriter", () => {
   });
 
   describe("transform rejects when the upstream body fails", () => {
-    // An HTTP server that sends response headers plus a partial HTML body
-    // and then resets the connection once the test calls `release()`.
-    // The transformed body must surface this as an error instead of
-    // resolving with a silently truncated document presented as complete.
+    // Sends response headers plus a partial HTML body, then resets the
+    // connection once the test calls `release()`. The transformed body must
+    // reject instead of resolving with a truncated document.
     const fullBody = "<div id=a><p>hello <b>world</b></p></div>";
-    // Ties the rejection to the connection failure so an unrelated future
-    // rejection ("Body already used", an internal rewriter error, ...) cannot
-    // keep these tests green. The exact RST message varies by platform, so
-    // match loosely rather than on the whole string.
+    // Ties the rejection to the connection failure so an unrelated rejection
+    // ("Body already used", an internal rewriter error) can't keep this green.
+    // The exact RST message varies by platform, so match loosely.
     const connectionError = /socket|connection|ECONNRESET/i;
 
     async function withPartialBodyServer(fn) {

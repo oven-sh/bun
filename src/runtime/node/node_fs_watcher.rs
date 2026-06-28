@@ -15,8 +15,8 @@ use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
-    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
+    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, GlobalRef,
+    JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
     VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
 use bun_paths::resolve_path::{self as Path, platform};
@@ -38,7 +38,7 @@ use super::win_watcher as path_watcher;
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `&mut Self`
 // carried LLVM `noalias`, so a host-fn that re-entered JS while holding it let
 // the optimiser cache `self.closed` etc. across the FFI call — the `*mut Self`
-// dance in the old `emit_abort`/`emit_error` was a manual workaround for
+// dance in the old `emit_error` was a manual workaround for
 // exactly that. With `Cell`/`JsCell` (UnsafeCell-backed) the miscompile is
 // structurally impossible and those methods are now plain `&self`.
 #[bun_jsc::JsClass(no_constructor)]
@@ -708,10 +708,12 @@ impl<'a> Arguments<'a> {
 }
 
 impl AbortListener for FSWatcher {
+    // Node only closes the watcher when the signal aborts ('close' event, no
+    // 'error'), so the abort reason is unused.
     // R-2: trait sig is fixed at `&mut self`; body just reborrows as `&self`
-    // (auto-deref) and calls the interior-mutable `emit_abort`.
-    fn on_abort(&mut self, reason: JSValue) {
-        (*self).emit_abort(reason);
+    // (auto-deref) and calls the interior-mutable `close`.
+    fn on_abort(&mut self, _reason: JSValue) {
+        (*self).close();
     }
 }
 
@@ -764,58 +766,20 @@ impl FSWatcher {
         }
     }
 
+    /// Deferred handler for a signal that was already aborted when the watcher
+    /// was created: Node parity is `'close'` only, so just close.
     pub fn emit_if_aborted(&self) {
-        let reason = match self.signal.get() {
-            Some(s) if s.aborted() => Some(s.abort_reason()),
-            _ => None,
-        };
-        if let Some(err) = reason {
-            self.emit_abort(err);
+        // Scope the `&AbortSignalRef` borrow before `close()` -> `detach()`
+        // replaces `self.signal` with `None`.
+        let aborted = matches!(self.signal.get(), Some(s) if s.aborted());
+        if aborted {
+            self.close();
         }
     }
 
-    /// R-2: `&self` + `Cell<bool>` for `closed` makes the old `*mut Self`
-    /// re-derive dance unnecessary. `listener.call_with_global_this(...)`
-    /// re-enters JS, which can call `watcher.close()` on this same object via
-    /// the wrapper's `m_ptr` — setting `closed = true` and `detach()`-ing.
-    /// `Cell::get()` after the callback observes that write because
-    /// `UnsafeCell` suppresses `noalias` on `&Self`; the trailing
-    /// `self.close()` then no-ops.
-    pub fn emit_abort(&self, err: JSValue) {
-        if self.closed.get() {
-            return;
-        }
-        self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
-        // unref_task() must execute before close(). No early returns below,
-        // so both calls are inlined at the end of this function.
-
-        err.ensure_still_alive();
-        let js_this = self.js_this.try_get();
-        if let Some(js_this) = js_this {
-            js_this.ensure_still_alive();
-            if let Some(listener) = js::listener_get_cached(js_this) {
-                listener.ensure_still_alive();
-                let global_this = self.global_this;
-                let args = [
-                    EventType::Error.to_js(&global_this),
-                    if err.is_empty_or_undefined_or_null() {
-                        CommonAbortReason::UserAbort.to_js(&global_this)
-                    } else {
-                        err
-                    },
-                ];
-                if listener.call_with_global_this(&global_this, &args).is_err() {
-                    global_this.clear_exception();
-                }
-            }
-        }
-
-        self.unref_task();
-        self.close();
-    }
-
-    /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`
-    /// observes a re-entrant `watcher.close()` from inside the listener.
+    /// R-2: the listener call re-enters JS and can `watcher.close()` this same
+    /// object (`closed = true` + `detach()`); `&self` + `Cell` lets the
+    /// trailing `self.close()` observe that write and no-op.
     pub fn emit_error(&self, err: &bun_sys::Error) {
         if self.closed.get() {
             return;

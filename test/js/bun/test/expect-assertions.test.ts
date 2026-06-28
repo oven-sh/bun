@@ -29,12 +29,12 @@ test("expect.assertions causes the test to fail when it should", async () => {
   expect(result.stderr.toString()).toContain("0 pass\n");
 });
 
-// Jest records any numeric argument to expect.assertions(n) as-is and compares it at
-// end-of-test. It never throws synchronously for a bogus number, so a try/catch in the
-// test body cannot swallow the failure and turn it into a false pass. Non-number and
-// missing arguments keep throwing a TypeError (Jest silently ignores those, which is a
-// worse false pass, so we intentionally stay stricter there).
-test("expect.assertions with an invalid numeric argument fails the test instead of throwing", async () => {
+// Jest records the argument to expect.assertions(n) as-is and compares it at end-of-test,
+// so an invalid count always fails the test: a try/catch in the test body cannot swallow
+// it and turn it into a false pass. Non-number and missing arguments still get an eager
+// TypeError (unlike Jest, which silently ignores them), but they are recorded as NaN
+// first so catching that throw does not turn the test green either.
+test("expect.assertions with an invalid argument fails the test even when the call is wrapped in try/catch", async () => {
   using dir = tempDir("expect-assertions-arg", {
     "assertions-arg.test.ts": `
       import { test, expect } from "bun:test";
@@ -89,11 +89,18 @@ test("expect.assertions with an invalid numeric argument fails the test instead 
         expect.assertions(-0);
       });
 
-      test("non-number argument still throws synchronously", () => {
+      test("non-number argument throws and still fails the test", () => {
         expect(() => expect.assertions("2" as any)).toThrow("Expected value must be a number");
       });
 
-      test("missing argument still throws synchronously", () => {
+      test("undefined count swallowed by try/catch still fails", () => {
+        try {
+          expect.assertions(undefined as any);
+        } catch {}
+        expect(1).toBe(1);
+      });
+
+      test("missing argument throws and still fails the test", () => {
         expect(() => (expect.assertions as any)()).toThrow("expect.assertions() takes 1 argument");
       });
     `,
@@ -132,13 +139,17 @@ test("expect.assertions with an invalid numeric argument fails the test instead 
     (fail) negative count without a try/catch still fails
     (pass) matching count still passes
     (pass) negative zero with no assertions still passes
-    (pass) non-number argument still throws synchronously
-    (pass) missing argument still throws synchronously
+    AssertionError: expected NaN assertions, but test ended with 1 assertion
+    (fail) non-number argument throws and still fails the test
+    AssertionError: expected NaN assertions, but test ended with 1 assertion
+    (fail) undefined count swallowed by try/catch still fails
+    AssertionError: expected NaN assertions, but test ended with 1 assertion
+    (fail) missing argument throws and still fails the test
 
-     4 pass
-     6 fail
-     10 expect() calls
-    Ran 10 tests across 1 file."
+     2 pass
+     9 fail
+     11 expect() calls
+    Ran 11 tests across 1 file."
     ,
       "stdout": "bun test <version> (<revision>)",
     }

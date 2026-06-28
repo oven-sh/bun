@@ -1090,7 +1090,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     JSValue key2;
                     bool found = false;
                     while (iter2->next(globalObject, key2)) {
-                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, true);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (equal) {
                             found = true;
@@ -1119,7 +1119,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     JSValue key1;
                     bool found = false;
                     while (iter1->next(globalObject, key1)) {
-                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, true);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (equal) {
                             found = true;
@@ -1148,7 +1148,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 size_t idx2 = 0;
                 while (iter2->next(globalObject, key2)) {
                     if (!matchedIndices.get(idx2)) {
-                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, true);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (equal) {
                             matchedIndices.set(idx2);
@@ -1194,7 +1194,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     allFastPath = false;
                     break;
                 }
-                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false);
+                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!valuesEqual) {
                     allFastPath = false;
@@ -1224,10 +1224,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     JSValue key2, value2;
                     bool found = false;
                     while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, true);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (keysEqual) {
-                            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false);
+                            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, true);
                             RETURN_IF_EXCEPTION(scope, {});
                             if (valuesEqual) {
                                 found = true;
@@ -1253,10 +1253,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     JSValue key1, value1;
                     bool found = false;
                     while (iter1->nextKeyValue(globalObject, key1, value1)) {
-                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, true);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (keysEqual) {
-                            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false);
+                            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, true);
                             RETURN_IF_EXCEPTION(scope, {});
                             if (valuesEqual) {
                                 found = true;
@@ -1287,10 +1287,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 size_t idx2 = 0;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {
                     if (!matchedIndices.get(idx2)) {
-                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, true);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (keysEqual) {
-                            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false);
+                            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, true);
                             RETURN_IF_EXCEPTION(scope, {});
                             if (valuesEqual) {
                                 matchedIndices.set(idx2);

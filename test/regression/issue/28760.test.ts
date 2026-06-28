@@ -165,3 +165,54 @@ test("Bun.deepEquals with self-referential Maps and object keys does not stack o
   expect(Bun.deepEquals(b, a)).toBe(true);
   expect(Bun.deepEquals(a, b, true)).toBe(true);
 });
+
+// Depth-2 cycles: a Set/Map that contains ANOTHER self-referential Set/Map.
+// The cycle closes through a nested pair, so element comparison must record
+// nested pairs on the cycle stack (addToStack=true), matching Node.
+test("Bun.deepEquals with nested self-referential Sets does not stack overflow", () => {
+  const inner1 = new Set<unknown>();
+  inner1.add(inner1);
+  const inner2 = new Set<unknown>();
+  inner2.add(inner2);
+  expect(Bun.deepEquals(new Set([inner1]), new Set([inner2]))).toBe(true);
+  expect(Bun.deepEquals(new Set([inner1]), new Set([inner2]), true)).toBe(true);
+});
+
+test("Bun.deepEquals with nested self-referential Maps (object keys) does not stack overflow", () => {
+  const inner1 = new Map<unknown, unknown>();
+  inner1.set("x", inner1);
+  const inner2 = new Map<unknown, unknown>();
+  inner2.set("x", inner2);
+  expect(
+    Bun.deepEquals(
+      new Map<unknown, unknown>([[{ k: 1 }, inner1]]),
+      new Map<unknown, unknown>([[{ k: 1 }, inner2]]),
+    ),
+  ).toBe(true);
+});
+
+test("Bun.deepEquals with nested self-referential Maps (string keys, fast path) does not stack overflow", () => {
+  // String keys hash-match, so this exercises the fast-path value comparison.
+  const inner1 = new Map<unknown, unknown>();
+  inner1.set("x", inner1);
+  const inner2 = new Map<unknown, unknown>();
+  inner2.set("x", inner2);
+  expect(Bun.deepEquals(new Map([["y", inner1]]), new Map([["y", inner2]]))).toBe(true);
+});
+
+test("expect().toEqual with nested self-referential Sets does not stack overflow", () => {
+  const inner1 = new Set<unknown>();
+  inner1.add(inner1);
+  const inner2 = new Set<unknown>();
+  inner2.add(inner2);
+  expect(new Set([inner1])).toEqual(new Set([inner2]));
+});
+
+test("Bun.deepEquals rejects nested self-referential Sets with differing siblings", () => {
+  // Cycle handling must not mask a real inequality elsewhere in the structure.
+  const inner1 = new Set<unknown>();
+  inner1.add(inner1);
+  const inner2 = new Set<unknown>();
+  inner2.add(inner2);
+  expect(Bun.deepEquals(new Set([inner1, { a: 1 }]), new Set([inner2, { a: 2 }]))).toBe(false);
+});

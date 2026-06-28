@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { once } from "events";
 import fs from "fs";
 import { gcTick, tls, tmpdirSync } from "harness";
+import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
@@ -103,6 +105,140 @@ describe("HTMLRewriter", () => {
   it("HTMLRewriter handles Symbol invalid type error", async () => {
     expect(() => new HTMLRewriter().transform(new Response(Symbol("ok")))).toThrow();
     expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
+  });
+
+  describe("transform rejects when the upstream body fails", () => {
+    // An HTTP server that sends response headers plus a partial HTML body
+    // and then resets the connection once the test calls `release()`.
+    // The transformed body must surface this as an error instead of
+    // resolving with a silently truncated document presented as complete.
+    const fullBody = "<div id=a><p>hello <b>world</b></p></div>";
+    // Ties the rejection to the connection failure so an unrelated future
+    // rejection ("Body already used", an internal rewriter error, ...) cannot
+    // keep these tests green. The exact RST message varies by platform, so
+    // match loosely rather than on the whole string.
+    const connectionError = /socket|connection|ECONNRESET/i;
+
+    async function withPartialBodyServer(fn) {
+      let release;
+      const released = new Promise(r => (release = r));
+      const server = createTcpServer(socket => {
+        socket.on("error", () => {});
+        socket.write(
+          "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: text/html\r\n" +
+            `Content-Length: ${fullBody.length}\r\n` +
+            "\r\n" +
+            fullBody.slice(0, 30),
+        );
+        released.then(() => socket.resetAndDestroy());
+      });
+      server.listen(0);
+      await once(server, "listening");
+      try {
+        await fn(`http://127.0.0.1:${server.address().port}/`, release);
+      } finally {
+        release();
+        await new Promise(r => server.close(r));
+      }
+    }
+
+    function rewriter() {
+      return new HTMLRewriter().on("p", {
+        element(e) {
+          e.setAttribute("seen", "1");
+        },
+      });
+    }
+
+    // Reports either settlement so a failing test shows the truncated
+    // document that was wrongly produced instead of just "did not reject".
+    function settle(promise) {
+      return promise.then(
+        value => ({ rejected: false, value }),
+        error => ({ rejected: true, message: String(error?.message) }),
+      );
+    }
+    const rejectedWithConnectionError = {
+      rejected: true,
+      message: expect.stringMatching(connectionError),
+    };
+
+    it("control: .text() on the untransformed response rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const text = res.text();
+        release();
+        await expect(text).rejects.toThrow(connectionError);
+      });
+    });
+
+    it(".text() on the transformed response rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const transformed = rewriter().transform(res);
+        const text = settle(transformed.text());
+        release();
+        // Must reject with the upstream connection error, and must never
+        // resolve with the truncated document.
+        expect(await text).toEqual(rejectedWithConnectionError);
+        // The body is now in its error state. A second read must report the
+        // same failure, not resolve as an empty "successful" document.
+        expect(await settle(transformed.text())).toEqual(rejectedWithConnectionError);
+      });
+    });
+
+    it(".arrayBuffer() on the transformed response rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const buf = rewriter().transform(res).arrayBuffer();
+        release();
+        await expect(buf).rejects.toThrow(connectionError);
+      });
+    });
+
+    it("does not invoke onDocument end for a document that never completed", async () => {
+      // Sanity: end() fires exactly once on a complete document.
+      {
+        let endCalls = 0;
+        new HTMLRewriter()
+          .onDocument({
+            end() {
+              endCalls++;
+            },
+          })
+          .transform(fullBody);
+        expect(endCalls).toBe(1);
+      }
+
+      await withPartialBodyServer(async (url, release) => {
+        let endCalls = 0;
+        const rw = rewriter().onDocument({
+          end() {
+            endCalls++;
+          },
+        });
+        const res = await fetch(url);
+        const text = rw.transform(res).text();
+        release();
+        await expect(text).rejects.toThrow(connectionError);
+        expect(endCalls).toBe(0);
+      });
+    });
+
+    it("transform() of a body that already failed throws the upstream error", async () => {
+      // Same failure class, synchronous path: once the body is already in its
+      // error state, transform() must throw the upstream connection error,
+      // not an unrelated (and usually empty) HTMLRewriter internal error.
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const text = res.text();
+        release();
+        // Awaiting the rejection is the barrier: the body is now Value::Error.
+        await expect(text).rejects.toThrow(connectionError);
+        expect(() => rewriter().transform(res)).toThrow(connectionError);
+      });
+    });
   });
 
   it("HTMLRewriter: async replacement using fetch + Bun.serve", async () => {

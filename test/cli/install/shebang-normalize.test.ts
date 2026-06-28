@@ -85,34 +85,6 @@ test.skipIf(isWindows)("bin linking normalizes CRLF in shebang", async () => {
   expect(binStat.mode & 0o111).toBeGreaterThan(0); // At least one execute bit should be set
 });
 
-// https://github.com/oven-sh/bun/issues/31387
-// Windows shim must skip `env -S` to find the real interpreter; on POSIX the
-// kernel (via `env`) splits `-S` natively so the bin just runs.
-
-function makeEnvDashSFixture() {
-  return tempDirWithFiles("shebang-env-s", {
-    "consumer/package.json": JSON.stringify({
-      name: "consumer",
-      version: "1.0.0",
-      dependencies: {
-        "env-dash-s-pkg": "file:../env-dash-s-pkg",
-      },
-    }),
-    "env-dash-s-pkg/package.json": JSON.stringify({
-      name: "env-dash-s-pkg",
-      version: "1.0.0",
-      bin: {
-        "env-dash-s-pkg": "./dist/index.js",
-      },
-    }),
-    // `--no-env-file` is a real Bun flag, so if the shim hands it to Bun the
-    // process starts cleanly and we see the log line below.
-    "env-dash-s-pkg/dist/index.js": `#!/usr/bin/env -S bun --no-env-file
-console.log("env-S-shebang-ok");
-`,
-  });
-}
-
 // `.bunx` file format (little-endian throughout):
 //   [WSTR:bin_path] [u16 '"'] [u16 0]
 //   (if shebang: [WSTR:launcher_with_trailing_space] [u32 bin_path_byte_len] [u32 args_byte_len])
@@ -138,8 +110,23 @@ function decodeBunxLauncher(bytes: Buffer): string {
   return bytes.subarray(launcherStart, launcherEnd - 2).toString("utf16le");
 }
 
+// https://github.com/oven-sh/bun/issues/31387
+// Windows shim must skip `env -S` so the real interpreter becomes the launcher.
 test.skipIf(!isWindows)("Windows `.bunx` shim encodes `env -S` launcher without the -S flag", async () => {
-  const dir = makeEnvDashSFixture();
+  const dir = tempDirWithFiles("shebang-env-s", {
+    "consumer/package.json": JSON.stringify({
+      name: "consumer",
+      version: "1.0.0",
+      dependencies: { "env-dash-s-pkg": "file:../env-dash-s-pkg" },
+    }),
+    "env-dash-s-pkg/package.json": JSON.stringify({
+      name: "env-dash-s-pkg",
+      version: "1.0.0",
+      bin: { "env-dash-s-pkg": "./dist/index.js" },
+    }),
+    // Only the shebang line feeds the `.bunx` encoder; the body is never run.
+    "env-dash-s-pkg/dist/index.js": "#!/usr/bin/env -S bun --no-env-file\n",
+  });
   const consumer = join(dir, "consumer");
 
   await using install = spawn({

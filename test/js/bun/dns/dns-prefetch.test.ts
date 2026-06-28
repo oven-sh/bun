@@ -42,12 +42,17 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
 
 describe("dns.prefetch", () => {
   it("should prefetch", async () => {
+    // A local server keeps the test off the external network. "localhost" is a
+    // real DNS lookup, so prefetch and fetch share the same cache entry.
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const url = `http://localhost:${server.port}/`;
+
     const currentStats = dns.getCacheStats();
-    dns.prefetch("example.com", 80);
+    dns.prefetch("localhost", server.port);
     await Bun.sleep(32);
 
     // Must set keepalive: false to ensure it doesn't reuse the socket.
-    await fetch("http://example.com", { method: "HEAD", redirect: "manual", keepalive: false });
+    await fetch(url, { method: "HEAD", redirect: "manual", keepalive: false });
     const newStats = dns.getCacheStats();
     expect(currentStats).not.toEqual(newStats);
     if (
@@ -60,7 +65,7 @@ describe("dns.prefetch", () => {
     }
 
     // Must set keepalive: false to ensure it doesn't reuse the socket.
-    await fetch("http://example.com", { method: "HEAD", redirect: "manual", keepalive: false });
+    await fetch(url, { method: "HEAD", redirect: "manual", keepalive: false });
     const newStats2 = dns.getCacheStats();
     // Ensure it's cached.
     expect(newStats2.cacheHitsCompleted).toBeGreaterThan(currentStats.cacheHitsCompleted);

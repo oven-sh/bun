@@ -378,6 +378,52 @@ describe("TOML date-times", () => {
     expect(Bun.TOML.parse('s = "1979-05-27"')).toEqual({ s: "1979-05-27" });
   });
 
+  // https://github.com/oven-sh/bun/issues/22426
+  // The example document from https://toml.io/en/v1.0.0 was rejected at the
+  // `dob` date-time.
+  test("the toml.io v1.0.0 example document parses", () => {
+    const doc = [
+      "# This is a TOML document",
+      "",
+      'title = "TOML Example"',
+      "",
+      "[owner]",
+      'name = "Tom Preston-Werner"',
+      "dob = 1979-05-27T07:32:00-08:00",
+      "",
+      "[database]",
+      "enabled = true",
+      "ports = [ 8000, 8001, 8002 ]",
+      'data = [ ["delta", "phi"], [3.14] ]',
+      "temp_targets = { cpu = 79.5, case = 72.0 }",
+      "",
+      "[servers]",
+      "",
+      "[servers.alpha]",
+      'ip = "10.0.0.1"',
+      'role = "frontend"',
+      "",
+      "[servers.beta]",
+      'ip = "10.0.0.2"',
+      'role = "backend"',
+      "",
+    ].join("\n");
+    expect(Bun.TOML.parse(doc)).toEqual({
+      title: "TOML Example",
+      owner: { name: "Tom Preston-Werner", dob: "1979-05-27T07:32:00-08:00" },
+      database: {
+        enabled: true,
+        ports: [8000, 8001, 8002],
+        data: [["delta", "phi"], [3.14]],
+        temp_targets: { cpu: 79.5, case: 72.0 },
+      },
+      servers: {
+        alpha: { ip: "10.0.0.1", role: "frontend" },
+        beta: { ip: "10.0.0.2", role: "backend" },
+      },
+    });
+  });
+
   test("malformed date-times are still rejected", () => {
     // toml-test invalid/datetime/*: missing leading zeros, missing seconds,
     // missing `T`, trailing garbage, out-of-range components, y10k.

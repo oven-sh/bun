@@ -266,6 +266,7 @@ private:
 
         /* Mark that we are inside the parser now */
         httpContextData->flags.isParsingHttp = true;
+        httpContextData->parsingHttpSocket = s;
         httpResponseData->isIdle = false;
 
         // clients need to know the cursor after http parse, not servers!
@@ -412,6 +413,7 @@ private:
 
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
+        httpContextData->parsingHttpSocket = nullptr;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             if(httpContextData->onClientError) {

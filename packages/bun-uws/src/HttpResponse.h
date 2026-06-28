@@ -97,8 +97,8 @@ public:
     }
 
     /* Uncorks a corked end, then closes if the response is done and flagged
-     * close; returns true when closed. Deferred to onData's tail while the
-     * parser runs (isParsingHttp) so it can still consume this request's body. */
+     * close; returns true when closed. While the parser runs on THIS socket
+     * the close defers to onData's tail so it can still consume the body. */
     bool uncorkAndCloseIfNeeded(HttpResponseData<SSL> *httpResponseData, bool keepCorked) {
         if (Super::isCorked()) {
             if (keepCorked) {
@@ -107,7 +107,10 @@ public:
             this->uncork();
         }
 
-        if (HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->flags.isParsingHttp) {
+        /* Per-socket, not flags.isParsingHttp: a response that ends inside a
+         * different socket's handler (its promise drained there) has no onData
+         * tail of its own to close it, so it must close here. */
+        if (HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->parsingHttpSocket == (void *) this) {
             return false;
         }
 

@@ -2930,6 +2930,37 @@ describe("Connection: close request header", () => {
     }).toEqual({ seen: ["/a"], servedA: true, closeHeader: true, serverClosed: true });
   });
 
+  // The defer-while-parsing gate is per socket, not per server: /a's close
+  // continuation here is drained from inside /b's onData (a different socket),
+  // which must not stop /a from closing.
+  it("closes when the async close-flagged response resolves inside another socket's handler", async () => {
+    const { promise: aIsPending, resolve: markAPending } = Promise.withResolvers<void>();
+    const { promise: gated, resolve: openGate } = Promise.withResolvers<void>();
+    using server = serve({
+      port: 0,
+      async fetch(req) {
+        if (new URL(req.url).pathname === "/a") {
+          markAPending();
+          await gated;
+          return new Response("saw /a");
+        }
+        openGate();
+        return new Response("saw /b");
+      },
+    });
+    const a = exchange(server.port, `${A}Connection: close\r\n\r\n`);
+    // Only send /b (a second connection) once /a's handler is suspended on the
+    // gate, so /b's synchronous handler is what resolves it.
+    await aIsPending;
+    const b = exchange(server.port, B, r => r.includes("saw /b"));
+    const [ra] = await Promise.all([a, b]);
+    expect({
+      servedA: ra.raw.includes("saw /a"),
+      closeHeader: hasCloseHeader(ra.raw),
+      serverClosed: ra.serverClosed,
+    }).toEqual({ servedA: true, closeHeader: true, serverClosed: true });
+  });
+
   // HEAD responses go through the separate end-without-body path.
   it("closes after a HEAD response to a close-flagged request", async () => {
     const seen: string[] = [];

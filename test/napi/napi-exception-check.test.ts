@@ -100,7 +100,7 @@ async function loadAddonWithValidator(name: string, addonSource: string, loadJs:
   expect(stderr).not.toContain("Unchecked JS exception");
 }
 
-test.skipIf(isWindows || !cc)("N-API module Init runs under BUN_JSC_validateExceptionChecks", async () => {
+test.concurrent.skipIf(isWindows || !cc)("N-API module Init runs under BUN_JSC_validateExceptionChecks", async () => {
   await loadAddonWithValidator(
     "napi-exception-check",
     twoCallInitSource,
@@ -109,11 +109,14 @@ test.skipIf(isWindows || !cc)("N-API module Init runs under BUN_JSC_validateExce
   );
 });
 
-test.skipIf(isWindows || !cc)("napi_define_class accessors run under BUN_JSC_validateExceptionChecks", async () => {
-  await loadAddonWithValidator(
-    "napi-exception-check-class",
-    accessorClassSource,
-    `const { Thing } = require("./addon.node");\nconsole.log("value", new Thing().value);\n`,
-    "value 42\n",
-  );
-});
+test.concurrent.skipIf(isWindows || !cc)(
+  "napi_define_class accessors run under BUN_JSC_validateExceptionChecks",
+  async () => {
+    await loadAddonWithValidator(
+      "napi-exception-check-class",
+      accessorClassSource,
+      `const { Thing } = require("./addon.node");\nconsole.log("value", new Thing().value);\n`,
+      "value 42\n",
+    );
+  },
+);

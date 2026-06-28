@@ -1,4 +1,5 @@
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import emptyToml from "./toml-empty.toml";
 import tomlFromCustomTypeAttribute from "./toml-fixture.toml.txt" with { type: "toml" };
 
@@ -102,6 +103,63 @@ q1 = 1
     nested: { outer: { inner: 1 } },
   });
   expect(parsed.items).toEqual([{ q1: 1 }]);
+});
+
+// The module loader (`import x from "./f.toml"`, `with { type: "toml" }`) and
+// `Bun.TOML.parse` share one parser but convert the AST to JS differently (the
+// loader prints JS source; `Bun.TOML.parse` round-trips through JSON). This
+// exercises the loader end to end for the value classes the parser used to
+// silently corrupt (`\U` escapes, multiline-string trimming, line-ending
+// backslashes, dotted float-looking keys) or reject (RFC 3339 date-times,
+// which the loader surfaces as strings). The per-class coverage lives in
+// toml-parse.test.ts.
+it("the toml loader decodes escapes, multiline strings, dotted keys, and date-times", async () => {
+  const specToml = [
+    'unicode = "\\U000003B4 \\u03B4 \\U00010AF1"',
+    'firstnl = """',
+    'X"""',
+    'joined = """a \\',
+    '   b"""',
+    '3.14159 = "pi"',
+    "odt = 1979-05-27T07:32:00Z",
+    "date = 1979-05-27",
+    "time = 07:32:00",
+    "",
+  ].join("\n");
+  using dir = tempDir("toml-loader-spec", {
+    "spec.toml": specToml,
+    // The same document reached via `with { type: "toml" }` on a non-.toml extension.
+    "spec.txt": specToml,
+    "index.ts": `
+      import withExtension from "./spec.toml";
+      import withAttribute from "./spec.txt" with { type: "toml" };
+      if (!Bun.deepEquals(withExtension, withAttribute, true)) {
+        throw new Error("extension and import-attribute loaders disagree");
+      }
+      console.log(JSON.stringify(withExtension));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode, toml: stdout.trim() && JSON.parse(stdout) }).toEqual({
+    stderr: "",
+    exitCode: 0,
+    toml: {
+      unicode: "δ δ \u{10AF1}",
+      firstnl: "X",
+      joined: "a b",
+      "3": { "14159": "pi" },
+      odt: "1979-05-27T07:32:00Z",
+      date: "1979-05-27",
+      time: "07:32:00",
+    },
+  });
 });
 
 it("Bun.TOML.parse throws on deeply nested inline tables instead of crashing", () => {

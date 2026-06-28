@@ -110,12 +110,6 @@ impl<'a> TOML<'a> {
                 self.lexer.next()?;
                 Ok(Some(self.e(E::String::init(b"true"), loc)))
             }
-            // what we see as a number here could actually be a string
-            T::t_numeric_literal => {
-                let literal = self.lexer.raw();
-                self.lexer.next()?;
-                Ok(Some(self.e(E::String::init(literal), loc)))
-            }
 
             _ => Ok(None),
         }
@@ -123,47 +117,85 @@ impl<'a> TOML<'a> {
 
     #[allow(clippy::mut_from_ref)]
     pub fn parse_key(&mut self, bump: &'a Bump) -> Result<&'a mut Rope, bun_core::Error> {
-        // Allocate from the caller-provided bump and return `&mut Rope`
-        // borrowed from it.
-        let rope: &mut Rope = bump.alloc(Rope {
-            head: match self.parse_key_segment()? {
-                Some(seg) => seg,
-                None => {
-                    self.lexer.expected_string(b"key")?;
-                    return Err(bun_core::err!("SyntaxError"));
-                }
-            },
-            next: core::ptr::null_mut(),
-        });
-        let head: *mut Rope = rope;
-        let mut rope: *mut Rope = rope;
-
         // Hard cap on dotted-key segments. The rope is consumed by `set_rope`,
         // `get_or_put_array`, and `get_or_put_object`, each of which recurses
         // once per `rope.next` link with no stack guard of their own.
         const MAX_DOTTED_KEY_SEGMENTS: usize = 512;
-        let mut segments: usize = 1;
 
-        while self.lexer.token == T::t_dot {
-            self.lexer.next()?;
+        // Allocated from the caller-provided bump; the returned `&mut Rope`
+        // borrows from it.
+        let mut head: *mut Rope = core::ptr::null_mut();
+        let mut tail: *mut Rope = core::ptr::null_mut();
+        let mut segments: usize = 0;
+        // Whether the previous iteration consumed a standalone `.` token. A
+        // `.`-prefixed numeric literal after one is `a..5`, not `a.5`.
+        let mut after_explicit_dot = false;
 
-            let Some(seg) = self.parse_key_segment()? else {
-                break;
+        loop {
+            let loc = self.lexer.loc();
+
+            // A bare key cannot contain `.`, so a numeric-literal token in key
+            // position carries implicit dot separators: `3.14159 = "pi"` is the
+            // dotted key `3` . `14159`, and the `.1` continuing `a.1` is `.`
+            // followed by the segment `1` (the numeric lexer consumes any `.`
+            // that is immediately followed by a digit).
+            let numeric_literal: Option<&'a [u8]> = match self.lexer.token {
+                T::t_numeric_literal => Some(self.lexer.raw()),
+                _ => None,
             };
-            segments += 1;
+
+            if let Some(raw) = numeric_literal {
+                let mut parts = raw.split(|&c| c == b'.');
+                // The leading `.` of a continuation is the separator itself,
+                // not an empty segment. An explicit `.` token before it
+                // (`a..5`) or a `.`-leading first token (`.5 = 1`) both leave
+                // the empty part in place so it is rejected below.
+                if !head.is_null() && !after_explicit_dot && raw.first() == Some(&b'.') {
+                    parts.next();
+                }
+                for part in parts {
+                    if part.is_empty() {
+                        self.lexer.expected_string(b"key")?;
+                        return Err(bun_core::err!("SyntaxError"));
+                    }
+                    segments += 1;
+                    rope_append(
+                        &mut head,
+                        &mut tail,
+                        self.e(E::String::init(part), loc),
+                        bump,
+                    )?;
+                }
+                self.lexer.next()?;
+            } else if let Some(seg) = self.parse_key_segment()? {
+                segments += 1;
+                rope_append(&mut head, &mut tail, seg, bump)?;
+            } else {
+                self.lexer.expected_string(b"key")?;
+                return Err(bun_core::err!("SyntaxError"));
+            }
+
             if segments > MAX_DOTTED_KEY_SEGMENTS {
                 self.lexer
                     .add_default_error(b"Dotted key has too many segments")?;
                 return Err(bun_core::err!("SyntaxError"));
             }
-            // SAFETY: `rope` points into `bump` and is live for this call; we are
-            // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
-            unsafe {
-                rope = (*rope).append(seg, bump)?;
+
+            after_explicit_dot = false;
+            match self.lexer.token {
+                T::t_dot => {
+                    self.lexer.next()?;
+                    after_explicit_dot = true;
+                }
+                // A `.`-prefixed numeric literal (the `.1` in `a.1`) continues
+                // the key; the implicit-separator handling above consumes it.
+                T::t_numeric_literal if self.lexer.raw().first() == Some(&b'.') => {}
+                _ => break,
             }
         }
 
-        // SAFETY: `head` was just allocated from `bump` above and is non-null.
+        // SAFETY: every path through the loop body either appends at least one
+        // segment (making `head` a live bump allocation) or returns `Err`.
         Ok(unsafe { &mut *head })
     }
 
@@ -461,4 +493,27 @@ impl<'a> TOML<'a> {
             }
         }
     }
+}
+
+/// Append `seg` to the dotted-key rope rooted at `*head`, allocating the node
+/// from `bump`. Initializes `*head`/`*tail` on the first call.
+fn rope_append(
+    head: &mut *mut Rope,
+    tail: &mut *mut Rope,
+    seg: Expr,
+    bump: &Bump,
+) -> Result<(), bun_core::Error> {
+    if (*head).is_null() {
+        let rope: *mut Rope = bump.alloc(Rope {
+            head: seg,
+            next: core::ptr::null_mut(),
+        });
+        *head = rope;
+        *tail = rope;
+        return Ok(());
+    }
+    // SAFETY: `*tail` points into `bump` and is live for this call; we are the
+    // sole mutator. Raw pointers used to avoid stacked &mut reborrows.
+    *tail = unsafe { (**tail).append(seg, bump)? };
+    Ok(())
 }

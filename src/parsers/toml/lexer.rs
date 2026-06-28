@@ -150,6 +150,34 @@ impl<'a> Lexer<'a> {
     fn parse_numeric_literal_or_dot(&mut self) -> Result<(), Error> {
         // Number or dot;
         let first = self.code_point;
+
+        // TOML date-times (`1979-05-27T07:32:00Z`) and local times (`07:32:00`)
+        // also begin with a digit; detect them before the numeric scan consumes
+        // the leading digits and leaves `-` / `:` behind as stray tokens.
+        // The AST has no date-time node, so the value surfaces as a string.
+        if ('0' as CodePoint..='9' as CodePoint).contains(&first) {
+            if let Some(len) = scan_date_time(&self.source.contents[self.start..]) {
+                self.token = T::t_string_literal;
+                self.string_literal_is_ascii = true;
+                self.string_literal_slice = &self.source.contents[self.start..self.start + len];
+                // Re-sync the cursor to the byte just past the date-time.
+                self.current = self.start + len;
+                self.step();
+                return Ok(());
+            }
+        }
+
+        // A `.` immediately followed by a complete date-time is the dotted-key
+        // separator of e.g. `a.2001-02-08 = 1` (toml-test valid/key/like-date),
+        // not the start of a fraction.
+        if first == '.' as CodePoint
+            && scan_date_time(&self.source.contents[self.start + 1..]).is_some()
+        {
+            self.step();
+            self.token = T::t_dot;
+            return Ok(());
+        }
+
         self.step();
 
         // Dot without a digit after it;
@@ -168,7 +196,6 @@ impl<'a> Lexer<'a> {
 
         let mut is_legacy_octal_literal = false;
 
-        // Assume this is a number, but potentially change to a date/time later;
         self.token = T::t_numeric_literal;
 
         // Check for binary, octal, or hexadecimal literal;
@@ -198,6 +225,9 @@ impl<'a> Lexer<'a> {
 
         if base != 0.0 {
             // Integer literal;
+            let radix = base as u64;
+            let mut int_value: u64 = 0;
+            let mut int_overflow = false;
             let mut is_first = true;
             let mut is_invalid_legacy_octal_literal = false;
             self.number = 0.0;
@@ -206,6 +236,7 @@ impl<'a> Lexer<'a> {
             }
 
             'integer_literal: loop {
+                let mut digit: Option<u64> = None;
                 match self.code_point {
                     c if c == '_' as CodePoint => {
                         // Cannot have multiple underscores in a row;
@@ -223,16 +254,14 @@ impl<'a> Lexer<'a> {
                     }
 
                     c if c == '0' as CodePoint || c == '1' as CodePoint => {
-                        self.number =
-                            self.number * base as f64 + float64(self.code_point - '0' as CodePoint);
+                        digit = Some((c - '0' as CodePoint) as u64);
                     }
 
                     c if ('2' as CodePoint..='7' as CodePoint).contains(&c) => {
                         if base == 2.0 {
                             self.syntax_error()?;
                         }
-                        self.number =
-                            self.number * base as f64 + float64(self.code_point - '0' as CodePoint);
+                        digit = Some((c - '0' as CodePoint) as u64);
                     }
                     c if c == '8' as CodePoint || c == '9' as CodePoint => {
                         if is_legacy_octal_literal {
@@ -240,23 +269,20 @@ impl<'a> Lexer<'a> {
                         } else if base < 10.0 {
                             self.syntax_error()?;
                         }
-                        self.number =
-                            self.number * base as f64 + float64(self.code_point - '0' as CodePoint);
+                        digit = Some((c - '0' as CodePoint) as u64);
                     }
                     c if ('A' as CodePoint..='F' as CodePoint).contains(&c) => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
-                        self.number = self.number * base as f64
-                            + float64(self.code_point + 10 - 'A' as CodePoint);
+                        digit = Some((c + 10 - 'A' as CodePoint) as u64);
                     }
 
                     c if ('a' as CodePoint..='f' as CodePoint).contains(&c) => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
-                        self.number = self.number * base as f64
-                            + float64(self.code_point + 10 - 'a' as CodePoint);
+                        digit = Some((c + 10 - 'a' as CodePoint) as u64);
                     }
                     _ => {
                         // The first digit must exist;
@@ -265,6 +291,16 @@ impl<'a> Lexer<'a> {
                         }
 
                         break 'integer_literal;
+                    }
+                }
+
+                if let Some(digit) = digit {
+                    match int_value
+                        .checked_mul(radix)
+                        .and_then(|v| v.checked_add(digit))
+                    {
+                        Some(v) => int_value = v,
+                        None => int_overflow = true,
                     }
                 }
 
@@ -315,6 +351,9 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+            } else {
+                // Prefixed literals cannot carry a sign, so the bound is i64::MAX.
+                self.number = self.check_exact_integer(int_value, int_overflow, i64::MAX as u64)?;
             }
         } else {
             // Floating-point literal;
@@ -324,25 +363,6 @@ impl<'a> Lexer<'a> {
             // Initial digits;
             loop {
                 if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                    match self.code_point {
-                        // '-' => {
-                        //     if (lexer.raw().len == 5) {
-                        //         // Is this possibly a datetime literal that begins with a 4 digit year?
-                        //         lexer.step();
-                        //         while (!lexer.has_newline_before) {
-                        //             switch (lexer.code_point) {
-                        //                 ',' => {
-                        //                     lexer.string_literal_slice = lexer.raw();
-                        //                     lexer.token = T.t_string_literal;
-                        //                     break;
-                        //                 },
-                        //             }
-                        //         }
-                        //     }
-                        // },
-                        c if c == '_' as CodePoint => {}
-                        _ => break,
-                    }
                     if self.code_point != '_' as CodePoint {
                         break;
                     }
@@ -446,13 +466,36 @@ impl<'a> Lexer<'a> {
                 text = bytes;
             }
 
-            if !has_dot_or_exponent && self.end - self.start < 10 {
-                // Parse a 32-bit integer (very fast path);
-                let mut number: u32 = 0;
-                for &c in text {
-                    number = number * 10 + u32::from(c - b'0');
+            if !has_dot_or_exponent {
+                // Decimal integer. `text` is all `0-9` here: the initial-digits
+                // loop only accepts digits and `_`, and `_` is filtered above.
+                if text.len() < 16 {
+                    // Fewer than 16 decimal digits is < 10^15 < 2^53: always
+                    // exactly representable (very fast path);
+                    let mut number: u64 = 0;
+                    for &c in text {
+                        number = number * 10 + u64::from(c - b'0');
+                    }
+                    self.number = number as f64;
+                } else {
+                    let mut int_value: u64 = 0;
+                    let mut int_overflow = false;
+                    for &c in text {
+                        match int_value
+                            .checked_mul(10)
+                            .and_then(|v| v.checked_add(u64::from(c - b'0')))
+                        {
+                            Some(v) => int_value = v,
+                            None => {
+                                int_overflow = true;
+                                break;
+                            }
+                        }
+                    }
+                    // The sign is a separate token, so the magnitude of
+                    // i64::MIN (2^63) must lex; `parse_value` applies the minus.
+                    self.number = self.check_exact_integer(int_value, int_overflow, 1u64 << 63)?;
                 }
-                self.number = number as f64;
             } else {
                 // Parse a double-precision floating-point number;
                 match bun_core::wtf::parse_double(text) {
@@ -467,6 +510,40 @@ impl<'a> Lexer<'a> {
         }
 
         Ok(())
+    }
+
+    /// TOML integers are 64-bit and must round-trip exactly through the
+    /// IEEE-754 double that backs a JavaScript number: "If an integer cannot
+    /// be represented losslessly, an error must be thrown" (TOML 1.0
+    /// §Integer). Silently rounding `9223372036854775807` to
+    /// `9223372036854776000` corrupts the document.
+    fn check_exact_integer(
+        &mut self,
+        value: u64,
+        overflowed: bool,
+        max: u64,
+    ) -> Result<f64, Error> {
+        let raw = bstr::BStr::new(self.raw());
+        if overflowed || value > max {
+            self.add_syntax_error(
+                self.start,
+                format_args!(
+                    "Integer \"{}\" is outside the 64-bit range allowed by TOML",
+                    raw
+                ),
+            )?;
+        }
+        let as_float = value as f64;
+        if as_float as u64 != value {
+            self.add_syntax_error(
+                self.start,
+                format_args!(
+                    "Integer \"{}\" cannot be represented exactly as a JavaScript number; quote it to load it as a string",
+                    raw
+                ),
+            )?;
+        }
+        Ok(as_float)
     }
 
     #[inline]
@@ -639,13 +716,16 @@ impl<'a> Lexer<'a> {
                     }
 
                     if is_multiline_string_literal {
+                        // A newline immediately following the opening ''' is trimmed.
+                        let content_start =
+                            multiline_content_start(&self.source.contents, start + 2);
                         loop {
                             match self.code_point {
                                 -1 => {
                                     self.add_default_error(b"Unterminated string literal")?;
                                 }
                                 c if c == '\'' as CodePoint => {
-                                    let end = self.end;
+                                    let mut end = self.end;
                                     self.step();
                                     if self.code_point != '\'' as CodePoint {
                                         continue;
@@ -655,9 +735,17 @@ impl<'a> Lexer<'a> {
                                         continue;
                                     }
                                     self.step();
+                                    // Up to two extra quotes next to the closing
+                                    // delimiter belong to the content (`''''x''''`).
+                                    let mut extra: usize = 0;
+                                    while extra < 2 && self.code_point == '\'' as CodePoint {
+                                        end += 1;
+                                        extra += 1;
+                                        self.step();
+                                    }
                                     self.token = T::t_string_literal;
                                     self.string_literal_slice =
-                                        &self.source.contents[start + 2..end];
+                                        &self.source.contents[content_start..end];
                                     return Ok(());
                                 }
                                 _ => {}
@@ -721,6 +809,9 @@ impl<'a> Lexer<'a> {
                     let slice_lo: usize;
                     let slice_hi: usize;
                     if is_multiline_string_literal {
+                        // A newline immediately following the opening """ is trimmed.
+                        let content_start =
+                            multiline_content_start(&self.source.contents, start + 2);
                         loop {
                             match self.code_point {
                                 -1 => {
@@ -735,7 +826,7 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                                 c if c == '"' as CodePoint => {
-                                    let end = self.end;
+                                    let mut end = self.end;
                                     self.step();
                                     if self.code_point != '"' as CodePoint {
                                         continue;
@@ -745,15 +836,23 @@ impl<'a> Lexer<'a> {
                                         continue;
                                     }
                                     self.step();
+                                    // Up to two extra quotes next to the closing
+                                    // delimiter belong to the content (`""""x""""`).
+                                    let mut extra: usize = 0;
+                                    while extra < 2 && self.code_point == '"' as CodePoint {
+                                        end += 1;
+                                        extra += 1;
+                                        self.step();
+                                    }
 
                                     self.token = T::t_string_literal;
                                     if needs_slow_pass {
-                                        slice_lo = start + 2;
+                                        slice_lo = content_start;
                                         slice_hi = end;
                                         break;
                                     }
                                     self.string_literal_slice =
-                                        &self.source.contents[start + 2..end];
+                                        &self.source.contents[content_start..end];
                                     return Ok(());
                                 }
                                 _ => {}
@@ -885,7 +984,7 @@ impl<'a> Lexer<'a> {
 
                     let width2 = iter.width;
                     match c2 {
-                        // https://mathiasbynens.be/notes/javascript-escapes#single
+                        // TOML §String: \b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX
                         c if c == 'b' as CodePoint => {
                             buf.push(8);
                             continue;
@@ -899,12 +998,6 @@ impl<'a> Lexer<'a> {
                             buf.push(10);
                             continue;
                         }
-                        c if c == 'v' as CodePoint => {
-                            // Vertical tab is invalid JSON
-                            // We're going to allow it.
-                            buf.push(11);
-                            continue;
-                        }
                         c if c == 't' as CodePoint => {
                             // Horizontal tab: U+0009
                             buf.push(9);
@@ -914,81 +1007,10 @@ impl<'a> Lexer<'a> {
                             buf.push(13);
                             continue;
                         }
-
-                        // legacy octal literals
-                        c if ('0' as CodePoint..='7' as CodePoint).contains(&c) => {
-                            let octal_start = (iter.i as usize + width2 as usize).saturating_sub(2);
-
-                            // 1-3 digit octal
-                            let mut is_bad = false;
-                            let mut value: i64 = (c2 - '0' as CodePoint) as i64;
-                            let mut restore = iter;
-
-                            if !iterator.next(&mut iter) {
-                                if value == 0 {
-                                    buf.push(0);
-                                    return Ok(());
-                                }
-
-                                self.syntax_error()?;
-                                return Ok(());
-                            }
-
-                            let c3: CodePoint = iter.c;
-
-                            match c3 {
-                                c if ('0' as CodePoint..='7' as CodePoint).contains(&c) => {
-                                    value = value * 8 + (c3 - '0' as CodePoint) as i64;
-                                    restore = iter;
-                                    if !iterator.next(&mut iter) {
-                                        return self.syntax_error();
-                                    }
-
-                                    let c4 = iter.c;
-                                    match c4 {
-                                        c if ('0' as CodePoint..='7' as CodePoint).contains(&c) => {
-                                            let temp = value * 8 + (c4 - '0' as CodePoint) as i64;
-                                            if temp < 256 {
-                                                value = temp;
-                                            } else {
-                                                iter = restore;
-                                            }
-                                        }
-                                        c if c == '8' as CodePoint || c == '9' as CodePoint => {
-                                            is_bad = true;
-                                        }
-                                        _ => {
-                                            iter = restore;
-                                        }
-                                    }
-                                }
-                                c if c == '8' as CodePoint || c == '9' as CodePoint => {
-                                    is_bad = true;
-                                }
-                                _ => {
-                                    iter = restore;
-                                }
-                            }
-
-                            iter.c = i32::try_from(value).expect("int cast");
-                            if is_bad {
-                                self.add_range_error(
-                                    bun_ast::Range {
-                                        loc: bun_ast::Loc {
-                                            start: i32::try_from(octal_start).expect("int cast"),
-                                        },
-                                        len: i32::try_from(iter.i as usize - octal_start)
-                                            .expect("int cast"),
-                                    },
-                                    format_args!("Invalid legacy octal literal"),
-                                )
-                                .expect("unreachable");
-                            }
-                        }
-                        c if c == '8' as CodePoint || c == '9' as CodePoint => {
+                        c if c == '"' as CodePoint || c == '\\' as CodePoint => {
                             iter.c = c2;
                         }
-                        // 2-digit hexadecimal
+                        // 2-digit hexadecimal (not TOML 1.0; kept for compatibility)
                         c if c == 'x' as CodePoint => {
                             if ALLOW_MULTILINE {
                                 self.end =
@@ -1030,7 +1052,9 @@ impl<'a> Lexer<'a> {
 
                             iter.c = value;
                         }
-                        c if c == 'u' as CodePoint => {
+                        // Unicode escapes: `\uXXXX` (4 hex digits) and
+                        // `\UXXXXXXXX` (8 hex digits).
+                        c if c == 'u' as CodePoint || c == 'U' as CodePoint => {
                             // We're going to make this an i64 so we don't risk integer overflows
                             // when people do weird things
                             let mut value: i64 = 0;
@@ -1041,8 +1065,8 @@ impl<'a> Lexer<'a> {
                             let mut c3 = iter.c;
                             let mut width3 = iter.width;
 
-                            // variable-length
-                            if c3 == '{' as CodePoint {
+                            // `\u{…}` variable-length (not TOML; kept for compatibility)
+                            if c2 == 'u' as CodePoint && c3 == '{' as CodePoint {
                                 let hex_start = (iter.i as usize)
                                     .saturating_sub(width as usize)
                                     .saturating_sub(width2 as usize)
@@ -1096,12 +1120,11 @@ impl<'a> Lexer<'a> {
                                     )?;
                                     return Ok(());
                                 }
-
-                                // fixed-length
                             } else {
                                 // Fixed-length
+                                let n_digits: usize = if c2 == 'U' as CodePoint { 8 } else { 4 };
                                 let mut j: usize = 0;
-                                while j < 4 {
+                                while j < n_digits {
                                     match hex_digit_value_u32(c3 as u32) {
                                         Some(d) => value = (value * 16) | d as i64,
                                         None => {
@@ -1111,7 +1134,7 @@ impl<'a> Lexer<'a> {
                                         }
                                     }
 
-                                    if j < 3 {
+                                    if j < n_digits - 1 {
                                         if !iterator.next(&mut iter) {
                                             return self.syntax_error();
                                         }
@@ -1120,6 +1143,20 @@ impl<'a> Lexer<'a> {
                                         width3 = iter.width;
                                     }
                                     j += 1;
+                                }
+
+                                // TOML §String: the escape must name a Unicode
+                                // scalar value. Surrogates and anything past
+                                // U+10FFFF are errors, not replacement output.
+                                if value > 0x0010_FFFF || (0xD800..=0xDFFF).contains(&value) {
+                                    self.end =
+                                        (start + iter.i as usize).saturating_sub(width3 as usize);
+                                    self.add_syntax_error(
+                                        self.end,
+                                        format_args!(
+                                            "Unicode escape sequence is not a Unicode scalar value"
+                                        ),
+                                    )?;
                                 }
                             }
 
@@ -1132,8 +1169,8 @@ impl<'a> Lexer<'a> {
                                 self.add_default_error(b"Unexpected end of line")?;
                             }
 
-                            // Ignore line continuations. A line continuation is not an escaped newline.
-                            // Match the JS lexer (js_parser/lexer.rs:660-661, 937-939): guard on
+                            // Line-ending backslash. Match the JS lexer
+                            // (js_parser/lexer.rs:660-661, 937-939): guard on
                             // the index we actually read (`iter.i + 1`), not `iter.i`. Without
                             // this, a multiline basic string ending in `\<CR>` right before `"""`
                             // reads `text[len]` and panics even in release (slice bounds checks
@@ -1143,19 +1180,71 @@ impl<'a> Lexer<'a> {
                                 // Make sure Windows CRLF counts as a single newline
                                 iter.i += 1;
                             }
+                            skip_line_continuation_whitespace(text, &iterator, &mut iter);
                             continue;
                         }
                         c if c == '\n' as CodePoint || c == 0x2028 || c == 0x2029 => {
-                            // Ignore line continuations. A line continuation is not an escaped newline.
+                            // Line-ending backslash.
                             if !ALLOW_MULTILINE {
                                 self.end =
                                     (start + iter.i as usize).saturating_sub(width2 as usize);
                                 self.add_default_error(b"Unexpected end of line")?;
                             }
+                            skip_line_continuation_whitespace(text, &iterator, &mut iter);
+                            continue;
+                        }
+                        // TOML §String: "when the last non-whitespace character on
+                        // a line is an unescaped \, it will be trimmed along with
+                        // all whitespace (including newlines) up to the next
+                        // non-whitespace character" — `\` followed only by
+                        // spaces/tabs until the end of the line is also a
+                        // line-ending backslash (ABNF `mlb-escaped-nl`).
+                        c if ALLOW_MULTILINE
+                            && (c == ' ' as CodePoint || c == '\t' as CodePoint) =>
+                        {
+                            let mut probe = iter;
+                            let reaches_newline = loop {
+                                if !iterator.next(&mut probe) {
+                                    break false;
+                                }
+                                match probe.c {
+                                    c if c == ' ' as CodePoint || c == '\t' as CodePoint => {}
+                                    c if c == '\n' as CodePoint => break true,
+                                    c if c == '\r' as CodePoint => {
+                                        // Only as the CR of a CRLF.
+                                        let ni = probe.i as usize + 1;
+                                        break ni < text.len() && text[ni] == b'\n';
+                                    }
+                                    _ => break false,
+                                }
+                            };
+                            if !reaches_newline {
+                                self.end =
+                                    (start + iter.i as usize).saturating_sub(width2 as usize);
+                                self.add_default_error(b"Invalid escape sequence")?;
+                            }
+                            // `probe` sits on the newline (or the CR of a CRLF).
+                            iter = probe;
+                            if iter.c == '\r' as CodePoint {
+                                iter.i += 1;
+                            }
+                            skip_line_continuation_whitespace(text, &iterator, &mut iter);
                             continue;
                         }
                         _ => {
-                            iter.c = c2;
+                            // TOML §String: "All other escape sequences [...]
+                            // are reserved; if they are used, TOML should
+                            // produce an error." Silently emitting the literal
+                            // character turned `"\U000003B4"` into `U000003B4`.
+                            self.end = (start + iter.i as usize).saturating_sub(width2 as usize);
+                            self.add_syntax_error(
+                                self.end,
+                                format_args!(
+                                    "Invalid escape sequence \"\\{}\" in TOML string",
+                                    char::from_u32(c2 as u32)
+                                        .unwrap_or(char::REPLACEMENT_CHARACTER)
+                                ),
+                            )?;
                         }
                     }
                 }
@@ -1282,7 +1371,167 @@ pub(crate) fn is_identifier_part(code_point: CodePoint) -> bool {
     // The `(0..=127)` bound is required for the byte cast above to be sound.
 }
 
+/// A newline immediately following a multi-line string's opening delimiter
+/// (`"""` / `'''`) is trimmed (TOML §String). `after_delim` is the byte index
+/// just past the opening delimiter; returns the index the content starts at.
 #[inline]
-fn float64(num: CodePoint) -> f64 {
-    num as f64
+fn multiline_content_start(contents: &[u8], after_delim: usize) -> usize {
+    match contents.get(after_delim).copied() {
+        Some(b'\n') => after_delim + 1,
+        Some(b'\r') if contents.get(after_delim + 1) == Some(&b'\n') => after_delim + 2,
+        _ => after_delim,
+    }
+}
+
+/// After a line-ending backslash has consumed its newline, consume the run of
+/// spaces, tabs, and newlines that follows. TOML §String: the backslash "will
+/// be trimmed along with all whitespace (including newlines) up to the next
+/// non-whitespace character or closing delimiter".
+fn skip_line_continuation_whitespace(
+    text: &[u8],
+    iterator: &strings::CodepointIterator<'_>,
+    iter: &mut strings::Cursor,
+) {
+    loop {
+        let mut probe = *iter;
+        if !iterator.next(&mut probe) {
+            return;
+        }
+        match probe.c {
+            c if c == ' ' as CodePoint || c == '\t' as CodePoint || c == '\n' as CodePoint => {}
+            c if c == '\r' as CodePoint => {
+                let next_i = probe.i as usize + 1;
+                if next_i < text.len() && text[next_i] == b'\n' {
+                    probe.i += 1;
+                } else {
+                    // A bare CR is not a TOML newline; leave it for the caller.
+                    return;
+                }
+            }
+            _ => return,
+        }
+        *iter = probe;
+    }
+}
+
+#[inline]
+fn two_digits(a: u8, b: u8) -> u32 {
+    u32::from(a - b'0') * 10 + u32::from(b - b'0')
+}
+
+/// `full-date = 4DIGIT "-" 2DIGIT "-" 2DIGIT` with month `01-12` and day
+/// `01-31` (RFC 3339 via TOML §Offset Date-Time). Calendar validity (leap
+/// years, days per month) is intentionally not checked.
+fn is_full_date(b: &[u8]) -> bool {
+    if b.len() < 10
+        || !b[0..4].iter().all(u8::is_ascii_digit)
+        || b[4] != b'-'
+        || !b[5].is_ascii_digit()
+        || !b[6].is_ascii_digit()
+        || b[7] != b'-'
+        || !b[8].is_ascii_digit()
+        || !b[9].is_ascii_digit()
+    {
+        return false;
+    }
+    (1..=12).contains(&two_digits(b[5], b[6])) && (1..=31).contains(&two_digits(b[8], b[9]))
+}
+
+/// `partial-time = 2DIGIT ":" 2DIGIT ":" 2DIGIT ["." 1*DIGIT]`, with hour
+/// `00-23`, minute `00-59`, and second `00-60` (leap second). Returns the
+/// byte length of the match.
+fn scan_partial_time(b: &[u8]) -> Option<usize> {
+    if b.len() < 8
+        || !b[0].is_ascii_digit()
+        || !b[1].is_ascii_digit()
+        || b[2] != b':'
+        || !b[3].is_ascii_digit()
+        || !b[4].is_ascii_digit()
+        || b[5] != b':'
+        || !b[6].is_ascii_digit()
+        || !b[7].is_ascii_digit()
+    {
+        return None;
+    }
+    if two_digits(b[0], b[1]) > 23 || two_digits(b[3], b[4]) > 59 || two_digits(b[6], b[7]) > 60 {
+        return None;
+    }
+    let mut i: usize = 8;
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        let frac_start = i;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        // At least one fractional digit is required after the `.`.
+        if i == frac_start {
+            return None;
+        }
+    }
+    Some(i)
+}
+
+/// Byte length of the TOML 1.0 date-time value that starts at `bytes[0]`, or
+/// `None` if there isn't one. Matches all four RFC 3339 shapes: offset
+/// date-time, local date-time, local date (`1979-05-27`), and local time
+/// (`07:32:00`). The match must end at a token boundary so inputs like
+/// `2020-01-01x` or `1997-09-0909:09:09` fall through to the number path
+/// (which then rejects them).
+fn scan_date_time(bytes: &[u8]) -> Option<usize> {
+    let len = if is_full_date(bytes) {
+        let mut i: usize = 10;
+        // `time-delim = "T" / "t" / %x20`. A space only counts as the
+        // delimiter when a time actually follows it.
+        let has_time = match bytes.get(i).copied() {
+            Some(b'T' | b't') => {
+                i += 1;
+                true
+            }
+            Some(b' ')
+                if bytes.len() >= i + 4
+                    && bytes[i + 1].is_ascii_digit()
+                    && bytes[i + 2].is_ascii_digit()
+                    && bytes[i + 3] == b':' =>
+            {
+                i += 1;
+                true
+            }
+            _ => false,
+        };
+        if has_time {
+            i += scan_partial_time(&bytes[i..])?;
+            // `time-offset = "Z" / ("+" / "-") 2DIGIT ":" 2DIGIT`, optional
+            // (its absence makes this a local date-time).
+            match bytes.get(i).copied() {
+                Some(b'Z' | b'z') => i += 1,
+                Some(b'+' | b'-') => {
+                    let off = bytes.get(i + 1..i + 6)?;
+                    if !(off[0].is_ascii_digit()
+                        && off[1].is_ascii_digit()
+                        && off[2] == b':'
+                        && off[3].is_ascii_digit()
+                        && off[4].is_ascii_digit())
+                        || two_digits(off[0], off[1]) > 23
+                        || two_digits(off[3], off[4]) > 59
+                    {
+                        return None;
+                    }
+                    i += 6;
+                }
+                _ => {}
+            }
+        }
+        i
+    } else {
+        scan_partial_time(bytes)?
+    };
+    // Require a token boundary so that anything that could extend a number,
+    // bare key, or malformed date (`2020-01-01x`, `1997-09-0909:09:09`) never
+    // half-matches. A `.` is a valid boundary: a fractional second is consumed
+    // by `scan_partial_time`, so a trailing `.` can only be the dotted-key
+    // separator of e.g. `2001-02-11.a = 1` (toml-test valid/key/like-date).
+    match bytes.get(len).copied() {
+        Some(c) if c.is_ascii_alphanumeric() || matches!(c, b'-' | b':' | b'+' | b'_') => None,
+        _ => Some(len),
+    }
 }

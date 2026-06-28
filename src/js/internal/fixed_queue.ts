@@ -1,5 +1,7 @@
 // https://github.com/nodejs/node/blob/bae03c4e30f927676203f61ff5a34fe0a0c0bbc9/lib/internal/fixed_queue.js
 
+const ArrayPrototypeFill = Array.prototype.fill;
+
 // Currently optimal queue size, tested on V8 6.0 - 6.6. Must be power of two.
 const kSize = 2048;
 const kMask = kSize - 1;
@@ -61,7 +63,10 @@ class FixedCircularBuffer<T> {
   constructor() {
     this.bottom = 0;
     this.top = 0;
-    this.list = $newArrayWithSize(kSize);
+    // Fill so every slot is an own property: `shift()` reads never-pushed
+    // slots, and on a holey array that read walks the prototype chain, so
+    // `Array.prototype[n] = x` becomes a phantom entry that corrupts the ring.
+    this.list = ArrayPrototypeFill.$call($newArrayWithSize(kSize), undefined) as Array<T | undefined>;
     this.next = null;
   }
 

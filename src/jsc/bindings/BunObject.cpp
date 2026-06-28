@@ -921,6 +921,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   BunObject_lazyPropCb_wrap_CryptoHasher                              DontDelete|PropertyCallback
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
+    FileIndex                                      BunObject_lazyPropCb_wrap_FileIndex                                 DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_lazyPropCb_wrap_FileSystemRouter                          DontDelete|PropertyCallback
     Glob                                           BunObject_lazyPropCb_wrap_Glob                                      DontDelete|PropertyCallback
     Image                                          BunObject_lazyPropCb_wrap_Image                                     DontDelete|PropertyCallback

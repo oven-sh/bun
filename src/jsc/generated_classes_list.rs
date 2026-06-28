@@ -21,6 +21,7 @@ pub mod Classes {
     pub use crate::api::archive as Archive;
     pub use crate::api::bun::secure_context as SecureContext;
     pub use crate::api::filesystem_router::FileSystemRouter;
+    pub use crate::file_index as FileIndex;
     pub use crate::api::glob as Glob;
     pub use crate::api::html_rewriter::AttributeIterator;
     pub use crate::api::html_rewriter::Comment;

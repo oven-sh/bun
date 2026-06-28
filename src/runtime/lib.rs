@@ -55,6 +55,7 @@ pub mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2nati
 pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub mod dns_jsc;
+pub mod file_index;
 pub mod image;
 pub mod test_runner;
 pub mod valkey_jsc;

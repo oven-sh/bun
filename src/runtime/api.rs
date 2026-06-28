@@ -169,6 +169,7 @@ pub mod bun {
 }
 pub use bun::process::Process as SpawnProcess;
 
+pub use crate::file_index as FileIndex;
 pub use crate::image as Image;
 pub use crate::shell as Shell;
 pub use crate::timer as Timer;

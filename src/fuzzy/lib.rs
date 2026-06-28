@@ -32,4 +32,4 @@ mod tests;
 
 pub use scorer::{CaseMode, MAX_BACKTRACK_CELLS, MAX_BACKTRACK_HAYSTACK, Scorer, ScorerOptions};
 pub use subsequence::is_subsequence;
-pub use topk::TopK;
+pub use topk::{TopK, TopKBy};

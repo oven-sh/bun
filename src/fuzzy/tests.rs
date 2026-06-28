@@ -683,3 +683,123 @@ fn topk_with_scorer_ranks_a_small_corpus() {
         vec![b"index.ts".as_slice(), b"src/index.ts", b"docs/index.md"]
     );
 }
+
+// ── single-byte closed form ────────────────────────────────────────────────
+
+/// Deterministic xorshift64* for the randomized equivalence tests.
+struct TestRng(u64);
+impl TestRng {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+    fn below(&mut self, n: usize) -> usize {
+        usize::try_from(self.next() % n as u64).expect("fits")
+    }
+}
+
+/// Random path-like byte strings (mixed case, separators, digits, a few
+/// non-ASCII bytes, empty strings).
+fn random_haystack(rng: &mut TestRng) -> Vec<u8> {
+    const ALPHABET: &[u8] = b"abczABCZ019/._- \xff\xc3";
+    let len = rng.below(40);
+    (0..len)
+        .map(|_| ALPHABET[rng.below(ALPHABET.len())])
+        .collect()
+}
+
+#[test]
+fn single_byte_closed_form_matches_the_dp() {
+    // The 1-byte fast path must agree with the generic DP on score AND
+    // positions for every case mode, including non-letter and non-ASCII
+    // needles, across randomized haystacks.
+    let modes = [CaseMode::Smart, CaseMode::Insensitive, CaseMode::Sensitive];
+    let needles: &[&[u8]] = &[b"a", b"A", b"z", b"Z", b"0", b"/", b".", b"\xff", b"_"];
+    let mut rng = TestRng(0x5EED_1234);
+    let mut hays: Vec<Vec<u8>> = (0..400).map(|_| random_haystack(&mut rng)).collect();
+    hays.push(b"src/Index.ts".to_vec());
+    hays.push(b"A".to_vec());
+    hays.push(b"a/".to_vec());
+    hays.push(Vec::new());
+    for path_mode in [true, false] {
+        for &case in &modes {
+            let opts = ScorerOptions { case, path_mode };
+            for &needle in needles {
+                let mut fast = scorer_with(opts, needle);
+                let mut slow = scorer_with(opts, needle);
+                for hay in &hays {
+                    let mut fast_pos = Vec::new();
+                    let mut slow_pos = Vec::new();
+                    let f = fast.score_with_positions(hay, &mut fast_pos);
+                    let s = slow.score_with_positions_via_dp(hay, &mut slow_pos);
+                    assert_eq!(
+                        (f, &fast_pos),
+                        (s, &slow_pos),
+                        "needle={:?} hay={:?} case={case:?} path_mode={path_mode}",
+                        needle.escape_ascii().to_string(),
+                        hay.escape_ascii().to_string(),
+                    );
+                    assert_eq!(fast.score(hay), slow.score_via_dp(hay));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn multi_byte_needles_still_use_the_dp_path() {
+    // Sanity for the dispatch: >1-byte needles agree with the explicit DP
+    // entry point (they are the same code path).
+    let mut rng = TestRng(0xDADA);
+    for _ in 0..200 {
+        let hay = random_haystack(&mut rng);
+        let mut s = path_scorer(b"az9");
+        let mut d = path_scorer(b"az9");
+        assert_eq!(s.score(&hay), d.score_via_dp(&hay));
+    }
+}
+
+// ── TopKBy ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn topk_by_value_tiebreak_matches_index_tiebreak() {
+    use crate::TopKBy;
+    // Pushing candidates whose tiebreak comparator orders them exactly like
+    // their push index must select and order exactly what TopK selects.
+    let mut state = 0xABCDu64;
+    let mut next = move || {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        state
+    };
+    let items: Vec<(i32, u32)> = (0..3000u32)
+        .map(|i| (((next() >> 16) % 50) as i32, i))
+        .collect();
+    for k in [1usize, 5, 64, 3000] {
+        let mut by: TopKBy<u32, _> = TopKBy::new(k, |a: &u32, b: &u32| a.cmp(b));
+        let mut classic = TopK::new(k);
+        for &(score, i) in &items {
+            by.push(score, i);
+            classic.push(score, i, i);
+        }
+        assert_eq!(by.len(), classic.len());
+        assert_eq!(by.threshold(), classic.threshold());
+        assert_eq!(by.into_sorted_vec(), classic.into_sorted_vec(), "k={k}");
+    }
+}
+
+#[test]
+fn topk_by_zero_k_and_emptiness() {
+    use crate::TopKBy;
+    let mut t: TopKBy<u32, _> = TopKBy::new(0, |a: &u32, b: &u32| a.cmp(b));
+    assert!(t.is_empty());
+    t.push(5, 1);
+    assert!(t.is_empty());
+    assert_eq!(t.threshold(), None);
+    assert!(t.into_sorted_vec().is_empty());
+}

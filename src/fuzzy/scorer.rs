@@ -191,9 +191,37 @@ impl Scorer {
         }
     }
 
+    /// The case sensitivity resolved by the last [`Scorer::set_needle`]
+    /// (`CaseMode::Smart` resolves per needle).
+    #[inline]
+    pub fn case_sensitive(&self) -> bool {
+        self.case_sensitive
+    }
+
     /// `None` => the needle is not a subsequence of `haystack`.
     /// Higher is better. Deterministic. Allocates nothing.
+    ///
+    /// A non-match costs one forward `memchr` scan of `haystack` and touches
+    /// no scratch state; a one-byte needle is scored in closed form
+    /// ([`Scorer::score_single`]) instead of running the DP.
     pub fn score(&mut self, haystack: &[u8]) -> Option<i32> {
+        if self.needle.is_empty() {
+            return Some(0);
+        }
+        if self.needle.len() == 1 {
+            return self.score_single(haystack).map(|(score, _)| score);
+        }
+        if !is_subsequence(haystack, &self.needle, self.case_sensitive) {
+            return None;
+        }
+        let (best, _) = self.run_dp(haystack, false)?;
+        Some(clamp_score(best))
+    }
+
+    /// The generic (DP) scoring path with no single-byte shortcut; the fast
+    /// path must agree with it byte for byte.
+    #[cfg(test)]
+    pub(crate) fn score_via_dp(&mut self, haystack: &[u8]) -> Option<i32> {
         if self.needle.is_empty() {
             return Some(0);
         }
@@ -202,6 +230,77 @@ impl Scorer {
         }
         let (best, _) = self.run_dp(haystack, false)?;
         Some(clamp_score(best))
+    }
+
+    /// [`Scorer::score_with_positions`] via the DP backtrack, no single-byte
+    /// shortcut (test reference).
+    #[cfg(test)]
+    pub(crate) fn score_with_positions_via_dp(
+        &mut self,
+        haystack: &[u8],
+        positions: &mut Vec<u32>,
+    ) -> Option<i32> {
+        positions.clear();
+        if self.needle.is_empty() {
+            return Some(0);
+        }
+        if !is_subsequence(haystack, &self.needle, self.case_sensitive) {
+            return None;
+        }
+        let (best, best_j) = self.run_dp(haystack, true)?;
+        self.backtrack(best_j, positions);
+        Some(clamp_score(best))
+    }
+
+    /// Closed form of the DP for a one-byte needle. With `m == 1` the only
+    /// predecessor of `D[1][j]` is the free leading skip (`H[0][j-1] == 0`),
+    /// so `D[1][j] = SCORE_MATCH + bonus(j) * BONUS_FIRST_CHAR_MULTIPLIER`
+    /// and the answer is its maximum over the needle byte's occurrences. The
+    /// DP only improves on a strictly greater score, so ties keep the first
+    /// (leftmost) occurrence; the returned index is that occurrence.
+    fn score_single(&self, hay: &[u8]) -> Option<(i32, usize)> {
+        debug_assert_eq!(self.needle.len(), 1);
+        let nb = self.needle[0];
+        let basename_start = if self.opts.path_mode {
+            memchr::memrchr(b'/', hay).map_or(0, |i| i + 1)
+        } else {
+            usize::MAX
+        };
+        let mut best = INVALID;
+        let mut best_at = 0usize;
+        let mut consider = |at: usize| {
+            let prev_class = if at == 0 {
+                self.initial_class
+            } else {
+                self.classes[hay[at - 1] as usize]
+            };
+            let class = self.classes[hay[at] as usize];
+            let mut col_bonus = self.bonus[prev_class as usize][class as usize];
+            if at == basename_start {
+                col_bonus += BONUS_BASENAME_START;
+            }
+            let v = SCORE_MATCH + col_bonus * BONUS_FIRST_CHAR_MULTIPLIER;
+            if v > best {
+                best = v;
+                best_at = at;
+            }
+        };
+        if self.case_sensitive || !nb.is_ascii_lowercase() {
+            // `set_needle` already folded the needle, so a non-lowercase
+            // byte here has no distinct upper-case form to look for.
+            for at in memchr::memchr_iter(nb, hay) {
+                consider(at);
+            }
+        } else {
+            for at in memchr::memchr2_iter(nb, nb.to_ascii_uppercase(), hay) {
+                consider(at);
+            }
+        }
+        if valid(best) {
+            Some((clamp_score(best), best_at))
+        } else {
+            None
+        }
     }
 
     /// Like [`Scorer::score`], also writing the matched byte indices
@@ -220,6 +319,13 @@ impl Scorer {
         positions.clear();
         if self.needle.is_empty() {
             return Some(0);
+        }
+        if self.needle.len() == 1 {
+            let (score, at) = self.score_single(haystack)?;
+            // The single matched byte is the one the closed form picked
+            // (exactly what the DP backtrack would recover).
+            positions.push(u32::try_from(at).unwrap_or(u32::MAX));
+            return Some(score);
         }
         if !is_subsequence(haystack, &self.needle, self.case_sensitive) {
             return None;

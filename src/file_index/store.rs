@@ -141,6 +141,16 @@ pub struct Store {
     touch: Vec<TouchSlot>,
     touch_head: usize,
     touch_seq: u64,
+    /// Bumped by every mutation that can change the live path set or
+    /// invalidate a [`FileId`] (insert, remove, bulk load, compact); see
+    /// [`Store::generation`]. `touch` does not bump it: recency only affects
+    /// ranking, never the candidate set.
+    generation: u64,
+    /// `byte_freq[b]` = occurrences of byte `b` across all live paths,
+    /// maintained incrementally on insert/remove. Lets `complete()` pick the
+    /// rarest needle byte and bound the arena-sweep hit count without
+    /// scanning anything (see [`Store::live_byte_count`]).
+    byte_freq: [u32; 256],
     budget: usize,
     /// Exact retained bytes (see `recompute_bytes`). Never exceeds `budget`.
     bytes: usize,
@@ -162,6 +172,8 @@ impl Store {
             touch: Vec::new(),
             touch_head: 0,
             touch_seq: 0,
+            generation: 0,
+            byte_freq: [0u32; 256],
             budget,
             bytes: 0,
             truncated: false,
@@ -202,6 +214,15 @@ impl Store {
     #[inline]
     pub fn tombstones(&self) -> usize {
         self.dead as usize
+    }
+
+    /// Mutation counter: bumped by every successful [`Store::upsert`],
+    /// [`Store::remove`], [`Store::bulk_load`] and [`Store::compact`] (which
+    /// invalidates ids), never by [`Store::touch`]. Lets a caller detect
+    /// that ids and candidate sets it cached are still valid.
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn get(&self, path: &[u8]) -> Option<FileId> {
@@ -254,6 +275,10 @@ impl Store {
         self.by_path.swap_remove_at(map_idx);
         self.flags[id as usize] |= FLAG_DEAD;
         self.dead += 1;
+        for &b in path {
+            self.byte_freq[b as usize] -= 1;
+        }
+        self.generation += 1;
         let pos = self.sorted_position(path);
         // The id is live and indexed, so it is present in `sorted` at the
         // partition point of its own path.
@@ -329,6 +354,7 @@ impl Store {
         self.sorted = sorted;
         self.remap_touch_ring(&remap);
         self.dead = 0;
+        self.generation += 1;
         self.bytes = self.recompute_bytes();
     }
 
@@ -337,14 +363,77 @@ impl Store {
         self.sorted.iter().map(|&id| FileId(id))
     }
 
-    /// Live ids whose path starts with `prefix`, in path order
-    /// (binary search on the sorted order; `prefix == b""` yields everything).
+    /// Live ids whose path starts with `prefix`, in path order. Both range
+    /// bounds are resolved up front by binary search ([`Store::prefix_range`]),
+    /// so iteration is a plain slice walk with no per-item prefix test.
     pub fn range_with_prefix<'a>(&'a self, prefix: &'a [u8]) -> impl Iterator<Item = FileId> + 'a {
-        let start = self.sorted_position(prefix);
-        self.sorted[start..]
+        self.sorted[self.prefix_range(prefix)]
             .iter()
-            .take_while(move |&&id| self.path_bytes(id).starts_with(prefix))
             .map(|&id| FileId(id))
+    }
+
+    /// Index range, in the path-sorted order, of the live ids whose path
+    /// starts with `prefix`. The empty prefix is the whole order (no
+    /// comparisons); otherwise two binary searches: the paths with `prefix`
+    /// are exactly the contiguous block that sorts at or after `prefix` and
+    /// still starts with it (any later path without the prefix sorts after
+    /// every path with it).
+    pub(crate) fn prefix_range(&self, prefix: &[u8]) -> core::ops::Range<usize> {
+        if prefix.is_empty() {
+            return 0..self.sorted.len();
+        }
+        let start = self.sorted_position(prefix);
+        let end = start
+            + self.sorted[start..].partition_point(|&id| self.path_bytes(id).starts_with(prefix));
+        start..end
+    }
+
+    /// Occurrences of `byte` across the bytes of every live path.
+    #[inline]
+    pub(crate) fn live_byte_count(&self, byte: u8) -> u32 {
+        self.byte_freq[byte as usize]
+    }
+
+    /// Live ids whose path contains `lo` (or `up`, when given), in ascending
+    /// id order, deduplicated, appended to `out` (cleared first).
+    ///
+    /// This is one `memchr`/`memchr2` sweep of the whole contiguous path
+    /// arena; each hit offset is mapped back to its entry by binary search
+    /// over the per-id arena offsets, which are ascending in id by
+    /// construction (entries only ever append to the arena, and `compact`
+    /// re-packs both in the same order). The arena still holds the bytes of
+    /// tombstoned entries until the next compaction; their hits are skipped.
+    pub(crate) fn ids_with_byte(&self, lo: u8, up: Option<u8>, out: &mut Vec<FileId>) {
+        out.clear();
+        match up {
+            Some(up) if up != lo => self.map_hits(memchr::memchr2_iter(lo, up, &self.arena), out),
+            _ => self.map_hits(memchr::memchr_iter(lo, &self.arena), out),
+        }
+    }
+
+    /// Maps ascending arena hit offsets to deduplicated live ids (see
+    /// [`Store::ids_with_byte`]).
+    fn map_hits(&self, hits: impl Iterator<Item = usize>, out: &mut Vec<FileId>) {
+        // `paths[..].off` is ascending and the arena has no gaps, so each
+        // ascending hit lands at or after the previously hit entry.
+        let mut next_entry = 0usize;
+        let mut hit_end = 0usize;
+        for hit in hits {
+            if hit < hit_end {
+                continue; // same entry as the previous hit
+            }
+            let idx = next_entry
+                + self.paths[next_entry..]
+                    .partition_point(|r| (r.off as usize + r.len as usize) <= hit);
+            debug_assert!(idx < self.paths.len(), "arena hit past the last entry");
+            let r = self.paths[idx];
+            debug_assert!((r.off as usize..r.off as usize + r.len as usize).contains(&hit));
+            hit_end = r.off as usize + r.len as usize;
+            next_entry = idx + 1;
+            if self.flags[idx] & FLAG_DEAD == 0 {
+                out.push(FileId(idx as u32));
+            }
+        }
     }
 
     /// Record an access to `id` (most-recent-first ranking for
@@ -451,6 +540,7 @@ impl Store {
         if let Some(map_idx) = self.lookup_map_index(path) {
             let id = self.by_path.keys()[map_idx];
             self.meta[id as usize] = meta;
+            self.generation += 1;
             return Ok(FileId(id));
         }
 
@@ -491,6 +581,10 @@ impl Store {
             let pos = self.sorted_position(path);
             self.sorted.insert(pos, id);
         }
+        for &b in path {
+            self.byte_freq[b as usize] += 1;
+        }
+        self.generation += 1;
         self.bytes = self.recompute_bytes();
         Ok(FileId(id))
     }
@@ -927,5 +1021,133 @@ mod tests {
             let id = s.get(n).unwrap();
             assert_eq!(s.path(id), n.as_slice());
         }
+    }
+
+    #[test]
+    fn range_with_prefix_end_bound_edge_cases() {
+        let mut s = Store::new(1 << 20);
+        load(
+            &mut s,
+            &[
+                b"a",
+                b"ab",
+                b"abz",
+                b"ab\xff",
+                b"ab\xff\xff",
+                b"b",
+                b"\xff",
+                b"\xff\xff",
+            ],
+        );
+        // The prefix that is also the LAST key in the order.
+        assert_eq!(
+            paths_of(&s, s.range_with_prefix(b"\xff\xff")),
+            vec![b"\xff\xff".to_vec()]
+        );
+        // Prefix ending in 0xff (no same-length lexicographic successor).
+        assert_eq!(
+            paths_of(&s, s.range_with_prefix(b"ab\xff")),
+            vec![b"ab\xff".to_vec(), b"ab\xff\xff".to_vec()]
+        );
+        assert_eq!(
+            paths_of(&s, s.range_with_prefix(b"\xff")),
+            vec![b"\xff".to_vec(), b"\xff\xff".to_vec()]
+        );
+        // A prefix matched only by itself; one greater than every key.
+        assert_eq!(paths_of(&s, s.range_with_prefix(b"b")), vec![b"b".to_vec()]);
+        assert_eq!(s.range_with_prefix(b"zzz").count(), 0);
+        // Everything, and the first key's block.
+        assert_eq!(s.range_with_prefix(b"").count(), s.len());
+        assert_eq!(
+            paths_of(&s, s.range_with_prefix(b"a")),
+            vec![
+                b"a".to_vec(),
+                b"ab".to_vec(),
+                b"abz".to_vec(),
+                b"ab\xff".to_vec(),
+                b"ab\xff\xff".to_vec()
+            ]
+        );
+        // A prefix longer than any key it could match.
+        assert_eq!(s.range_with_prefix(b"ab\xff\xff\xff").count(), 0);
+        let empty = Store::new(1 << 20);
+        assert_eq!(empty.range_with_prefix(b"").count(), 0);
+        assert_eq!(empty.range_with_prefix(b"x").count(), 0);
+    }
+
+    #[test]
+    fn generation_bumps_on_mutation_but_not_on_touch() {
+        let mut s = Store::new(1 << 20);
+        let g0 = s.generation();
+        let id = s.upsert(b"a", Meta::default()).unwrap();
+        let g1 = s.generation();
+        assert!(g1 > g0, "insert must bump");
+        s.touch(id);
+        assert_eq!(s.generation(), g1, "touch must not bump");
+        s.upsert(b"a", meta(EntryKind::Dir, 0)).unwrap();
+        let g2 = s.generation();
+        assert!(g2 > g1, "meta update must bump");
+        s.upsert(b"b", Meta::default()).unwrap();
+        let g3 = s.generation();
+        assert!(g3 > g2);
+        assert!(s.remove(b"b"));
+        let g4 = s.generation();
+        assert!(g4 > g3, "remove must bump");
+        assert!(!s.remove(b"b"));
+        assert_eq!(s.generation(), g4, "a no-op remove must not bump");
+        s.compact();
+        assert!(s.generation() > g4, "compact invalidates ids and must bump");
+    }
+
+    #[test]
+    fn live_byte_counts_track_inserts_and_removes() {
+        let mut s = Store::new(1 << 20);
+        assert_eq!(s.live_byte_count(b'q'), 0);
+        load(&mut s, &[b"src/a.rs", b"lib/qq.rs", b"Q.txt"]);
+        assert_eq!(s.live_byte_count(b'q'), 2);
+        assert_eq!(s.live_byte_count(b'Q'), 1);
+        assert_eq!(s.live_byte_count(b's'), 3);
+        assert!(s.remove(b"lib/qq.rs"));
+        assert_eq!(s.live_byte_count(b'q'), 0);
+        assert_eq!(s.live_byte_count(b'Q'), 1);
+        // Compaction rebuilds the arena but the live set is unchanged.
+        s.compact();
+        assert_eq!(s.live_byte_count(b'q'), 0);
+        assert_eq!(s.live_byte_count(b'Q'), 1);
+        // Re-inserting brings the counts back.
+        s.upsert(b"qq", Meta::default()).unwrap();
+        assert_eq!(s.live_byte_count(b'q'), 2);
+    }
+
+    #[test]
+    fn ids_with_byte_sweeps_the_arena_and_skips_tombstones() {
+        let mut s = Store::new(1 << 20);
+        load(&mut s, &[b"src/a.rs", b"lib/qq.rs", b"Q.txt", b"zz/z.z"]);
+        let mut out = Vec::new();
+        // Case pair: matches both 'q' and 'Q'; multiple hits in one path
+        // are deduplicated; output is in id (= insertion) order.
+        s.ids_with_byte(b'q', Some(b'Q'), &mut out);
+        assert_eq!(
+            paths_of(&s, out.iter().copied()),
+            vec![b"lib/qq.rs".to_vec(), b"Q.txt".to_vec()]
+        );
+        s.ids_with_byte(b'q', None, &mut out);
+        assert_eq!(
+            paths_of(&s, out.iter().copied()),
+            vec![b"lib/qq.rs".to_vec()]
+        );
+        // A byte present in no path.
+        s.ids_with_byte(b'%', None, &mut out);
+        assert!(out.is_empty());
+        // Tombstoned entries keep their bytes in the arena but are skipped.
+        assert!(s.remove(b"lib/qq.rs"));
+        s.ids_with_byte(b'q', Some(b'Q'), &mut out);
+        assert_eq!(paths_of(&s, out.iter().copied()), vec![b"Q.txt".to_vec()]);
+        // After compaction the rebuilt arena still maps hits to the right ids.
+        s.compact();
+        s.ids_with_byte(b'z', None, &mut out);
+        assert_eq!(paths_of(&s, out.iter().copied()), vec![b"zz/z.z".to_vec()]);
+        s.ids_with_byte(b'q', Some(b'Q'), &mut out);
+        assert_eq!(paths_of(&s, out.iter().copied()), vec![b"Q.txt".to_vec()]);
     }
 }

@@ -11,73 +11,75 @@
 /// that will never fill.
 const PREALLOC_CAP: usize = 1024;
 
+/// One retained candidate: its score and the caller's value (the value also
+/// carries whatever the tiebreak comparator looks at).
 struct Entry<T> {
     score: i32,
-    tiebreak: u32,
     value: T,
 }
 
-/// `a` ranks strictly worse than `b`: lower score, or equal score and a
-/// larger tiebreak.
-#[inline]
-fn worse(a_score: i32, a_tiebreak: u32, b_score: i32, b_tiebreak: u32) -> bool {
-    a_score < b_score || (a_score == b_score && a_tiebreak > b_tiebreak)
-}
-
-/// Fixed-capacity top-K min-heap keyed by (score desc, then tiebreak asc).
-pub struct TopK<T> {
+/// Fixed-capacity top-K min-heap keyed by score (descending) with a
+/// caller-supplied tiebreak ordering over the values (`Less` ranks better).
+/// The root is the worst retained item, so the push phase selects the best K
+/// of N candidates in O(N log K); the tiebreak runs only on equal scores.
+pub struct TopKBy<T, F> {
     k: usize,
     heap: Vec<Entry<T>>,
+    tie: F,
 }
 
-impl<T> TopK<T> {
-    pub fn new(k: usize) -> TopK<T> {
-        TopK {
+impl<T, F: Fn(&T, &T) -> core::cmp::Ordering> TopKBy<T, F> {
+    /// `tie` must be a strict total order consistent across the whole query
+    /// (ties on it keep the first-pushed candidate).
+    pub fn new(k: usize, tie: F) -> TopKBy<T, F> {
+        TopKBy {
             k,
             heap: Vec::with_capacity(k.min(PREALLOC_CAP)),
+            tie,
         }
+    }
+
+    /// `a` ranks strictly worse than `b`: lower score, or equal score and a
+    /// tiebreak that orders after `b`'s.
+    #[inline]
+    fn worse(&self, a: &Entry<T>, b: &Entry<T>) -> bool {
+        a.score < b.score
+            || (a.score == b.score
+                && (self.tie)(&a.value, &b.value) == core::cmp::Ordering::Greater)
     }
 
     /// Offer one candidate. Once full, a candidate is admitted only if it is
     /// strictly better (score desc, then tiebreak asc) than the current
     /// worst; a candidate equal to the current worst is rejected.
-    pub fn push(&mut self, score: i32, tiebreak: u32, value: T) {
+    pub fn push(&mut self, score: i32, value: T) {
         if self.k == 0 {
             return;
         }
+        let entry = Entry { score, value };
         if self.heap.len() < self.k {
-            self.heap.push(Entry {
-                score,
-                tiebreak,
-                value,
-            });
+            self.heap.push(entry);
             self.sift_up(self.heap.len() - 1);
             return;
         }
-        let root = &self.heap[0];
-        if worse(root.score, root.tiebreak, score, tiebreak) {
-            self.heap[0] = Entry {
-                score,
-                tiebreak,
-                value,
-            };
+        if self.worse(&self.heap[0], &entry) {
+            self.heap[0] = entry;
             self.sift_down(0);
         }
     }
 
     /// Drains, best first (score desc, then tiebreak asc).
     pub fn into_sorted_vec(self) -> Vec<(i32, T)> {
-        let mut entries = self.heap;
-        entries.sort_by(|a, b| {
-            b.score
-                .cmp(&a.score)
-                .then_with(|| a.tiebreak.cmp(&b.tiebreak))
-        });
-        entries.into_iter().map(|e| (e.score, e.value)).collect()
+        let TopKBy { mut heap, tie, .. } = self;
+        heap.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| tie(&a.value, &b.value)));
+        heap.into_iter().map(|e| (e.score, e.value)).collect()
     }
 
     pub fn len(&self) -> usize {
         self.heap.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.heap.is_empty()
     }
 
     /// Worst retained score, for early-exit pruning. `None` until full. A
@@ -93,8 +95,7 @@ impl<T> TopK<T> {
     fn sift_up(&mut self, mut idx: usize) {
         while idx > 0 {
             let parent = (idx - 1) / 2;
-            let (c, p) = (&self.heap[idx], &self.heap[parent]);
-            if worse(c.score, c.tiebreak, p.score, p.tiebreak) {
+            if self.worse(&self.heap[idx], &self.heap[parent]) {
                 self.heap.swap(idx, parent);
                 idx = parent;
             } else {
@@ -108,11 +109,8 @@ impl<T> TopK<T> {
         loop {
             let mut worst = idx;
             for child in [2 * idx + 1, 2 * idx + 2] {
-                if child < len {
-                    let (c, w) = (&self.heap[child], &self.heap[worst]);
-                    if worse(c.score, c.tiebreak, w.score, w.tiebreak) {
-                        worst = child;
-                    }
+                if child < len && self.worse(&self.heap[child], &self.heap[worst]) {
+                    worst = child;
                 }
             }
             if worst == idx {
@@ -121,6 +119,56 @@ impl<T> TopK<T> {
             self.heap.swap(idx, worst);
             idx = worst;
         }
+    }
+}
+
+/// Tiebreak for [`TopK`]: the caller-supplied `u32` (ascending).
+fn tie_by_index<T>(a: &(u32, T), b: &(u32, T)) -> core::cmp::Ordering {
+    a.0.cmp(&b.0)
+}
+
+/// Comparator type of [`tie_by_index`], so [`TopK`] stays non-generic over a
+/// closure type.
+type IndexTie<T> = fn(&(u32, T), &(u32, T)) -> core::cmp::Ordering;
+
+/// Fixed-capacity top-K min-heap keyed by (score desc, then a `u32` tiebreak
+/// asc): [`TopKBy`] specialized to an explicit per-candidate index.
+pub struct TopK<T> {
+    inner: TopKBy<(u32, T), IndexTie<T>>,
+}
+
+impl<T> TopK<T> {
+    pub fn new(k: usize) -> TopK<T> {
+        TopK {
+            inner: TopKBy::new(k, tie_by_index::<T> as IndexTie<T>),
+        }
+    }
+
+    /// See [`TopKBy::push`].
+    pub fn push(&mut self, score: i32, tiebreak: u32, value: T) {
+        self.inner.push(score, (tiebreak, value));
+    }
+
+    /// Drains, best first (score desc, then tiebreak asc).
+    pub fn into_sorted_vec(self) -> Vec<(i32, T)> {
+        self.inner
+            .into_sorted_vec()
+            .into_iter()
+            .map(|(score, (_, value))| (score, value))
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// See [`TopKBy::threshold`].
+    pub fn threshold(&self) -> Option<i32> {
+        self.inner.threshold()
     }
 }
 

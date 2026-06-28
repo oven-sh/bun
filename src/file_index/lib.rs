@@ -23,7 +23,10 @@ mod store;
 mod test_link_stubs;
 
 pub use budget::BudgetExceeded;
-pub use complete::{CompleteMatch, CompleteOptions, DEFAULT_COMPLETE_LIMIT, complete};
+pub use complete::{
+    CompleteCache, CompleteMatch, CompleteOptions, DEFAULT_COMPLETE_LIMIT, complete,
+    complete_with_cache,
+};
 pub use crawl::{CrawlOptions, CrawlResult, crawl};
 pub use glob::glob;
 pub use grep::{GrepHit, GrepOutcome, GrepQuery, grep_file};

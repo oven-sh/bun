@@ -64,6 +64,44 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 });
 
 describe("ipc mode advanced", () => {
+  // Spawns node as a raw injector that writes each hex payload to the channel
+  // fd as a complete advanced frame (4-byte big-endian length + bytes) in a
+  // single syscall, then exits. Resolves with every message the decoder
+  // delivered plus the injector's exit code, once the channel has closed.
+  //
+  // Ordering is what makes this sound: `ipc()` runs synchronously as each
+  // frame is decoded, and `onDisconnect` fires on a later task only after the
+  // socket's data has been fully drained (whether the close came from the
+  // injector exiting or from the decoder rejecting a frame). So `messages` is
+  // complete at disconnect, and a disconnect with nothing delivered can only
+  // mean the frame never reached the decoder or the decoder rejected it --
+  // that rejects, so those failures surface immediately instead of hanging.
+  async function injectFrames(...hexPayloads: string[]): Promise<{ messages: any[]; exitCode: number }> {
+    const messages: any[] = [];
+    const closed = Promise.withResolvers<void>();
+    await using child = Bun.spawn({
+      cmd: [
+        process.execPath,
+        "-e",
+        `const frames = ${JSON.stringify(hexPayloads)}.map(h => Buffer.from(h, "hex"));
+         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+         require("fs").writeSync(3, Buffer.concat(frames.flatMap(p => [be(p.length), p])));`,
+      ],
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      env: bunEnv,
+      ipc(message) {
+        messages.push(message);
+      },
+      onDisconnect() {
+        if (messages.length) closed.resolve();
+        else closed.reject(new Error("IPC channel closed before any injected frame was delivered"));
+      },
+    });
+    await closed.promise;
+    return { messages, exitCode: await child.exited };
+  }
+
   rawInjection("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
     // The advanced IPC framing is [u32-be length][payload]. Checking
     // `data.len < header_length + message_len` in u32 arithmetic would let a
@@ -120,7 +158,16 @@ describe("ipc mode advanced", () => {
           execPath: process.execPath, execArgv: [], serialization: "advanced", stdio: "ignore",
         });
         child.on("message", m => console.error("UNEXPECTED_IPC_MESSAGE", JSON.stringify(m)));
+        // The injector keeps itself alive forever, so the only legitimate
+        // exit is the kill() after disconnect. An exit seen first means the
+        // writeSync to fd 3 failed and the child died -- that also produces a
+        // disconnect, but one the decoder never caused, so it must not pass.
+        child.on("exit", (code, signal) => {
+          console.log("FAIL injector exited before the decoder rejected the frame: " + code + ", " + signal);
+          process.exitCode = 1;
+        });
         child.on("disconnect", () => {
+          child.removeAllListeners("exit");
           console.log("DISCONNECTED");
           child.kill();
         });
@@ -228,36 +275,15 @@ describe("ipc mode advanced", () => {
     // read, or the payload is malformed and the whole frame is rejected;
     // accepting it would mean a corrupt stream delivers a message.
     //
-    // The child writes two complete frames to the channel fd in one syscall:
-    // the same [1,2,3] dense array twice, first with the correct trailer
-    // (propertyCount=0, length=3) and then with propertyCount corrupted to 5.
-    // The first must be delivered; the second must not be.
+    // Both frames are the same [1,2,3] dense array; the first has the
+    // correct trailer (propertyCount=0, length=3) and the second has
+    // propertyCount corrupted to 5. The first must be delivered; the
+    // second must not be. `injectFrames` only resolves once the channel has
+    // closed, by which point both have been accepted or rejected.
     const valid = "ff0f4103490249044906240003";
     const corrupt = "ff0f4103490249044906240503";
-    const got: unknown[] = [];
-    const first = Promise.withResolvers<void>();
-    await using child = Bun.spawn({
-      cmd: [
-        process.execPath,
-        "-e",
-        `const v = Buffer.from("${valid}", "hex"), c = Buffer.from("${corrupt}", "hex");
-         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
-         require("fs").writeSync(3, Buffer.concat([be(v.length), v, be(c.length), c]));`,
-      ],
-      stdio: ["ignore", "inherit", "inherit"],
-      serialization: "advanced",
-      env: bunEnv,
-      ipc(message) {
-        got.push(message);
-        first.resolve();
-      },
-    });
-    // Both frames arrive in one write and are decoded in the same pass, so by
-    // the time the first message is observed the second has already been
-    // accepted or rejected; awaiting exit then bounds the whole exchange.
-    await first.promise;
-    const exitCode = await child.exited;
-    expect(got).toEqual([[1, 2, 3]]);
+    const { messages, exitCode } = await injectFrames(valid, corrupt);
+    expect(messages).toEqual([[1, 2, 3]]);
     expect(exitCode).toBe(0);
   });
 
@@ -268,27 +294,10 @@ describe("ipc mode advanced", () => {
   // `{ view: new Uint8Array([10, 20, 30]) }` at wire version 15, where the
   // view record carries a trailing flags varint the reader must consume.
   rawInjection("a raw V8 ArrayBuffer plus ArrayBufferView record deserializes to a typed array", async () => {
-    const payload = "ff0f6f22047669657742030a141e56420003007b01";
-    const { promise, resolve } = Promise.withResolvers<any>();
-    await using child = Bun.spawn({
-      cmd: [
-        process.execPath,
-        "-e",
-        `const p = Buffer.from("${payload}", "hex");
-         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
-         require("fs").writeSync(3, Buffer.concat([be(p.length), p]));`,
-      ],
-      stdio: ["ignore", "inherit", "inherit"],
-      serialization: "advanced",
-      env: bunEnv,
-      ipc(message) {
-        resolve(message);
-      },
-    });
-    const got = await promise;
-    expect(got).toEqual({ view: new Uint8Array([10, 20, 30]) });
-    expect(got.view).toBeInstanceOf(Uint8Array);
-    expect(await child.exited).toBe(0);
+    const { messages, exitCode } = await injectFrames("ff0f6f22047669657742030a141e56420003007b01");
+    expect(messages).toEqual([{ view: new Uint8Array([10, 20, 30]) }]);
+    expect(messages[0].view).toBeInstanceOf(Uint8Array);
+    expect(exitCode).toBe(0);
   });
 
   // V8's reader consumes a trailing kArrayBufferView after ANY tag that
@@ -301,31 +310,17 @@ describe("ipc mode advanced", () => {
   // `a = new Uint8Array(ab, 0, 2)` and `b = new Uint8Array(ab, 2, 2)` share
   // an `ArrayBuffer([10, 20, 30, 40])`.
   rawInjection("two views over one ArrayBuffer via kObjectReference share the buffer", async () => {
-    const payload = "ff0f6f220470616972410242040a141e2856420002005e0256420202002400027b01";
-    const { promise, resolve } = Promise.withResolvers<any>();
-    await using child = Bun.spawn({
-      cmd: [
-        process.execPath,
-        "-e",
-        `const p = Buffer.from("${payload}", "hex");
-         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
-         require("fs").writeSync(3, Buffer.concat([be(p.length), p]));`,
-      ],
-      stdio: ["ignore", "inherit", "inherit"],
-      serialization: "advanced",
-      env: bunEnv,
-      ipc(message) {
-        resolve(message);
-      },
-    });
-    const got = await promise;
+    const { messages, exitCode } = await injectFrames(
+      "ff0f6f220470616972410242040a141e2856420002005e0256420202002400027b01",
+    );
+    const [got] = messages;
     expect(got.pair).toEqual([new Uint8Array([10, 20]), new Uint8Array([30, 40])]);
     // The defining property of the kObjectReference form: both views are
     // backed by the SAME ArrayBuffer, at their original offsets.
     expect(got.pair[0].buffer).toBe(got.pair[1].buffer);
     expect(got.pair[0].byteOffset).toBe(0);
     expect(got.pair[1].byteOffset).toBe(2);
-    expect(await child.exited).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   // V8 serializes a length-tracking view over a resizable ArrayBuffer with a
@@ -336,24 +331,8 @@ describe("ipc mode advanced", () => {
   // Payload is `new v8.Serializer()` output for `{view: t}` where
   // `t = new Uint8Array(new ArrayBuffer(4, {maxByteLength: 8}))` over [1,2,3,4].
   rawInjection("a length-tracking view over a resizable ArrayBuffer stays length-tracking", async () => {
-    const payload = "ff0f6f2204766965777e04080102030456420000037b01";
-    const { promise, resolve } = Promise.withResolvers<any>();
-    await using child = Bun.spawn({
-      cmd: [
-        process.execPath,
-        "-e",
-        `const p = Buffer.from("${payload}", "hex");
-         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
-         require("fs").writeSync(3, Buffer.concat([be(p.length), p]));`,
-      ],
-      stdio: ["ignore", "inherit", "inherit"],
-      serialization: "advanced",
-      env: bunEnv,
-      ipc(message) {
-        resolve(message);
-      },
-    });
-    const got = await promise;
+    const { messages, exitCode } = await injectFrames("ff0f6f2204766965777e04080102030456420000037b01");
+    const [got] = messages;
     expect(got.view).toEqual(new Uint8Array([1, 2, 3, 4]));
     expect(got.view.buffer.resizable).toBe(true);
     expect(got.view.buffer.maxByteLength).toBe(8);
@@ -361,7 +340,7 @@ describe("ipc mode advanced", () => {
     // grow the view. V8's own deserializer reports length 8 here.
     got.view.buffer.resize(8);
     expect(got.view.length).toBe(8);
-    expect(await child.exited).toBe(0);
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -376,11 +355,12 @@ describe("ipc mode advanced", () => {
 // implementation; the bun<->bun cases run unconditionally.
 describe("ipc mode advanced structured clone", () => {
   // A CJS child that runs unchanged under node and bun: echo each message
-  // verbatim, then exit after the sentinel so the parent's channel closes.
+  // verbatim. It never exits on its own -- `process.send` is asynchronous
+  // under node, so a synchronous `process.exit` here would race the echo's
+  // flush. Every parent kills the child after receiving the echo.
   const ECHO_CHILD = /* js */ `
     process.on("message", m => {
       process.send(m);
-      if (m && m.done) process.exit(0);
     });
   `;
 
@@ -395,6 +375,14 @@ describe("ipc mode advanced structured clone", () => {
       int: 42,
       neg: -7,
       dbl: 1.5,
+      // Integer-valued doubles past the int32 range, non-finites, and -0 all
+      // have to take the serializer's kDouble path rather than its int32
+      // downgrade, and each is a distinct Number on the far side.
+      wide: 2 ** 40,
+      inf: Infinity,
+      negInf: -Infinity,
+      nan: NaN,
+      negZero: -0,
       big: 2n ** 70n,
       negBig: -5n,
       str: "h\u00e9llo \u65e5\u672c",
@@ -418,13 +406,15 @@ describe("ipc mode advanced structured clone", () => {
 
   // Forks `childSource` with the given execPath over an advanced channel,
   // sends `payload`, and resolves with the first echoed message. Every
-  // failure path (exit before echo, channel error) rejects so a broken wire
-  // format fails the test immediately instead of just hanging.
+  // failure path (exit before echo, channel error, channel disconnect)
+  // rejects so a broken wire format fails the test immediately instead of
+  // just hanging. A reject that races in after the resolve is a no-op.
   function echoOnce(childPath: string, execPath: string, payload: unknown): Promise<any> {
     const child = fork(childPath, [], { execPath, execArgv: [], serialization: "advanced", stdio: "ignore" });
     const { promise, resolve, reject } = Promise.withResolvers<any>();
     child.on("message", resolve);
     child.on("error", reject);
+    child.on("disconnect", () => reject(new Error("IPC channel disconnected before echoing")));
     child.on("exit", (code, signal) => reject(new Error(`child exited (${code}, ${signal}) before echoing`)));
     child.send(payload as any);
     return promise.finally(() => child.kill());
@@ -439,6 +429,8 @@ describe("ipc mode advanced structured clone", () => {
     const got = await echoOnce(path.join(String(dir), "echo.cjs"), nodeExe()!, sent);
 
     expect(got).toEqual(sent as any);
+    // toEqual does not distinguish -0 from +0; only SameValue does.
+    expect(Object.is(got.negZero, -0)).toBe(true);
     expect(Buffer.isBuffer(got.buf)).toBe(true);
     expect(got.u16).toBeInstanceOf(Uint16Array);
     expect(got.map).toBeInstanceOf(Map);
@@ -466,7 +458,9 @@ describe("ipc mode advanced structured clone", () => {
         const cyclic = [1]; cyclic.push(cyclic);
         const shared = { x: 1 };
         const sent = {
-          int: 42, neg: -7, dbl: 1.5, big: 2n ** 70n, negBig: -5n,
+          int: 42, neg: -7, dbl: 1.5,
+          wide: 2 ** 40, inf: Infinity, negInf: -Infinity, nan: NaN, negZero: -0,
+          big: 2n ** 70n, negBig: -5n,
           str: "h\\u00e9llo \\u65e5\\u672c",
           buf: Buffer.from([1, 2, 3]),
           u16: new Uint16Array([256, 513]),
@@ -519,6 +513,8 @@ describe("ipc mode advanced structured clone", () => {
     const got = await echoOnce(path.join(String(dir), "echo.cjs"), bunExe(), sent);
 
     expect(got).toEqual(sent as any);
+    // toEqual does not distinguish -0 from +0; only SameValue does.
+    expect(Object.is(got.negZero, -0)).toBe(true);
     expect(Buffer.isBuffer(got.buf)).toBe(true);
     expect(got.cyclic[1]).toBe(got.cyclic);
     expect(got.shared[0]).toBe(got.shared[1]);

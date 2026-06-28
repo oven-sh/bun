@@ -267,14 +267,19 @@ private:
         }
         if (value.isNumber()) {
             double d = value.asNumber();
-            int32_t i = static_cast<int32_t>(d);
-            if (static_cast<double>(i) == d && !(i == 0 && std::signbit(d))) {
-                writeTag(V8Tag::kInt32);
-                writeZigZag(i);
-            } else {
-                writeTag(V8Tag::kDouble);
-                writeDouble(d);
+            // double -> int32_t is UB for NaN, +/-Infinity, and out-of-range
+            // values, so prove d is in range (in the wide type) before casting.
+            // NaN fails both comparisons and correctly takes the kDouble path.
+            if (d >= static_cast<double>(INT32_MIN) && d <= static_cast<double>(INT32_MAX)) {
+                int32_t i = static_cast<int32_t>(d);
+                if (static_cast<double>(i) == d && !(i == 0 && std::signbit(d))) {
+                    writeTag(V8Tag::kInt32);
+                    writeZigZag(i);
+                    return true;
+                }
             }
+            writeTag(V8Tag::kDouble);
+            writeDouble(d);
             return true;
         }
 #if USE(BIGINT32)

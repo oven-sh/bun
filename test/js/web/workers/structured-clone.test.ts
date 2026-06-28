@@ -1028,6 +1028,31 @@ function thrownName(fn: () => unknown): string | undefined {
   }
 }
 
+// Versions 14 and 15 are reserved for upstream WebKit format changes Bun never adopted,
+// so the deserializer has no reader for either; a version 14 payload in particular would
+// have its object-reference pool silently desynced instead of failing, because its writer
+// pooled the terminal types and this reader would not. Both must reject, not misparse.
+describe("the serialization format version", () => {
+  const withVersion = (version: number) => {
+    // `serialize` returns a SharedArrayBuffer; Buffer.from views it, so the
+    // version patch lands in the same bytes that `deserialize` reads.
+    const bytes = Buffer.from(serialize({ a: 1 }));
+    bytes.writeUint32LE(version, 0);
+    return bytes;
+  };
+
+  test("serialize() stamps the current version", () => {
+    expect(Buffer.from(serialize({ a: 1 })).readUint32LE(0)).toBe(16);
+  });
+
+  // 14 and 15 are the reserved gap; 99 is the pre-existing newer-than-current rejection.
+  test.each([14, 15, 99])("a version %i payload is rejected instead of misparsed", version => {
+    expect(thrownName(() => deserialize(withVersion(version)))).toBe("TypeError");
+    // A well-formed payload through the same helper still round-trips.
+    expect(deserialize(withVersion(16))).toEqual({ a: 1 });
+  });
+});
+
 // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
 // StructuredSerializeInternal of a SharedArrayBuffer re-shares the Data Block; it never
 // copies it. That Data Block only exists in this process, so paths that reduce the clone

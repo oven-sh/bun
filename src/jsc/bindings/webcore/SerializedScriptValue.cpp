@@ -579,6 +579,9 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * in the object reference pool on both sides.
  */
 [[maybe_unused]] static constexpr unsigned CurrentVersion = 16;
+// Upstream WebKit's versions 14 and 15, which Bun never adopted or wrote (see above).
+// isValid() rejects [FirstReservedVersion, FirstVersionWithPooledTerminals).
+[[maybe_unused]] static constexpr unsigned FirstReservedVersion = 14;
 // Deserializers must not pool the version 16 terminal types for older payloads,
 // whose writers never counted them, or the pool indices stop matching the writer's.
 [[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 16;
@@ -3421,7 +3424,15 @@ private:
 
     DeserializationResult deserialize();
 
-    bool isValid() const { return m_version <= CurrentVersion; }
+    // The reserved upstream-WebKit versions have no reader here; a version 14 payload in
+    // particular would have its object-reference pool silently desynced instead of failing
+    // (its writer pooled the terminal types, this reader would not). Reject them loudly.
+    bool isValid() const
+    {
+        if (m_version >= FirstReservedVersion && m_version < FirstVersionWithPooledTerminals)
+            return false;
+        return m_version <= CurrentVersion;
+    }
 
     template<typename T> bool readLittleEndian(T& value)
     {

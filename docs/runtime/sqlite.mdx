@@ -578,7 +578,10 @@ console.log(`Inserted ${count} cats`);
 The driver will automatically [`begin`](https://www.sqlite.org/lang_transaction.html) a transaction when `insertCats` is called and `commit` it when the wrapped function returns. If an exception is thrown, the transaction will be rolled back. The exception will propagate as usual; it is not caught.
 
 <Note>
-**Async callbacks are not supported.** `BEGIN` and `COMMIT` bracket the synchronous callback, so an `async` callback would escape the transaction at its first `await` and nothing after that point would be atomic. `db.transaction()` throws a `TypeError` if the callback is an async function, and invoking a transaction whose callback returns a `Promise` rolls it back and throws. Do any asynchronous work before starting the transaction.
+  **Async callbacks are not supported.** `BEGIN` and `COMMIT` bracket the synchronous callback, so an `async` callback
+  would escape the transaction at its first `await` and nothing after that point would be atomic. `db.transaction()`
+  throws a `TypeError` if the callback is an async function, and invoking a transaction whose callback returns a
+  `Promise` rolls it back and throws. Do any asynchronous work before starting the transaction.
 </Note>
 
 <Note>

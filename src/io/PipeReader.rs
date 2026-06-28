@@ -624,9 +624,12 @@ impl PosixBufferedReader {
         // Shadow-rebind so the local `parent` is no longer the `noalias` arg
         // but a raw-ptr-derived borrow whose loads must reload after each
         // opaque vtable call (precedent: `JSMySQLQuery::resolve`'s guard
-        // re-borrow). The reader struct is an inline field of its parent
-        // (never freed mid-call), so `*this` stays a valid place even if
-        // re-entry calls `done()`/`close()`.
+        // re-borrow). The reader struct is an inline field of its parent;
+        // `on_read_chunk` re-entry never frees it per `BufferedReaderParent`'s
+        // contract, so `*this` stays a valid place even if re-entry calls
+        // `done()`/`close()`. `on_reader_error` MAY free it, and every
+        // `register_poll()`/`on_error()` below is in tail position, so nothing
+        // touches `parent` after one can have dispatched it.
         let parent = unsafe { &mut *this };
         let mut received_hup = received_hup_initially;
         loop {

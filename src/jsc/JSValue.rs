@@ -2237,6 +2237,16 @@ impl JSValue {
             JSC__JSValue__isSameValue(self, other, global)
         })
     }
+    /// `JSValue.isStrictEqual` (`===` / IsStrictlyEqual semantics).
+    ///
+    /// Differs from SameValue: `NaN !== NaN` and `-0 === +0`.
+    /// Can throw (rope-string resolution).
+    pub fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        // No encoded-bits fast path: two NaNs share an encoding but NaN !== NaN.
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__isStrictEqual(self, other, global)
+        })
+    }
 
     // ── Numeric coercion. ────────────────────
     /// `JSValue.toNumber` — full ECMA `ToNumber` (`+value`); may throw.
@@ -2652,6 +2662,11 @@ impl JSValue {
 unsafe extern "C" {
     safe fn JSC__JSValue__eqlValue(this: JSValue, other: JSValue) -> bool;
     safe fn JSC__JSValue__isSameValue(
+        this: JSValue,
+        other: JSValue,
+        global: &JSGlobalObject,
+    ) -> bool;
+    safe fn JSC__JSValue__isStrictEqual(
         this: JSValue,
         other: JSValue,
         global: &JSGlobalObject,

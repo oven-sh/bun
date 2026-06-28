@@ -649,3 +649,33 @@ it("should update transitive resolutions of a named package", async () => {
     await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
   ).toMatchObject({ version: "1.1.0" });
 });
+
+// `<name>` appears only transitively: nothing in any package.json depends on
+// it directly. `bun update <name>` promotes it to a direct dependency of the
+// invoking package.json, and the transitive slot must re-resolve too.
+it("should update a resolution reachable only through a transitive dependency", async () => {
+  const tgzDir = join(package_dir, ".tarballs");
+  const depX = { "dep-x": { versions: { "1.0.0": { dependencies: { shared: "^1.0.0" } } }, latest: "1.0.0" } };
+  // Only shared@1.0.0 exists when the lockfile is created.
+  setHandler(await perNameRegistry(tgzDir, { ...depX, shared: { versions: { "1.0.0": {} }, latest: "1.0.0" } }));
+  await writePerNameBunfig();
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { "dep-x": "^1.0.0" } }),
+  );
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+
+  // shared@1.1.0 is published after the lockfile pinned 1.0.0.
+  setHandler(
+    await perNameRegistry(tgzDir, { ...depX, shared: { versions: { "1.0.0": {}, "1.1.0": {} }, latest: "1.1.0" } }),
+  );
+
+  // Both the new root entry and dep-x's `^1.0.0` must land on 1.1.0. Before
+  // the fix the root entry resolved to 1.1.0 while dep-x's stayed on 1.0.0.
+  await runInPackageDir("update", "shared");
+  expect(await file(join(package_dir, "package.json")).json()).toMatchObject({
+    dependencies: { "dep-x": "^1.0.0", shared: "^1.1.0" },
+  });
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.1.0"']);
+});

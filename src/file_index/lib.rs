@@ -17,6 +17,13 @@
 //! The query functions ([`complete`], [`glob`], [`grep_file`]) are pure: the
 //! first two read a `&Store` on the owning thread, the last operates on bytes
 //! its caller already read.
+//!
+//! One deliberate extension of that shape: a `complete()` over a large
+//! candidate set scores it on the work pool while the owning thread blocks
+//! inside the call (see `parallel`). Workers still never see the `Store` —
+//! only raw, read-only views that the blocked owner keeps alive — and the
+//! call remains synchronous and observationally identical to the sequential
+//! path.
 
 mod budget;
 mod complete;
@@ -24,6 +31,7 @@ mod crawl;
 mod exempt;
 mod glob;
 mod grep;
+mod parallel;
 mod read;
 mod store;
 #[cfg(test)]

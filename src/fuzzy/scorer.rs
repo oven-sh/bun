@@ -198,6 +198,13 @@ impl Scorer {
         self.case_sensitive
     }
 
+    /// The options this scorer was built with, so a caller can construct
+    /// other scorers (e.g. one per worker thread) that rank identically.
+    #[inline]
+    pub fn options(&self) -> ScorerOptions {
+        self.opts
+    }
+
     /// `None` => the needle is not a subsequence of `haystack`.
     /// Higher is better. Deterministic. Allocates nothing.
     ///

@@ -9696,7 +9696,12 @@ declare module "bun" {
      * Synchronous: operates entirely on the in-memory index with no I/O, and
      * is intended to be cheap enough to call on every keystroke (each call
      * also caches its survivor set, so a query that *extends* the previous
-     * one over an unchanged index only re-ranks those survivors).
+     * one over an unchanged index only re-ranks those survivors). A query
+     * with a large candidate set is scored in parallel on Bun's thread pool
+     * while the call blocks; even so, a worst-case short query over very
+     * large indexes costs milliseconds, not microseconds (about 10 ms over
+     * 163k entries and about 20 ms over a 250,000-path tree on an example
+     * Linux x64 box — see `bench/file-index/complete.mjs`).
      * Recently {@link FileIndex.touch | touched} paths receive a recency boost.
      *
      * @param query - The fuzzy query, e.g. `"srvidx"` to match

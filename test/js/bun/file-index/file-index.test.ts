@@ -317,6 +317,57 @@ describe("Bun.FileIndex", () => {
       }
     });
 
+    // Above ~12k candidates a cold complete() is scored in parallel on the
+    // work pool (PARALLEL_MIN_CANDIDATES in src/file_index/parallel.rs);
+    // results must be bit-identical to the sequential paths. The oracle: the
+    // identical query repeated back to back answers from the survivor cache
+    // — a single-threaded re-rank of the parallel pass's survivor set — and
+    // a second cold (parallel) pass must reproduce itself exactly.
+    test("a parallel cold query equals its sequential cached re-rank and repeats exactly", async () => {
+      // The fixture must exceed the native parallel threshold (8,192
+      // candidates), so it cannot be made small; the per-test timeout
+      // covers writing it out and crawling it on slow debug/ASAN runners.
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 9_000; i++) files[`pkg${i % 40}/dir${i % 6}/main_${i}.ts`] = "";
+      using dir = tempDir("file-index-complete-parallel", files);
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      // 9,000 files + the pkg/dir directories: past the parallel
+      // threshold, so the full-range needles below fan out.
+      expect(index.size).toBeGreaterThan(9_000);
+      const shape = (r: { path: string; score: number; positions: number[] }) =>
+        `${r.path}:${r.score}:${r.positions.join(",")}`;
+      for (const needle of ["m", "main1"]) {
+        // Bust the per-keystroke survivor cache: "@" matches nothing and
+        // `needle` does not extend it, so the next call is a full cold pass.
+        expect(index.complete("@")).toEqual([]);
+        const cold = index.complete(needle, { limit: 32 }).map(shape);
+        const cached = index.complete(needle, { limit: 32 }).map(shape);
+        expect(cached, needle).toEqual(cold);
+        expect(index.complete("~")).toEqual([]);
+        expect(index.complete(needle, { limit: 32 }).map(shape), needle).toEqual(cold);
+      }
+      // A cwd-narrowed query (few candidates: always sequential) finds
+      // exactly the cwd-relative paths the needle is a subsequence of —
+      // the full-index parallel passes above and this never disagree on
+      // membership.
+      const isSubsequence = (needle: string, hay: string) => {
+        let i = 0;
+        for (const c of hay.toLowerCase()) if (c === needle[i]) i++;
+        return i === needle.length;
+      };
+      const scoped = index
+        .complete("main1", { cwd: "pkg7", limit: 1 << 20 })
+        .map(r => r.path)
+        .sort();
+      const expected = index
+        .glob("**/*", { cwd: "pkg7" })
+        .filter(p => isSubsequence("main1", p))
+        .sort();
+      expect(scoped.length).toBeGreaterThan(0);
+      expect(scoped).toEqual(expected);
+    }, 20_000);
+
     test("positions index the JS string, not its UTF-8 bytes", async () => {
       using dir = tempDir("file-index-complete-utf16", {
         // "é" is 2 UTF-8 bytes / 1 UTF-16 code unit; "𝛅" (U+1D6C5) is

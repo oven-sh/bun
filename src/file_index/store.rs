@@ -21,6 +21,13 @@ impl FileId {
     pub fn index(self) -> usize {
         self.0 as usize
     }
+
+    /// Inverse of [`FileId::index`] for ids the store itself produced (the
+    /// raw `u32`s in its sorted order / prefilter output).
+    #[inline]
+    pub(crate) fn from_raw(raw: u32) -> FileId {
+        FileId(raw)
+    }
 }
 
 /// What kind of filesystem object an entry is.
@@ -545,6 +552,28 @@ impl Store {
         start..end
     }
 
+    /// The raw ids of the path-sorted slice `range` (a sub-range of
+    /// [`Store::prefix_range`]), each convertible with [`FileId::from_raw`].
+    #[inline]
+    pub(crate) fn sorted_ids(&self, range: core::ops::Range<usize>) -> &[u32] {
+        debug_assert!(!self.sorted_dirty, "ordered read of a dirty store");
+        &self.sorted[range]
+    }
+
+    /// A raw, thread-shareable, read-only view of the columns a parallel
+    /// `complete()` chunk needs (see [`StoreView`]). The caller must uphold
+    /// the view's blocking contract.
+    #[inline]
+    pub(crate) fn view(&self) -> StoreView {
+        StoreView {
+            arena: self.arena.as_ptr(),
+            arena_len: self.arena.len(),
+            paths: self.paths.as_ptr(),
+            meta: self.meta.as_ptr(),
+            len: self.paths.len(),
+        }
+    }
+
     /// Occurrences of `byte` across the bytes of every live path.
     #[inline]
     pub(crate) fn live_byte_count(&self, byte: u8) -> u32 {
@@ -946,6 +975,67 @@ impl Store {
         self.touch.clear();
         self.touch.extend_from_slice(&kept);
         self.touch_head = 0;
+    }
+}
+
+/// An immutable raw view of the three columns the per-candidate `complete()`
+/// pipeline reads — the path arena, the per-id path refs and the per-id
+/// metadata (`kind`) — built by [`Store::view`] on the thread that owns the
+/// store and handed to the work-pool chunks of `complete()`'s parallel
+/// fan-out (`crate::complete`).
+///
+/// # Safety contract (why the `Send`/`Sync` impls below are sound)
+///
+/// The owning thread builds the view inside `complete()` and **blocks there
+/// until every chunk has finished** (it joins a per-chunk `WaitGroup` before
+/// returning), and the `Store` is `!Sync` and owned by that same thread, so:
+///
+/// - the pointed-to columns cannot be mutated, reallocated, or dropped while
+///   any worker holds the view (the only thread that could is blocked);
+/// - workers only ever read through it.
+///
+/// A worker task that runs *after* the owning thread has unblocked (one the
+/// pool dequeued too late to claim a chunk) never dereferences the view: the
+/// pointers may dangle by then, which is why they are raw pointers and not
+/// slices.
+#[derive(Clone, Copy)]
+pub(crate) struct StoreView {
+    arena: *const u8,
+    arena_len: usize,
+    paths: *const StrRef,
+    meta: *const Meta,
+    /// Entry count: `paths` and `meta` both have this many elements.
+    len: usize,
+}
+
+// SAFETY: see the type docs — the view is a read-only snapshot whose pointees
+// are kept alive and unmutated by the owning thread blocking inside
+// `complete()` for as long as any worker can dereference it.
+unsafe impl Send for StoreView {}
+// SAFETY: same as `Send`; all access through the view is read-only.
+unsafe impl Sync for StoreView {}
+
+impl StoreView {
+    /// Same as [`Store::path`]. `id` must come from the candidate list the
+    /// owning thread built from the same store the view was taken from.
+    #[inline]
+    pub(crate) fn path(&self, id: FileId) -> &[u8] {
+        // SAFETY: `paths` points to `len` initialized `StrRef`s of the live,
+        // unmutated store (see the type docs); the index is bounds-checked.
+        let r = unsafe { core::slice::from_raw_parts(self.paths, self.len) }[id.index()];
+        // SAFETY: every `StrRef` the store hands out is in bounds of its
+        // arena (`off + len <= arena_len`, re-checked here).
+        let arena = unsafe { core::slice::from_raw_parts(self.arena, self.arena_len) };
+        &arena[r.off as usize..r.off as usize + r.len as usize]
+    }
+
+    /// Same as [`Store::kind`].
+    #[inline]
+    pub(crate) fn kind(&self, id: FileId) -> EntryKind {
+        // SAFETY: `meta` points to `len` initialized `Meta`s of the live,
+        // unmutated store (see the type docs); the index is bounds-checked.
+        let meta = unsafe { core::slice::from_raw_parts(self.meta, self.len) };
+        meta[id.index()].kind
     }
 }
 

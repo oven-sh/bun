@@ -22,9 +22,10 @@
 //! the candidate visiting order does not matter.
 
 use bun_collections::array_hash_map::{ArrayHashMap, AutoContext};
-use bun_fuzzy::{Scorer, TopK, TopKBy};
+use bun_fuzzy::{Scorer, TopKBy};
 
-use crate::store::{EntryKind, FileId, Store};
+use crate::parallel;
+use crate::store::{EntryKind, FileId, Store, StoreView};
 
 /// Maximum frecency bonus, awarded to the most recently touched path. The
 /// scorer's per-character match score is 16 (`bun_fuzzy::SCORE_MATCH`), so
@@ -193,6 +194,29 @@ fn complete_impl(
     prev: Option<&CompleteCache>,
     survivors_out: Option<&mut Vec<FileId>>,
 ) -> Vec<CompleteMatch> {
+    complete_with_parallel_threshold(
+        store,
+        scorer,
+        needle,
+        opts,
+        prev,
+        survivors_out,
+        parallel::PARALLEL_MIN_CANDIDATES,
+    )
+}
+
+/// [`complete_impl`] with an explicit parallel-fan-out threshold, so tests
+/// can force the parallel path over small stores (and disable it with
+/// `usize::MAX`). Results never depend on the threshold.
+pub(crate) fn complete_with_parallel_threshold(
+    store: &Store,
+    scorer: &mut Scorer,
+    needle: &[u8],
+    opts: &CompleteOptions<'_>,
+    prev: Option<&CompleteCache>,
+    survivors_out: Option<&mut Vec<FileId>>,
+    parallel_min: usize,
+) -> Vec<CompleteMatch> {
     if opts.limit == 0 {
         return Vec::new();
     }
@@ -213,22 +237,76 @@ fn complete_impl(
     } else {
         plan.map(|plan| plan.run(store, opts))
     };
-    let mut query = Query {
-        store,
-        opts,
-        strip: opts.cwd_prefix.len(),
-        ranks: store.touch_ranks(),
-        survivors_out,
-    };
-    let strip = query.strip;
-    let ranked = if use_cache {
-        // `use_cache` is only true for a present, reusable cache.
+    let ranks = store.touch_ranks();
+    let strip = opts.cwd_prefix.len();
+    macro_rules! query {
+        ($survivors_out:expr) => {
+            Query {
+                src: store,
+                strip,
+                dirs_only: opts.dirs_only,
+                limit: opts.limit,
+                ranks: &ranks,
+                survivors_out: $survivors_out,
+            }
+        };
+    }
+    let ranked: Vec<(i32, FileId)> = if use_cache {
+        // `use_cache` is only true for a present, reusable cache. A short
+        // needle keeps most of the store alive, so a big enough survivor
+        // set is fanned out exactly like any other unordered candidate
+        // list; the typical (narrowed) cache is scored inline.
         let survivors = cached.map_or(&[][..], |c| c.survivors.as_slice());
-        query.run_unordered(scorer, survivors.iter().copied())
-    } else if let Some(ids) = &prefiltered {
-        query.run_unordered(scorer, ids.iter().copied())
+        if survivors.len() >= parallel_min {
+            parallel::run(
+                store,
+                scorer,
+                needle,
+                &ranks,
+                parallel::Candidates::Unordered(survivors.to_vec()),
+                opts,
+                survivors_out,
+                parallel_min,
+            )
+        } else {
+            query!(survivors_out).run_unordered(scorer, survivors.iter().copied())
+        }
+    } else if let Some(ids) = prefiltered {
+        if ids.len() >= parallel_min {
+            parallel::run(
+                store,
+                scorer,
+                needle,
+                &ranks,
+                parallel::Candidates::Unordered(ids),
+                opts,
+                survivors_out,
+                parallel_min,
+            )
+        } else {
+            query!(survivors_out).run_unordered(scorer, ids.iter().copied())
+        }
     } else {
-        query.run_in_path_order(scorer, store.range_with_prefix(opts.cwd_prefix))
+        let range = store.prefix_range(opts.cwd_prefix);
+        if range.len() >= parallel_min {
+            let ids = store.sorted_ids(range).to_vec();
+            parallel::run(
+                store,
+                scorer,
+                needle,
+                &ranks,
+                parallel::Candidates::PathOrdered(ids),
+                opts,
+                survivors_out,
+                parallel_min,
+            )
+        } else {
+            query!(survivors_out)
+                .run_in_path_order(scorer, store.range_with_prefix(opts.cwd_prefix), 0)
+                .into_iter()
+                .map(|(score, _, id)| (score, id))
+                .collect()
+        }
     };
     ranked
         .into_iter()
@@ -246,29 +324,60 @@ fn complete_impl(
         .collect()
 }
 
-/// Per-query candidate pipeline state: the per-candidate work is identical
-/// for every candidate source; only the heap's tiebreak differs (see
-/// [`Query::run_in_path_order`] / [`Query::run_unordered`]).
-struct Query<'q, 'o> {
-    store: &'q Store,
-    opts: &'q CompleteOptions<'o>,
-    /// Bytes of `opts.cwd_prefix` to strip before scoring: the needle is
-    /// matched against the cwd-relative path, never the prefix itself.
-    strip: usize,
-    ranks: ArrayHashMap<u32, u32, AutoContext>,
-    survivors_out: Option<&'q mut Vec<FileId>>,
+/// Read-only path/kind access for the per-candidate pipeline, so the
+/// sequential path (`&Store`) and a parallel worker chunk
+/// ([`StoreView`]) run the exact same code over the same data.
+pub(crate) trait PathSource: Copy {
+    fn path(&self, id: FileId) -> &[u8];
+    fn kind(&self, id: FileId) -> EntryKind;
 }
 
-impl Query<'_, '_> {
+impl PathSource for &Store {
+    #[inline]
+    fn path(&self, id: FileId) -> &[u8] {
+        Store::path(self, id)
+    }
+    #[inline]
+    fn kind(&self, id: FileId) -> EntryKind {
+        Store::kind(self, id)
+    }
+}
+
+impl PathSource for StoreView {
+    #[inline]
+    fn path(&self, id: FileId) -> &[u8] {
+        StoreView::path(self, id)
+    }
+    #[inline]
+    fn kind(&self, id: FileId) -> EntryKind {
+        StoreView::kind(self, id)
+    }
+}
+
+/// Per-query (or per-chunk) candidate pipeline state: the per-candidate work
+/// is identical for every candidate source; only the heap's tiebreak differs
+/// (see [`Query::run_in_path_order`] / [`Query::run_unordered`]).
+pub(crate) struct Query<'q, P> {
+    pub(crate) src: P,
+    /// Bytes of the query's `cwd_prefix` to strip before scoring: the needle
+    /// is matched against the cwd-relative path, never the prefix itself.
+    pub(crate) strip: usize,
+    pub(crate) dirs_only: bool,
+    pub(crate) limit: usize,
+    pub(crate) ranks: &'q ArrayHashMap<u32, u32, AutoContext>,
+    pub(crate) survivors_out: Option<&'q mut Vec<FileId>>,
+}
+
+impl<P: PathSource> Query<'_, P> {
     /// Per-candidate pipeline: the `dirs_only` filter → the scorer (whose
     /// reject path is the subsequence test) → survivor recording → the
     /// frecency bonus → the caller's heap push.
     #[inline]
     fn score_into(&mut self, scorer: &mut Scorer, id: FileId, push: impl FnOnce(i32, FileId)) {
-        if self.opts.dirs_only && self.store.kind(id) != EntryKind::Dir {
+        if self.dirs_only && self.src.kind(id) != EntryKind::Dir {
             return;
         }
-        let Some(base) = scorer.score(&self.store.path(id)[self.strip..]) else {
+        let Some(base) = scorer.score(&self.src.path(id)[self.strip..]) else {
             return;
         };
         if let Some(out) = self.survivors_out.as_deref_mut() {
@@ -277,43 +386,62 @@ impl Query<'_, '_> {
         let score = if self.ranks.is_empty() {
             base
         } else {
-            base.saturating_add(frecency_bonus(&self.ranks, id))
+            base.saturating_add(frecency_bonus(self.ranks, id))
         };
         push(score, id);
     }
 
     /// Candidates arriving in path order (the sorted-range walk): the heap's
     /// tiebreak is the arrival index, which costs nothing to compare.
-    fn run_in_path_order(
+    /// `base` is the global arrival index of the first candidate, so a
+    /// parallel chunk's tiebreaks are its candidates' indices in the full
+    /// iteration order; the returned triples carry that index.
+    pub(crate) fn run_in_path_order(
         &mut self,
         scorer: &mut Scorer,
         candidates: impl Iterator<Item = FileId>,
-    ) -> Vec<(i32, FileId)> {
-        let mut topk: TopK<FileId> = TopK::new(self.opts.limit);
+        base: u32,
+    ) -> Vec<(i32, u32, FileId)> {
+        let mut topk: TopKBy<(u32, FileId), OrderTie> = TopKBy::new(self.limit, order_tie);
         for (order, id) in candidates.enumerate() {
-            self.score_into(scorer, id, |score, id| topk.push(score, order as u32, id));
+            self.score_into(scorer, id, |score, id| {
+                topk.push(score, (base + order as u32, id));
+            });
         }
         topk.into_sorted_vec()
+            .into_iter()
+            .map(|(score, (order, id))| (score, order, id))
+            .collect()
     }
 
     /// Candidates in any other order (the arena prefilter's id order, a
     /// cache's survivor order): equal scores compare the paths themselves —
     /// the same total order as the arrival index of a path-ordered walk, so
     /// results are identical to [`Query::run_in_path_order`].
-    fn run_unordered(
+    pub(crate) fn run_unordered(
         &mut self,
         scorer: &mut Scorer,
         candidates: impl Iterator<Item = FileId>,
     ) -> Vec<(i32, FileId)> {
-        let store = self.store;
-        let mut topk = TopKBy::new(self.opts.limit, |a: &FileId, b: &FileId| {
-            store.path(*a).cmp(store.path(*b))
+        let src = self.src;
+        let mut topk = TopKBy::new(self.limit, move |a: &FileId, b: &FileId| {
+            src.path(*a).cmp(src.path(*b))
         });
         for id in candidates {
             self.score_into(scorer, id, |score, id| topk.push(score, id));
         }
         topk.into_sorted_vec()
     }
+}
+
+/// Tiebreak of [`Query::run_in_path_order`]'s heap: the candidate's index in
+/// the full (path-ordered) iteration order, ascending.
+pub(crate) type OrderTie = fn(&(u32, FileId), &(u32, FileId)) -> core::cmp::Ordering;
+
+// `TopKBy` tiebreak comparators take their operands by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+pub(crate) fn order_tie(a: &(u32, FileId), b: &(u32, FileId)) -> core::cmp::Ordering {
+    a.0.cmp(&b.0)
 }
 
 /// A committed decision to run the arena prefilter for one query: the byte
@@ -760,6 +888,163 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    // ── parallel fan-out (see `crate::parallel`) ─────────────────────────
+
+    /// One query, run twice: forced fully sequential (`usize::MAX`
+    /// threshold) and forced parallel (threshold 1, so even a tiny store
+    /// fans out across many chunks). Returns `(matches, survivors)` pairs.
+    fn seq_and_par(
+        store: &Store,
+        needle: &[u8],
+        opts: &CompleteOptions<'_>,
+    ) -> [(Vec<CompleteMatch>, Vec<FileId>); 2] {
+        [usize::MAX, 1].map(|threshold| {
+            let mut survivors: Vec<FileId> = Vec::new();
+            let matches = complete_with_parallel_threshold(
+                store,
+                &mut scorer(),
+                needle,
+                opts,
+                None,
+                Some(&mut survivors),
+                threshold,
+            );
+            (matches, survivors)
+        })
+    }
+
+    /// The hard determinism requirement: the parallel fan-out is
+    /// bit-identical to the sequential path — same candidates, same scores,
+    /// same order, same positions, same survivor set — across randomized
+    /// stores, needles and options (which together exercise both the
+    /// path-ordered range plan and the unordered arena-prefilter plan).
+    #[test]
+    fn parallel_complete_is_bit_identical_to_sequential() {
+        let mut rng = TestRng(0xBADC_0FFE);
+        let needles: &[&[u8]] = &[b"", b"q", b"in", b"index", b"zb", b"Zq", b"a", b"%%"];
+        for round in 0..4 {
+            let mut store = random_store(&mut rng, 200 + round * 450);
+            for _ in 0..rng.below(5) {
+                let pick = rng.below(store.len());
+                let id = store.iter_sorted().nth(pick).expect("in range");
+                store.touch(id);
+            }
+            for &cwd in &[b"".as_slice(), b"src/"] {
+                for &needle in needles {
+                    for dirs_only in [false, true] {
+                        for limit in [5usize, DEFAULT_COMPLETE_LIMIT] {
+                            let opts = CompleteOptions {
+                                limit,
+                                cwd_prefix: cwd,
+                                dirs_only,
+                            };
+                            let [(seq, seq_survivors), (par, par_survivors)] =
+                                seq_and_par(&store, needle, &opts);
+                            assert_eq!(
+                                seq.len(),
+                                par.len(),
+                                "needle={:?}",
+                                needle.escape_ascii().to_string()
+                            );
+                            for (a, b) in seq.iter().zip(&par) {
+                                assert_eq!(
+                                    (a.id, a.score, &a.positions),
+                                    (b.id, b.score, &b.positions),
+                                    "needle={:?} cwd={:?} dirs_only={dirs_only} limit={limit}",
+                                    needle.escape_ascii().to_string(),
+                                    cwd.escape_ascii().to_string(),
+                                );
+                            }
+                            assert_eq!(seq_survivors, par_survivors);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The survivor cache produced by a (cold) parallel pass narrows the
+    /// next keystroke exactly like a sequential one's, and the cached path
+    /// itself (always sequential) returns the same results.
+    #[test]
+    fn parallel_pass_produces_the_same_survivor_cache() {
+        let mut rng = TestRng(0xCAFE);
+        let store = random_store(&mut rng, 700);
+        let opts = CompleteOptions::default();
+        let caches: Vec<CompleteCache> = [usize::MAX, 1]
+            .into_iter()
+            .map(|threshold| {
+                let mut sc = scorer();
+                let mut survivors: Vec<FileId> = Vec::new();
+                let _ = complete_with_parallel_threshold(
+                    &store,
+                    &mut sc,
+                    b"in",
+                    &opts,
+                    None,
+                    Some(&mut survivors),
+                    threshold,
+                );
+                CompleteCache {
+                    needle: b"in".to_vec(),
+                    cwd_prefix: Vec::new(),
+                    dirs_only: false,
+                    case_sensitive: sc.case_sensitive(),
+                    generation: store.generation(),
+                    survivors,
+                    usable: true,
+                }
+            })
+            .collect();
+        assert_eq!(caches[0].survivors, caches[1].survivors);
+        assert!(caches[0].survivor_count() > 0);
+        let want = as_pairs(&store, &complete(&store, &mut scorer(), b"ind", &opts));
+        // The cached (survivor) path itself is also fanned out once the
+        // survivor set is large enough; both ways must equal a cold query.
+        for cache in &caches {
+            for threshold in [usize::MAX, 1] {
+                let got = complete_with_parallel_threshold(
+                    &store,
+                    &mut scorer(),
+                    b"ind",
+                    &opts,
+                    Some(cache),
+                    None,
+                    threshold,
+                );
+                assert_eq!(as_pairs(&store, &got), want, "threshold={threshold}");
+            }
+        }
+    }
+
+    /// A store big enough to cross the real [`parallel::PARALLEL_MIN_CANDIDATES`]
+    /// threshold: the default entry point (which fans out) equals the forced
+    /// sequential run.
+    #[test]
+    fn parallel_threshold_path_matches_sequential_on_a_large_store() {
+        let mut store = Store::new(1 << 27);
+        for i in 0..(crate::parallel::PARALLEL_MIN_CANDIDATES + 1500) {
+            let p = format!("pkg{}/src/dir{}/module_{i}.ts", i % 23, i % 7).into_bytes();
+            store.upsert(&p, Meta::default()).unwrap();
+        }
+        assert!(store.len() > crate::parallel::PARALLEL_MIN_CANDIDATES);
+        for needle in [b"in".as_slice(), b"module1", b""] {
+            let opts = CompleteOptions::default();
+            let got = complete(&store, &mut scorer(), needle, &opts);
+            let want = complete_with_parallel_threshold(
+                &store,
+                &mut scorer(),
+                needle,
+                &opts,
+                None,
+                None,
+                usize::MAX,
+            );
+            assert_eq!(as_pairs(&store, &got), as_pairs(&store, &want));
+            assert_eq!(got.len(), opts.limit.min(want.len()));
         }
     }
 

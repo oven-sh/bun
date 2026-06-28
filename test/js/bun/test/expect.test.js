@@ -949,7 +949,7 @@ describe("expect()", () => {
     }
   });
 
-  // jest and vitest call RegExp#test here, which reads and advances lastIndex for /g
+  // jest and vitest call RegExp#test here, which reads and advances lastIndex for /g and /y
   test_skipIf(!isBun)("toThrow with global regex is stateless across calls", () => {
     const re = /oops/g;
     const fn = () => {
@@ -959,7 +959,25 @@ describe("expect()", () => {
     expect(fn).toThrow(re);
     expect(fn).toThrow(re);
     expect(re.lastIndex).toBe(0);
-    expect(fn).not.toThrow(/nope/g);
+  });
+
+  test_skipIf(!isBun)("toThrow with sticky regex is stateless across calls", () => {
+    const re = /oops/y;
+    const fn = () => {
+      throw new Error("oops");
+    };
+    expect(fn).toThrow(re);
+    expect(fn).toThrow(re);
+  });
+
+  test_skipIf(!isBun)("not.toThrow with global regex is stateless across calls", () => {
+    const re = /oops/g;
+    const fn = () => {
+      throw new Error("oops");
+    };
+    // The message matches, so not.toThrow must reject every time, not just the first.
+    expect(() => expect(fn).not.toThrow(re)).toThrow();
+    expect(() => expect(fn).not.toThrow(re)).toThrow();
   });
 
   test("deepEquals derived strings and strings", () => {

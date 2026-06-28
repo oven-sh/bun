@@ -151,6 +151,21 @@ void us_loop_pump(struct us_loop_t *loop) {
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
 }
 
+/* Same semantics as the deprecated uv_loop_new(): NULL on failure. Allocated
+ * with our own malloc so us_loop_free can pair it with free(); uv_loop_new()
+ * uses libuv's replaceable allocator, which Bun swaps out for mimalloc. */
+static uv_loop_t *create_uv_loop(void) {
+  uv_loop_t *uv_loop = (uv_loop_t *)malloc(sizeof(uv_loop_t));
+  if (!uv_loop) {
+    return 0;
+  }
+  if (uv_loop_init(uv_loop)) {
+    free(uv_loop);
+    return 0;
+  }
+  return uv_loop;
+}
+
 struct us_loop_t *us_create_loop(void *hint,
                                  void (*wakeup_cb)(struct us_loop_t *loop),
                                  void (*pre_cb)(struct us_loop_t *loop),
@@ -159,7 +174,7 @@ struct us_loop_t *us_create_loop(void *hint,
   struct us_loop_t *loop =
       (struct us_loop_t *)calloc(1, sizeof(struct us_loop_t) + ext_size);
 
-  loop->uv_loop = hint ? hint : uv_loop_new();
+  loop->uv_loop = hint ? hint : create_uv_loop();
   loop->is_default = hint != 0;
 
   loop->uv_pre = malloc(sizeof(uv_prepare_t));
@@ -203,8 +218,20 @@ void us_loop_free(struct us_loop_t *loop) {
   // we need to run the loop one last round to call all close callbacks
   // we cannot do this if we do not own the loop, default
   if (!loop->is_default) {
-    uv_run(loop->uv_loop, UV_RUN_NOWAIT);
-    uv_loop_delete(loop->uv_loop);
+    uv_loop_t *uv_loop = loop->uv_loop;
+    /* Closing handles only retire from inside uv_run, and one turn is not
+     * enough when an endgame waits on an in-flight IOCP completion. Bounded so
+     * a handle that can never retire cannot hang teardown. */
+    int spins = 16;
+    do {
+      uv_run(uv_loop, UV_RUN_NOWAIT);
+    } while (uv_loop_alive(uv_loop) && --spins > 0);
+    /* uv_loop_close() succeeding is what removes the loop from libuv's global
+     * uv__loops[] registry, walked by uv__wake_all_loops() on Windows resume.
+     * Never free a loop it refused (UV_EBUSY); leaking it is strictly safer. */
+    if (uv_loop_close(uv_loop) == 0) {
+      free(uv_loop);
+    }
   }
 
   // now we can free our part

@@ -86,9 +86,15 @@ test.skipIf(!isGlibc)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toContain("EVENT_LOOP_ALIVE");
-    expect(exitCode).toBe(0);
+    // Debug/ASAN builds print a benign "WARNING: ASAN interferes with JSC signal
+    // handlers" banner (bunEnv's BUN_DEBUG_QUIET_LOGS gates only Bun's debug
+    // scopes, not this); filter it so the real signal is what's asserted.
+    const cleanStderr = stderr.replace(/^WARNING: ASAN interferes with JSC signal handlers;[^\n]*\n?/gm, "");
+    expect({ stdout, stderr: cleanStderr, exitCode }).toEqual({
+      stdout: expect.stringContaining("EVENT_LOOP_ALIVE"),
+      stderr: "",
+      exitCode: 0,
+    });
   },
   15_000,
 );

@@ -756,12 +756,17 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
         0
     };
     let mut remaining = &bytes[start..];
+    // The replacement decode emits at most one code unit per consumed byte, so
+    // `remaining.len()` bounds the tail's growth (the bound `to_utf16_alloc`'s
+    // slow path reserves too); the appends below stay inside this reservation.
+    output
+        .try_reserve(remaining.len())
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
 
     let mut non_ascii: Option<u32> = Some(0);
     while let Some(i) = non_ascii {
         let i = i as usize;
         {
-            output.reserve(i + 2); // +2 for UTF16 codepoint
             append_u8_as_u16(&mut output, &remaining[..i]);
             remaining = &remaining[i..];
         }
@@ -814,8 +819,6 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
     }
 
     if !remaining.is_empty() {
-        let need = output.len() + remaining.len();
-        output.reserve_exact(need.saturating_sub(output.len()));
         append_u8_as_u16(&mut output, remaining);
     }
 

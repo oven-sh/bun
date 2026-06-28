@@ -49,13 +49,14 @@ if (isLinux) {
 }
 
 // The UTF-8 -> UTF-16 converters behind `fs.readFile*(.., "utf8")`,
-// `Buffer.prototype.toString("utf8")` and `TextDecoder.decode` size their
-// output buffer from a `simdutf` length query. That allocation must fail as a
-// catchable error, not abort the process, when it cannot be satisfied
+// `Buffer.prototype.toString("utf8")` and `TextDecoder.decode` must surface a
+// failed output-buffer allocation as a catchable error, never a process abort
 // (observed in the wild as a `capacity overflow` panic from an oversized
-// length). Reproduce the failure deterministically with ASAN's per-allocation
-// cap: the 32 MiB input fits under the 48 MiB limit, but the ~64 MiB UTF-16
-// output does not, so exactly that allocation returns null.
+// length). ASAN's per-allocation cap makes the failure deterministic: every
+// 32 MiB input fits under the 48 MiB cap while its ~64 MiB UTF-16 output does
+// not, on both the simdutf fast path ('\u00e9' followed by ASCII) and the
+// per-codepoint replacement slow path (a flood of 0x80 continuation bytes,
+// for which the simdutf length query predicts ~0 code units).
 describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catchable", () => {
   test("readFileSync, readFile, Buffer.toString and TextDecoder recover", async () => {
     const SIZE = 32 * 1024 * 1024;
@@ -88,6 +89,14 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
         catch (e) { results.push(report(e)); }
         try { new TextDecoder().decode(big); results.push("DECODE_UNEXPECTED_SUCCESS"); }
         catch (e) { results.push(report(e)); }
+        // Slow (WTF-8 replacement) path: the simdutf length query counts ~0
+        // code units for a continuation-byte flood, so the output buffer is
+        // sized by the replacement decoder instead of the fast path.
+        const cont = Buffer.alloc(${SIZE}, 0x80);
+        try { cont.toString("utf8"); results.push("TOSTRING_SLOW_UNEXPECTED_SUCCESS"); }
+        catch (e) { results.push(report(e)); }
+        try { new TextDecoder().decode(cont); results.push("DECODE_SLOW_UNEXPECTED_SUCCESS"); }
+        catch (e) { results.push(report(e)); }
         console.log(JSON.stringify(results));
         `,
       ],
@@ -106,6 +115,8 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
       { name: "Error", code: "ENOMEM" },
       { name: "Error", code: "ENOMEM" },
+      { name: "Error", code: "ERR_STRING_TOO_LONG" },
+      { name: "RangeError", code: undefined },
       { name: "Error", code: "ERR_STRING_TOO_LONG" },
       { name: "RangeError", code: undefined },
     ]);

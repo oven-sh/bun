@@ -8139,6 +8139,33 @@ impl H2FrameParser {
         Ok(JSValue::js_number(this.flush() as f64))
     }
 
+    /// Registers `stream_id`, attaches the JS context, marks it CLOSED with `rst_code` and
+    /// dispatches `onStreamError`. Only for `request()` rejections that run BEFORE any header is
+    /// fed to the shared HPACK encoder; a post-encode bail-out desyncs it from the peer's decoder.
+    fn reject_request_stream(
+        &self,
+        stream_id: u32,
+        stream_ctx_arg: JSValue,
+        global_object: &JSGlobalObject,
+        rst_code: ErrorCode,
+    ) -> JSValue {
+        let Some(stream_ptr) = self.handle_received_stream_id(stream_id) else {
+            return JSValue::js_number(-1.0);
+        };
+        let mut stream = self.enter_stream_dispatch(stream_ptr);
+        if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
+            stream.set_context(stream_ctx_arg, global_object);
+        }
+        stream.state = StreamState::CLOSED;
+        stream.rst_code = rst_code.0;
+        self.dispatch_with_extra(
+            JSH2FrameParser::Gc::onStreamError,
+            stream.get_identifier(),
+            JSValue::js_number(stream.rst_code as f64),
+        );
+        JSValue::js_number(stream_id as f64)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn request(
         this: &Self,
@@ -8182,6 +8209,186 @@ impl H2FrameParser {
             };
         if stream_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
+        }
+
+        // Options are parsed, validated and the session memory limit is checked before any header
+        // is handed to the shared HPACK encoder: every rejection below must not advance the
+        // encoder's dynamic table (see reject_request_stream).
+        let mut flags: u8 = HeadersFrameFlags::END_HEADERS as u8;
+        let mut exclusive: bool = false;
+        let mut silent: bool = false;
+        let mut wait_for_trailers: bool = false;
+        let mut end_stream: bool = false;
+        let mut parent: Option<u32> = None;
+        let mut weight: Option<u8> = None;
+        let mut padding_strategy: Option<PaddingStrategy> = None;
+        // Kept as the rooted JSValue (not the raw *mut AbortSignal) across the header encode
+        // loops, whose property getters can run arbitrary JS.
+        let mut signal: Option<JSValue> = None;
+        if args_list.len > 4 && !args_list.ptr[4].is_empty_or_undefined_or_null() {
+            let options = args_list.ptr[4];
+            if !options.is_object() {
+                return Ok(this.reject_request_stream(
+                    stream_id,
+                    stream_ctx_arg,
+                    global_object,
+                    ErrorCode::INTERNAL_ERROR,
+                ));
+            }
+
+            if let Some(padding_js) = options.get(global_object, "paddingStrategy")? {
+                if padding_js.is_number() {
+                    padding_strategy = Some(match padding_js.to_u32() {
+                        1 => PaddingStrategy::Aligned,
+                        2 => PaddingStrategy::Max,
+                        _ => PaddingStrategy::None,
+                    });
+                }
+            }
+
+            if let Some(trailes_js) = options.get(global_object, "waitForTrailers")? {
+                if trailes_js.is_boolean() {
+                    wait_for_trailers = trailes_js.as_boolean();
+                }
+            }
+
+            if let Some(silent_js) = options.get(global_object, "silent")? {
+                if silent_js.is_boolean() {
+                    silent = silent_js.as_boolean();
+                } else {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.silent",
+                        b"boolean",
+                        silent_js,
+                    ));
+                }
+            }
+
+            if let Some(end_stream_js) = options.get(global_object, "endStream")? {
+                if end_stream_js.is_boolean() {
+                    if end_stream_js.as_boolean() {
+                        end_stream = true;
+                        // will end the stream after trailers
+                        if !wait_for_trailers || this.is_server.get() {
+                            flags |= HeadersFrameFlags::END_STREAM as u8;
+                        }
+                    }
+                } else {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.endStream",
+                        b"boolean",
+                        end_stream_js,
+                    ));
+                }
+            }
+
+            if let Some(exclusive_js) = options.get(global_object, "exclusive")? {
+                if exclusive_js.is_boolean() {
+                    if exclusive_js.as_boolean() {
+                        exclusive = true;
+                    }
+                } else {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.exclusive",
+                        b"boolean",
+                        exclusive_js,
+                    ));
+                }
+            }
+
+            if let Some(parent_js) = options.get(global_object, "parent")? {
+                if parent_js.is_number() || parent_js.is_int32() {
+                    // node accepts any parent >= 0; 0 is the connection stream (RFC 7540 §5.3.1's
+                    // implicit root) and is what node's own option defaulting fills in.
+                    let parent_value = parent_js.to_int32();
+                    if parent_value < 0 || parent_value as u32 > MAX_STREAM_ID {
+                        return Ok(this.reject_request_stream(
+                            stream_id,
+                            stream_ctx_arg,
+                            global_object,
+                            ErrorCode::INTERNAL_ERROR,
+                        ));
+                    }
+                    parent = Some(parent_value as u32);
+                } else {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.parent",
+                        b"number",
+                        parent_js,
+                    ));
+                }
+            }
+
+            if let Some(weight_js) = options.get(global_object, "weight")? {
+                if weight_js.is_number() || weight_js.is_int32() {
+                    // nghttp2 clamps an out-of-range weight to [MIN_WEIGHT, MAX_WEIGHT] instead of
+                    // rejecting the request; node forwards any numeric weight relying on that.
+                    let weight_value = weight_js.to_int32().clamp(1, u8::MAX as i32);
+                    weight = Some(u8::try_from(weight_value).expect("clamped to u8 range"));
+                } else {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.weight",
+                        b"number",
+                        weight_js,
+                    ));
+                }
+            }
+
+            if let Some(signal_arg) = options.get(global_object, "signal")? {
+                if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
+                    // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal_arg` on the stack.
+                    let signal_ = unsafe { &mut *signal_ptr };
+                    if signal_.aborted() {
+                        let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
+                            return Ok(JSValue::js_number(-1.0));
+                        };
+                        let mut stream = this.enter_stream_dispatch(stream_ptr);
+                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
+                            && stream_ctx_arg.is_object()
+                        {
+                            stream.set_context(stream_ctx_arg, global_object);
+                        }
+                        stream.state = StreamState::IDLE;
+                        let wrapped = Bun__wrapAbortError(global_object, signal_.abort_reason());
+                        this.abort_stream(&mut stream, wrapped);
+                        return Ok(JSValue::js_number(stream_id as f64));
+                    }
+                    signal = Some(signal_arg);
+                } else {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"options.signal",
+                        b"AbortSignal",
+                        signal_arg,
+                    ));
+                }
+            }
+        }
+        let has_priority = exclusive || parent.is_some() || weight.is_some();
+
+        // too much memory being use
+        if this.get_session_memory_usage() > this.max_session_memory.get() as usize {
+            this.rejected_streams.set(this.rejected_streams.get() + 1);
+            let ret = this.reject_request_stream(
+                stream_id,
+                stream_ctx_arg,
+                global_object,
+                ErrorCode::ENHANCE_YOUR_CALM,
+            );
+            if this.rejected_streams.get() >= this.max_rejected_streams.get() {
+                let global = this.handlers.get().global();
+                let chunk = this
+                    .handlers
+                    .get()
+                    .binary_type
+                    .to_js(b"ENHANCE_YOUR_CALM", &global)?;
+                this.dispatch_with_2_extra(
+                    JSH2FrameParser::Gc::onError,
+                    JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64),
+                    JSValue::js_number(this.last_stream_id.get() as f64),
+                    chunk,
+                );
+            }
+            return Ok(ret);
         }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
@@ -8618,203 +8825,32 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
             return Ok(JSValue::js_number(-1.0));
         };
-        // The `options` getters below can run user JS while `stream` is borrowed.
+        // `attach_signal` and the terminal dispatches below can run user JS while `stream` is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }
-        let mut flags: u8 = HeadersFrameFlags::END_HEADERS as u8;
-        let mut exclusive: bool = false;
-        let mut has_priority: bool = false;
-        let mut weight: i32 = 0;
-        let mut parent: i32 = 0;
-        let mut silent: bool = false;
-        let mut wait_for_trailers: bool = false;
-        let mut end_stream: bool = false;
-        if args_list.len > 4 && !args_list.ptr[4].is_empty_or_undefined_or_null() {
-            let options = args_list.ptr[4];
-            if !options.is_object() {
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                this.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamError,
-                    stream.get_identifier(),
-                    JSValue::js_number(stream.rst_code as f64),
-                );
-                return Ok(JSValue::js_number(stream_id as f64));
-            }
-
-            if let Some(padding_js) = options.get(global_object, "paddingStrategy")? {
-                if padding_js.is_number() {
-                    stream.padding_strategy = match padding_js.to_u32() {
-                        1 => PaddingStrategy::Aligned,
-                        2 => PaddingStrategy::Max,
-                        _ => PaddingStrategy::None,
-                    };
-                }
-            }
-
-            if let Some(trailes_js) = options.get(global_object, "waitForTrailers")? {
-                if trailes_js.is_boolean() {
-                    wait_for_trailers = trailes_js.as_boolean();
-                    stream.wait_for_trailers = wait_for_trailers;
-                }
-            }
-
-            if let Some(silent_js) = options.get(global_object, "silent")? {
-                if silent_js.is_boolean() {
-                    silent = silent_js.as_boolean();
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.silent",
-                        b"boolean",
-                        silent_js,
-                    ));
-                }
-            }
-
-            if let Some(end_stream_js) = options.get(global_object, "endStream")? {
-                if end_stream_js.is_boolean() {
-                    if end_stream_js.as_boolean() {
-                        end_stream = true;
-                        // will end the stream after trailers
-                        if !wait_for_trailers || this.is_server.get() {
-                            flags |= HeadersFrameFlags::END_STREAM as u8;
-                        }
-                    }
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.endStream",
-                        b"boolean",
-                        end_stream_js,
-                    ));
-                }
-            }
-
-            if let Some(exclusive_js) = options.get(global_object, "exclusive")? {
-                if exclusive_js.is_boolean() {
-                    if exclusive_js.as_boolean() {
-                        exclusive = true;
-                        stream.exclusive = true;
-                        has_priority = true;
-                    }
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.exclusive",
-                        b"boolean",
-                        exclusive_js,
-                    ));
-                }
-            }
-
-            if let Some(parent_js) = options.get(global_object, "parent")? {
-                if parent_js.is_number() || parent_js.is_int32() {
-                    has_priority = true;
-                    parent = parent_js.to_int32();
-                    if parent <= 0 || parent as u32 > MAX_STREAM_ID {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream.id as f64));
-                    }
-                    stream.stream_dependency = u32::try_from(parent).expect("int cast");
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.parent",
-                        b"number",
-                        parent_js,
-                    ));
-                }
-            }
-
-            if let Some(weight_js) = options.get(global_object, "weight")? {
-                if weight_js.is_number() || weight_js.is_int32() {
-                    has_priority = true;
-                    weight = weight_js.to_int32();
-                    if weight < 1 || weight > u8::MAX as i32 {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream_id as f64));
-                    }
-                    stream.weight = u16::try_from(weight).expect("int cast");
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.weight",
-                        b"number",
-                        weight_js,
-                    ));
-                }
-
-                if weight < 1 || weight > u8::MAX as i32 {
-                    stream.state = StreamState::CLOSED;
-                    stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                    this.dispatch_with_extra(
-                        JSH2FrameParser::Gc::onStreamError,
-                        stream.get_identifier(),
-                        JSValue::js_number(stream.rst_code as f64),
-                    );
-                    return Ok(JSValue::js_number(stream_id as f64));
-                }
-
-                stream.weight = u16::try_from(weight).expect("int cast");
-            }
-
-            if let Some(signal_arg) = options.get(global_object, "signal")? {
-                if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
-                    // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal_arg` on the stack.
-                    let signal_ = unsafe { &mut *signal_ptr };
-                    if signal_.aborted() {
-                        stream.state = StreamState::IDLE;
-                        let wrapped = Bun__wrapAbortError(global_object, signal_.abort_reason());
-                        this.abort_stream(&mut stream, wrapped);
-                        return Ok(JSValue::js_number(stream_id as f64));
-                    }
-                    stream.attach_signal(this, signal_);
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.signal",
-                        b"AbortSignal",
-                        signal_arg,
-                    ));
-                }
-            }
+        // Apply the options parsed above. Nothing between here and the frame write may bail out
+        // over them: the header block is already committed to the encoder's dynamic table.
+        if let Some(strategy) = padding_strategy {
+            stream.padding_strategy = strategy;
+        }
+        stream.wait_for_trailers = wait_for_trailers;
+        if exclusive {
+            stream.exclusive = true;
+        }
+        if let Some(parent) = parent {
+            stream.stream_dependency = parent;
+        }
+        if let Some(weight) = weight {
+            stream.weight = u16::from(weight);
+        }
+        // `signal_arg` already passed `AbortSignal::from_js` above; re-derive from the rooted value.
+        if let Some(signal_ptr) = signal.and_then(AbortSignal::from_js) {
+            // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal` on the stack.
+            stream.attach_signal(this, unsafe { &mut *signal_ptr });
         }
 
-        // too much memory being use
-        if this.get_session_memory_usage() > this.max_session_memory.get() as usize {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
-            this.rejected_streams.set(this.rejected_streams.get() + 1);
-            this.dispatch_with_extra(
-                JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
-                JSValue::js_number(stream.rst_code as f64),
-            );
-            if this.rejected_streams.get() >= this.max_rejected_streams.get() {
-                let global = this.handlers.get().global();
-                let chunk = this
-                    .handlers
-                    .get()
-                    .binary_type
-                    .to_js(b"ENHANCE_YOUR_CALM", &global)?;
-                this.dispatch_with_2_extra(
-                    JSH2FrameParser::Gc::onError,
-                    JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64),
-                    JSValue::js_number(this.last_stream_id.get() as f64),
-                    chunk,
-                );
-            }
-            return Ok(JSValue::js_number(stream_id as f64));
-        }
         let mut length: usize = encoded_size;
         if has_priority {
             length += 5;
@@ -8902,11 +8938,10 @@ impl H2FrameParser {
 
             // Write priority data if present
             if has_priority {
-                let stream_identifier =
-                    UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
+                let stream_identifier = UInt31WithReserved::init(parent.unwrap_or(0), exclusive);
                 let priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
-                    weight: u8::try_from(weight).expect("int cast"),
+                    weight: weight.unwrap_or(0),
                 };
                 let _ = priority_data.write(&mut writer);
             }
@@ -8957,11 +8992,10 @@ impl H2FrameParser {
             let _ = headers_frame.write(&mut writer);
 
             if has_priority {
-                let stream_identifier =
-                    UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
+                let stream_identifier = UInt31WithReserved::init(parent.unwrap_or(0), exclusive);
                 let priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
-                    weight: u8::try_from(weight).expect("int cast"),
+                    weight: weight.unwrap_or(0),
                 };
                 let _ = priority_data.write(&mut writer);
             }
@@ -9022,8 +9056,6 @@ impl H2FrameParser {
                 identifier,
                 JSValue::js_number(stream.state as u8 as f64),
             );
-        } else {
-            stream.wait_for_trailers = wait_for_trailers;
         }
 
         if silent {

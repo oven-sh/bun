@@ -3186,3 +3186,69 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     server.close();
   }
 });
+
+// request() priority options must be validated BEFORE the header block is fed to the session's
+// shared HPACK encoder: a post-encode rejection leaves the encoder's dynamic table ahead of the
+// peer (the frame is never sent), killing the NEXT request with GOAWAY(COMPRESSION_ERROR).
+it("request() priority options are accepted and never desync the session's HPACK encoder", async () => {
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.respond({ ":status": 200, "content-type": "text/plain" });
+    stream.end(headers[":path"]);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  try {
+    // Any session-level failure (the poisoned-encoder symptom is a server GOAWAY that surfaces as
+    // an ERR_HTTP2_SESSION_ERROR) must fail the step that is in flight, not hang it.
+    const sessionFailure = new Promise((_, reject) => {
+      client.on("error", reject);
+      client.on("goaway", (code, lastStreamID) => {
+        if (code !== http2.constants.NGHTTP2_NO_ERROR) {
+          reject(new Error(`unexpected GOAWAY code=${code} lastStreamID=${lastStreamID}`));
+        }
+      });
+    });
+    sessionFailure.catch(() => {}); // only observed through the races below
+
+    const get = (path, options) =>
+      Promise.race([
+        sessionFailure,
+        new Promise((resolve, reject) => {
+          const req =
+            options === undefined ? client.request({ ":path": path }) : client.request({ ":path": path }, options);
+          let body = "";
+          let status;
+          req.setEncoding("utf8");
+          req.on("response", headers => (status = headers[":status"]));
+          req.on("data", chunk => (body += chunk));
+          req.on("error", reject);
+          req.on("close", () => resolve({ status, body, rstCode: req.rstCode }));
+          req.end();
+        }),
+      ]);
+
+    // Every option shape here is accepted by node. The trailing plain request is the real
+    // assertion: it proves none of the optioned requests left the encoder mid-block.
+    const results = [
+      await get("/parent-0", { parent: 0 }),
+      await get("/weight-0", { weight: 0 }),
+      await get("/weight-256", { weight: 256 }),
+      await get("/exclusive", { exclusive: true }),
+      await get("/node-defaults", { parent: 0, weight: 16, exclusive: false }),
+      await get("/plain"),
+    ];
+    expect(results).toEqual([
+      { status: 200, body: "/parent-0", rstCode: 0 },
+      { status: 200, body: "/weight-0", rstCode: 0 },
+      { status: 200, body: "/weight-256", rstCode: 0 },
+      { status: 200, body: "/exclusive", rstCode: 0 },
+      { status: 200, body: "/node-defaults", rstCode: 0 },
+      { status: 200, body: "/plain", rstCode: 0 },
+    ]);
+  } finally {
+    client.close();
+    server.close();
+  }
+});

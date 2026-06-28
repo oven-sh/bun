@@ -99,10 +99,9 @@ pub struct FetchTasklet {
     pub promise: jsc::JSPromiseStrong,
     pub concurrent_task: ConcurrentTask,
     pub poll_ref: KeepAlive,
-    /// RFC 8305 connection-attempt delay timer, armed by [`Self::queue`] and
-    /// re-armed by its own fire handler until the HTTP thread reports its
-    /// first progress. The VM's timer heap holds a raw pointer to this node,
-    /// so [`Self::clear_data`] MUST unlink it before `deinit` frees the box.
+    /// RFC 8305 connection-attempt delay, armed by [`Self::queue`] and re-armed
+    /// by its fire handler until the first HTTP progress. The VM's timer heap
+    /// holds a raw pointer to it; [`Self::clear_data`] MUST unlink it first.
     pub connect_attempt_timer: EventLoopTimer,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
@@ -459,9 +458,8 @@ impl FetchTasklet {
 
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
-        // Unlink first: the VM's timer heap holds a raw pointer to
-        // `connect_attempt_timer`, and `deinit` frees the box as soon as this
-        // returns. Usually already removed by the first `on_progress_update`.
+        // The VM's timer heap holds a raw pointer to `connect_attempt_timer`
+        // and `deinit` frees this box on return, so unlink it first.
         self.remove_connect_attempt_timer();
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
@@ -823,9 +821,8 @@ impl FetchTasklet {
     pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
-        // The HTTP thread's first result means the connect phase is over
-        // (opened, failed, or aborted), so the RFC 8305 per-attempt nudge
-        // timer is done. Later streaming updates find it already unlinked.
+        // The HTTP thread's first result means the connect phase is over, so the
+        // per-attempt nudge timer is done (later updates find it unlinked).
         self.remove_connect_attempt_timer();
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
@@ -2288,12 +2285,9 @@ impl FetchTasklet {
         }
     }
 
-    /// Link `connect_attempt_timer` into the VM heap for
-    /// `CONNECT_ATTEMPT_DELAY_MS` from now. JS-thread only; the node must not
-    /// currently be linked (freshly PENDING, or popped by the timer drain).
-    /// Real time on purpose: this is internal connection pacing, and under
-    /// `useFakeTimers()` a mocked deadline would stall address fallback
-    /// (`Tag::FetchConnectAttempt` is excluded from fake timers to match).
+    /// Link `connect_attempt_timer` into the VM heap for CONNECT_ATTEMPT_DELAY_MS
+    /// from now (JS thread only; the node must be unlinked). Real time on purpose:
+    /// internal pacing, and `Tag::allow_fake_timers` excludes the tag to match.
     fn arm_connect_attempt_timer(&mut self) {
         let deadline = bun_core::Timespec::ms_from_now(
             bun_core::TimespecMockMode::ForceRealTime,
@@ -2321,9 +2315,8 @@ impl FetchTasklet {
         }
     }
 
-    /// `TimerTag::FetchConnectAttempt` fire handler: nudge the HTTP thread to
-    /// start the next untried resolved address (RFC 8305 connection-attempt
-    /// delay), then re-arm. Stopped by [`Self::remove_connect_attempt_timer`]
+    /// Fire handler: nudge the HTTP thread to start the next untried resolved
+    /// address, then re-arm. Stopped by [`Self::remove_connect_attempt_timer`]
     /// at the first progress update and, as the backstop, in `clear_data`.
     pub(crate) fn on_connect_attempt_timer(&mut self) {
         // `All::next` already unlinked the node from the heap but left

@@ -831,31 +831,46 @@ it.skipIf(isFFIUnavailable)("JSCallback tolerates worker.terminate() arriving in
   });
 });
 
-it("FFI functions are not constructors", () => {
-  const cb = new JSCallback(() => 42, {
-    returns: "int32_t",
-    args: [],
+// Runs in a subprocess for the same reason as the JSCallback tests above: the
+// linked library's native handle is not finalized on `bun test`'s exit path,
+// which the ASan lane's leak checker reports against this file.
+it.skipIf(isFFIUnavailable)("FFI functions are not constructors", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { JSCallback, linkSymbols } from "bun:ffi";
+      const cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+      const lib = linkSymbols({ fn: { returns: "int32_t", args: [], ptr: cb.ptr } });
+      console.log(lib.symbols.fn());
+      // a native construct handler must never return a primitive
+      for (const construct of [() => new lib.symbols.fn(), () => Reflect.construct(lib.symbols.fn, [])]) {
+        try {
+          construct();
+          console.log("constructed");
+        } catch (e) {
+          console.log(e.constructor.name);
+        }
+      }
+      // non-constructible functions inspect as functions, not classes (#32103)
+      console.log(Bun.inspect(lib.symbols.fn));
+      lib.close();
+      cb.close();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  try {
-    const lib = linkSymbols({
-      fn: {
-        returns: "int32_t",
-        args: [],
-        ptr: cb.ptr,
-      },
-    });
-    expect(lib.symbols.fn()).toBe(42);
-    // a native construct handler must never return a primitive
-    expect(() => new lib.symbols.fn()).toThrow(TypeError);
-    expect(() => Reflect.construct(lib.symbols.fn, [])).toThrow(TypeError);
-    // non-constructible functions inspect as functions, not classes (#32103)
-    expect(Bun.inspect(lib.symbols.fn)).toBe("[Function: fn]");
-  } finally {
-    cb.close();
-  }
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({
+    stdout: "42\nTypeError\nTypeError\n[Function: fn]\n",
+    exitCode: 0,
+  });
+});
 
-  // runtime functions like the node:os natives are created through
-  // JSFFIFunction::create rather than createForFFI
+// runtime functions like the node:os natives are created through
+// JSFFIFunction::create rather than createForFFI, and do not need TinyCC
+it("runtime native functions are not constructors", () => {
   expect(freemem()).toBeGreaterThan(0);
   expect(() => new freemem()).toThrow(TypeError);
   expect(() => Reflect.construct(freemem, [])).toThrow(TypeError);

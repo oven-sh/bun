@@ -2229,7 +2229,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or ']' in an array but found end of file",
+    );
   });
 
   test("invalid/array/no-close-02", () => {
@@ -2253,7 +2255,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or ']' in an array but found end of file",
+    );
   });
 
   test("invalid/array/no-close-04", () => {
@@ -2265,7 +2269,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or '}' in an inline table but found end of file",
+    );
   });
 
   test("invalid/array/no-close-05", () => {
@@ -2277,7 +2283,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or ']' in an array but found end of file",
+    );
   });
 
   test("invalid/array/no-close-06", () => {
@@ -2289,7 +2297,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or '}' in an inline table but found end of file",
+    );
   });
 
   test("invalid/array/no-close-07", () => {
@@ -2301,7 +2311,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or ']' in an array but found end of file",
+    );
   });
 
   test("invalid/array/no-close-08", () => {
@@ -2325,7 +2337,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or '}' in an inline table but found end of file",
+    );
   });
 
   test("invalid/array/no-close-table-02", () => {
@@ -2337,7 +2351,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or '}' in an inline table but found end of file",
+    );
   });
 
   test("invalid/array/no-close-table-03", () => {
@@ -2397,7 +2413,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or ']' in an array but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or ']' in an array but found end of file",
+    );
   });
 
   test("invalid/array/only-comma-01", () => {
@@ -4433,7 +4451,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Expected ',' or '}' in an inline table but found");
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: Expected ',' or '}' in an inline table but found end of file",
+    );
   });
 
   test("invalid/inline-table/no-comma-01", () => {

@@ -175,13 +175,13 @@ impl<'a, 'log> Parser<'a, 'log> {
     }
 
     fn err_char(&mut self, pos: usize, what: &'static str) -> PErr {
-        let c = self.src.get(pos).copied();
-        match c {
-            Some(c) if !self.redact && c.is_ascii_graphic() => {
+        match self.src.get(pos).copied() {
+            None => self.err_fmt(pos, format_args!("{} end of file", what)),
+            Some(_) if self.redact => self.err_fmt(pos, format_args!("{}", what)),
+            Some(c) if c.is_ascii_graphic() => {
                 self.err_fmt(pos, format_args!("{} '{}'", what, c as char))
             }
-            Some(c) if !self.redact => self.err_fmt(pos, format_args!("{} (0x{:02X})", what, c)),
-            _ => self.err_fmt(pos, format_args!("{}", what)),
+            Some(c) => self.err_fmt(pos, format_args!("{} (0x{:02X})", what, c)),
         }
     }
 

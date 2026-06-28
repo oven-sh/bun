@@ -1044,9 +1044,9 @@ impl FileReader {
         self.pending.with_mut(|p| {
             p.result = streams::Result::Err(streams::StreamError::Error(err));
         });
-        // Pin across `p.run()`: a re-entrant cancel() reaches on_reader_done,
-        // which drops the across-read ref and lets a GC free this box before
-        // the `waiting_for_on_reader_done` read below.
+        // Pin across `p.run()`: it runs user JS, and anything there that
+        // reaches on_reader_done would drop the across-read ref and let a GC
+        // free this box before the `waiting_for_on_reader_done` read below.
         let parent = self.parent();
         // SAFETY: see `parent()`.
         unsafe { (*parent).increment_count() };

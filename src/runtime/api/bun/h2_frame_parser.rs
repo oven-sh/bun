@@ -5702,8 +5702,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
 
     fn is_local_stream(&self, stream_id: u32) -> bool {
         // The legacy outbound created an entry in the legacy streams map for every locally
-        // initiated stream (request/respond), so membership there means "we sent HEADERS on it".
-        self.streams.get().contains_key(&stream_id)
+        // initiated stream (request/respond), but peer-initiated ids live there too (inbound
+        // streams, received pushes), so the locally-initiated parity check is load-bearing.
+        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
+        stream_id % 2 != peer_parity && self.streams.get().contains_key(&stream_id)
     }
 
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {

@@ -2939,6 +2939,119 @@ it("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) res
   }
 });
 
+it("http2 client ignores the pushed response that races a push refusal", async () => {
+  // The pushed response HEADERS are usually already in flight when the client's
+  // RST_STREAM(REFUSED_STREAM) reaches the server. They target a stream the client reset and
+  // servers only open streams through PUSH_PROMISE (RFC 9113 5.1), so they must not open a new
+  // stream on the client: a phantom stream would pin the session's stream count and hang close().
+  const pushBlock = Buffer.concat([
+    // Static-table-only HPACK: :method GET (2), :scheme http (6), then literal-without-indexing
+    // :path "/pushed" (name index 4) and :authority "localhost" (name index 1).
+    Buffer.from([0x82, 0x86, 0x04, 0x07]),
+    Buffer.from("/pushed"),
+    Buffer.from([0x01, 0x09]),
+    Buffer.from("localhost"),
+  ]);
+  const pushPromisePayload = Buffer.concat([Buffer.from([0, 0, 0, 2]), pushBlock]);
+  const pushPromiseFrame = Buffer.concat([
+    new http2utils.Frame(pushPromisePayload.length, 5, 0x4 /* END_HEADERS */, 1).data,
+    pushPromisePayload,
+  ]);
+
+  const clientFrames = [];
+  const gotRequest = Promise.withResolvers();
+  const gotPushRst = Promise.withResolvers();
+  const gotPingAck = Promise.withResolvers();
+  const sockets = [];
+  const server = net.createServer(socket => {
+    sockets.push(socket);
+    let buffered = Buffer.alloc(0);
+    let sawPreface = false;
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (!sawPreface) {
+        if (buffered.length < 24) return;
+        buffered = buffered.subarray(24);
+        sawPreface = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+      }
+      while (buffered.length >= 9) {
+        const length = buffered.readUIntBE(0, 3);
+        if (buffered.length < 9 + length) break;
+        const frame = {
+          type: buffered[3],
+          flags: buffered[4],
+          streamId: buffered.readUInt32BE(5) & 0x7fffffff,
+          payload: Buffer.from(buffered.subarray(9, 9 + length)),
+        };
+        buffered = buffered.subarray(9 + length);
+        clientFrames.push(frame);
+        if (frame.type === 1 && frame.streamId === 1) gotRequest.resolve();
+        if (frame.type === 3 && frame.streamId === 2) gotPushRst.resolve();
+        if (frame.type === 6 && (frame.flags & 0x1) !== 0) gotPingAck.resolve();
+      }
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  let client;
+  try {
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const sessionErrors = [];
+    client.on("error", err => sessionErrors.push(err));
+    const surfacedPushes = [];
+    const pushClosed = Promise.withResolvers();
+    client.on("stream", (pushedStream, headers) => {
+      surfacedPushes.push(headers[":path"]);
+      pushedStream.on("error", () => {});
+      pushedStream.on("close", () => pushClosed.resolve(pushedStream.rstCode));
+      pushedStream.close(http2.constants.NGHTTP2_REFUSED_STREAM);
+    });
+    const reqClosed = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.resume();
+    req.on("error", reqClosed.reject);
+    req.on("close", reqClosed.resolve);
+
+    await gotRequest.promise;
+    const socket = sockets[0];
+    // PUSH_PROMISE reserving stream 2, then the response that ends the main request.
+    socket.write(pushPromiseFrame);
+    socket.write(new http2utils.HeadersFrame(1, http2utils.kFakeResponseHeaders, 0, true, true).data);
+
+    await gotPushRst.promise;
+    expect(await pushClosed.promise).toBe(http2.constants.NGHTTP2_REFUSED_STREAM);
+    await reqClosed.promise;
+
+    // The refusal already reached the server, now its response HEADERS for the pushed stream
+    // land anyway. The PING ack is the barrier proving the client processed them.
+    socket.write(new http2utils.HeadersFrame(2, http2utils.kFakeResponseHeaders, 0, true, false).data);
+    socket.write(new http2utils.PingFrame(false).data);
+    await gotPingAck.promise;
+
+    // One RST_STREAM for the refusal; the late HEADERS get the RFC 9113 5.1 closed-stream
+    // answer (STREAM_CLOSED) instead of being opened as a fresh stream.
+    expect(clientFrames.filter(f => f.type === 3 && f.streamId === 2).map(f => f.payload.readUInt32BE(0))).toEqual([
+      http2.constants.NGHTTP2_REFUSED_STREAM,
+      http2.constants.NGHTTP2_STREAM_CLOSED,
+    ]);
+    expect(surfacedPushes).toEqual(["/pushed"]);
+    expect(sessionErrors).toEqual([]);
+
+    // Nothing is left pinning the session: a graceful close still reaches 'close'.
+    const sessionClosed = Promise.withResolvers();
+    client.on("close", sessionClosed.resolve);
+    client.close();
+    await sessionClosed.promise;
+  } finally {
+    client?.destroy();
+    server.close();
+    for (const socket of sockets) socket.destroy();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

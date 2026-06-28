@@ -2047,9 +2047,6 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
-  // The native side fully closed and freed the stream (state 7 delivered): there is
-  // nothing left to send on the wire for it.
-  NativeClosed = 1 << 6, // 1000000 = 64
 }
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
@@ -2385,15 +2382,7 @@ class Http2Stream extends Duplex {
     // will destroy if it has been closed and there are no other open or
     // pending streams. Delay with setImmediate so we don't do it on the
     // nghttp2 stack.
-    if (
-      session &&
-      typeof this.#id === "number" &&
-      !this[kNeverAnnounced] &&
-      !wasClosed &&
-      // A cleanly closed stream the native side already freed has nothing to send:
-      // the deferred rstStream would be a guaranteed no-op host call per request.
-      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
-    ) {
+    if (session && typeof this.#id === "number" && !this[kNeverAnnounced] && !wasClosed) {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
 
@@ -3534,7 +3523,6 @@ class ServerHttp2Session extends Http2Session {
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
@@ -4260,7 +4248,6 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
         if (stream.readable && !stream.rstCode) {

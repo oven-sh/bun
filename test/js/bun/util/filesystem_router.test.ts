@@ -1,7 +1,7 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -522,8 +522,9 @@ it("MatchedRoute.params does not leak", async () => {
     const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
     console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
     // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
-    // deltas run far higher under bun-asan; widen the threshold there.
-    if (growthMB > ${isASAN ? 400 : 20}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+    // deltas run far higher under ASAN. Debug builds enable ASAN by default,
+    // so treat them the same; the non-ASAN bound guards the actual leak.
+    if (growthMB > ${isASAN || isDebug ? 400 : 20}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
   `;
 
   await using proc = Bun.spawn({

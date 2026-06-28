@@ -283,7 +283,10 @@ protected:
     template <unsigned int MESSAGE_HEADER, typename T>
     static inline bool consumeMessage(T payLength, char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (getOpCode(src)) {
-            if (wState->state.opStack == 1 || (!wState->state.lastFin && getOpCode(src) < 2)) {
+            /* RFC 6455 5.4: while a data message is still fragmented (opStack != -1), a new
+             * text/binary frame (opcode < 3) must fail the connection; only continuation
+             * frames (opcode 0) and interleaved control frames (opcode >= 8) are allowed. */
+            if (wState->state.opStack == 1 || (getOpCode(src) < 3 && wState->state.opStack != -1)) {
                 Impl::forceClose(wState, user);
                 return true;
             }

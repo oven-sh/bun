@@ -1,6 +1,7 @@
 import { TCPSocketListener } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import net from "node:net";
 
 const hostname = "127.0.0.1";
 const MAX_HEADER_SIZE = 16 * 1024;
@@ -435,5 +436,103 @@ describe("WebSocket", () => {
       client?.close();
       server?.stop(true);
     }
+  });
+});
+
+// RFC 6455 5.4: once a data message is fragmented (a data frame with FIN=0),
+// only continuation frames and control frames may follow until it completes.
+// A new text/binary frame before the message ends must fail the connection.
+describe("WebSocket server rejects a new data frame mid-fragment (RFC 6455 5.4)", () => {
+  const CONT = 0x0;
+  const TEXT = 0x1;
+  const BINARY = 0x2;
+  const PING = 0x9;
+
+  function maskedFrame(opcode: number, payload: Buffer, fin: boolean): Buffer {
+    const mask = Buffer.from([1, 2, 3, 4]);
+    const masked = Buffer.from(payload.map((b, i) => b ^ mask[i % 4]));
+    return Buffer.concat([Buffer.from([(fin ? 0x80 : 0) | opcode, 0x80 | payload.length]), mask, masked]);
+  }
+
+  // Connect a raw client, finish the handshake, send `frames`, and report whether
+  // the server delivered a message or failed (closed) the connection.
+  async function outcomeFor(frames: Buffer[]): Promise<{ outcome: "message" | "closed"; data?: string }> {
+    const { promise, resolve, reject } = Promise.withResolvers<{ outcome: "message" | "closed"; data?: string }>();
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        if (srv.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        message(ws, m) {
+          resolve({ outcome: "message", data: Buffer.from(m as Buffer).toString() });
+        },
+      },
+    });
+
+    const sock = net.connect(server.port, "127.0.0.1");
+    let handshakeDone = false;
+    let buf = Buffer.alloc(0);
+
+    sock.on("error", err => {
+      if (handshakeDone) resolve({ outcome: "closed" });
+      else reject(err);
+    });
+    sock.on("data", chunk => {
+      if (handshakeDone) return;
+      buf = Buffer.concat([buf, chunk]);
+      if (buf.includes("\r\n\r\n")) {
+        handshakeDone = true;
+        sock.write(Buffer.concat(frames));
+      }
+    });
+    sock.on("close", () => {
+      if (handshakeDone) resolve({ outcome: "closed" });
+    });
+
+    sock.write(
+      "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    );
+
+    try {
+      return await promise;
+    } finally {
+      sock.destroy();
+    }
+  }
+
+  test("a new BINARY frame inside a fragmented BINARY message fails the connection", async () => {
+    expect(
+      await outcomeFor([maskedFrame(BINARY, Buffer.from("he"), false), maskedFrame(BINARY, Buffer.from("llo"), true)]),
+    ).toEqual({ outcome: "closed" });
+  });
+
+  test("a new TEXT frame inside a fragmented TEXT message fails the connection", async () => {
+    expect(
+      await outcomeFor([maskedFrame(TEXT, Buffer.from("he"), false), maskedFrame(TEXT, Buffer.from("llo"), true)]),
+    ).toEqual({ outcome: "closed" });
+  });
+
+  test("a new data frame after an interleaved control frame fails the connection", async () => {
+    expect(
+      await outcomeFor([
+        maskedFrame(BINARY, Buffer.from("he"), false),
+        maskedFrame(PING, Buffer.from("p"), true),
+        maskedFrame(BINARY, Buffer.from("llo"), true),
+      ]),
+    ).toEqual({ outcome: "closed" });
+  });
+
+  test("a fragmented message with a legitimately interleaved control frame is delivered", async () => {
+    expect(
+      await outcomeFor([
+        maskedFrame(BINARY, Buffer.from("he"), false),
+        maskedFrame(PING, Buffer.from("p"), true),
+        maskedFrame(CONT, Buffer.from("llo"), true),
+      ]),
+    ).toEqual({ outcome: "message", data: "hello" });
   });
 });

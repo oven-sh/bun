@@ -2743,9 +2743,7 @@ pub(crate) fn prune_dangling_bin_links(bin_dir: Fd) {
             Ok(file) => {
                 let _ = file.close();
             }
-            Err(err)
-                if err.get_errno() == sys::E::ENOENT || err.get_errno() == sys::E::ENOTDIR =>
-            {
+            Err(err) if err.get_errno() == sys::E::ENOENT || err.get_errno() == sys::E::ENOTDIR => {
                 let _ = sys::unlinkat(bin_dir, buf);
             }
             Err(_) => {}

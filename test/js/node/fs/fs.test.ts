@@ -1512,6 +1512,9 @@ describe("writeSync", () => {
       [["61626364", 0, "hex"], Buffer.from("abcd")],
       [["aGk=", null, "base64"], Buffer.from("hi")],
       [["\u00ff", 0, "latin1"], Buffer.from([0xff])],
+      // Node writes UTF-8 for the "buffer" encoding name; it must not fall
+      // into the latin1-narrowing path.
+      [["\u00e9", 0, "buffer"], Buffer.from([0xc3, 0xa9])],
       // A lone string in the position slot is not an encoding.
       [["ab", "utf16le"], Buffer.from("ab")],
       [["abc", 0], Buffer.from("abc")],

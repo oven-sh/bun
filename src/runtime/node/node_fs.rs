@@ -3855,8 +3855,9 @@ pub mod args {
                             args.encoding = Encoding::assert(current, ctx, args.encoding)?;
                             arguments.eat();
                             // `bv` was converted to UTF-8 before the encoding
-                            // argument was parsed; re-encode it now.
-                            if args.encoding != Encoding::Utf8 {
+                            // argument was parsed; re-encode it now. Node
+                            // treats the "buffer" encoding name as UTF-8 here.
+                            if !matches!(args.encoding, Encoding::Utf8 | Encoding::Buffer) {
                                 if let Some(encoded) =
                                     StringOrBuffer::from_js_with_encoding(ctx, bv, args.encoding)?
                                 {

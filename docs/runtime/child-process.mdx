@@ -300,7 +300,6 @@ if (typeof Bun !== "undefined") {
       node.kill();
     },
     stdio: ["inherit", "inherit", "inherit"],
-    serialization: "json",
   });
 
   node.send({ message: `${prefix} 👋 hey node` });

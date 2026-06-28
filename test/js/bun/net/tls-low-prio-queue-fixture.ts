@@ -63,23 +63,26 @@ async function captureClientHello(): Promise<Buffer> {
     srv.listen(0, "127.0.0.1", r);
   });
   const port = (srv.address() as net.AddressInfo).port;
-  const c = tls.connect({
-    port,
-    host: "127.0.0.1",
-    maxVersion: "TLSv1.2",
-    minVersion: "TLSv1.2",
-    rejectUnauthorized: false,
-  });
-  // The raw server never replies, so the client errors or closes once the
-  // ClientHello has been captured and `sock` is destroyed; by then `promise`
-  // is settled and these rejections are no-ops. Before that point they turn a
-  // setup failure into a real error instead of a hang.
-  c.on("error", reject);
-  c.on("close", () => reject(new Error("tls.connect closed before the ClientHello was captured")));
-  const hello = await promise;
-  c.destroy();
-  await new Promise<void>(r => srv.close(() => r()));
-  return hello;
+  let c: tls.TLSSocket | undefined;
+  try {
+    c = tls.connect({
+      port,
+      host: "127.0.0.1",
+      maxVersion: "TLSv1.2",
+      minVersion: "TLSv1.2",
+      rejectUnauthorized: false,
+    });
+    // The raw server never replies, so the client errors or closes once the
+    // ClientHello has been captured and `sock` is destroyed; by then `promise`
+    // is settled and these rejections are no-ops. Before that point they turn
+    // a setup failure into a real error instead of a hang.
+    c.on("error", reject);
+    c.on("close", () => reject(new Error("tls.connect closed before the ClientHello was captured")));
+    return await promise;
+  } finally {
+    c?.destroy();
+    await new Promise<void>(r => srv.close(() => r()));
+  }
 }
 
 const clientHello = await captureClientHello();
@@ -147,8 +150,14 @@ async function round() {
   // us_poll_change(READABLE|WRITABLE), including on already-parked sockets.
   // The faults are process-wide, so clear them even if the child fails.
   try {
-    fault.set({ syscall: "send", action: "zero", repeat: -1 });
-    fault.set({ syscall: "writev", action: "zero", repeat: -1 });
+    // fault.set returns false if the rule could not be armed; without the
+    // forced backpressure nothing ever parks, so that must fail the fixture.
+    if (!fault.set({ syscall: "send", action: "zero", repeat: -1 })) {
+      throw new Error("failed to arm the send socket fault");
+    }
+    if (!fault.set({ syscall: "writev", action: "zero", repeat: -1 })) {
+      throw new Error("failed to arm the writev socket fault");
+    }
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", clientSrc],

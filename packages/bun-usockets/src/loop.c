@@ -538,6 +538,16 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     } else {
                         struct us_poll_t* poll = &s->p;
                         us_poll_change(poll, loop, us_poll_events(poll) & LIBUS_SOCKET_WRITABLE);
+                        /* Already parked: a writable dispatch re-enabled READABLE on
+                         * this socket (us_socket_raw_write / us_socket_resume issue
+                         * us_poll_change(R|W) without knowing about the queue). It
+                         * sits in loop->data.low_prio_head, NOT in g->head_sockets,
+                         * so the group unlink below would cross-wire the two lists
+                         * (they share prev/next) and the counter bump would leak.
+                         * Readable is disabled again above; leave it where it is. */
+                        if (flags->low_prio_state == 1) {
+                            break;
+                        }
                         struct us_socket_group_t *g = s->group;
                         /* Queued sockets aren't in head_sockets while parked, so
                          * the group's emptiness check needs this counter to know

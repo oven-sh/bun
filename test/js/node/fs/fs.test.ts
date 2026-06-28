@@ -1894,6 +1894,31 @@ it("realpath async", async () => {
   expect(await promise).toBe(realpathSync(import.meta.path));
 }, 30_000);
 
+it("promises.realpath uses the native binding (Node syscall tag)", async () => {
+  // https://github.com/oven-sh/bun/issues/32963
+  const dir = tmpdirSync();
+  const file = join(dir, "f");
+  writeFileSync(file, "x");
+
+  // Node routes fsPromises.realpath to native realpath(3), so a missing path
+  // rejects with syscall "realpath", not the JS-walking variant's "lstat".
+  const enoent = await promises.realpath(join(dir, "nope")).then(
+    () => null,
+    e => ({ code: e.code, syscall: e.syscall }),
+  );
+  expect(enoent).toEqual({ code: "ENOENT", syscall: "realpath" });
+
+  if (isPosix) {
+    // A trailing separator on a regular file is ENOTDIR under native realpath,
+    // unlike the slash-ignoring fs.realpath/realpathSync JS walk.
+    const notdir = await promises.realpath(file + "/").then(
+      () => null,
+      e => ({ code: e.code, syscall: e.syscall }),
+    );
+    expect(notdir).toEqual({ code: "ENOTDIR", syscall: "realpath" });
+  }
+});
+
 describe("stat", () => {
   it("file metadata is correct", () => {
     const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));

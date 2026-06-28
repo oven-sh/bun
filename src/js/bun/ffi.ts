@@ -310,8 +310,12 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
     return __GlobalBunFFIPtrFunctionForWrapper(val);
   }
 
-  if (val instanceof __GlobalBunCString) {
-    return val.ptr;
+  // A CString (or anything else carrying a numeric "ptr", like a JSCallback).
+  // CString data starts at ptr + byteOffset, like its arrayBuffer getter.
+  var valPtr = val.ptr;
+  if (typeof valPtr === "number") {
+    var valByteOffset = val.byteOffset;
+    return valByteOffset ? valPtr + valByteOffset : valPtr;
   }
 
   if (typeof val === "string") {

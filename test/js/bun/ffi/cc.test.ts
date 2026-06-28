@@ -162,6 +162,15 @@ describe.skipIf(isFFIUnavailable)("given a ping(cstr) function", () => {
     expect(result.ptr).toBe(cstr.ptr);
     expect(result.toString()).toBe("hello");
   });
+
+  it("given a CString with a byteOffset, passes the address of its data", () => {
+    const buf = Buffer.from("hello\0");
+    const arr = new Uint8Array(buf);
+    const sliced = new CString(ptr(arr), 2, 3);
+    expect(sliced.toString()).toBe("llo");
+
+    expect(holder.library.symbols.ping(sliced).toString()).toBe("llo");
+  });
 }); // </given a ping(cstr) function>
 
 // Successful compiles are fine under ASan; the setjmp/longjmp conflict only

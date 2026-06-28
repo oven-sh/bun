@@ -1116,6 +1116,14 @@ describe.if(!!strlenLibPath)("pointer argument conversion", () => {
     expect(lib.symbols.strlen(cstr)).toBe(6n);
   });
 
+  it("accepts a CString with a byteOffset", () => {
+    const lib = dlopen(strlenLibPath, strings);
+    const buf = Buffer.from("bunbun\0", "ascii");
+    const sliced = new CString(ptr(buf), 3, 3);
+    expect(sliced.toString()).toBe("bun");
+    expect(lib.symbols.strlen(sliced)).toBe(3n);
+  });
+
   it("accepts an ArrayBuffer", () => {
     const lib = dlopen(strlenLibPath, strings);
     const buf = new ArrayBuffer(7);

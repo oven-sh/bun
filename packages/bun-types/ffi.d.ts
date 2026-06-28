@@ -429,8 +429,8 @@ declare module "bun:ffi" {
    *
    * Conversion happens without the JavaScript-side coercion that calls into
    * native functions get, so pointer-typed returns accept a {@link Pointer},
-   * a TypedArray (its backing store address is used), or `null`, but not a
-   * {@link CString} or {@link JSCallback}.
+   * a TypedArray or DataView (its backing store address is used), or `null`,
+   * but not a {@link CString} or {@link JSCallback}.
    */
   interface FFITypeToJSCallbackReturnsType {
     [FFIType.char]: number;

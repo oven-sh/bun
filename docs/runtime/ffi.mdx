@@ -291,7 +291,7 @@ const {
 });
 
 const searchIterator = new JSCallback(
-  (ptr: Pointer, length: bigint) => /hello/.test(new CString(ptr, 0, Number(length))),
+  (ptr: Pointer | null, length: bigint) => ptr !== null && /hello/.test(new CString(ptr, 0, Number(length))),
   {
     returns: "bool",
     args: ["ptr", "usize"],
@@ -320,7 +320,7 @@ Currently, thread-safe callbacks work best when run from another thread that is 
 
 ```ts
 const searchIterator = new JSCallback(
-  (ptr: Pointer, length: bigint) => /hello/.test(new CString(ptr, 0, Number(length))),
+  (ptr: Pointer | null, length: bigint) => ptr !== null && /hello/.test(new CString(ptr, 0, Number(length))),
   {
     returns: "bool",
     args: ["ptr", "usize"],

@@ -605,7 +605,11 @@ function asyncWrap(fn: any, name: string) {
         if (typeof length !== "number") length = buffer.byteLength - offset;
         if (typeof position !== "number") position = null;
       } else {
-        // filehandle.write(string[, position[, encoding]]): `length` is the encoding.
+        // filehandle.write(string[, position[, encoding]]): `length` is the
+        // encoding. Node rejects a non-string before it validates the encoding.
+        if (typeof buffer !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+        }
         validateEncoding(buffer, length);
       }
       try {

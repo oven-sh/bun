@@ -3567,6 +3567,31 @@ describe("fs.write", () => {
     }
   });
 
+  // Node rejects a non-string, non-view buffer with ERR_INVALID_ARG_TYPE
+  // before validating the encoding against it. `{ length: 3 }` with "hex"
+  // would otherwise be rejected by validateEncoding with the wrong code.
+  it("rejects a non-string, non-view buffer before the encoding is validated", async () => {
+    const dest = join(tmpdirSync(), "fs-write-buffer-type.bin");
+    const badBuffer = { length: 3 } as unknown as string;
+    const fd = fs.openSync(dest, "w");
+    try {
+      expect(() => fs.write(fd, badBuffer, 0, "hex", () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      expect(() => fs.writeSync(fd, badBuffer, 0, "hex")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    } finally {
+      closeSync(fd);
+    }
+    const handle = await promises.open(dest, "w");
+    try {
+      const outcome = await handle.write(badBuffer, 0, "hex").then(
+        () => "resolved",
+        err => err.code,
+      );
+      expect(outcome).toBe("ERR_INVALID_ARG_TYPE");
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("should work with (fd, string, position, callback)", done => {
     const path = `${tmpdir()}/bun-fs-write-4-${Date.now()}.txt`;
     const fd = fs.openSync(path, "w");

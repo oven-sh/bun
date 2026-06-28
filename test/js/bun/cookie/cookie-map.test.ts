@@ -424,8 +424,9 @@ describe("Bun.CookieMap percent-decoding", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({
+    expect({ stdout, stderr, exitCode }).toEqual({
       stdout: JSON.stringify({ a: "é", b: "读写", c: "🍪", d: "A" }),
+      stderr: "",
       exitCode: 0,
     });
   });

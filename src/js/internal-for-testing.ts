@@ -85,6 +85,31 @@ export const iniInternals = {
   loadNpmrc: $newRustFunction("ini.rs", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
+export const simdJSONInternals = {
+  parse: $newRustFunction("json_simd_testing.rs", "jsParse", 1) as (input: string) => unknown,
+  index: $newRustFunction("json_simd_testing.rs", "jsIndex", 1) as (input: string) => number[],
+  bench: $newRustFunction("json_simd_testing.rs", "jsBench", 2) as (
+    input: string,
+    iters: number,
+  ) => { bytes: number; iters: number; simdNs: number; scalarNs: number },
+  benchStage1: $newRustFunction("json_simd_testing.rs", "jsBenchStage1", 2) as (
+    input: string,
+    iters: number,
+  ) => { ns: number; count: number; bytes: number },
+  benchTape: $newRustFunction("json_simd_testing.rs", "jsBenchTape", 2) as (
+    input: string,
+    iters: number,
+  ) => { ns: number; tapeLen: number; bytes: number },
+  benchCursor: $newRustFunction("json_simd_testing.rs", "jsBenchCursor", 2) as (
+    input: string,
+    iters: number,
+  ) => { ns: number; versions: number; fields: number; bytes: number },
+  cursorGet: $newRustFunction("json_simd_testing.rs", "jsCursorGet", 2) as (
+    input: string,
+    path: string,
+  ) => string | null | undefined,
+};
+
 export const cssInternals = {
   minifyTestWithOptions: $newRustFunction("css_internals.rs", "minifyTestWithOptions", 3),
   minifyErrorTestWithOptions: $newRustFunction("css_internals.rs", "minifyErrorTestWithOptions", 3),

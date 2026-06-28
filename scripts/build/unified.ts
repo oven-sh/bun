@@ -134,6 +134,8 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/xxhash3.cpp",
   // Fourth highway TU — same foreach_target.h include-guard reason.
   "src/jsc/bindings/highway_sourcemap.cpp",
+  // Fifth highway TU — same foreach_target.h include-guard reason.
+  "src/jsc/bindings/highway_json.cpp",
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.

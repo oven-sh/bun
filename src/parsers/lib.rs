@@ -19,6 +19,18 @@ pub mod json;
 /// latter here.
 pub use json as json_parser;
 
+// ───── json_simd ──────────────────────────────────────────────────────────
+// simdjson-style two-stage strict-JSON parser. Stage 1 lives in
+// `highway_json.cpp`; stage 2 here.
+#[path = "json_simd.rs"]
+pub mod json_simd;
+
+// ───── json_cursor ────────────────────────────────────────────────────────
+// On-demand cursor over stage-1 indices for sparse reads (npm packuments,
+// package.json name/version).
+#[path = "json_cursor.rs"]
+pub mod json_cursor;
+
 // ───── json5 ──────────────────────────────────────────────────────────────
 #[path = "json5.rs"]
 pub mod json5;

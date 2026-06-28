@@ -69,6 +69,8 @@ pub mod js_transpiler;
 pub mod json5_object;
 #[path = "api/JSONCObject.rs"]
 pub mod jsonc_object;
+#[path = "api/json_simd_testing.rs"]
+pub mod json_simd_testing;
 #[path = "api/lolhtml_jsc.rs"]
 pub mod lolhtml_jsc;
 #[path = "api/MarkdownObject.rs"]

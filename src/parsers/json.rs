@@ -742,6 +742,25 @@ impl ToAst for bun_core::Error {
 // site converts a struct/enum value — only the primitive/slice impls above are
 // used.
 
+/// Old recursive-descent strict-JSON path. Kept for benchmarking against
+/// `json_simd::SimdJSON`.
+pub fn parse_utf8_scalar(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> Result<Expr, bun_core::Error> {
+    let mut parser = JSONLikeParser::init(
+        js_lexer::JSONOptions {
+            is_json: true,
+            ..js_lexer::JSONOptions::DEFAULT
+        },
+        bump,
+        source,
+        log,
+    )?;
+    parser.parse_expr(false, true)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Parser option presets
 // ──────────────────────────────────────────────────────────────────────────
@@ -751,11 +770,6 @@ impl ToAst for bun_core::Error {
 //
 // `json_warn_duplicate_keys: bool = true` is the DEFAULT; the first four
 // presets do not override it.
-
-const JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
-    is_json: true,
-    ..js_lexer::JSONOptions::DEFAULT
-};
 
 const DOTENV_JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
     is_json: true,
@@ -827,7 +841,8 @@ pub fn parse<const FORCE_UTF8: bool>(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
+    Expr::data_store_assert();
+    Stmt::data_store_assert();
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -858,7 +873,7 @@ pub fn parse<const FORCE_UTF8: bool>(
         _ => {}
     }
 
-    parser.parse_expr(false, FORCE_UTF8)
+    crate::json_simd::SimdJSON::parse_with_flags(source, log, bump, FORCE_UTF8).map(|(e, _)| e)
 }
 
 /// Parse Package JSON
@@ -1071,17 +1086,8 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
         _ => {}
     }
 
-    let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
-    debug_assert!(!parser.source().contents.is_empty());
-
-    let result = parser.parse_expr(false, true)?;
-    if CHECK_LEN {
-        if parser.lexer.end >= source.contents.len() {
-            return Ok(result);
-        }
-        parser.lexer.unexpected()?;
-        return Err(bun_core::err!("ParserError"));
-    }
+    let result = crate::json_simd::SimdJSON::parse(source, log, bump)?;
+    let _ = CHECK_LEN; // SimdJSON::parse always rejects trailing tokens.
     Ok(result)
 }
 
@@ -1185,10 +1191,10 @@ pub fn parse_for_bundling(
         _ => {}
     }
 
-    let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
-    let result = parser.parse_expr(false, true)?;
+    let (result, is_ascii_only) =
+        crate::json_simd::SimdJSON::parse_with_flags(source, log, bump, true)?;
     Ok(JSONParseResult {
-        tag: if !LEXER_DEBUGGER_WORKAROUND && parser.lexer.is_ascii_only {
+        tag: if !LEXER_DEBUGGER_WORKAROUND && is_ascii_only {
             JSONParseResultTag::Ascii
         } else {
             JSONParseResultTag::Expr

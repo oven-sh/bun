@@ -58,7 +58,7 @@ pub struct ManifestBindings;
 impl ManifestBindings {
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
-        let obj = JSValue::create_empty_object(global, 1);
+        let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
             b"parseManifest",
@@ -72,8 +72,115 @@ impl ManifestBindings {
                 Default::default(),
             ),
         );
+        obj.put(
+            global,
+            b"benchManifestParse",
+            JSFunction::create(
+                global,
+                bun_core::String::static_(b"benchManifestParse"),
+                __jsc_host_js_bench_manifest_parse,
+                3,
+                Default::default(),
+            ),
+        );
         obj
     }
+}
+
+/// Time the real `PackageManifest::parse()` on raw packument JSON bytes.
+/// Args: (jsonString, packageName, iters). Returns timing breakdown from
+/// `npm::PARSE_TIMING` (json/count/build/total) averaged over `iters`.
+#[bun_jsc::host_fn]
+pub(crate) fn js_bench_manifest_parse(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    use bun_install::npm;
+
+    let json_str = frame.argument(0).to_slice(global)?;
+    let name_str = frame.argument(1).to_slice(global)?;
+    let iters = frame.argument(2).coerce_to_i32(global)?.max(1) as u32;
+
+    let json = json_str.slice();
+    let name = name_str.slice();
+
+    let scope = npm::registry::Scope {
+        url_hash: *npm::registry::DEFAULT_URL_HASH,
+        url: bun_url::OwnedURL::from_href(Box::from(b"https://registry.npmjs.org/".as_slice())),
+        ..Default::default()
+    };
+
+    type ParseFn = fn(
+        &npm::registry::Scope,
+        &mut bun_ast::Log,
+        &[u8],
+        &[u8],
+        &[u8],
+        &[u8],
+        u32,
+        bool,
+    ) -> Result<Option<npm::PackageManifest>, bun_core::Error>;
+
+    let run = |which: ParseFn| -> JsResult<(npm::ParseTiming, usize, u64)> {
+        // Warmup.
+        for _ in 0..2 {
+            let mut log = bun_ast::Log::init();
+            let _ = which(&scope, &mut log, json, name, b"", b"", 0, false);
+        }
+        let mut sum = npm::ParseTiming::default();
+        let mut versions = 0usize;
+        let mut string_buf_hash = 0u64;
+        for _ in 0..iters {
+            let mut log = bun_ast::Log::init();
+            match which(&scope, &mut log, json, name, b"", b"", 0, false) {
+                Ok(Some(m)) => {
+                    versions = m.versions.len();
+                    string_buf_hash =
+                        npm::registry::Scope::hash(&m.string_buf);
+                }
+                Ok(None) => {
+                    return Err(
+                        global.throw(format_args!("PackageManifest::parse returned None"))
+                    );
+                }
+                Err(e) => {
+                    return Err(global.throw(format_args!(
+                        "PackageManifest::parse failed: {}",
+                        bstr::BStr::new(e.name().as_bytes())
+                    )));
+                }
+            }
+            let t = npm::PARSE_TIMING.with(|c| c.get());
+            sum.json_ns += t.json_ns;
+            sum.count_ns += t.count_ns;
+            sum.build_ns += t.build_ns;
+            sum.total_ns += t.total_ns;
+        }
+        Ok((sum, versions, string_buf_hash))
+    };
+
+    let (sum_expr, ver_expr, hash_expr) = run(npm::PackageManifest::parse)?;
+    let (sum_cur, ver_cur, hash_cur) = run(npm::PackageManifest::parse_cursor)?;
+
+    let obj = JSValue::create_empty_object(global, 12);
+    let f = |n: u64| JSValue::js_number(n as f64 / iters as f64);
+    obj.put(global, b"exprJsonNs", f(sum_expr.json_ns));
+    obj.put(global, b"exprCountNs", f(sum_expr.count_ns));
+    obj.put(global, b"exprBuildNs", f(sum_expr.build_ns));
+    obj.put(global, b"exprTotalNs", f(sum_expr.total_ns));
+    obj.put(global, b"curJsonNs", f(sum_cur.json_ns));
+    obj.put(global, b"curCountNs", f(sum_cur.count_ns));
+    obj.put(global, b"curBuildNs", f(sum_cur.build_ns));
+    obj.put(global, b"curTotalNs", f(sum_cur.total_ns));
+    obj.put(global, b"versionsExpr", JSValue::js_number(ver_expr as f64));
+    obj.put(global, b"versionsCur", JSValue::js_number(ver_cur as f64));
+    obj.put(
+        global,
+        b"outputsMatch",
+        JSValue::js_boolean(ver_expr == ver_cur && hash_expr == hash_cur),
+    );
+    obj.put(global, b"bytes", JSValue::js_number(json.len() as f64));
+    Ok(obj)
 }
 
 // Lives at module scope (not `impl ManifestBindings`) because the

@@ -4,7 +4,7 @@ use core::fmt;
 
 use bun_core::Output;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    CallFrame, JSGlobalObject, JSType, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
@@ -2770,7 +2770,8 @@ impl ExpectMatcherContext {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_custom_testers(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO: populate from expect.addEqualityTesters once supported
+        // `expect.addEqualityTesters` is not implemented, so there is never a
+        // registered tester to surface; Jest also returns [] when there are none.
         JSValue::create_empty_array(global_this, 0)
     }
 
@@ -2916,16 +2917,16 @@ impl ExpectMatcherUtils {
         let args = arguments.slice();
         let object = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
         let subset = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
-        // Jest's `isObjectWithKeys`: a plain-ish object, so not an Array,
-        // Error, Date, Set, or Map.
+        // Jest's `isObjectWithKeys`: not an Array, Error, Date, Set, or Map.
+        // Its `instanceof Set`/`Map` does not match WeakSet/WeakMap, so only the
+        // strong variants are out of domain (`is_set`/`is_map` include the weak ones).
         if !subset.is_cell() {
             return Ok(JSValue::UNDEFINED);
         }
         let subset_ty = subset.js_type();
         if !subset_ty.is_object()
             || subset_ty.is_array()
-            || subset_ty.is_set()
-            || subset_ty.is_map()
+            || matches!(subset_ty, JSType::Set | JSType::Map)
             || subset.is_error()
             || subset.is_date()
         {

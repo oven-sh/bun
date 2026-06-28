@@ -126,12 +126,15 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
         iterEqSetsNe: this.utils.iterableEquality(new Set([1]), new Set([2])),
         iterEqArrays: this.utils.iterableEquality([1], [1]),
         iterEqTypedArrays: this.utils.iterableEquality(new Uint8Array([1]), new Uint8Array([1])),
+        iterEqWeakSets: this.utils.iterableEquality(new WeakSet(), new WeakSet()),
         iterEqNonIter: this.utils.iterableEquality({}, {}),
         subsetEqMatch: this.utils.subsetEquality({ a: 1, b: 2 }, { a: 1 }),
         subsetEqMiss: this.utils.subsetEquality({ a: 1 }, { b: 2 }),
         subsetEqArray: this.utils.subsetEquality({ a: 1 }, [1]),
         subsetEqSet: this.utils.subsetEquality({ a: 1 }, new Set([1])),
         subsetEqMap: this.utils.subsetEquality({ a: 1 }, new Map([[1, 2]])),
+        subsetEqWeakSet: this.utils.subsetEquality({ a: 1 }, new WeakSet()),
+        subsetEqWeakMap: this.utils.subsetEquality({ a: 1 }, new WeakMap()),
         subsetEqPrimitive: this.utils.subsetEquality(1, 1),
       };
       return { pass: true, message: () => "" };
@@ -150,9 +153,11 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
 
   expect(captured.iterEqSets).toBe(true);
   expect(captured.iterEqSetsNe).toBe(false);
-  // Arrays and ArrayBuffer views are out of iterableEquality's domain in jest.
+  // Arrays and ArrayBuffer views are out of iterableEquality's domain in jest,
+  // and so are weak collections (no Symbol.iterator).
   expect(captured.iterEqArrays).toBe(undefined);
   expect(captured.iterEqTypedArrays).toBe(undefined);
+  expect(captured.iterEqWeakSets).toBe(undefined);
   expect(captured.iterEqNonIter).toBe(undefined);
 
   expect(captured.subsetEqMatch).toBe(true);
@@ -161,6 +166,10 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
   expect(captured.subsetEqArray).toBe(undefined);
   expect(captured.subsetEqSet).toBe(undefined);
   expect(captured.subsetEqMap).toBe(undefined);
+  // WeakSet/WeakMap are NOT instanceof Set/Map, so jest keeps them in the
+  // domain; they have no enumerable keys, so the subset match is vacuously true.
+  expect(captured.subsetEqWeakSet).toBe(true);
+  expect(captured.subsetEqWeakMap).toBe(true);
   expect(captured.subsetEqPrimitive).toBe(undefined);
 });
 

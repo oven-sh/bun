@@ -1258,11 +1258,9 @@ describe("expect()", () => {
   // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
   // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
-    // https://github.com/oven-sh/bun/issues/14250. Distinct array keys always
-    // miss the identity lookup and take the JSSetIterator/JSMapIterator linear
-    // fallback, so cost is quadratic in the element count. 150 elements x 2000
-    // iterations took minutes under debug+ASAN and timed out; 20 x 500 exercises
-    // the same fallback thousands of times inside the test budget.
+    // https://github.com/oven-sh/bun/issues/14250. Distinct array keys take the
+    // JSSetIterator/JSMapIterator linear fallback (quadratic in N); 20 x 500
+    // exercises that fallback thousands of times inside the debug+ASAN budget.
     const N = 20;
     const arr1 = [];
     const arr2 = [];

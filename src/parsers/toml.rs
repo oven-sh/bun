@@ -87,7 +87,10 @@ struct KeySeg<'a> {
 enum LineStart<'a> {
     Eof,
     /// `[` (`aot` for `[[`) at `pos`.
-    TableOpen { aot: bool, pos: usize },
+    TableOpen {
+        aot: bool,
+        pos: usize,
+    },
     Key(KeySeg<'a>),
 }
 
@@ -125,7 +128,10 @@ struct ValueToken<'a> {
 
 #[derive(Copy, Clone)]
 enum ValueData<'a> {
-    String { text: &'a [u8], is_ascii: bool },
+    String {
+        text: &'a [u8],
+        is_ascii: bool,
+    },
     Number(f64),
     /// All four TOML date/time kinds, as their source text (always ASCII).
     DateTime(&'a [u8]),

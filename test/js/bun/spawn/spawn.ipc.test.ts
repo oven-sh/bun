@@ -950,6 +950,8 @@ describe("ipc internal message routing", () => {
       "old-worker.cjs": /* js */ `
         const fs = require("node:fs");
         fs.writeSync(3, Buffer.from('\\x02{"act":"online","seq":0}\\n', "latin1"));
+        // Reap on channel close so a timed-out run never orphans this interval.
+        process.on("disconnect", () => process.exit());
         setInterval(() => {}, 1 << 30);
       `,
     });
@@ -959,8 +961,8 @@ describe("ipc internal message routing", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "ONLINE\n", exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, stderr }).toEqual({ stdout: "ONLINE\n", exitCode: 0, stderr: expect.any(String) });
   });
 });
 

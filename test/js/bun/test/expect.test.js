@@ -1258,28 +1258,25 @@ describe("expect()", () => {
   // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
   // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
-    // Exercises Set/Map iterator allocation in deepEquals (#14256): distinct-identity
-    // array elements force the linear-search fallback that allocates an iterator per
-    // element. Counts sized to stay within the default timeout under debug + ASAN.
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
     const arr4 = [];
 
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 150; i++) {
       arr1[i] = [i];
       arr2[i] = [i];
       arr3[i] = [i, [i]];
       arr4[i] = [i, [i]];
     }
 
-    for (let i = 0; i < 500; i++) {
+    for (let i = 0; i < 2000; i++) {
       let outerSet = new Set(arr1);
       let innerSet = new Set(arr2);
       Bun.deepEquals(outerSet, innerSet);
     }
 
-    for (let i = 0; i < 250; i++) {
+    for (let i = 0; i < 1000; i++) {
       let outerMap = new Map(arr3);
       let innerMap = new Map(arr4);
       Bun.deepEquals(outerMap, innerMap);

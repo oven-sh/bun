@@ -1,6 +1,7 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { join } from "node:path";
 
 const exampleServer = exampleSite("http");
 
@@ -764,6 +765,34 @@ test("Request content-type survives fetch(request) and matches the wire", async 
   expect(received.contentType).toBe(ct);
   const boundary = ct!.slice("multipart/form-data; boundary=".length);
   expect(received.body).toContain("--" + boundary);
+});
+
+// Responses fetched from data:, file:, and blob: URLs derive their Content-Type
+// from the body Blob too, so it must also survive the body being read first.
+describe("fetch() non-remote response content-type survives body consumption", () => {
+  test("data: URL", async () => {
+    const res = await fetch("data:application/json,{}");
+    expect(await res.text()).toBe("{}");
+    expect(res.headers.get("content-type")).toBe("application/json;charset=utf-8");
+  });
+
+  test("blob: URL", async () => {
+    const url = URL.createObjectURL(new Blob(["body"], { type: "text/css" }));
+    try {
+      const res = await fetch(url);
+      expect(await res.text()).toBe("body");
+      expect(res.headers.get("content-type")).toBe("text/css;charset=utf-8");
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  test("file: URL", async () => {
+    using dir = tempDir("body-file-url-ct", { "a.json": "{}" });
+    const res = await fetch(Bun.pathToFileURL(join(String(dir), "a.json")));
+    expect(await res.text()).toBe("{}");
+    expect(res.headers.get("content-type")).toBe("application/json;charset=utf-8");
+  });
 });
 
 function arrayBuffer(buffer: BufferSource) {

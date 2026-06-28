@@ -6964,7 +6964,9 @@ declare module "bun" {
       /**
        * The serialization format to use for IPC messages. Defaults to `"advanced"`.
        *
-       * To communicate with Node.js processes, use `"json"`.
+       * `"advanced"` uses Node.js's V8 serialization wire format and supports
+       * structured-clone types such as `Buffer`, `Map`, `Set`, typed arrays,
+       * and circular references. Both modes interoperate with Node.js.
        *
        * When `ipc` is not specified, this is ignored.
        */

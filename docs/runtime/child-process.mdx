@@ -276,7 +276,7 @@ process.send({ message: "Hello from child as object" });
 
 The `serialization` option controls the underlying communication format between the two processes:
 
-- `advanced`: (default) Messages are serialized using the JSC `serialize` API, which supports cloning [everything `structuredClone` supports](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm). This does not support transferring ownership of objects.
+- `advanced`: (default) Messages are serialized using Node.js's V8 serialization wire format, which supports [everything `structuredClone` supports](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) such as `Buffer`, `Map`, `Set`, typed arrays, and circular references. This does not support transferring ownership of objects.
 - `json`: Messages are serialized using `JSON.stringify` and `JSON.parse`, which does not support as many object types as `advanced` does.
 
 To disconnect the IPC channel from the parent process, call:
@@ -287,7 +287,7 @@ childProc.disconnect();
 
 ### IPC between Bun & Node.js
 
-To use IPC between a `bun` process and a Node.js process, set `serialization: "json"` in `Bun.spawn`. This is because Node.js and Bun use different JavaScript engines with different object serialization formats.
+Both serialization modes work between a `bun` process and a Node.js process in either direction, so you can use `serialization: "advanced"` to pass `Buffer`s, `Map`s, and other structured-clone types across the runtime boundary.
 
 ```js bun-node-ipc.js icon="file-code"
 if (typeof Bun !== "undefined") {

@@ -248,10 +248,9 @@ void JSDOMException::finishCreation(VM& vm)
     Base::finishCreation(vm, String(), JSValue(), nullptr, JSC::TypeNothing, true);
     ASSERT(inherits(info()));
 
-    // ErrorInstance never materializes a `stack` from an empty trace. That only
-    // happens when we are created with no JS frames on the stack (a native entry
-    // like AbortSignal.timeout). Give it the `name: message` header so `.stack`
-    // is always a string on a DOMException, like other engines.
+    // ErrorInstance never materializes `stack` from an empty trace, which can
+    // happen for native entries like AbortSignal.timeout. Give `.stack` the
+    // `name: message` header so DOMException matches other engines.
     auto* trace = stackTrace();
     if (!trace || trace->isEmpty()) {
         auto& impl = wrapped();

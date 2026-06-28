@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { inspect } from "node:util";
 
 describe("DOMException in Node.js environment", () => {
@@ -102,17 +103,42 @@ describe("DOMException in Node.js environment", () => {
     expect(reason.stack).toStartWith("AbortError");
   });
 
-  it("AbortSignal.timeout() reason gets a stack even with no JS frames", async () => {
-    // The timeout fires from a native timer with no JS on the stack, so there
-    // are no frames to capture; the stack must still be the error header.
-    const signal = AbortSignal.timeout(1);
-    const { promise, resolve } = Promise.withResolvers();
-    signal.addEventListener("abort", resolve);
-    await promise;
+  it("AbortSignal.timeout() reason is a DOMException with a stack", async () => {
+    // AbortSignal.timeout()'s timer is not ref'd and awaiting only its abort
+    // event hangs the Windows test runner, so drive the loop with a ref'd
+    // sleep and poll the aborted flag (same shape as web/abort/abort.test.ts).
+    const signal = AbortSignal.timeout(0);
+    for (let i = 0; i < 200 && !signal.aborted; i++) await Bun.sleep(10);
+    expect(signal.aborted).toBe(true);
     const reason = signal.reason;
     expect(reason).toBeInstanceOf(DOMException);
     expect(Error.isError(reason)).toBe(true);
-    expect(reason.stack).toBe("TimeoutError: The operation timed out.");
+    expect(reason.name).toBe("TimeoutError");
+    expect(typeof reason.stack).toBe("string");
+    expect(reason.stack).toStartWith("TimeoutError: The operation timed out.");
+  });
+
+  it("gets a header-only stack when no frames are captured", async () => {
+    // Error.stackTraceLimit is process-global, so mutate it in a subprocess.
+    // `undefined` makes getStackTrace return no trace; `0` returns an empty one.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Error.stackTraceLimit = undefined;
+         console.log(JSON.stringify(new DOMException("boom", "AbortError").stack));
+         Error.stackTraceLimit = 0;
+         console.log(JSON.stringify(new DOMException("boom", "AbortError").stack));
+         console.log(JSON.stringify(new DOMException("", "AbortError").stack));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({
+      stdout: '"AbortError: boom"\n"AbortError: boom"\n"AbortError"\n',
+      exitCode: 0,
+    });
   });
 
   it("AbortController.abort() reason is a DOMException with a stack", () => {

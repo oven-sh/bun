@@ -1200,7 +1200,9 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     WeakPtr weakThis { *this };
     auto callback = [index, weakThis, wrapAlgorithm, wrappingKey = Ref { wrappingKey }, wrapParams = WTF::move(wrapParams), isEncryption, context, workQueue = m_workQueue](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
         if (weakThis) {
-            if (auto promise = weakThis->m_pendingPromises.get(index)) {
+            // get() peeks the map's Ref as a raw pointer; the JWK error paths below remove that
+            // Ref before rejecting, so hold our own reference like the unwrapKey callback does.
+            if (RefPtr promise = weakThis->m_pendingPromises.get(index)) {
                 auto& vm = promise->globalObject()->vm();
                 auto scope = DECLARE_THROW_SCOPE(vm);
                 Vector<uint8_t> bytes;

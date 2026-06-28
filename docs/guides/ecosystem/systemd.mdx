@@ -8,16 +8,20 @@ mode: center
 
 ---
 
-To run a Bun application as a daemon using **systemd** you'll need to create a _service file_ in `/lib/systemd/system/`.
+**systemd** works in terms of _unit files_ such as _service files_. It can read unit files from `{/usr/lib,/etc,/run}/systemd/{user,system}/`. In most cases, you should be writing to `/etc/systemd/system`, because `/etc` [is where you put system-specific configuration][fhssys] and you generally want your service to be managed by the system's instance of systemd, not the per-user instance. You may deviate from the recommendation if you know what you are doing.
+
+  [fhssys]: https://unix.stackexchange.com/questions/206315/whats-the-difference-between-usr-lib-systemd-system-and-etc-systemd-system
 
 ```sh terminal icon="terminal"
-cd /lib/systemd/system
+cd /etc/systemd/system
 touch my-app.service
+# edit your service with any editor...
+systemctl daemon-reload
 ```
 
 ---
 
-Here is a typical service file that runs an application on system start. You can use this as a template for your own service. Replace `YOUR_USER` with the name of the user you want to run the application as. To run as `root`, replace `YOUR_USER` with `root`, though this is generally not recommended for security reasons.
+Here is a typical service file that runs an application on system start. You can use this as a template for your own service. (Replace `YOUR_USER` with the name of the user you want to run the application as. To run as `root`, replace `YOUR_NAME` with `root` and `/home/YOUR_NAME` with `/root`; this is is strongly not recommended for security reasons.)
 
 Refer to the [systemd documentation](https://www.freedesktop.org/software/systemd/man/systemd.service.html) for more information on each setting.
 
@@ -33,12 +37,12 @@ After=network.target
 # one of https://www.freedesktop.org/software/systemd/man/systemd.service.html#Type=
 Type=simple
 # which user to use when starting the app
-User=YOUR_USER
+User=YOUR_NAME
 # path to your application's root directory
-WorkingDirectory=/home/YOUR_USER/path/to/my-app
+WorkingDirectory=/path/to/my-app
 # the command to start the app
 # requires absolute paths
-ExecStart=/home/YOUR_USER/.bun/bin/bun run index.ts
+ExecStart=/home/YOUR_NAME/.bun/bin/bun run index.ts
 # restart policy
 # one of {no|on-success|on-failure|on-abnormal|on-watchdog|on-abort|always}
 Restart=always
@@ -47,16 +51,6 @@ Restart=always
 # start the app automatically
 WantedBy=multi-user.target
 ```
-
----
-
-If your application starts a webserver, note that non-`root` users are not able to listen on ports 80 or 443 by default. To permanently allow Bun to listen on these ports when executed by a non-`root` user, use the following command. This step isn't necessary when running as `root`.
-
-```bash terminal icon="terminal"
-setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
-```
-
----
 
 With the service file configured, you can now _enable_ the service. Once enabled, it will start automatically on reboot. This requires `sudo` permissions.
 
@@ -98,6 +92,38 @@ To update the service, edit the contents of the service file, then reload the da
 
 ```bash terminal icon="terminal"
 systemctl daemon-reload
+```
+
+## User and capabilities
+
+9 out of 10 sysadmins agree that no matter what your web-facing service is, it probably should **not** be run as `root`. The conventional way to separate permissions is by creating a user for the specific service: for example, the below creates a user called `bunny`:
+
+```bash terminal icon="terminal"
+# why /var? because it's not a very real user and that's just tradition. You can remove this part and just use /home/bunny.
+sudo adduser --system --home /var/bunny --group bunny
+```
+
+You can log into `bunny` and run the `bun` installer script to install a copy at `/var/bunny/.bun/`, but you probably want your version and bunny's to be synced. You can give bunny access to your `.bun` by doing:
+
+```bash terminal icon="terminal"
+YOUR_NAME=$(whoami)
+sudo usermod -a -G $YOUR_NAME bunny   # put bunny in the YOUR_NAME group
+chmod g+x /home/$YOUR_NAME            # allow everyone in the YOUR_NAME group to traverse /home/$YOUR_NAME (without being able to list or write it)
+```
+
+Then you can just set `ExecStart=/home/YOUR_NAME/.bun/bin/bun ...` knowing `bunny` can run it as well. You also would want to put your project under somewhere that `bunny` has access to; somewhere under bunny's home would make sense, but then you might want to run the following to give your main account access:
+
+```bash terminal icon="terminal"
+YOUR_NAME=$(whoami)
+sudo usermod -a -G bunny $YOUR_NAME   # put YOUR_NAME in bunny's group
+sudo chmod g+rwx /var/bunny           # allow everyone in bunny's group to do whatever they want to bunny's home
+sudo chmod g+rwx /var/bunny/...       # replace ... with the exact path to your project. you may need to do this layer-by-layer.
+```
+
+Ports numbered lower than 1024 (such as the webserver 80 and 443) are considered a system-level resource not usually given to the ordinary user. For a non-`root` user to have `bun` listen on ports 80 or 443 by default, you need to mark `bun` as a something that could be trusted with ports:
+
+```bash terminal icon="terminal"
+sudo setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
 ```
 
 ---

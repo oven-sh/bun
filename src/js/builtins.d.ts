@@ -425,6 +425,11 @@ declare function $evaluateCommonJSModule(
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
+declare function $requireCommonJSModule(this: JSCommonJSModule, id: string, options?: { paths?: string[] }): any;
+/** `require("node:module")`, for invoking a user-supplied `Module._load` with the `this` Node uses. */
+declare const $nodeModuleConstructor: any;
+/** The function assigned to `Module._load` by user code, or `undefined` when it has not been replaced. */
+declare const $overriddenModuleLoad: ((request: string, parent: JSCommonJSModule, isMain: boolean) => any) | undefined;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

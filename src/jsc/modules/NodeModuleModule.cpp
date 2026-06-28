@@ -780,9 +780,91 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
     return prototype;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// `Module._load(request, parent, isMain)`: the default implementation. It
+// performs the resolve + cache check + load a `require()` does, anchored at
+// `parent`. `Module.prototype.require` dispatches through `Module._load` once
+// user code has replaced it, so interception tools (proxyquire, mock-require,
+// APM agents) see every `require()`; this is the original they forward to.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue request = callFrame->argument(0);
+    JSValue parent = callFrame->argument(1);
+
+    auto* parentModule = dynamicDowncast<Bun::JSCommonJSModule>(parent);
+    if (!parentModule) [[unlikely]] {
+        // Node accepts a plain `{ filename }` / `{ id }` object or no parent at
+        // all, in which case resolution is anchored at the working directory.
+        WTF::String from;
+        if (parent.isObject()) {
+            auto* parentObject = parent.getObject();
+            auto anchor = parentObject->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!anchor || !anchor.isString()) {
+                anchor = parentObject->getIfPropertyExists(globalObject, vm.propertyNames->id);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            if (anchor && anchor.isString()) {
+                from = anchor.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+        parentModule = Bun::JSCommonJSModule::create(globalObject, from, JSC::constructEmptyObject(globalObject), true, JSC::jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    JSValue requireFunction = globalObject->getDirect(vm, builtinNames(vm).requireCommonJSModulePrivateName());
+    ASSERT(requireFunction.isCallable());
+    JSC::MarkedArgumentBuffer args;
+    args.append(request);
+    ASSERT(!args.hasOverflowed());
+    RELEASE_AND_RETURN(scope,
+        JSValue::encode(JSC::profiledCall(globalObject, JSC::ProfilingReason::API, requireFunction,
+            JSC::getCallData(requireFunction), parentModule, args)));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(nodeModuleUnderscoreLoad,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(
+        globalObject->m_moduleUnderscoreLoadFunction.getInitializedOnMainThread(
+            globalObject));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setNodeModuleUnderscoreLoad,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue, EncodedJSValue encodedValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = lexicalGlobalObject->vm();
+    auto value = JSValue::decode(encodedValue);
+    if (value.isCell()) {
+        bool isOriginal = false;
+        if (value.isCallable()) {
+            JSC::CallData callData = JSC::getCallData(value);
+
+            if (callData.type == JSC::CallData::Type::Native) {
+                if (callData.native.function.untaggedPtr() == &jsFunctionLoad) {
+                    isOriginal = true;
+                }
+            }
+        }
+        globalObject->m_moduleUnderscoreLoadFunction.set(vm, globalObject, value.asCell());
+        // `require()`'s fast path only consults `@overriddenModuleLoad`; keep it
+        // `undefined` unless user code actually installed a replacement function.
+        globalObject->putDirect(vm,
+            builtinNames(vm).overriddenModuleLoadPrivateName(),
+            (isOriginal || !value.isCallable()) ? JSC::jsUndefined() : value, 0);
+    }
+
+    return true;
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
@@ -891,7 +973,7 @@ _debug                  getModuleDebugObject              PropertyCallback
 _extensions             getModuleExtensionsObject         PropertyCallback
 _findPath                jsFunctionFindPath               Function 3
 _initPaths              JSBuiltin                         Function|Builtin 0
-_load                   jsFunctionLoad                    Function 1
+_load                   nodeModuleUnderscoreLoad          CustomAccessor
 _nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1
 _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
@@ -1084,6 +1166,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
                 jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,
                 JSC::NoIntrinsic);
             init.set(resolveFilenameFunction);
+        });
+
+    globalObject->m_moduleUnderscoreLoadFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+            JSFunction* loadFunction = JSFunction::create(
+                init.vm, init.owner, 3, "_load"_s,
+                jsFunctionLoad, JSC::ImplementationVisibility::Public,
+                JSC::NoIntrinsic);
+            init.set(loadFunction);
         });
 
     globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(

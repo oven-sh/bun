@@ -379,19 +379,27 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test("eval does not leak source code", async () => {
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "eval-source-leak-fixture.js"],
-    env: bunEnv,
-    cwd: __dirname,
-    stderr: "pipe",
-    stdout: "ignore",
-  });
-  await proc.exited;
-  const errors = await proc.stderr.text();
-  if (errors.length > 0) throw new Error(errors);
-  expect(proc.exitCode).toBe(0);
-});
+// The fixture cycles 6 workers holding 100 MiB of eval source each and forces
+// 3 full GCs after every one: ~2s under a release build, ~36s under a debug
+// ASAN build. The workload cannot be shrunk (smaller source sizes fall under
+// the process's RSS noise floor and false-positive the leak threshold).
+test(
+  "eval does not leak source code",
+  async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "eval-source-leak-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await proc.stderr.text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  },
+  120_000,
+);
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
@@ -469,21 +477,27 @@ describe("environmentData", () => {
     expect(getEnvironmentData("does_not_exist")).toBeUndefined();
   });
 
-  test("is deeply inherited", async () => {
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
-      env: bunEnv,
-      cwd: __dirname,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    await proc.exited;
-    const errors = await proc.stderr.text();
-    if (errors.length > 0) throw new Error(errors);
-    expect(proc.exitCode).toBe(0);
-    const out = await proc.stdout.text();
-    expect(out).toBe("foo\n".repeat(5));
-  });
+  // 5 nested worker VMs at roughly 1s each under a debug ASAN build sits
+  // right at the 5s default, so this flakes there while taking 80ms released.
+  test(
+    "is deeply inherited",
+    async () => {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
+        env: bunEnv,
+        cwd: __dirname,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      await proc.exited;
+      const errors = await proc.stderr.text();
+      if (errors.length > 0) throw new Error(errors);
+      expect(proc.exitCode).toBe(0);
+      const out = await proc.stdout.text();
+      expect(out).toBe("foo\n".repeat(5));
+    },
+    30_000,
+  );
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({

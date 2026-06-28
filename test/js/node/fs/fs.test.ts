@@ -3741,6 +3741,99 @@ it("test syscall errno, issue#4198", () => {
   rmdirSync(path);
 });
 
+describe("error.syscall is node's operation name, not the raw kernel syscall", () => {
+  // Node documents err.syscall as a stable, platform-independent operation
+  // name ("stat", "lstat", "utime", ...). On Linux, Bun implements stat via
+  // statx(2) and utimes via utimensat(2); the implementation detail must not
+  // leak into err.syscall.
+  const missing = join(tmpdir(), "fs-syscall-" + Date.now(), "nope");
+  const badfd = 2147483640;
+  const syscallOf = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e: any) {
+      return e.syscall;
+    }
+    throw new Error("expected to throw");
+  };
+  const syscallOfAsync = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e: any) {
+      return e.syscall;
+    }
+    throw new Error("expected to reject");
+  };
+
+  it("sync", () => {
+    expect({
+      stat: syscallOf(() => statSync(missing)),
+      lstat: syscallOf(() => lstatSync(missing)),
+      fstat: syscallOf(() => fstatSync(badfd)),
+      utimes: syscallOf(() => fs.utimesSync(missing, 1, 1)),
+      lutimes: syscallOf(() => fs.lutimesSync(missing, 1, 1)),
+      futimes: syscallOf(() => fs.futimesSync(badfd, 1, 1)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      fstat: "fstat",
+      utimes: "utime",
+      lutimes: "lutime",
+      futimes: "futime",
+    });
+  });
+
+  it("syscall appears in the error message", () => {
+    expect(() => statSync(missing)).toThrow(/, stat '/);
+    expect(() => lstatSync(missing)).toThrow(/, lstat '/);
+    expect(() => fs.utimesSync(missing, 1, 1)).toThrow(/, utime '/);
+    expect(() => fs.lutimesSync(missing, 1, 1)).toThrow(/, lutime '/);
+  });
+
+  it("async (fs/promises)", async () => {
+    expect({
+      stat: await syscallOfAsync(() => promises.stat(missing)),
+      lstat: await syscallOfAsync(() => promises.lstat(missing)),
+      utimes: await syscallOfAsync(() => promises.utimes(missing, 1, 1)),
+      lutimes: await syscallOfAsync(() => promises.lutimes(missing, 1, 1)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      utimes: "utime",
+      lutimes: "lutime",
+    });
+  });
+
+  it("async (callback)", async () => {
+    const cb = (fn: (cb: (err: any) => void) => void) =>
+      new Promise<string>(resolve => fn(err => resolve(err?.syscall)));
+    expect({
+      stat: await cb(done => fs.stat(missing, done)),
+      lstat: await cb(done => fs.lstat(missing, done)),
+      utimes: await cb(done => fs.utimes(missing, 1, 1, done)),
+      lutimes: await cb(done => fs.lutimes(missing, 1, 1, done)),
+    }).toEqual({
+      stat: "stat",
+      lstat: "lstat",
+      utimes: "utime",
+      lutimes: "lutime",
+    });
+  });
+
+  it("FileHandle.read after close reports 'read', not 'fsync'", async () => {
+    using dir = tempDir("fs-syscall-fh", { "f.txt": "hello" });
+    const handle = await promises.open(join(String(dir), "f.txt"), "r");
+    await handle.close();
+    let err: any;
+    try {
+      await handle.read(Buffer.alloc(1), 0, 1, 0);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, syscall: err?.syscall }).toEqual({ code: "EBADF", syscall: "read" });
+  });
+});
+
 it.if(isWindows)("writing to windows hidden file is possible", () => {
   const temp = tmpdir();
   writeFileSync(join(temp, "file.txt"), "FAIL");

@@ -9,7 +9,6 @@ import {
   CString,
   dlopen,
   JSCallback,
-  linkSymbols,
   ptr,
   read,
   suffix,

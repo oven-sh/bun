@@ -248,8 +248,8 @@ impl NapiHandleScope {
         unsafe { NapiHandleScope__open(env.as_mut_ptr(), escapable) }
     }
 
-    /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
-    /// Asserts that self is the current handle scope in env.
+    /// Closes the given handle scope (and any scope nested inside it), releasing all values
+    /// inside it. Does nothing if it is no longer in the chain of open handle scopes.
     pub(super) fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
         // SAFETY: NapiHandleScope__close handles null `current`.
         unsafe { NapiHandleScope__close(env.as_mut_ptr(), self_) }

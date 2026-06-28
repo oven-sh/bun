@@ -335,6 +335,44 @@ test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Closing handle scopes out of order (or closing one whose enclosing scope was
+// already closed) must return a status like Node does, not abort the process.
+static napi_value
+test_napi_handle_scope_out_of_order_close(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_handle_scope outer, inner;
+  NODE_API_CALL(env, napi_open_handle_scope(env, &outer));
+  NODE_API_CALL(env, napi_open_handle_scope(env, &inner));
+  // close the outer scope first (wrong order), then the inner one
+  printf("close outer status: %d\n", napi_close_handle_scope(env, outer));
+  printf("close inner status: %d\n", napi_close_handle_scope(env, inner));
+
+  napi_escapable_handle_scope escapable_outer, escapable_inner;
+  NODE_API_CALL(env, napi_open_escapable_handle_scope(env, &escapable_outer));
+  NODE_API_CALL(env, napi_open_escapable_handle_scope(env, &escapable_inner));
+  printf("close escapable outer status: %d\n",
+         napi_close_escapable_handle_scope(env, escapable_outer));
+  printf("close escapable inner status: %d\n",
+         napi_close_escapable_handle_scope(env, escapable_inner));
+
+  // NAPI and the runtime must still work afterwards
+  napi_value str;
+  NODE_API_CALL(
+      env, napi_create_string_utf8(env, "still alive", NAPI_AUTO_LENGTH, &str));
+  char buf[32];
+  size_t len;
+  NODE_API_CALL(env,
+                napi_get_value_string_utf8(env, str, buf, sizeof(buf), &len));
+  printf("%s\n", buf);
+
+  return ok(env);
+}
+
 // call this with a bunch (>10) of string arguments representing increasing
 // decimal numbers. ensures that the runtime does not let these arguments be
 // freed.
@@ -2399,6 +2437,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);
   REGISTER_FUNCTION(env, exports, test_napi_escapable_handle_scope);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_nesting);
+  REGISTER_FUNCTION(env, exports, test_napi_handle_scope_out_of_order_close);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);

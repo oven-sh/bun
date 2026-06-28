@@ -80,8 +80,8 @@ public:
     // Create a new handle scope in the given environment
     static NapiHandleScopeImpl* open(Zig::GlobalObject* globalObject, bool escapable);
 
-    // Closes the most recently created handle scope in the given environment and restores the old one.
-    // Asserts that `current` is the active handle scope.
+    // Closes `current` and every handle scope nested inside it, restoring the enclosing
+    // one. Does nothing if `current` is no longer in the chain of open handle scopes.
     static void close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
 
 private:
@@ -92,8 +92,8 @@ private:
 // Create a new handle scope in the given environment
 extern "C" NapiHandleScopeImpl* NapiHandleScope__open(napi_env env, bool escapable);
 
-// Pop the most recently created handle scope in the given environment and restore the old one.
-// Asserts that `current` is the active handle scope.
+// Pop `current` (and every handle scope nested inside it) and restore the enclosing one.
+// Does nothing if `current` is no longer in the chain of open handle scopes.
 extern "C" void NapiHandleScope__close(napi_env env, NapiHandleScopeImpl* current);
 
 // Store a value in the active handle scope in the given environment

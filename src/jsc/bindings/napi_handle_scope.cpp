@@ -111,8 +111,19 @@ void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl
     if (!current) {
         return;
     }
-    RELEASE_ASSERT_WITH_MESSAGE(current == globalObject->m_currentNapiHandleScopeImpl.get(),
-        "Unbalanced napi_handle_scope opens and closes");
+    // Addons may close handle scopes out of order or more than once; Node returns
+    // napi_ok for both, so we must not abort. Like V8, closing a scope discards every
+    // scope nested inside it, and closing one no longer in the chain does nothing.
+    auto* active = globalObject->m_currentNapiHandleScopeImpl.get();
+    if (current != active) {
+        auto* scope = active;
+        while (scope && scope != current) {
+            scope = scope->parent();
+        }
+        if (!scope) {
+            return;
+        }
+    }
     if (auto* parent = current->parent()) {
         globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, parent);
     } else {

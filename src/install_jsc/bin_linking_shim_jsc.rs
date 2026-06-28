@@ -34,8 +34,16 @@ pub fn js_parse_shebang(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
         Ok(None) => Ok(JSValue::NULL),
         Ok(Some(shebang)) => {
             let obj = JSValue::create_empty_object(go, 2);
-            obj.put(go, b"launcher", BunString::from_bytes(shebang.launcher).to_js(go)?);
-            obj.put(go, b"isNodeOrBun", JSValue::js_boolean(shebang.is_node_or_bun));
+            obj.put(
+                go,
+                b"launcher",
+                BunString::from_bytes(shebang.launcher).to_js(go)?,
+            );
+            obj.put(
+                go,
+                b"isNodeOrBun",
+                JSValue::js_boolean(shebang.is_node_or_bun),
+            );
             Ok(obj)
         }
         Err(err) => Err(go.throw(format_args!("parseShebang failed: {err:?}"))),

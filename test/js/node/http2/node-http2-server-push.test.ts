@@ -6,27 +6,45 @@ import http2utils from "./helpers";
 // Client-side handling of server push: refusing a pushed stream with
 // close(NGHTTP2_REFUSED_STREAM) and the frames that race the refusal.
 
-// Per-test barriers: any connection-level failure rejects every pending one so the test fails
-// at its cause instead of the timeout.
+// Per-test barriers: a connection-level failure rejects every pending (and later) barrier so the
+// test fails at its cause instead of the timeout; beginTeardown() disarms that for the expected
+// end-of-test socket closes.
 function makeBarriers() {
   const barriers: PromiseWithResolvers<any>[] = [];
+  let failure: unknown;
+  let failed = false;
+  let tearingDown = false;
   const barrier = () => {
     const pending = Promise.withResolvers<any>();
-    barriers.push(pending);
+    if (failed) {
+      pending.promise.catch(() => {});
+      pending.reject(failure);
+    } else {
+      barriers.push(pending);
+    }
     return pending;
   };
   const failTest = (err: unknown) => {
-    for (const pending of barriers) pending.reject(err);
+    if (failed || tearingDown) return;
+    failed = true;
+    failure = err;
+    for (const pending of barriers) {
+      // A barrier the test is no longer awaiting must not surface as an unhandled rejection.
+      pending.promise.catch(() => {});
+      pending.reject(err);
+    }
+    barriers.length = 0;
   };
-  return { barrier, failTest };
+  const beginTeardown = () => {
+    tearingDown = true;
+  };
+  return { barrier, failTest, beginTeardown };
 }
 
 test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) resets only that stream", async () => {
-  // Declining a server push (pushedStream.close(NGHTTP2_REFUSED_STREAM)) is the documented way
-  // to reject it: node sends exactly one RST_STREAM(REFUSED_STREAM) for the pushed id, the
-  // pushed stream errors with ERR_HTTP2_STREAM_ERROR, and the session (and the request that
-  // carried the PUSH_PROMISE) keeps working.
-  const { barrier, failTest } = makeBarriers();
+  // Refusing a push must reset only that stream: one RST_STREAM(REFUSED_STREAM), a coded
+  // ERR_HTTP2_STREAM_ERROR on the pushed stream, and an untouched session (node behavior).
+  const { barrier, failTest, beginTeardown } = makeBarriers();
   const server = http2.createServer();
   const serverPushClosed = barrier();
   server.on("stream", (stream, headers) => {
@@ -72,8 +90,14 @@ test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) r
       }
     });
     upstream.on("data", chunk => socket.write(chunk));
-    socket.on("close", () => upstream.destroy());
-    upstream.on("close", () => socket.destroy());
+    socket.on("close", () => {
+      upstream.destroy();
+      failTest(new Error("proxy socket closed before the test finished"));
+    });
+    upstream.on("close", () => {
+      socket.destroy();
+      failTest(new Error("proxy upstream closed before the test finished"));
+    });
     socket.on("error", failTest);
     upstream.on("error", failTest);
   });
@@ -139,10 +163,8 @@ test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) r
     await againClosed.promise;
     expect(sessionErrors).toEqual([]);
 
-    // Exactly one RST_STREAM(REFUSED_STREAM) went out for the pushed stream id (it comes first);
-    // any later RST for it is the RFC 9113 5.1 closed-stream answer to pushed-response frames
-    // that raced the refusal (pinned deterministically by the next test). The client never sent
-    // HEADERS or DATA on the pushed stream.
+    // The refusal RST_STREAM(REFUSED_STREAM) goes out exactly once (and first); any later RST is
+    // the RFC 9113 5.1 closed-stream answer to pushed-response frames that raced it (next test).
     const pushedRstCodes = clientFrames
       .filter(f => f.type === 3 && f.streamId === pushedId)
       .map(f => f.payload.readUInt32BE(0));
@@ -155,9 +177,11 @@ test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) r
     // Graceful close still reaches 'close': the refused push does not pin the session open.
     const sessionClosed = barrier();
     client.on("close", sessionClosed.resolve);
+    beginTeardown();
     client.close();
     await sessionClosed.promise;
   } finally {
+    beginTeardown();
     client?.destroy();
     proxy.close();
     for (const socket of proxySockets) socket.destroy();
@@ -166,10 +190,8 @@ test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) r
 });
 
 test("http2 client ignores the pushed response that races a push refusal", async () => {
-  // The pushed response HEADERS are usually already in flight when the client's
-  // RST_STREAM(REFUSED_STREAM) reaches the server. They target a stream the client reset and
-  // servers only open streams through PUSH_PROMISE (RFC 9113 5.1), so they must not open a new
-  // stream on the client: a phantom stream would pin the session's stream count and hang close().
+  // HEADERS for an even id the client already reset (the pushed response racing the refusal)
+  // must not open a new stream (RFC 9113 5.1): a phantom stream would pin the session open.
   const pushBlock = Buffer.concat([
     // Static-table-only HPACK: :method GET (2), :scheme http (6), then literal-without-indexing
     // :path "/pushed" (name index 4) and :authority "localhost" (name index 1).
@@ -184,7 +206,7 @@ test("http2 client ignores the pushed response that races a push refusal", async
     pushPromisePayload,
   ]);
 
-  const { barrier, failTest } = makeBarriers();
+  const { barrier, failTest, beginTeardown } = makeBarriers();
   const clientFrames = [];
   const gotRequest = barrier();
   const gotPushRst = barrier();
@@ -220,6 +242,7 @@ test("http2 client ignores the pushed response that races a push refusal", async
       }
     });
     socket.on("error", failTest);
+    socket.on("close", () => failTest(new Error("socket closed before the test finished")));
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 
@@ -273,9 +296,11 @@ test("http2 client ignores the pushed response that races a push refusal", async
     // Nothing is left pinning the session: a graceful close still reaches 'close'.
     const sessionClosed = barrier();
     client.on("close", sessionClosed.resolve);
+    beginTeardown();
     client.close();
     await sessionClosed.promise;
   } finally {
+    beginTeardown();
     client?.destroy();
     server.close();
     for (const socket of sockets) socket.destroy();

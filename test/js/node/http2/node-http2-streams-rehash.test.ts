@@ -2,11 +2,9 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
 
-// The spawned fixtures take well under a second in release but several seconds
-// under debug+ASAN (the options-getter test needs ~6s; the deferred-task-queue
-// fixture ~8s when it crashes), so the default 5s per-test budget kills them.
-// Debug builds get the largest multiplier: they are ASAN-instrumented and
-// unoptimized.
+// The spawned fixtures finish in well under a second in release but take
+// several seconds under the ASAN-instrumented, unoptimized debug build, so
+// the default 5s per-test budget kills them before they can exit.
 const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
 
 // H2FrameParser stored Stream by value in a HashMap. Any *Stream obtained

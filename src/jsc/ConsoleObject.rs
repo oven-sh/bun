@@ -972,12 +972,9 @@ impl<'a> TablePrinter<'a> {
             }
         }
 
-        // Width pass: read and format each cell exactly once, appending its
-        // rendered bytes to `cell_text` and sizing columns as we go. The
-        // render pass replays those byte ranges, so no property is re-read
-        // (which would re-invoke its getter and exhaust one-shot iterables)
-        // and no value is re-formatted (which would re-run a custom inspect
-        // hook).
+        // Width pass: format each cell exactly once, appending its bytes to
+        // `cell_text` and sizing columns. The render pass replays those byte
+        // ranges, so no property is re-read and no value is re-formatted.
         let mut cell_text: Vec<u8> = Vec::new();
         let mut rows: Vec<CollectedRow> = Vec::new();
         {

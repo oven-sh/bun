@@ -309,6 +309,46 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   await 1;
 });
 
+it("write() and flush() after end() return 0 and undefined, not boolean true", async () => {
+  const path = join(tmpdirSync(), "filesink-write-after-end.txt");
+  const writer = Bun.file(path).writer();
+
+  // write() may return a number synchronously (POSIX regular file) or a
+  // Promise<number> (Windows regular-file uv_fs_write); await either.
+  expect(await writer.write("hello")).toBe(5);
+  await Promise.resolve(writer.end());
+
+  // write()/flush() are typed `number | Promise<number>`. After end() they
+  // returned the boolean `true` because end_from_js() never set `done` on the
+  // synchronous success paths, so the call fell through to the already-ended
+  // IOWriter. Now they return 0 / undefined like every other sink.
+  expect(writer.write("world")).toBe(0);
+  expect(writer.flush()).toBeUndefined();
+
+  // The dropped write must not appear in the file.
+  expect(await Bun.file(path).text()).toBe("hello");
+
+  // Calling end() again is idempotent and must not throw.
+  await Promise.resolve(writer.end()).catch(() => {});
+});
+
+it("write() to an exited subprocess's stdin returns 0, not boolean true", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "process.exit(0)"],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await proc.exited;
+
+  // The stdin FileSink's `done` is set by on_attached_process_exit. Writing
+  // to it returns 0 (nothing written), matching the HTTP/network sinks and
+  // the declared `number | Promise<number>` type.
+  expect(proc.stdin.write("late\n")).toBe(0);
+  await Promise.resolve(proc.stdin.end()).catch(() => {});
+});
+
 // On Windows the libuv write completion path re-enters JS (promise resolution)
 // while a `&mut WindowsStreamingWriter` is live, so without raw-ptr laundering
 // LLVM `noalias` lets release builds cache stale `is_done`/`parent` and

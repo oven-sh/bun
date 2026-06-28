@@ -397,7 +397,11 @@ impl PosixBufferedReader {
         self.vtable.on_reader_error(err);
     }
 
-    pub fn register_poll(&mut self) {
+    /// Returns `false` when registration failed and `on_reader_error` was
+    /// dispatched. That callback may drop the last reference to the struct
+    /// embedding `self` (the shell `PipeReader` does exactly that), so the
+    /// caller must not touch `self` again after a `false` return.
+    pub fn register_poll(&mut self) -> bool {
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
@@ -407,7 +411,7 @@ impl PosixBufferedReader {
 
         if let PollOrFd::Fd(fd) = self.handle {
             if !self.flags.contains(PosixFlags::POLLABLE) {
-                return;
+                return true;
             }
             self.handle = PollOrFd::Poll(FilePollRef::init(
                 ev,
@@ -416,7 +420,7 @@ impl PosixBufferedReader {
             ));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
-            return;
+            return true;
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
@@ -427,8 +431,9 @@ impl PosixBufferedReader {
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
             sys::Result::Err(err) => {
                 self.vtable.on_reader_error(err);
+                false
             }
-            sys::Result::Ok(()) => {}
+            sys::Result::Ok(()) => true,
         }
     }
 
@@ -808,8 +813,10 @@ impl PosixBufferedReader {
         // SAFETY: `this` aliases the live `&mut parent`; single JS thread.
         // Shadow-rebind so the local `parent` is no longer the `noalias` arg
         // but a raw-ptr-derived borrow (precedent: `JSMySQLQuery::resolve`).
-        // The reader struct is an inline field of its parent (never freed
-        // mid-call), so `*this` stays a valid place across re-entry.
+        // The reader struct is an inline field of its parent, which
+        // `on_read_chunk` re-entry never frees per `BufferedReaderParent`'s
+        // contract. `on_reader_error` MAY free it, so nothing below touches
+        // `parent` after dispatching an error (see the EAGAIN arm).
         let parent = unsafe { &mut *this };
         let streaming = parent.vtable.is_streaming_enabled();
 
@@ -882,8 +889,11 @@ impl PosixBufferedReader {
                                     bun_core::debug_warn!(
                                         "Received EAGAIN while reading from a file. This is a bug.",
                                     );
-                                } else {
-                                    parent.register_poll();
+                                } else if !parent.register_poll() {
+                                    // `on_reader_error` ran and may have freed
+                                    // the struct embedding `parent`; the
+                                    // drained head must not be delivered.
+                                    return;
                                 }
 
                                 if head_start > 0 {

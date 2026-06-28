@@ -3,7 +3,7 @@
 // surfaces synchronously from inside the spawn call. The command must finish
 // with the syscall errno as its exit code, not tear state down under the spawn.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -21,6 +21,12 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 //                            a fixed chunk ("FAKE-CHUNK\\n"), every later one
 //                            returns EAGAIN. Pins the "child wrote some bytes,
 //                            then stalled" interleaving so it is deterministic.
+//   SHELL_RECV_EAGAIN_FIRST=1 the first recv() on each AF_UNIX socket returns
+//                            EAGAIN, every later recv() is real. Pushes the
+//                            first successful read out of the eager spawn-time
+//                            read_all() and into the epoll dispatch.
+//   SHELL_FAIL_EPOLL_FROM=N  the Nth and every later epoll_ctl ADD/MOD on each
+//                            AF_UNIX socket fails with ENOMEM (1-based).
 // FilePoll registers the socketpair through the raw syscall(SYS_epoll_ctl,
 // ...) wrapper, not the libc epoll_ctl symbol, so the epoll modes interpose
 // syscall(2).
@@ -49,6 +55,8 @@ static int fail_recv = -1;
 static int fail_epoll = -1;
 static int fail_epoll_after = -1;
 static int recv_one_chunk = -1;
+static int recv_eagain_first = -1;
+static int fail_epoll_from = -1; /* 0 = off, N >= 1 = 1-based index of the first failing call */
 static unsigned char recv_count[MAX_FD];
 static unsigned char epoll_count[MAX_FD];
 
@@ -57,6 +65,11 @@ static void init_modes(void) {
   if (fail_epoll < 0) fail_epoll = getenv("SHELL_FAIL_EPOLL") != NULL;
   if (fail_epoll_after < 0) fail_epoll_after = getenv("SHELL_FAIL_EPOLL_AFTER") != NULL;
   if (recv_one_chunk < 0) recv_one_chunk = getenv("SHELL_RECV_ONE_CHUNK") != NULL;
+  if (recv_eagain_first < 0) recv_eagain_first = getenv("SHELL_RECV_EAGAIN_FIRST") != NULL;
+  if (fail_epoll_from < 0) {
+    const char *s = getenv("SHELL_FAIL_EPOLL_FROM");
+    fail_epoll_from = s ? atoi(s) : 0;
+  }
 }
 
 static int is_unix_sock(int fd) {
@@ -92,6 +105,10 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
     errno = EAGAIN;
     return -1;
   }
+  if (recv_eagain_first && fd >= 0 && fd < MAX_FD && is_unix_sock(fd) && recv_count[fd]++ == 0) {
+    errno = EAGAIN;
+    return -1;
+  }
   return real_recv(fd, buf, len, flags);
 }
 
@@ -120,6 +137,12 @@ long syscall(long number, ...) {
       }
       if (fail_epoll_after && target >= 0 && target < MAX_FD && is_unix_sock(target)) {
         if (epoll_count[target]++ >= 1) {
+          errno = ENOMEM;
+          return -1;
+        }
+      }
+      if (fail_epoll_from > 0 && target >= 0 && target < MAX_FD && is_unix_sock(target)) {
+        if (++epoll_count[target] >= fail_epoll_from) {
           errno = ENOMEM;
           return -1;
         }
@@ -171,6 +194,21 @@ const r = await $\`sleep 5\`.quiet().nothrow();
 console.log(JSON.stringify({ exitCode: r.exitCode }));
 `;
 
+// For SHELL_RECV_EAGAIN_FIRST + SHELL_FAIL_EPOLL_FROM=3: the eager spawn-time
+// read gets EAGAIN and re-registers the poll (epoll_ctl #2, succeeds), so the
+// spawn returns and drops its keepalive. The child's bytes then wake the poll;
+// that read drains the chunk, hits a real EAGAIN, and its re-registration
+// (epoll_ctl #3) fails, tearing the stream down from under the in-flight read
+// while it still has the drained chunk to deliver. `exec sleep` keeps stdout
+// open so the poll-driven read sees data-then-EAGAIN instead of EOF, and
+// `2> /dev/null` makes stdout the only captured stream so the Cmd finishes
+// as soon as it errors instead of waiting out the child.
+const POLL_CHUNK_FIXTURE = /* js */ `
+import { $ } from "bun";
+const r = await $\`sh -c 'printf AAAA; exec sleep 5' 2> /dev/null\`.quiet().nothrow();
+console.log(JSON.stringify({ exitCode: r.exitCode }));
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -181,6 +219,7 @@ beforeAll(async () => {
     "stdout-only.js": STDOUT_ONLY_FIXTURE,
     "both-pipes.js": BOTH_PIPES_FIXTURE,
     "quiet-chunk.js": QUIET_CHUNK_FIXTURE,
+    "poll-chunk.js": POLL_CHUNK_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -202,16 +241,32 @@ afterAll(() => {
 // The shell surfaces the failed syscall's errno as the command's exit code.
 const ENOMEM = 12;
 
-const MODES = ["SHELL_FAIL_RECV", "SHELL_FAIL_EPOLL", "SHELL_FAIL_EPOLL_AFTER", "SHELL_RECV_ONE_CHUNK"] as const;
+const MODES = [
+  "SHELL_FAIL_RECV",
+  "SHELL_FAIL_EPOLL",
+  "SHELL_FAIL_EPOLL_AFTER",
+  "SHELL_RECV_ONE_CHUNK",
+  "SHELL_RECV_EAGAIN_FIRST",
+] as const;
+// Integer-valued fault knobs; cleared alongside MODES and set through `extraEnv`.
+const VALUE_MODES = ["SHELL_FAIL_EPOLL_FROM"] as const;
 
-async function expectShellFault(script: string, modes: (typeof MODES)[number][]) {
+async function expectShellFault(
+  script: string,
+  modes: (typeof MODES)[number][],
+  extraEnv: Partial<Record<(typeof VALUE_MODES)[number], string>> = {},
+) {
   const existing = bunEnv.LD_PRELOAD;
   const env: Record<string, string | undefined> = {
     ...bunEnv,
     LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+    // ASAN symbolizes the whole debug binary before exiting on an error, which
+    // alone blows the per-test budget. No assertion reads the symbolized frames.
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
   };
-  for (const m of MODES) env[m] = undefined;
+  for (const m of [...MODES, ...VALUE_MODES]) env[m] = undefined;
   for (const m of modes) env[m] = "1";
+  Object.assign(env, extraEnv);
   await using proc = Bun.spawn({
     // If the fixture does crash, skip the debug build's slow symbolized
     // backtrace so the failure surfaces as the panic message, not a test
@@ -275,5 +330,18 @@ test.concurrent.skipIf(!isLinux || !cc)(
   "shell survives a poll re-registration failure after the eager read drained a chunk",
   async () => {
     await expectShellFault("quiet-chunk.js", ["SHELL_FAIL_EPOLL_AFTER", "SHELL_RECV_ONE_CHUNK"]);
+  },
+);
+
+// Same re-registration failure, but raised from the poll-driven read instead
+// of the eager spawn-time one. `Readable::start_pipe_reader` holds an Arc
+// across the eager read, but the epoll dispatch holds nothing, so when the
+// failed register_poll's on_reader_error dropped the last reference to the
+// PipeReader, read_with_fn's EAGAIN arm delivered the drained chunk to the
+// freed reader. ASAN: heap-use-after-free in PipeReader::on_read_chunk.
+test.concurrent.skipIf(!isLinux || !cc || !isASAN)(
+  "shell survives a poll re-registration failure during a poll-driven read",
+  async () => {
+    await expectShellFault("poll-chunk.js", ["SHELL_RECV_EAGAIN_FIRST"], { SHELL_FAIL_EPOLL_FROM: "3" });
   },
 );

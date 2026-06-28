@@ -3,7 +3,13 @@ const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = require("internal/fs/binding") as $ZigGeneratedClasses.NodeJSFS;
 const { glob } = require("internal/fs/glob");
-const { validateInteger, validateBoolean, validateObject, validateAbortSignal } = require("internal/validators");
+const {
+  validateInteger,
+  validateBoolean,
+  validateObject,
+  validateAbortSignal,
+  validateEncoding,
+} = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
 
@@ -598,6 +604,13 @@ function asyncWrap(fn: any, name: string) {
         }
         if (typeof length !== "number") length = buffer.byteLength - offset;
         if (typeof position !== "number") position = null;
+      } else {
+        // filehandle.write(string[, position[, encoding]]): `length` is the
+        // encoding. Node rejects a non-string before it validates the encoding.
+        if (typeof buffer !== "string") {
+          throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+        }
+        validateEncoding(buffer, length);
       }
       try {
         this[kRef]();

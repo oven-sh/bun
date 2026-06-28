@@ -50,7 +50,12 @@ beforeAll(() => {
 async function runFixture(code: string) {
   await using proc = spawn({
     cmd: [bunExe(), "-e", `const addon = require(${JSON.stringify(addonPath)});\n${code}`],
-    env: bunEnv,
+    // Strip JSC exception-scope validation if a CI agent has it set (like the
+    // JSC_useJIT strip in harness.ts). Every napi_* call opens a ThrowScope that
+    // simulates a throw on return into the addon's C frame, and Node-API has no
+    // place for an exception check between two napi calls, so any addon callback
+    // making two of them aborts under the validator regardless of this fix.
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined, BUN_JSC_dumpSimulatedThrows: undefined },
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -1,5 +1,6 @@
 import fs from "fs";
 try {
+  let sawChange = false;
   const watcher = fs.watch("./myrelativedir/", { signal: AbortSignal.timeout(2000) });
 
   watcher.on("change", function (event, filename) {
@@ -9,6 +10,7 @@ try {
       watcher.close();
       process.exit(1);
     } else {
+      sawChange = true;
       clearInterval(interval);
       watcher.close();
     }
@@ -17,6 +19,15 @@ try {
     clearInterval(interval);
     console.error(err.message);
     process.exit(1);
+  });
+  // The abort timeout only emits 'close', so a watcher that never delivered a
+  // change event has to be failed here (and the interval cleared so we exit).
+  watcher.on("close", () => {
+    clearInterval(interval);
+    if (!sawChange) {
+      console.error("timed out without a change event");
+      process.exit(1);
+    }
   });
 
   const interval = setInterval(() => {

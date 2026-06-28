@@ -112,9 +112,11 @@ describe("fs.watch", () => {
     });
 
     watcher.on("error", e => (err = e));
+    // The AbortSignal.timeout(3000) hang guard only emits 'close'; reaching it
+    // with fewer than 2 change events means no events were ever delivered.
     watcher.on("close", () => {
       clearInterval(interval);
-      done(err);
+      done(err ?? (count < 2 ? new Error(`timed out after ${count} change events`) : undefined));
     });
 
     const interval = repeat(() => {
@@ -167,9 +169,10 @@ describe("fs.watch", () => {
       }
     });
     watcher.on("error", e => (err = e));
+    // Same hang guard as "add file/folder to folder" above.
     watcher.on("close", () => {
       clearInterval(interval);
-      done(err);
+      done(err ?? (count < 2 ? new Error(`timed out after ${count} change events`) : undefined));
     });
 
     const interval = repeat(() => {

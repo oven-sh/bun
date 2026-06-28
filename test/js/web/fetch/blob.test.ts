@@ -193,6 +193,15 @@ test("Blob.slice applies ToNumber to start/end and ToString to contentType", asy
   expect(blob.slice(1, 3, { toString: () => "text/x" } as any).type).toBe("text/x");
   // values ToNumber rejects throw
   expect(() => blob.slice(Symbol() as any)).toThrow(TypeError);
+
+  // arguments are converted before the empty-blob fast path returns
+  const empty = new Blob([]);
+  expect(() => empty.slice(Symbol() as any)).toThrow(TypeError);
+  let valueOfCalls = 0;
+  expect(empty.slice({ valueOf: () => (valueOfCalls++, 0) } as any).size).toBe(0);
+  expect(valueOfCalls).toBe(1);
+  expect(empty.slice(0, 0, 123 as any).type).toBe("123");
+  expect(empty.slice(0, 0, "text/HTML").type).toBe("text/html");
 });
 
 test("blob: can be fetched", async () => {

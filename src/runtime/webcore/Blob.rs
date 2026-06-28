@@ -2042,13 +2042,6 @@ impl BlobExt for Blob {
         // index the full fixed-3 array (args[2] is written below regardless of len).
         let args = &mut arguments_.ptr[..];
 
-        if self.size.get() == 0 {
-            let ptr = Blob::new(Blob::init_empty(global_this));
-            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
-            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
-            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
-        }
-
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
@@ -2121,6 +2114,21 @@ impl BlobExt for Blob {
                     None => BlobContentType::from_lowercased(slice),
                 };
             }
+        }
+
+        // WebIDL converts every argument before the operation body runs, so
+        // the coercions above (and their side effects and exceptions) happen
+        // even when this Blob is empty; the provided type still applies.
+        if self.size.get() == 0 {
+            let blob = Blob::init_empty(global_this);
+            let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
+            blob.content_type.set(content_type);
+            blob.content_type_was_set
+                .set(self.content_type_was_set.get() || content_type_was_allocated);
+            let ptr = Blob::new(blob);
+            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
+            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
+            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
         Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))

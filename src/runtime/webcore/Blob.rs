@@ -247,6 +247,7 @@ pub trait BlobExt {
         extra_options: Option<JSValue>,
         mkdirp_if_not_exists: bool,
         mode: Option<bun_sys::Mode>,
+        took_stream: &mut bool,
     ) -> JsResult<JSValue>;
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_slice_from(
@@ -1432,6 +1433,11 @@ impl BlobExt for Blob {
         extra_options: Option<JSValue>,
         mkdirp_if_not_exists: bool,
         mode: Option<bun_sys::Mode>,
+        // Set once `assign_to_stream` has taken the stream. The stream's own
+        // close path clears its `$reader` lock sentinel and direct streams
+        // never set `$disturbed`, so stream state cannot answer this after
+        // the fact. Stays false on every early return before the assignment.
+        took_stream: &mut bool,
     ) -> JsResult<JSValue> {
         let Some(store) = self.store.get().clone() else {
             return Ok(
@@ -1685,6 +1691,7 @@ impl BlobExt for Blob {
         // the controller cell through this as `void**`.
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*(*file_sink).signal.as_ptr()).ptr).cast::<*mut c_void>() };
+        *took_stream = true;
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
@@ -1735,7 +1742,7 @@ impl BlobExt for Blob {
                     }
                     jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: file_sink is a live +1 *mut FileSink.
-                        let written = unsafe { (*file_sink).written.get() } as f64;
+                        let written = unsafe { (*file_sink).received_bytes.get() } as f64;
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
@@ -1769,7 +1776,7 @@ impl BlobExt for Blob {
             }
         }
         // SAFETY: file_sink is a live +1 *mut FileSink.
-        let written = unsafe { (*file_sink).written.get() } as f64;
+        let written = unsafe { (*file_sink).received_bytes.get() } as f64;
         // SAFETY: release our +1 ref on the sink.
         unsafe { webcore::FileSink::deref(file_sink) };
 
@@ -4891,12 +4898,15 @@ pub fn write_file_with_source_destination(
             )?,
             ctx,
         )? {
+            // An S3 source has no Body to mark used, so the taken signal is unused.
+            let mut _took_stream = false;
             return destination_blob.pipe_readable_stream_to_blob(
                 ctx,
                 stream,
                 options.extra_options,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,
+                &mut _took_stream,
             );
         } else {
             return Ok(
@@ -5351,18 +5361,18 @@ pub fn write_file_internal(
                                 "ReadableStream has already been used"
                             )));
                         }
-                        let readable_value = readable.value;
+                        let mut took_stream = false;
                         let result = destination_blob.pipe_readable_stream_to_blob(
                             global_this,
                             readable,
                             options.extra_options,
                             options.mkdirp_if_not_exists.unwrap_or(true),
                             options.mode,
+                            &mut took_stream,
                         );
-                        // Only a pipe that took a reader consumed the body. Early
-                        // rejections (open failure) leave the stream untouched.
-                        if webcore::readable_stream::is_disturbed_value(readable_value, global_this)
-                        {
+                        // Only a pipe that took the stream consumed the body. Early
+                        // rejections (open failure) leave it untouched and retryable.
+                        if took_stream {
                             // SAFETY: re-borrow `body_value` (a live JS-heap Body);
                             // the `readable` borrow ended above.
                             unsafe { *body_value = BodyValue::Used };
@@ -6118,7 +6128,7 @@ pub fn on_file_stream_resolve_request_stream(
         stream.done(global_this);
     }
     // SAFETY: `this.sink` is the +1 ref held until Drop runs below.
-    let written = unsafe { (*this.sink).written.get() } as f64;
+    let written = unsafe { (*this.sink).received_bytes.get() } as f64;
     this.promise
         .resolve(global_this, JSValue::js_number(written))?;
     Ok(JSValue::UNDEFINED)

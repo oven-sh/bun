@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
+use bun_simdutf_sys::simdutf;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::api::bun::process::Status as SpawnStatus;
@@ -39,6 +40,12 @@ pub struct FileSink {
     pub writer: JsCell<IOWriter>,
     pub event_loop_handle: EventLoopHandle,
     pub written: Cell<usize>,
+    /// Total UTF-8 bytes `write`/`write_latin1`/`write_utf16` accepted, each
+    /// chunk counted exactly once. `written` mixes the writer's buffered and
+    /// flushed progress reports and can count the same bytes twice (e.g. a
+    /// direct stream's buffer-then-flush), so it cannot report how many bytes
+    /// a piped `ReadableStream` wrote (`Blob::pipe_readable_stream_to_blob`).
+    pub received_bytes: Cell<u64>,
     pub pending: JsCell<streams::WritablePending>,
     pub signal: JsCell<streams::Signal>,
     pub done: Cell<bool>,
@@ -967,6 +974,16 @@ impl FileSink {
         this
     }
 
+    /// Credit one accepted chunk's emitted UTF-8 length into `received_bytes`.
+    /// `Wrote`/`Pending` mean the writer took the whole chunk (buffering any
+    /// remainder); `Done`/`Err` mean it took nothing.
+    fn count_received(&self, rc: &WriteResult, emitted_len: usize) {
+        if matches!(rc, WriteResult::Wrote(_) | WriteResult::Pending(_)) {
+            self.received_bytes
+                .set(self.received_bytes.get() + emitted_len as u64);
+        }
+    }
+
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
@@ -974,6 +991,7 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
+        self.count_received(&rc, data.slice().len());
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -990,6 +1008,7 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
+        self.count_received(&rc, simdutf::length::utf8::from::latin1(data.slice()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1001,6 +1020,9 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
+        // `IOWriter::write_utf16` sizes its buffer from this same length fn, so
+        // the count matches what the simdutf converter actually emits.
+        self.count_received(&rc, simdutf::length::utf8::from::utf16::le(data.slice16()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
@@ -1300,6 +1322,7 @@ impl FileSink {
             // SAFETY: sentinel only; never dispatched (overwritten before use).
             event_loop_handle: EventLoopHandle::init(core::ptr::null_mut()),
             written: Cell::new(0),
+            received_bytes: Cell::new(0),
             pending: JsCell::new(streams::WritablePending {
                 result: streams::Writable::Done,
                 ..Default::default()

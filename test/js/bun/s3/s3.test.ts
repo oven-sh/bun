@@ -1273,19 +1273,18 @@ for (let credentials of allCredentials) {
             }),
           );
         });
-        it("should error when presign with invalid token", async () => {
+        it("should presign with a session token larger than 2 KB", async () => {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
               let options = { ...s3Options, bucket: S3Bucket };
+              // AWS documents no maximum session token length; Cognito and
+              // role chaining routinely produce multi-KB tokens. This used to
+              // throw ERR_S3_INVALID_SESSION_TOKEN.
               options.sessionToken = Buffer.alloc(4096, "a").toString();
 
-              try {
-                const s3file = fn(randomUUID(), options);
-                await s3file.presign();
-                expect.unreachable();
-              } catch (e: any) {
-                expect(e?.code).toBe("ERR_S3_INVALID_SESSION_TOKEN");
-              }
+              const s3file = fn(randomUUID(), options);
+              const url = await s3file.presign();
+              expect(new URL(url).searchParams.get("X-Amz-Security-Token")).toBe(options.sessionToken);
             }),
           );
         });

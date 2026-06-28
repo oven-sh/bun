@@ -712,8 +712,10 @@ impl<'a> TablePrinter<'a> {
             tag.tag,
             TagPayload::String | TagPayload::StringPossiblyFormatted
         ));
-        let _ =
-            value_formatter.format::<ENABLE_ANSI_COLORS>(tag, &mut text, value, self.global_object);
+        // A throwing custom inspect (or stack overflow) must surface to the
+        // caller; the render loop that used to propagate it no longer reads
+        // JS values.
+        value_formatter.format::<ENABLE_ANSI_COLORS>(tag, &mut text, value, self.global_object)?;
 
         let width = strings::immutable::visible::width::exclude_ansi_colors::utf8(&text) as u32;
         Ok(FormattedCell { text, width })

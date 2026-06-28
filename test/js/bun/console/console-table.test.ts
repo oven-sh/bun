@@ -265,6 +265,32 @@ describe("console.table reads each cell once", () => {
     expect(Bun.inspect.table(rows())).toBe(`┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n│ 1 │ 2 │\n└───┴───┘\n`);
   });
 
+  test("getter on a primitive routed to the Values column", () => {
+    let calls = 0;
+    const data = {};
+    Object.defineProperty(data, "a", { get: () => ++calls, enumerable: true });
+    const out = Bun.inspect.table(data);
+    expect({ calls, out }).toEqual({
+      calls: 1,
+      out: `┌───┬────────┐\n│   │ Values │\n├───┼────────┤\n│ a │ 1      │\n└───┴────────┘\n`,
+    });
+  });
+
+  test("a throwing custom inspect in a cell still propagates", () => {
+    const boom = new Error("boom");
+    expect(() =>
+      Bun.inspect.table([
+        {
+          x: {
+            [Bun.inspect.custom]() {
+              throw boom;
+            },
+          },
+        },
+      ]),
+    ).toThrow(boom);
+  });
+
   test("console.table", async () => {
     await using proc = Bun.spawn({
       cmd: [

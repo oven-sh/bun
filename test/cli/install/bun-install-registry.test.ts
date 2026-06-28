@@ -9304,10 +9304,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect(await exists(join(packageDir, "node_modules", "local-pkg", "package.json"))).toBe(true);
 
       // drop a-dep so a prune actually runs; the folder dep must survive it
-      await write(
-        packageJson,
-        JSON.stringify({ name: "foo", dependencies: { "local-pkg": "file:./local-pkg" } }),
-      );
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "local-pkg": "file:./local-pkg" } }));
       await runBunInstall(env, packageDir, { savesLockfile: false });
 
       expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);

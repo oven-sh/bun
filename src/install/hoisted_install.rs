@@ -220,10 +220,7 @@ pub(crate) fn install_hoisted_packages(
     // Skipped for the security scanner's narrowed pre-install pass; the full
     // install that follows performs it.
     if !new_node_modules && packages_to_install.is_none() {
-        package_install::prune_extraneous_node_modules(
-            &this.lockfile,
-            node_modules_folder.fd(),
-        );
+        package_install::prune_extraneous_node_modules(&this.lockfile, node_modules_folder.fd());
     }
 
     let mut skip_delete = new_node_modules;

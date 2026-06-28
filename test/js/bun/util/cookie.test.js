@@ -522,22 +522,22 @@ describe("cookie.serialize(name, value, options)", function () {
   });
 
   describe('with "maxAge" option', function () {
-    it.failing("should throw when not a number", function () {
+    it("should throw when not a number", function () {
       expect(function () {
         cookie.serialize("foo", "bar", { maxAge: "buzz" });
-      }).toThrow(/option maxAge is invalid/);
+      }).toThrow(/maxAge must be a safe integer/);
     });
 
-    it.failing("should throw when Infinity", function () {
+    it("should throw when Infinity", function () {
       expect(function () {
         cookie.serialize("foo", "bar", { maxAge: Infinity });
-      }).toThrow(/option maxAge is invalid/);
+      }).toThrow(/maxAge must be a safe integer/);
     });
 
-    it.failing("should throw when max-age is not an integer", function () {
+    it("should throw when max-age is not an integer", function () {
       expect(function () {
         cookie.serialize("foo", "bar", { maxAge: 3.14 });
-      }).toThrow(/option maxAge is invalid/);
+      }).toThrow(/maxAge must be a safe integer/);
     });
 
     it("should set max-age to value", function () {

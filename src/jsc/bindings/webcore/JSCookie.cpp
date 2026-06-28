@@ -20,6 +20,7 @@
 #include "JSDOMWrapperCache.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/MathCommon.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
@@ -83,6 +84,22 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
     }
 
     return Bun::ERR::INVALID_ARG_VALUE(throwScope, lexicalGlobalObject, "expires"_s, expiresValue, "Invalid expires value. Must be a Date or a number"_s);
+}
+
+// Max-Age is serialized as RFC 6265 delta-seconds (["-"] *DIGIT), so only integers the
+// double represents exactly are accepted. NaN is the internal "no Max-Age" sentinel.
+static double getMaxAgeValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, JSValue maxAgeValue)
+{
+    if (maxAgeValue.isUndefinedOrNull())
+        return std::numeric_limits<double>::quiet_NaN();
+
+    double maxAge = maxAgeValue.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, std::numeric_limits<double>::quiet_NaN());
+    if (!JSC::isSafeInteger(maxAge)) [[unlikely]] {
+        throwScope.throwException(lexicalGlobalObject, createRangeError(lexicalGlobalObject, "maxAge must be a safe integer"_s));
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return maxAge;
 }
 
 template<bool checkName>
@@ -160,9 +177,8 @@ static std::optional<CookieInit> cookieInitFromJS(JSC::VM& vm, JSGlobalObject* l
             auto maxAgeValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.maxAgePublicName());
             RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             if (maxAgeValue) {
-                if (!maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
-                    maxAge = maxAgeValue.asNumber();
-                }
+                maxAge = getMaxAgeValue(lexicalGlobalObject, throwScope, maxAgeValue);
+                RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             }
 
             // secure
@@ -869,14 +885,9 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_maxAge, (JSGlobalObject * lexic
     if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "maxAge"_s);
     auto& impl = thisObject->wrapped();
-    if (JSValue::decode(encodedValue).isUndefinedOrNull()) {
-        impl.setMaxAge(std::numeric_limits<double>::quiet_NaN());
-        return true;
-    }
-    auto value = convert<IDLDouble>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    double maxAge = getMaxAgeValue(lexicalGlobalObject, throwScope, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
-    impl.setMaxAge(value);
-
+    impl.setMaxAge(maxAge);
     return true;
 }
 

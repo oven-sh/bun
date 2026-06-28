@@ -195,6 +195,20 @@ describe("HTMLRewriter", () => {
       });
     });
 
+    it(".body on the transformed response is an errored stream", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        const transformed = rewriter().transform(res);
+        const text = settle(transformed.text());
+        release();
+        // Barrier: once this has rejected, the body is in its error state.
+        expect(await text).toEqual(rejectedWithConnectionError);
+        // Reading `.body` must reject with the same upstream error instead of
+        // closing cleanly as an empty "successful" document.
+        expect(await settle(transformed.body.getReader().read())).toEqual(rejectedWithConnectionError);
+      });
+    });
+
     it("does not invoke onDocument end for a document that never completed", async () => {
       // Sanity: end() fires exactly once on a complete document.
       {
@@ -247,7 +261,7 @@ describe("HTMLRewriter", () => {
         // The body is mid-stream (the server is stalled until release()).
         const text = res.text();
         controller.abort();
-        await expect(text).rejects.toThrow();
+        await expect(text).rejects.toThrow(/abort/i);
         let thrown;
         try {
           rewriter().transform(res);

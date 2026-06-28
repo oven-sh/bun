@@ -926,9 +926,11 @@ impl Value {
 
                 Ok(locked.readable.get(global_this).unwrap().value)
             }
-            Value::Error(_) => {
-                // TODO: handle error properly
-                ReadableStream::empty(global_this)
+            Value::Error(err) => {
+                // Leave `self` as `Error` so the promise-returning readers
+                // (`handle_body_error`) still reject too.
+                let reason = err.to_js(global_this);
+                ReadableStream::errored(global_this, reason)
             }
         }
     }

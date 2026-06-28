@@ -72,6 +72,7 @@ using namespace JSC;
     macro(controller) \
     macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \
+    macro(createErroredReadableStream) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
     macro(createNativeReadableStream) \

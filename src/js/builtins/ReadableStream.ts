@@ -360,6 +360,15 @@ export function createUsedReadableStream() {
 }
 
 $linkTimeConstant;
+export function createErroredReadableStream(reason) {
+  var stream = new ReadableStream({
+    pull() {},
+  } as any);
+  $readableStreamError(stream, reason);
+  return stream;
+}
+
+$linkTimeConstant;
 export function createNativeReadableStream(nativePtr, autoAllocateChunkSize) {
   $assert(nativePtr, "nativePtr must be a valid pointer");
   return new ReadableStream({

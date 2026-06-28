@@ -1197,25 +1197,32 @@ describe("expect()", () => {
   });
 
   test("deepEquals Set/Map stress test", () => {
+    // Each deepEquals call on object elements is quadratic in `elements`. Debug
+    // builds run it roughly 100x slower and exceed the test timeout, so only
+    // scale the volume down there; release keeps the full workload.
+    const isDebugBuild = isBun && Bun.version.includes("debug");
+    const elements = isDebugBuild ? 20 : 150;
+    const iterations = isDebugBuild ? 50 : 2000;
+
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
     const arr4 = [];
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < elements; i++) {
       arr1[i] = [i];
       arr2[i] = [i];
       arr3[i] = [i, [i]];
       arr4[i] = [i, [i]];
     }
 
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < iterations; i++) {
       let outerSet = new Set(arr1);
       let innerSet = new Set(arr2);
       Bun.deepEquals(outerSet, innerSet);
     }
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < iterations / 2; i++) {
       let outerMap = new Map(arr3);
       let innerMap = new Map(arr4);
       Bun.deepEquals(outerMap, innerMap);

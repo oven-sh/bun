@@ -3532,17 +3532,16 @@ impl AnyServer {
         message: &[u8],
         opcode: uws::Opcode,
         compress: bool,
-    ) -> bool {
+    ) -> uws::SendStatus {
         any_server_dispatch!(self, |s| match s.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
             Some(app) =>
                 bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
-            // Defensive false
-            // here for the post-stop window; assert in debug to catch misuse.
+            // Defensive for the post-stop window; assert in debug to catch misuse.
             None => {
                 debug_assert!(false, "publish on server with no app");
-                false
+                uws::SendStatus::Dropped
             }
         })
     }

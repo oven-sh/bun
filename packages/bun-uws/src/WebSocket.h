@@ -82,6 +82,29 @@ public:
         DROPPED
     };
 
+    /* Report what send() would return right now without sending: DROPPED over
+     * maxBackpressure, BACKPRESSURE if anything is buffered, else SUCCESS.
+     * publish() uses this to surface per-subscriber backpressure. */
+    SendStatus sendStatus() {
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
+        size_t buffered = getBufferedAmount();
+        if (webSocketContextData->maxBackpressure && webSocketContextData->maxBackpressure < buffered) {
+            return DROPPED;
+        }
+        if (buffered > 0) {
+            return BACKPRESSURE;
+        }
+        return SUCCESS;
+    }
+
+    /* Fold a per-subscriber status into an aggregate: DROPPED beats
+     * BACKPRESSURE beats SUCCESS. */
+    static SendStatus worseStatus(SendStatus a, SendStatus b) {
+        if (a == DROPPED || b == DROPPED) return DROPPED;
+        if (a == BACKPRESSURE || b == BACKPRESSURE) return BACKPRESSURE;
+        return SUCCESS;
+    }
+
     size_t memoryCost() {
         return getBufferedAmount() + sizeof(WebSocket);
     }
@@ -349,28 +372,45 @@ public:
         }
     }
 
-    /* Publish a message to a topic according to MQTT rules and syntax. Returns success.
-     * We, the WebSocket, must be subscribed to the topic itself and if so - no message will be sent to ourselves.
-     * Use App::publish for an unconditional publish that simply publishes to whomever might be subscribed. */
-    bool publish(std::string_view topic, std::string_view message, OpCode opCode = OpCode::TEXT, bool compress = false) {
+    /* MQTT-style publish that never delivers to this WebSocket (the sender).
+     * Returns the worst receiver SendStatus; no receivers is DROPPED.
+     * Use App::publish for an unconditional broadcast. */
+    SendStatus publish(std::string_view topic, std::string_view message, OpCode opCode = OpCode::TEXT, bool compress = false) {
         WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
         /* We cannot be a subscriber of this topic if we are not a subscriber of anything */
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
         if (!webSocketData->subscriber) {
-            /* Failure, but still do return the number of subscribers */
-            return false;
+            return DROPPED;
         }
 
         /* Publish as sender, does not receive its own messages even if subscribed to relevant topics */
         if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
-            return webSocketContextData->topicTree->publishBig(webSocketData->subscriber, topic, {message, opCode, compress}, [](Subscriber *s, TopicTreeBigMessage &message) {
+            SendStatus worst = SUCCESS;
+            bool hasReceivers = false;
+            webSocketContextData->topicTree->publishBig(webSocketData->subscriber, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
+                hasReceivers = true;
                 auto *ws = (WebSocket<SSL, true, int> *) s->user;
 
-                ws->send(message.message, (OpCode)message.opCode, message.compress);
+                worst = worseStatus(worst, (SendStatus) ws->send(message.message, (OpCode)message.opCode, message.compress));
             });
+            return hasReceivers ? worst : DROPPED;
         } else {
-            return webSocketContextData->topicTree->publish(webSocketData->subscriber, topic, {std::string(message), opCode, compress});
+            Topic *t = webSocketContextData->topicTree->lookupTopic(topic);
+            if (!t) {
+                return DROPPED;
+            }
+            webSocketContextData->topicTree->publish(webSocketData->subscriber, topic, {std::string(message), opCode, compress});
+            /* publish() may have synchronously drained a subscriber; check backpressure after. */
+            SendStatus worst = SUCCESS;
+            bool hasReceivers = false;
+            for (Subscriber *s : *t) {
+                if (s == webSocketData->subscriber) continue;
+                hasReceivers = true;
+                auto *ws = (WebSocket<SSL, true, int> *) s->user;
+                worst = worseStatus(worst, (SendStatus) ws->sendStatus());
+            }
+            return hasReceivers ? worst : DROPPED;
         }
     }
 };

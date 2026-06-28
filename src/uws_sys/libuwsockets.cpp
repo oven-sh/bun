@@ -591,21 +591,21 @@ extern "C"
     uWS::App *uwsApp = (uWS::App *)app;
     return uwsApp->numSubscribers(stringViewFromC(topic, topic_length));
   }
-  bool uws_publish(int ssl, uws_app_t *app, const char *topic,
-                   size_t topic_length, const char *message,
-                   size_t message_length, uws_opcode_t opcode, bool compress)
+  uws_sendstatus_t uws_publish(int ssl, uws_app_t *app, const char *topic,
+                               size_t topic_length, const char *message,
+                               size_t message_length, uws_opcode_t opcode, bool compress)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      return uwsApp->publish(stringViewFromC(topic, topic_length),
-                             stringViewFromC(message, message_length),
-                             (uWS::OpCode)(unsigned char)opcode, compress);
+      return (uws_sendstatus_t)uwsApp->publish(stringViewFromC(topic, topic_length),
+                                               stringViewFromC(message, message_length),
+                                               (uWS::OpCode)(unsigned char)opcode, compress);
     }
     uWS::App *uwsApp = (uWS::App *)app;
-    return uwsApp->publish(stringViewFromC(topic, topic_length),
-                           stringViewFromC(message, message_length),
-                           (uWS::OpCode)(unsigned char)opcode, compress);
+    return (uws_sendstatus_t)uwsApp->publish(stringViewFromC(topic, topic_length),
+                                             stringViewFromC(message, message_length),
+                                             (uWS::OpCode)(unsigned char)opcode, compress);
   }
   void *uws_get_native_handle(int ssl, uws_app_t *app)
   {
@@ -1061,41 +1061,41 @@ extern "C"
     }
   }
 
-  bool uws_ws_publish(int ssl, uws_websocket_t *ws, const char *topic,
-                      size_t topic_length, const char *message,
-                      size_t message_length)
+  uws_sendstatus_t uws_ws_publish(int ssl, uws_websocket_t *ws, const char *topic,
+                                  size_t topic_length, const char *message,
+                                  size_t message_length)
   {
     if (ssl)
     {
       TLSWebSocket *uws =
           (TLSWebSocket *)ws;
-      return uws->publish(stringViewFromC(topic, topic_length),
-                          stringViewFromC(message, message_length));
+      return (uws_sendstatus_t)uws->publish(stringViewFromC(topic, topic_length),
+                                            stringViewFromC(message, message_length));
     }
     TCPWebSocket *uws =
         (TCPWebSocket *)ws;
-    return uws->publish(stringViewFromC(topic, topic_length),
-                        stringViewFromC(message, message_length));
+    return (uws_sendstatus_t)uws->publish(stringViewFromC(topic, topic_length),
+                                          stringViewFromC(message, message_length));
   }
 
-  bool uws_ws_publish_with_options(int ssl, uws_websocket_t *ws,
-                                   const char *topic, size_t topic_length,
-                                   const char *message, size_t message_length,
-                                   uws_opcode_t opcode, bool compress)
+  uws_sendstatus_t uws_ws_publish_with_options(int ssl, uws_websocket_t *ws,
+                                               const char *topic, size_t topic_length,
+                                               const char *message, size_t message_length,
+                                               uws_opcode_t opcode, bool compress)
   {
     if (ssl)
     {
       TLSWebSocket *uws =
           (TLSWebSocket *)ws;
-      return uws->publish(stringViewFromC(topic, topic_length),
-                          stringViewFromC(message, message_length),
-                          (uWS::OpCode)(unsigned char)opcode, compress);
+      return (uws_sendstatus_t)uws->publish(stringViewFromC(topic, topic_length),
+                                            stringViewFromC(message, message_length),
+                                            (uWS::OpCode)(unsigned char)opcode, compress);
     }
     TCPWebSocket *uws =
         (TCPWebSocket *)ws;
-    return uws->publish(stringViewFromC(topic, topic_length),
-                        stringViewFromC(message, message_length),
-                        (uWS::OpCode)(unsigned char)opcode, compress);
+    return (uws_sendstatus_t)uws->publish(stringViewFromC(topic, topic_length),
+                                          stringViewFromC(message, message_length),
+                                          (uWS::OpCode)(unsigned char)opcode, compress);
   }
 
   size_t uws_ws_get_buffered_amount(int ssl, uws_websocket_t *ws)

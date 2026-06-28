@@ -15,9 +15,8 @@ use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
-    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, GlobalRef,
-    JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
+    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, GlobalRef, JSGlobalObject,
+    JSValue, JsRef, JsResult, SysErrorJsc, VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};

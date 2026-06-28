@@ -478,6 +478,19 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  test("Overwriting Module._load", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(import.meta.dir, "moduleLoadOverwrite.cjs")],
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout.trim().endsWith("--pass--")).toBe(true);
+    expect(await proc.exited).toBe(0);
+  });
+
   test("Overwriting Module.prototype.require", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "modulePrototypeOverwrite.cjs")],

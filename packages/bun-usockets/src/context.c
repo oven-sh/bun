@@ -420,6 +420,75 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
     return ls;
 }
 
+/* Adopt an already-listening file descriptor (inherited from a parent process
+ * or received over IPC via SCM_RIGHTS) as a listen socket, rather than
+ * creating+binding a new one. The fd must already be a socket in the LISTEN
+ * state. On success the group owns the fd (us_listen_socket_close closes it);
+ * on failure the caller keeps it, and an errno is written into *error:
+ * ENOTSOCK if the fd is not a socket, EINVAL if it is a socket but
+ * (verifiably) not listening. */
+struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+        LIBUS_SOCKET_DESCRIPTOR fd, int options, int socket_ext_size, int *error) {
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+    (void) group; (void) kind; (void) ssl_ctx; (void) fd; (void) options; (void) socket_ext_size;
+    *error = EINVAL;
+    return 0;
+#else
+    if (fd == LIBUS_SOCKET_ERROR) {
+        *error = EINVAL;
+        return 0;
+    }
+
+    /* The fd must at least be a socket. getsockopt(SO_TYPE) fails with ENOTSOCK
+     * on a non-socket fd (e.g. stdin) and EBADF on a closed one, on both Linux
+     * and macOS — this is what rejects `listen({ fd: 0 })`. */
+    int socktype = 0;
+    socklen_t typelen = sizeof(socktype);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (void *) &socktype, &typelen) != 0) {
+        *error = errno ? errno : ENOTSOCK;
+        return 0;
+    }
+
+    /* Reject a socket that is not listening. SO_ACCEPTCONN is reliable on Linux
+     * but NOT on macOS/BSD — there it can report 0 for a genuinely-listening fd
+     * that was inherited/duplicated (e.g. over SCM_RIGHTS), so only treat a 0 as
+     * fatal where the query is trustworthy. A non-listening socket on macOS
+     * surfaces EINVAL from accept() instead, which Node's contract allows. */
+#if defined(SO_ACCEPTCONN) && !defined(__APPLE__)
+    int accepting = 0;
+    socklen_t optlen = sizeof(accepting);
+    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (void *) &accepting, &optlen) == 0 && !accepting) {
+        *error = EINVAL;
+        return 0;
+    }
+#endif
+
+    /* The fd arrives from another process; normalize the flags we rely on. */
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
+
+    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
+    us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
+    /* Mirror us_socket_from_fd: honor the epoll_ctl/kevent return code so a
+     * registration failure is reported rather than yielding a dead listener. */
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        *error = errno ? errno : EINVAL;
+        us_poll_free(p, group->loop);
+        return 0;
+    }
+
+    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
+    us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
+        ls->deferred_accept = bsd_set_defer_accept(fd);
+    }
+
+    return ls;
+#endif
+}
+
 void us_listen_socket_close(struct us_listen_socket_t *ls) {
     struct us_socket_t *s = &ls->s;
     if (!us_socket_is_closed(s)) {

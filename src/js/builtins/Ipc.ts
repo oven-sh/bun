@@ -1,236 +1,112 @@
-// for net.Server, get ._handle
-
-// const handleConversion = {
-//   "net.Server": {
-//     simultaneousAccepts: true,
-
-//     send(message, server, options) {
-//       return server._handle;
-//     },
-
-//     got(message, handle, emit) {
-//       const server = new net.Server();
-//       server.listen(handle, () => {
-//         emit(server);
-//       });
-//     },
-//   },
-
-//   "net.Socket": {
-//     send(message, socket, options) {
-//       if (!socket._handle) return;
-
-//       // If the socket was created by net.Server
-//       if (socket.server) {
-//         // The worker should keep track of the socket
-//         message.key = socket.server._connectionKey;
-
-//         const firstTime = !this[kChannelHandle].sockets.send[message.key];
-//         const socketList = getSocketList("send", this, message.key);
-
-//         // The server should no longer expose a .connection property
-//         // and when asked to close it should query the socket status from
-//         // the workers
-//         if (firstTime) socket.server._setupWorker(socketList);
-
-//         // Act like socket is detached
-//         if (!options.keepOpen) socket.server._connections--;
-//       }
-
-//       const handle = socket._handle;
-
-//       // Remove handle from socket object, it will be closed when the socket
-//       // will be sent
-//       if (!options.keepOpen) {
-//         handle.onread = nop;
-//         socket._handle = null;
-//         socket.setTimeout(0);
-
-//         if (freeParser === undefined) freeParser = require("_http_common").freeParser;
-//         if (HTTPParser === undefined) HTTPParser = require("_http_common").HTTPParser;
-
-//         // In case of an HTTP connection socket, release the associated
-//         // resources
-//         if (socket.parser && socket.parser instanceof HTTPParser) {
-//           freeParser(socket.parser, null, socket);
-//           if (socket._httpMessage) socket._httpMessage.detachSocket(socket);
-//         }
-//       }
-
-//       return handle;
-//     },
-
-//     postSend(message, handle, options, callback, target) {
-//       // Store the handle after successfully sending it, so it can be closed
-//       // when the NODE_HANDLE_ACK is received. If the handle could not be sent,
-//       // just close it.
-//       if (handle && !options.keepOpen) {
-//         if (target) {
-//           // There can only be one _pendingMessage as passing handles are
-//           // processed one at a time: handles are stored in _handleQueue while
-//           // waiting for the NODE_HANDLE_ACK of the current passing handle.
-//           assert(!target._pendingMessage);
-//           target._pendingMessage = { callback, message, handle, options, retransmissions: 0 };
-//         } else {
-//           handle.close();
-//         }
-//       }
-//     // NOTE that another function will call _pendingMessage.handle.close() and set _pendingMessage to null
-//     },
-
-//     got(message, handle, emit) {
-//       const socket = new net.Socket({
-//         handle: handle,
-//         readable: true,
-//         writable: true,
-//       });
-
-//       // If the socket was created by net.Server we will track the socket
-//       if (message.key) {
-//         // Add socket to connections list
-//         const socketList = getSocketList("got", this, message.key);
-//         socketList.add({
-//           socket: socket,
-//         });
-//       }
-
-//       emit(socket);
-//     },
-//   },
-
-//   "dgram.Native": {
-//     simultaneousAccepts: false,
-
-//     send(message, handle, options) {
-//       return handle;
-//     },
-
-//     got(message, handle, emit) {
-//       emit(handle);
-//     },
-//   },
-
-//   "dgram.Socket": {
-//     simultaneousAccepts: false,
-
-//     send(message, socket, options) {
-//       message.dgramType = socket.type;
-
-//       return socket[kStateSymbol].handle;
-//     },
-
-//     got(message, handle, emit) {
-//       const socket = new dgram.Socket(message.dgramType);
-
-//       socket.bind(handle, () => {
-//         emit(socket);
-//       });
-//     },
-//   },
-// };
+// Serialization of the handle attached to an IPC message sent with
+// `subprocess.send(message, handle)` / `process.send(message, handle)`.
+// Mirrors the `handleConversion` table in Node's lib/internal/child_process.js:
+// https://github.com/nodejs/node/blob/main/lib/internal/child_process.js
+//
+// The transport (SCM_RIGHTS over the IPC socketpair, the NODE_HANDLE /
+// NODE_HANDLE_ACK / NODE_HANDLE_NACK handshake, the ack-gated send queue)
+// lives in src/jsc/ipc.rs; `do_send` in src/runtime/ipc_host.rs takes the
+// native handle returned from `serialize()` and dups its fd into the queued
+// message, so the sender's copy can be released independently.
 
 // have to use jsdoc type definitions because bundle-functions is based on regex
 /**
  * @typedef {Object} Serialized
  * @property {"NODE_HANDLE"} cmd
- * @property {unknown} message
- * @property {"net.Socket" | "net.Server" | "dgram.Socket"} type
+ * @property {"net.Server" | "net.Socket"} type
+ * @property {unknown} msg
  */
+
 /**
- * @typedef {import("node:net").Server | import("node:net").Socket | import("node:dgram").Socket} Handle
- */
-/**
+ * Map a user-provided handle to `[nativeHandle, wrappedMessage]`. Returns
+ * `null` to send `message` with no handle (its socket is already gone — Node
+ * falls back the same way); throws for handle types that cannot be sent.
+ *
  * @param {unknown} message
- * @param {Handle} handle
+ * @param {import("node:net").Server | import("node:net").Socket} handle
  * @param {{ keepOpen?: boolean } | undefined} options
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(_message, _handle, _options) {
-  // sending file descriptors is not supported yet
-  return null; // send the message without the file descriptor
-
-  /*
+export function serialize(message, handle, options) {
   const net = require("node:net");
-  const dgram = require("node:dgram");
-  if (handle instanceof net.Server) {
-    // this one doesn't need a close function, but the fd needs to be kept alive until it is sent
-    const server = handle as unknown as (typeof net)["Server"] & { _handle: Bun.TCPSocketListener<unknown> };
-    return [server._handle, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
-  } else if (handle instanceof net.Socket) {
-    const new_message: { cmd: "NODE_HANDLE"; message: unknown; type: "net.Socket"; key?: string } = {
-      cmd: "NODE_HANDLE",
-      message,
-      type: "net.Socket",
-    };
-    const socket = handle as unknown as (typeof net)["Socket"] & {
-      _handle: Bun.Socket;
-      server: (typeof net)["Server"] | null;
-      setTimeout(timeout: number): void;
-    };
-    if (!socket._handle) return null; // failed
-
-    // If the socket was created by net.Server
-    if (socket.server) {
-      // The worker should keep track of the socket
-      new_message.key = socket.server._connectionKey;
-
-      const firstTime = !this[kChannelHandle].sockets.send[message.key];
-      const socketList = getSocketList("send", this, message.key);
-
-      // The server should no longer expose a .connection property
-      // and when asked to close it should query the socket status from
-      // the workers
-      if (firstTime) socket.server._setupWorker(socketList);
-
-      // Act like socket is detached
-      if (!options?.keepOpen) socket.server._connections--;
-    }
-
-    const internal_handle = socket._handle;
-
-    // Remove handle from socket object, it will be closed when the socket
-    // will be sent
-    if (!options?.keepOpen) {
-      // we can use a $newRustFunction to have it unset the callback
-      internal_handle.onread = nop;
-      socket._handle = null;
-      socket.setTimeout(0);
-    }
-    return [internal_handle, new_message];
-  } else if (handle instanceof dgram.Socket) {
-    // this one doesn't need a close function, but the fd needs to be kept alive until it is sent
-    throw new Error("todo serialize dgram.Socket");
-  } else {
+  const isSocket = handle instanceof net.Socket;
+  if (!isSocket && !(handle instanceof net.Server)) {
+    // dgram.Socket needs an fd getter on Bun's native UDPSocket plus a
+    // bind-to-fd path, neither of which exist yet. Everything else is not a
+    // sendable handle in Node either. Never silently drop the handle.
     throw $ERR_INVALID_HANDLE_TYPE();
   }
-  */
+  if (process.platform === "win32") {
+    // Bun's Windows IPC channel is a libuv named pipe with no SOCKET
+    // duplication (uv_write2 / WSADuplicateSocketW) implemented.
+    const { throwNotImplemented } = require("internal/shared");
+    throwNotImplemented("Passing a net.Socket or net.Server over IPC on Windows");
+  }
+
+  const nativeHandle = handle._handle;
+  if (!nativeHandle) return null;
+
+  if (isSocket) {
+    // `tls.TLSSocket extends net.Socket`, so TLS sockets land here too
+    // (matching Node); the receiver reconstructs a plain net.Socket around
+    // the transferred fd — TLS session state is not transferable.
+    if (!options?.keepOpen) {
+      // Node detaches the sender's socket the moment it is sent. Closing the
+      // native handle is deferred one tick — past `do_send`'s dup — so the
+      // sender's event loop stops consuming bytes that now belong to the
+      // receiving process and its copy of the fd is released.
+      handle._handle = null;
+      handle.setTimeout(0);
+      process.nextTick(h => h.close(), nativeHandle);
+    }
+    return [nativeHandle, { cmd: "NODE_HANDLE", type: "net.Socket", msg: message }];
+  }
+
+  // net.Server: the listener stays open in the sender. Both processes
+  // accept() on the shared fd (the pre-fork server model).
+  return [nativeHandle, { cmd: "NODE_HANDLE", type: "net.Server", msg: message }];
 }
+
 /**
+ * Reconstruct a handle object around a file descriptor received over
+ * SCM_RIGHTS and re-dispatch the wrapped user message with it. Invoked from
+ * `handle_ipc_message` (src/jsc/ipc.rs) once a `NODE_HANDLE` message and its
+ * ancillary fd have both arrived (the ACK has already been written back).
+ * On success the constructed handle owns `fd`.
+ *
+ * @param {unknown} target the Subprocess (parent side) or null (child side)
  * @param {Serialized} serialized
- * @param {unknown} handle
- * @param {(handle: Handle) => void} emit
- * @returns {void}
+ * @param {number} fd
  */
 export function parseHandle(target, serialized, fd) {
   const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
   const net = require("node:net");
-  // const dgram = require("node:dgram");
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
       server.listen({ fd }, () => {
-        emit(target, serialized.message, server);
+        emit(target, serialized.msg, server);
       });
       return;
     }
     case "net.Socket": {
-      throw new Error("TODO case net.Socket");
-    }
-    case "dgram.Socket": {
-      throw new Error("TODO case dgram.Socket");
+      // Adopt the already-connected fd. `connect({ fd })` opens synchronously
+      // (the native `open` handler fires inside it), so the socket handed to
+      // the 'message' listener is already live.
+      const socket = new net.Socket();
+      socket.connect({ fd });
+      emit(target, serialized.msg, socket);
+      return;
     }
     default: {
-      throw new Error("failed to parse handle");
+      // A handle type Bun cannot reconstruct (e.g. a dgram.Socket or a raw
+      // net.Native/dgram.Native wrap from a Node.js peer). The sender was
+      // already ACK'd, so the fd is ours to release; leaking it would also
+      // pin the peer's connection open.
+      require("node:fs").closeSync(fd);
+      throw new Error(
+        `Cannot receive a ${JSON.stringify(serialized.type)} handle over IPC; only "net.Server" and "net.Socket" are supported`,
+      );
     }
   }
 }

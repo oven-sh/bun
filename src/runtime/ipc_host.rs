@@ -13,9 +13,12 @@ use bun_jsc::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_sys::Fd;
+use bun_sys_jsc::ErrorJsc as _;
 
 use crate::api::bun::subprocess::Subprocess;
-use crate::socket::Listener;
+use crate::socket::listener::ListenerType;
+use crate::socket::{Listener, TCPSocket, TLSSocket};
 
 bun_core::define_scoped_log!(log, IPC, visible);
 
@@ -70,19 +73,50 @@ fn do_send_err(
     Err(global_object.throw_value(ex))
 }
 
+/// The live fd behind a native socket handle that `Ipc.ts`'s `serialize()`
+/// returns: a `Listener` (from a `net.Server`) or a `TCPSocket`/`TLSSocket`
+/// (from a `net.Socket`). `None` when the handle's socket is already
+/// closed/detached or the type carries no fd (named pipes).
+fn native_handle_fd(handle: JSValue) -> Option<Fd> {
+    let fd = if let Some(listener) = Listener::from_js(handle) {
+        // SAFETY: `from_js` returned a non-null `*mut Listener`; the JS
+        // wrapper holds it alive for the call.
+        match unsafe { (*listener).listener.get() } {
+            // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
+            // owned by uSockets; `get_socket` only reinterpret-casts to
+            // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
+            ListenerType::Uws(socket_uws) => unsafe { &mut *socket_uws }.get_socket().get_fd(),
+            ListenerType::NamedPipe(_) | ListenerType::None => return None,
+        }
+    } else if let Some(tcp) = handle.as_::<TCPSocket>() {
+        // SAFETY: `as_` returned a non-null `*mut TCPSocket`; the JS wrapper
+        // holds it alive for the call.
+        unsafe { (*tcp).socket.get() }.fd()
+    } else if let Some(tls) = handle.as_::<TLSSocket>() {
+        // SAFETY: see above.
+        unsafe { (*tls).socket.get() }.fd()
+    } else {
+        return None;
+    };
+    fd.is_valid().then_some(fd)
+}
+
 pub(crate) fn do_send(
     ipc: Option<&mut SendQueue>,
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
     from: FromEnum,
 ) -> JsResult<JSValue> {
-    let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
+    let [mut message, mut handle, mut options_, mut callback] =
+        call_frame.arguments_as_array::<4>();
 
     if handle.is_callable() {
         callback = handle;
         handle = JSValue::UNDEFINED;
+        options_ = JSValue::UNDEFINED;
     } else if options_.is_callable() {
         callback = options_;
+        options_ = JSValue::UNDEFINED;
     } else if !options_.is_undefined() {
         global_object.validate_object("options", options_, Default::default())?;
     }
@@ -123,38 +157,37 @@ pub(crate) fn do_send(
         ));
     }
 
-    if !handle.is_undefined_or_null() {
-        let serialized_array: JSValue = IPC::ipc_serialize(global_object, message, handle)?;
-        if serialized_array.is_undefined_or_null() {
-            handle = JSValue::UNDEFINED;
-        } else {
-            let serialized_handle = serialized_array.get_index(global_object, 0)?;
-            let serialized_message = serialized_array.get_index(global_object, 1)?;
-            handle = serialized_handle;
-            message = serialized_message;
-        }
-    }
-
+    // Package the message with a handle. `ipc_serialize` (the `Ipc.ts`
+    // `serialize()` builtin) maps a JS handle (net.Server / net.Socket) to
+    // `[nativeHandle, wrappedMessage]`; null means "send the message plain"
+    // (the handle's socket is already gone — node falls back the same way).
+    // The wrapped `{cmd: "NODE_HANDLE", ...}` message is adopted ONLY once an
+    // fd is secured: writing a NODE_HANDLE message with no ancillary fd makes
+    // the receiver NACK until the retry limit and the message is lost.
     let mut zig_handle: Option<Handle> = None;
     if !handle.is_undefined_or_null() {
-        if let Some(listener) = Listener::from_js(handle) {
-            log!("got listener");
-            // SAFETY: from_js returned a non-null `*mut Listener`; the JS
-            // wrapper holds it alive for the call.
-            match unsafe { (*listener).listener.get() } {
-                crate::socket::listener::ListenerType::Uws(socket_uws) => {
-                    // may need to handle ssl case
-                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only reinterpret-casts to
-                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
-                    let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
-                    zig_handle = Some(Handle::init(fd, handle));
+        let serialized_array: JSValue =
+            IPC::ipc_serialize(global_object, message, handle, options_)?;
+        if !serialized_array.is_undefined_or_null() {
+            let native_handle = serialized_array.get_index(global_object, 0)?;
+            let wrapped_message = serialized_array.get_index(global_object, 1)?;
+            if let Some(fd) = native_handle_fd(native_handle) {
+                // Dup so the in-flight transfer owns its own fd: the sender's
+                // copy is closed right after this call for a net.Socket (node
+                // semantics), and a net.Server can be closed by the user
+                // before the queued sendmsg runs. `Handle` closes it on drop.
+                match bun_sys::dup(fd) {
+                    Ok(owned) => {
+                        log!("sending handle fd {} (dup of {})", owned.uv(), fd.uv());
+                        zig_handle = Some(Handle::init(owned));
+                        message = wrapped_message;
+                    }
+                    Err(err) => {
+                        let ex = err.to_js(global_object)?;
+                        return do_send_err(global_object, callback, ex, from);
+                    }
                 }
-                crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
-                crate::socket::listener::ListenerType::None => {}
             }
-        } else {
-            //
         }
     }
 

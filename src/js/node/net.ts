@@ -1567,20 +1567,6 @@ Socket.prototype.connect = function connect(...args) {
     if (socket) {
       connection = socket;
     }
-    if (fd) {
-      doConnect(this._handle, {
-        data: this,
-        fd: fd,
-        socket: SocketHandlers,
-        // Always half-open natively; see kConnect.
-        allowHalfOpen: true,
-      }).catch(error => {
-        if (!this.destroyed) {
-          this.emit("error", error);
-          this.emit("close", true);
-        }
-      });
-    }
     this.pauseOnConnect = pauseOnConnect;
     if (pauseOnConnect) {
       this.pause();
@@ -1595,6 +1581,22 @@ Socket.prototype.connect = function connect(...args) {
       this.connecting = true;
     }
     if (fd) {
+      // `doConnect({ fd })` adopts an already-open fd: the `open` handler
+      // fires synchronously inside it (setting `_handle` and
+      // `connecting = false`), so it must run after the `connecting = true`
+      // above — running it first left adopted sockets stuck in 'opening'.
+      doConnect(this._handle, {
+        data: this,
+        fd: fd,
+        socket: SocketHandlers,
+        // Always half-open natively; see kConnect.
+        allowHalfOpen: true,
+      }).catch(error => {
+        if (!this.destroyed) {
+          this.emit("error", error);
+          this.emit("close", true);
+        }
+      });
       return this;
     }
     if (

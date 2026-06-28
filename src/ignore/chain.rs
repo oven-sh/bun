@@ -90,13 +90,28 @@ impl IgnoreChain {
             None => rel_path,
         };
         let mut node = self.head.as_deref();
+        // Lazily-built `above + "/" + rel_path` for files anchored in an
+        // ancestor of the index root ([`IgnoreFile::parse_above`]); reused
+        // across nodes. Untouched (never allocated) when no node needs it.
+        let mut prefixed: Vec<u8> = Vec::new();
         while let Some(cur) = node {
-            // Skip files whose directory does not contain `rel_path` (e.g.
-            // a sibling's chain reused for an out-of-tree query, or the
-            // file's own directory).
-            if let Some(rel_to_base) = cur.file.rel_to_base(rel_path)
-                && let Some(negated) = cur.file.last_match(rel_to_base, basename, is_dir)
-            {
+            let decided = if cur.file.above().is_empty() {
+                // Skip files whose directory does not contain `rel_path`
+                // (e.g. a sibling's chain reused for an out-of-tree query,
+                // or the file's own directory).
+                match cur.file.rel_to_base(rel_path) {
+                    Some(rel_to_base) => cur.file.last_match(rel_to_base, basename, is_dir),
+                    None => None,
+                }
+            } else {
+                prefixed.clear();
+                prefixed.reserve(cur.file.above().len() + 1 + rel_path.len());
+                prefixed.extend_from_slice(cur.file.above());
+                prefixed.push(b'/');
+                prefixed.extend_from_slice(rel_path);
+                cur.file.last_match(&prefixed, basename, is_dir)
+            };
+            if let Some(negated) = decided {
                 return if negated {
                     Match::Whitelist
                 } else {

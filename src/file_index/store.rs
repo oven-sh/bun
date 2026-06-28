@@ -239,6 +239,17 @@ impl Store {
         }
     }
 
+    /// A replacement for a store whose generation was `predecessor`: an empty
+    /// store whose generation starts strictly past it, so that a generation a
+    /// caller captured from the OLD store can never equal one observed on the
+    /// new store, no matter how many mutations follow (the generation is
+    /// monotonic across the life of whatever owns the stores).
+    pub fn new_after(budget: usize, predecessor: u64) -> Store {
+        let mut store = Store::new(budget);
+        store.generation = predecessor.wrapping_add(1);
+        store
+    }
+
     /// Number of live entries. Exact even while the sorted order is dirty.
     #[inline]
     pub fn len(&self) -> usize {
@@ -1366,6 +1377,38 @@ mod tests {
         assert_eq!(s.generation(), g4, "a no-op remove must not bump");
         s.compact();
         assert!(s.generation() > g4, "compact invalidates ids and must bump");
+    }
+
+    /// A replacement store seeded with [`Store::new_after`] can never reach a
+    /// generation an observer captured from its predecessor: the guard
+    /// "drop the result if the generation changed" stays sound across a
+    /// `refresh()` that swaps the store (a plain `Store::new` restarts at 0
+    /// and an exact-wraparound — old == new after k mutations — defeats it).
+    #[test]
+    fn new_after_keeps_the_generation_monotonic_across_a_replacement() {
+        let mut old = Store::new(1 << 20);
+        for i in 0..5u32 {
+            old.upsert(format!("f{i}").as_bytes(), Meta::default())
+                .unwrap();
+        }
+        let observed = old.generation();
+        // The defeated scenario: a fresh store re-reaches `observed`.
+        let mut naive = Store::new(1 << 20);
+        for i in 0..5u32 {
+            naive
+                .upsert(format!("g{i}").as_bytes(), Meta::default())
+                .unwrap();
+        }
+        assert_eq!(naive.generation(), observed, "the wraparound is real");
+
+        let mut replacement = Store::new_after(1 << 20, observed);
+        assert!(replacement.generation() > observed);
+        for i in 0..16u32 {
+            replacement
+                .upsert(format!("g{i}").as_bytes(), Meta::default())
+                .unwrap();
+            assert!(replacement.generation() > observed);
+        }
     }
 
     #[test]

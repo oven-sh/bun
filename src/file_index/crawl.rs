@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_core::{ZStr, handle_oom, kind_from_mode};
 use bun_ignore::{IgnoreChain, IgnoreFile, Match};
-use bun_sys::{Dir, E, EntryKind as SysEntryKind, O, PosixStat, fstat, lstatat};
+use bun_sys::{Dir, EntryKind as SysEntryKind, O, PosixStat, lstatat};
 use bun_threading::{GuardedBy, Mutex, WorkPool};
 
 use crate::store::{EntryKind, Meta};
@@ -354,37 +354,14 @@ impl Shared {
 }
 
 /// Read and parse `<dir>/.gitignore`, anchored at `rel` (the directory's
-/// path relative to the index root). Absent files are normal; anything else
-/// unreadable counts as an error.
-///
-/// The open is `O_NONBLOCK` and the descriptor is `fstat`ed before any read:
-/// a name in the tree can be anything (a writer-less FIFO blocks a plain
-/// `open(2)` in the kernel forever), so every by-name content open in this
-/// crate must refuse to read from a non-regular file. A regular file ignores
-/// `O_NONBLOCK`.
+/// path relative to the index root). Absent files are normal; a `.gitignore`
+/// that is not a regular file (a writer-less FIFO blocks a plain `open(2)`
+/// in the kernel forever, a symlink can point anywhere) is treated as
+/// absent; anything else unreadable counts as an error.
 fn read_gitignore(shared: &Arc<Shared>, dir: &Dir, rel: &[u8]) -> Option<IgnoreFile> {
-    let flags = O::RDONLY | O::NONBLOCK | O::NOFOLLOW | O::CLOEXEC;
-    let file = match dir.open_file(b".gitignore", flags, 0) {
-        Ok(file) => file,
-        Err(err) => {
-            if err.get_errno() != E::ENOENT {
-                shared.errors.fetch_add(1, Ordering::Relaxed);
-            }
-            return None;
-        }
-    };
-    match fstat(file.fd()) {
-        Ok(st)
-            if kind_from_mode(PosixStat::init(&st).mode as bun_core::Mode)
-                == SysEntryKind::File => {}
-        Ok(_) => return None,
-        Err(_) => {
-            shared.errors.fetch_add(1, Ordering::Relaxed);
-            return None;
-        }
-    }
-    match file.read_to_end() {
-        Ok(bytes) => Some(IgnoreFile::parse(rel, &bytes)),
+    match crate::read::read_regular_at(dir.fd(), b".gitignore", u64::MAX) {
+        Ok(crate::read::FileReadOutcome::Contents(bytes)) => Some(IgnoreFile::parse(rel, &bytes)),
+        Ok(_) => None,
         Err(_) => {
             shared.errors.fetch_add(1, Ordering::Relaxed);
             None

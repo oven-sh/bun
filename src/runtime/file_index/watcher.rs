@@ -67,9 +67,9 @@ use bun_ignore::IgnoreChain;
 use bun_jsc::ConcurrentTask as concurrent_task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JsTerminated};
+use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_sys::{Dir, FdExt as _};
-use bun_sys::{Fd, O};
+use bun_sys::{Dir, FdExt as _, O};
 use bun_threading::{Condition, GuardedBy, Mutex};
 
 use super::FileIndex;
@@ -433,11 +433,12 @@ fn append_gitignore(
         path.extend_from_slice(dir_rel);
     }
     path.extend_from_slice(b"/.gitignore");
-    let Ok(file) = bun_sys::File::openat(Fd::cwd(), &path, O::RDONLY | O::NOFOLLOW | O::CLOEXEC, 0)
+    // Guarded by-name open: a `.gitignore` swapped for a writer-less FIFO
+    // must never wedge the watcher thread, and a symlinked one is treated
+    // as absent (exactly like the crawl's `read_gitignore`).
+    let Ok(bun_file_index::FileReadOutcome::Contents(bytes)) =
+        bun_file_index::read_regular_at(Fd::cwd(), &path, u64::MAX)
     else {
-        return parent.clone();
-    };
-    let Ok(bytes) = file.read_to_end() else {
         return parent.clone();
     };
     let file = bun_ignore::IgnoreFile::parse(dir_rel, &bytes);
@@ -448,25 +449,39 @@ fn append_gitignore(
     }
 }
 
-/// Rebuild `state.chains` for `dirs` (sorted ascending, so every parent
-/// precedes its children) and fold the root `.gitignore` into `base_chain`.
-fn rebuild_chains(state: &mut State, root_abs: &[u8], dirs: &[Vec<u8>]) {
-    let gitignore = state.gitignore;
-    state.chains = StringHashMap::default();
-    state.base_chain = append_gitignore(root_abs, &state.base_chain.clone(), b"", gitignore);
+/// Build the per-directory chains for `dirs` (sorted ascending, so every
+/// parent precedes its children) plus the root chain with its `.gitignore`
+/// folded in. This reads one `.gitignore` per directory: it must be called
+/// WITHOUT holding [`WatchDelivery::state`]'s lock (the JS thread contends
+/// on that lock from `sync()` and the Windows event callback), and the
+/// result is swapped in under the lock by the caller.
+fn build_chains(
+    root_abs: &[u8],
+    base: &IgnoreChain,
+    gitignore: bool,
+    dirs: &[Vec<u8>],
+) -> (IgnoreChain, StringHashMap<IgnoreChain>) {
+    let base = append_gitignore(root_abs, base, b"", gitignore);
+    let mut chains: StringHashMap<IgnoreChain> = StringHashMap::default();
     for dir in dirs {
         if dir.is_empty() {
             continue;
         }
-        let parent = match chain_for_dir(state, parent_dir(dir)) {
-            Some(chain) => chain.clone(),
-            // The parent is not registered (it disappeared between the crawl
-            // and this sync): skip the orphan.
-            None => continue,
+        let parent_rel = parent_dir(dir);
+        let parent = if parent_rel.is_empty() {
+            Some(&base)
+        } else {
+            chains.get(parent_rel)
+        };
+        // A missing parent is not registered (it disappeared between the
+        // crawl and this sync): skip the orphan.
+        let Some(parent) = parent.cloned() else {
+            continue;
         };
         let chain = append_gitignore(root_abs, &parent, dir, gitignore);
-        handle_oom(state.chains.put(dir, chain));
+        handle_oom(chains.put(dir, chain));
     }
+    (base, chains)
 }
 
 /// Whether `rel` should be dropped, given the chain of its nearest known
@@ -501,20 +516,37 @@ fn admit_recursive_event(state: &mut State, rel: &[u8], is_dir_hint: bool) -> bo
 fn debounce_thread(shared: Arc<WatchDelivery>, root_abs: Vec<u8>) {
     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("FileIndexWatch"));
     loop {
-        let due = {
+        // A pending sync rebuilds the per-directory ignore chains, which
+        // reads `.gitignore` files: snapshot the inputs, do the I/O with the
+        // lock RELEASED (the JS thread contends on it), swap the result in.
+        let sync = {
             let mut state = shared.state.lock();
             if state.shutdown {
                 return;
             }
-            if let Some(dirs) = state.sync.take() {
-                rebuild_chains(&mut state, &root_abs, &dirs);
-                drop(state);
-                shared.post(Batch {
-                    paths: Vec::new(),
-                    recrawl: false,
-                    synced: true,
-                });
-                continue;
+            state
+                .sync
+                .take()
+                .map(|dirs| (dirs, state.base_chain.clone(), state.gitignore))
+        };
+        if let Some((dirs, base, gitignore)) = sync {
+            let (base, chains) = build_chains(&root_abs, &base, gitignore, &dirs);
+            {
+                let mut state = shared.state.lock();
+                state.base_chain = base;
+                state.chains = chains;
+            }
+            shared.post(Batch {
+                paths: Vec::new(),
+                recrawl: false,
+                synced: true,
+            });
+            continue;
+        }
+        let due = {
+            let mut state = shared.state.lock();
+            if state.shutdown {
+                return;
             }
             match state.timeout_ms(Instant::now()) {
                 None => {
@@ -733,21 +765,26 @@ mod linux_impl {
 
         /// Apply a pending re-registration request from the JS thread.
         fn handle_sync(&mut self) {
-            let dirs = {
+            let (dirs, base, gitignore) = {
                 let mut state = self.shared.state.lock();
                 if state.shutdown {
                     return;
                 }
                 match state.sync.take() {
-                    Some(dirs) => dirs,
+                    Some(dirs) => (dirs, state.base_chain.clone(), state.gitignore),
                     None => return,
                 }
             };
             self.unregister_all();
             let root = self.root.clone();
+            // The chain rebuild reads one `.gitignore` per directory: all of
+            // that I/O happens with the state lock RELEASED (the JS thread
+            // contends on it), then the result is swapped in under it.
+            let (base, chains) = build_chains(&root, &base, gitignore, &dirs);
             {
                 let mut state = self.shared.state.lock();
-                rebuild_chains(&mut state, &root, &dirs);
+                state.base_chain = base;
+                state.chains = chains;
             }
             self.add_watch(&root, b"");
             for dir in &dirs {

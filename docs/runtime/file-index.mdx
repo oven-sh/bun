@@ -53,7 +53,8 @@ for await (const match of index.grep("TODO", { glob: "**/*.ts" })) {
 
 ```ts
 const index = new Bun.FileIndex("/path/to/project", {
-  // Respect .gitignore and .git/info/exclude (default true).
+  // Respect .gitignore, $GIT_COMMON_DIR/info/exclude and git's global
+  // excludes file (default true).
   // The .git directory itself is always skipped.
   gitignore: true,
 
@@ -83,7 +84,9 @@ A few rules worth knowing:
 
 ### gitignore semantics
 
-With `gitignore: true` (the default), the crawl implements the full [gitignore](https://git-scm.com/docs/gitignore) specification: per-directory `.gitignore` stacks, `!` negation, last-match-wins, `**` globs, anchored vs. basename patterns, directory-only patterns, and the rule that a file inside an excluded directory cannot be re-included. `.git/info/exclude` is honored too. The crawler never descends into an ignored directory.
+With `gitignore: true` (the default), the crawl implements the full [gitignore](https://git-scm.com/docs/gitignore) specification: per-directory `.gitignore` stacks, `!` negation, last-match-wins, `**` globs, anchored vs. basename patterns, directory-only patterns, and the rule that a file inside an excluded directory cannot be re-included. The crawler never descends into an ignored directory.
+
+Every source git itself consults is honored, in git's precedence order: the global excludes file (`core.excludesFile` from the repository config, else `$XDG_CONFIG_HOME/git/ignore`, else `~/.config/git/ignore`), then `$GIT_COMMON_DIR/info/exclude` (found through a linked worktree's `.git` file), then `.gitignore` in every directory from the work-tree top down — so an index rooted at a *subdirectory* of a work tree still applies the ancestor `.gitignore` files, exactly like `git status` run in that subdirectory. The git-specific sources only apply when `root` is inside a git work tree.
 
 Patterns passed via the `ignore` option use the same syntax and are rooted at `root`.
 
@@ -99,12 +102,14 @@ const results = index.complete("bdts", { limit: 10 });
 ```
 
 - `limit` — maximum results to return (default `64`).
-- `cwd` — only return paths under this prefix (relative to `root`).
-- `directories` — return only directories (default `false`).
+- `cwd` — match inside this indexed directory (relative to `root`). Same meaning as `Bun.Glob`'s `cwd`: only entries under it are candidates, the query is matched against each path _relative to it_, and the returned `path`s (and `positions`) are relative to it. A `cwd` that isn't an indexed directory matches nothing.
+- `directories` — return only directories (default `false`). This is the directories-only counterpart of `glob()`'s `onlyFiles: false` (which returns files, directories, and symlinks).
 
 Matching is smart-case (case-insensitive unless the query contains an uppercase letter), and matches in the basename outrank the same match earlier in the path. `positions` are indices into the `path` string (UTF-16 code units — `path[positions[0]]` is the first matched character, even for non-ASCII names), for highlighting in a UI.
 
 Paths you've recorded with [`touch()`](#touch-and-recent-access-history) get a recency boost, so frequently-opened files surface first.
+
+`complete()` is built to be called on every keystroke. Each call caches its survivor set (the candidates the query was a subsequence of), and the next call reuses it when the new query *extends* the previous one with the same options and the index has not changed in between — so the work per keystroke shrinks with the candidate set instead of rescanning every path. This is purely a fast path: results are always identical to a cold call, and any index mutation (a watcher event, `refresh()`) invalidates the cache automatically.
 
 ### `glob()` — match indexed paths
 
@@ -112,10 +117,17 @@ Paths you've recorded with [`touch()`](#touch-and-recent-access-history) get a r
 
 ```ts
 const sources = index.glob("src/**/*.ts");
+// ["api.mdx", "guide/intro.mdx", ...] — relative to docs/, like Bun.Glob.
 const docs = index.glob("**/*.mdx", { cwd: "docs" });
 ```
 
-The pattern syntax is the same as [`Bun.Glob`](/runtime/glob).
+The pattern syntax and the option semantics are the same as [`Bun.Glob`](/runtime/glob)'s `scanSync()`:
+
+- `cwd` — match inside this indexed directory (relative to `root`). The pattern is interpreted relative to it and the returned paths are relative to it. A `cwd` that isn't an indexed directory matches nothing.
+- `onlyFiles` — return only files (default `true`, like `Bun.Glob`). Pass `false` to also return directories and symlinks.
+- `limit` — maximum number of paths to return.
+
+The one intentional difference from `new Bun.Glob(pattern).scanSync({ cwd })`: `glob()` only sees what was indexed, so gitignored entries (and anything beyond `maxMemory`) never match.
 
 ### `has()` and `stat()`
 
@@ -143,12 +155,12 @@ for await (const match of index.grep("FIXME", { glob: "src/**", context: 2 })) {
 }
 ```
 
-Each match has `path`, a 1-based `line` and `column`, and the full `lineText`. With `context: n`, the surrounding lines are included as `before` and `after`.
+Each match has `path`, a 1-based `line` and `column`, and the full `lineText`. `column` is a 1-based offset into `lineText` in UTF-16 code units (the unit JavaScript string indices use), for both literal and `RegExp` patterns. With `context: n`, the surrounding lines are included as `before` and `after`. Matches are yielded ordered by `path`, then `line`, then `column`: the candidate files are read by concurrent thread-pool tasks and the merged results are sorted before the first match is yielded.
 
 Options:
 
-- `glob` — only search files matching this glob (relative to `root`).
-- `cwd` — only search files under this prefix.
+- `glob` — only search files matching this glob (relative to `cwd`, which defaults to the root).
+- `cwd` — only search inside this indexed directory (relative to `root`); `glob` and every reported `path` are relative to it, like `Bun.Glob`.
 - `limit` — stop after this many matches.
 - `maxFileSize` — skip files larger than this many bytes (default 1 MiB, or the constructor's `maxFileSize`).
 - `caseSensitive` — default `true`.
@@ -195,7 +207,7 @@ if (status) {
 
 ### `gitDiff()`
 
-Returns a line-level diff of the working-tree file against the version in `HEAD`, or `null` if `root` isn't in a git work tree or the path isn't tracked:
+Returns a line-level diff of the working-tree file against the version in `HEAD`, or `null` if `root` isn't in a git work tree or the path exists in neither `HEAD` nor the working tree. An untracked file that exists on disk diffs as all additions (`oldText: null`); a tracked file deleted from the working tree diffs as all deletions (`newText: null`).
 
 ```ts
 const diff = await index.gitDiff("src/index.ts");
@@ -293,7 +305,11 @@ The initial crawl, `refresh()`, `grep()` over a string, `gitStatus()`, and `gitD
 
 ```ts
 interface FileIndexOptions {
-  /** Respect .gitignore / .git/info/exclude (default true). `.git` itself is always skipped. */
+  /**
+   * Respect every gitignore source git consults: .gitignore files (including
+   * the ancestors of a sub-directory root), $GIT_COMMON_DIR/info/exclude and
+   * the global excludes file. Default true. `.git` itself is always skipped.
+   */
   gitignore?: boolean;
   /** Extra ignore patterns (gitignore syntax, rooted at `root`). */
   ignore?: string[];
@@ -325,14 +341,19 @@ class FileIndex implements Disposable {
   /**
    * Fuzzy filename autocomplete. Synchronous; operates on the in-memory index.
    * `positions` are indices into the `path` string of the matched characters.
+   * With `cwd`, candidates are restricted to that indexed directory and
+   * matched/returned relative to it (Bun.Glob's `cwd` semantics).
    */
   complete(
     query: string,
     options?: { limit?: number; cwd?: string; directories?: boolean },
   ): Array<{ path: string; score: number; positions: number[] }>;
 
-  /** Match indexed paths against a glob. Synchronous, no I/O. */
-  glob(pattern: string, options?: { limit?: number; cwd?: string }): string[];
+  /**
+   * Match indexed paths against a glob. Synchronous, no I/O. `cwd` and
+   * `onlyFiles` (default true) mean what they mean for Bun.Glob.scanSync.
+   */
+  glob(pattern: string, options?: { limit?: number; cwd?: string; onlyFiles?: boolean }): string[];
 
   has(path: string): boolean;
   stat(path: string): {
@@ -370,7 +391,11 @@ class FileIndex implements Disposable {
     files: Array<{ path: string; status: string }>;
   } | null>;
 
-  /** Line diff of the worktree file vs HEAD. null if not in git / not tracked. */
+  /**
+   * Line diff of the worktree file vs HEAD. null if not in a git work tree,
+   * or if the path exists in neither HEAD nor the worktree (an untracked
+   * file that exists on disk is an all-additions diff with oldText: null).
+   */
   gitDiff(path: string): Promise<{
     oldText: string | null;
     newText: string | null;

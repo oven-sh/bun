@@ -4,16 +4,20 @@ use bun_glob::matcher;
 
 use crate::store::{FileId, Store};
 
-/// Live entries whose relative path matches `pattern`, in path order.
+/// Live entries under `cwd_prefix` whose path *relative to it* matches
+/// `pattern`, in path order (`Bun.Glob`'s `cwd` semantics).
 ///
-/// The pattern's literal prefix (everything before the first glob
-/// metacharacter) narrows the candidate set via the store's sorted order
-/// before the real matcher runs.
-pub fn glob(store: &Store, pattern: &[u8]) -> Vec<FileId> {
-    let prefix = literal_prefix(pattern);
+/// `cwd_prefix` is `b""` (the whole store) or a `/`-terminated directory
+/// prefix; the pattern is matched against `path[cwd_prefix.len()..]`. The
+/// pattern's literal prefix (everything before the first glob metacharacter)
+/// further narrows the candidate set via the store's sorted order before the
+/// real matcher runs.
+pub fn glob(store: &Store, pattern: &[u8], cwd_prefix: &[u8]) -> Vec<FileId> {
+    let mut range_prefix = cwd_prefix.to_vec();
+    range_prefix.extend_from_slice(literal_prefix(pattern));
     store
-        .range_with_prefix(prefix)
-        .filter(|&id| matcher::r#match(pattern, store.path(id)).matches())
+        .range_with_prefix(&range_prefix)
+        .filter(|&id| matcher::r#match(pattern, &store.path(id)[cwd_prefix.len()..]).matches())
         .collect()
 }
 
@@ -70,9 +74,17 @@ mod tests {
     }
 
     fn glob_paths(store: &Store, pattern: &[u8]) -> Vec<Vec<u8>> {
-        glob(store, pattern)
+        glob(store, pattern, b"")
             .into_iter()
             .map(|id| store.path(id).to_vec())
+            .collect()
+    }
+
+    /// Matching paths *relative to `cwd`*, like the JS API returns them.
+    fn glob_under(store: &Store, pattern: &[u8], cwd: &[u8]) -> Vec<Vec<u8>> {
+        glob(store, pattern, cwd)
+            .into_iter()
+            .map(|id| store.path(id)[cwd.len()..].to_vec())
             .collect()
     }
 
@@ -138,6 +150,31 @@ mod tests {
         assert!(got.contains(&b"README.md".to_vec()));
         assert!(got.contains(&b"srclike/index.ts".to_vec()));
         assert!(!got.iter().any(|p| p.starts_with(b"src/")));
+    }
+
+    #[test]
+    fn cwd_prefix_rebases_the_pattern_and_narrows_the_candidates() {
+        let s = store();
+        // The pattern is interpreted relative to `cwd`: `*.ts` means
+        // "directly inside src/", `**/*.ts` means "anywhere under it".
+        assert_eq!(glob_under(&s, b"*.ts", b"src/"), vec![b"index.ts".to_vec()]);
+        assert_eq!(
+            glob_under(&s, b"**/*.ts", b"src/"),
+            vec![
+                b"index.ts".to_vec(),
+                b"server/index.ts".to_vec(),
+                b"server/util.ts".to_vec()
+            ]
+        );
+        assert_eq!(
+            glob_under(&s, b"index.ts", b"src/server/"),
+            vec![b"index.ts".to_vec()]
+        );
+        // "src/" does not leak into "srclike/".
+        assert!(!glob_under(&s, b"**/*", b"src/").contains(&b"index.ts/".to_vec()));
+        assert_eq!(glob_under(&s, b"**/*", b"src/").len(), 3);
+        // A prefix nothing starts with matches nothing.
+        assert!(glob_under(&s, b"**/*", b"nope/").is_empty());
     }
 
     #[test]

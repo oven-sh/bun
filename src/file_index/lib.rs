@@ -1,5 +1,10 @@
 //! In-memory codebase index: path store, parallel ignore-aware crawl, queries.
-//! See /tmp/file-index-design.md ("Crate 4: bun_file_index").
+//!
+//! This is the engine behind `Bun.FileIndex`: a single-threaded [`Store`] of
+//! root-relative path bytes plus pure query functions over it, filled by a
+//! parallel, gitignore-aware, enumeration-only crawl. It never touches JSC
+//! or the event loop; the runtime layer (`src/runtime/file_index/`) owns all
+//! JS marshalling, the filesystem watcher, and git.
 //!
 //! # Threading model (load-bearing)
 //!
@@ -18,6 +23,7 @@ mod complete;
 mod crawl;
 mod glob;
 mod grep;
+mod read;
 mod store;
 #[cfg(test)]
 mod test_link_stubs;
@@ -30,4 +36,5 @@ pub use complete::{
 pub use crawl::{CrawlEntry, CrawlOptions, CrawlResult, crawl, crawl_batched};
 pub use glob::glob;
 pub use grep::{GrepHit, GrepOutcome, GrepQuery, grep_file};
+pub use read::{FileReadOutcome, read_regular_at};
 pub use store::{EntryKind, FileId, Meta, Store};

@@ -57,7 +57,10 @@ const PREFILTER_MIN_RANGE_FRACTION: usize = 2;
 pub struct CompleteOptions<'a> {
     /// Maximum number of results.
     pub limit: usize,
-    /// Only consider paths starting with this prefix (`b""` = everything).
+    /// Only consider paths starting with this prefix (`b""` = everything,
+    /// otherwise a `/`-terminated directory). The needle is matched against
+    /// the path *with the prefix stripped* (`Bun.Glob`'s `cwd` semantics), so
+    /// `positions` index the cwd-relative path.
     pub cwd_prefix: &'a [u8],
     /// Only consider directories.
     pub dirs_only: bool,
@@ -74,7 +77,8 @@ impl Default for CompleteOptions<'static> {
 }
 
 /// One autocomplete result. `score` includes the frecency bonus; `positions`
-/// are the matched byte indices in the path (ascending), for highlighting.
+/// are the matched byte indices in the *cwd-relative* path (ascending), for
+/// highlighting.
 #[derive(Clone, Debug)]
 pub struct CompleteMatch {
     pub id: FileId,
@@ -212,9 +216,11 @@ fn complete_impl(
     let mut query = Query {
         store,
         opts,
+        strip: opts.cwd_prefix.len(),
         ranks: store.touch_ranks(),
         survivors_out,
     };
+    let strip = query.strip;
     let ranked = if use_cache {
         // `use_cache` is only true for a present, reusable cache.
         let survivors = cached.map_or(&[][..], |c| c.survivors.as_slice());
@@ -230,7 +236,7 @@ fn complete_impl(
             let mut positions: Vec<u32> = Vec::new();
             // The candidate scored, so it matches; positions come from the
             // pure alignment (the frecency bonus does not move them).
-            let _ = scorer.score_with_positions(store.path(id), &mut positions);
+            let _ = scorer.score_with_positions(&store.path(id)[strip..], &mut positions);
             CompleteMatch {
                 id,
                 score,
@@ -246,6 +252,9 @@ fn complete_impl(
 struct Query<'q, 'o> {
     store: &'q Store,
     opts: &'q CompleteOptions<'o>,
+    /// Bytes of `opts.cwd_prefix` to strip before scoring: the needle is
+    /// matched against the cwd-relative path, never the prefix itself.
+    strip: usize,
     ranks: ArrayHashMap<u32, u32, AutoContext>,
     survivors_out: Option<&'q mut Vec<FileId>>,
 }
@@ -259,7 +268,7 @@ impl Query<'_, '_> {
         if self.opts.dirs_only && self.store.kind(id) != EntryKind::Dir {
             return;
         }
-        let Some(base) = scorer.score(self.store.path(id)) else {
+        let Some(base) = scorer.score(&self.store.path(id)[self.strip..]) else {
             return;
         };
         if let Some(out) = self.survivors_out.as_deref_mut() {
@@ -499,6 +508,23 @@ mod tests {
     }
 
     #[test]
+    fn cwd_prefix_rebases_the_needle_and_the_positions() {
+        // `Bun.Glob`-style cwd: the needle never matches the prefix itself,
+        // and positions index the cwd-relative path.
+        let s = store_with(&[b"src/app.ts", b"src/main.rs", b"other/srcish.ts"]);
+        let scoped = CompleteOptions {
+            cwd_prefix: b"src/",
+            ..CompleteOptions::default()
+        };
+        assert!(complete_paths(&s, b"src", &scoped).is_empty());
+        let got = complete(&s, &mut scorer(), b"app", &scoped);
+        assert_eq!(got.len(), 1);
+        assert_eq!(s.path(got[0].id), b"src/app.ts");
+        // "app" aligns at bytes 0..3 of "app.ts" (not 4..7 of the full path).
+        assert_eq!(got[0].positions, vec![0, 1, 2]);
+    }
+
+    #[test]
     fn dirs_only_filters_files() {
         let s = store_with(&[b"src/app.ts", b"src/app/", b"app2/"]);
         let opts = CompleteOptions {
@@ -615,7 +641,8 @@ mod tests {
             if opts.dirs_only && store.kind(id) != EntryKind::Dir {
                 continue;
             }
-            let Some(base) = sc.score(path) else {
+            // The needle is matched against the cwd-relative path.
+            let Some(base) = sc.score(&path[opts.cwd_prefix.len()..]) else {
                 continue;
             };
             all.push((

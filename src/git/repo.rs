@@ -206,9 +206,18 @@ impl Repository {
     /// HEAD's tree flattened to a path-sorted `(path, oid, mode)` list.
     /// An unborn HEAD yields an empty list. Annotated tags are peeled.
     pub fn head_tree(&self, odb: &Odb) -> Result<Vec<TreeEntry>, GitError> {
-        let Some(mut oid) = self.head()?.oid() else {
-            return Ok(Vec::new());
-        };
+        match self.head()?.oid() {
+            None => Ok(Vec::new()),
+            Some(oid) => self.tree_at(odb, oid),
+        }
+    }
+
+    /// The tree of `oid` (a commit, an annotated tag chain ending in a
+    /// commit, or a tree) flattened to a path-sorted `(path, oid, mode)`
+    /// list. [`Repository::head_tree`] is `tree_at(head().oid())`; callers
+    /// that already resolved (and may have cached) a commit use this
+    /// directly.
+    pub fn tree_at(&self, odb: &Odb, mut oid: Oid) -> Result<Vec<TreeEntry>, GitError> {
         let mut body = Vec::new();
         let mut kind = odb.read(oid, &mut body)?;
         let mut peeled = 0;

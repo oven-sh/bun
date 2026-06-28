@@ -53,6 +53,13 @@ export default [
         length: 1,
         privateSymbol: "paths",
       },
+      // `grep(RegExp)`: read one candidate off the JS thread through the
+      // same guarded (O_NOFOLLOW + fstat) open the literal worker uses.
+      __grepRead: {
+        fn: "__grepRead",
+        length: 2,
+        privateSymbol: "read",
+      },
       // Post-close observer for the `grep()` async iterator; never throws.
       __closed: {
         fn: "__closed",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 
@@ -124,7 +124,7 @@ describe("Bun.FileIndex gitStatus()", () => {
 
   test("throws after close()", async () => {
     using dir = tempDir("file-index-git-closed", { "a.txt": "alpha\n" });
-    const index = new Bun.FileIndex(String(dir));
+    using index = new Bun.FileIndex(String(dir));
     await index.ready;
     index.close();
     expect(() => index.gitStatus()).toThrow("FileIndex is closed");
@@ -181,6 +181,40 @@ describe("Bun.FileIndex gitStatus()", () => {
     }
     // The sequence really produced a non-trivial final state.
     expect((await bunStatusFiles(root)).length).toBeGreaterThanOrEqual(5);
+  });
+
+  // `.git/index` format coverage: real-git index v4 (prefix-compressed path
+  // names) plus the v3 extended flags (`skip-worktree`, `intent-to-add`),
+  // which also force the extended entry format.
+  test("matches git over a real index v4 with skip-worktree and intent-to-add entries", async () => {
+    using dir = tempDir("file-index-git-indexv4", {
+      "a.txt": "alpha\n",
+      "deep/nested/prefix-compressed-aaa.txt": "x\n",
+      "deep/nested/prefix-compressed-bbb.txt": "y\n",
+      "skip.txt": "skip\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+    git(root, "update-index", "--index-version", "4");
+    // The on-disk index really is v4: "DIRC" + a big-endian u32 version.
+    expect(fs.readFileSync(join(root, ".git/index")).readUInt32BE(4)).toBe(4);
+    await expectStatusMatchesGit(root, "clean tree, index v4");
+
+    fs.writeFileSync(join(root, "ita.txt"), "intent to add\n");
+    git(root, "add", "--intent-to-add", "ita.txt");
+    git(root, "update-index", "--skip-worktree", "skip.txt");
+    fs.writeFileSync(join(root, "skip.txt"), "modified behind skip-worktree\n");
+    fs.writeFileSync(join(root, "a.txt"), "alpha modified\n");
+    expect(fs.readFileSync(join(root, ".git/index")).readUInt32BE(4)).toBe(4);
+    const fromGit = await expectStatusMatchesGit(root, "v4 + intent-to-add + skip-worktree + worktree edit");
+    // The fixture really exercised every shape: ita.txt is reported via its
+    // intent-to-add entry, a.txt is a plain worktree modification, and the
+    // skip-worktree entry hides skip.txt's modification entirely.
+    expect(fromGit.map(f => f.path)).toContain("ita.txt");
+    expect(fromGit).toContainEqual({ path: "a.txt", status: " M" });
+    expect(fromGit.map(f => f.path)).not.toContain("skip.txt");
   });
 
   test("untracked files excluded by .gitignore never appear", async () => {
@@ -437,6 +471,241 @@ describe("Bun.FileIndex gitStatus()", () => {
   });
 });
 
+describe("Bun.FileIndex git HEAD-tree cache", () => {
+  // The flattened HEAD tree is cached on the index keyed by the HEAD
+  // commit; a commit made between two calls on the SAME index must be
+  // picked up (the worker re-resolves HEAD on every call).
+  test("gitStatus()/gitDiff() reflect a commit made between two calls on one index", async () => {
+    using dir = tempDir("file-index-git-headmove", {
+      "a.txt": "one\n",
+      "b.txt": "two\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+    using index = new Bun.FileIndex(root);
+    await index.ready;
+    const first = await index.gitStatus();
+    expect(first!.files).toEqual([]);
+    expect(first!.oid).toBe(git(root, "rev-parse", "HEAD").trim());
+
+    fs.writeFileSync(join(root, "a.txt"), "one changed\n");
+    expect(sortFiles((await index.gitStatus())!.files)).toEqual([{ path: "a.txt", status: " M" }]);
+    expect((await index.gitDiff("a.txt"))!.oldText).toBe("one\n");
+
+    git(root, "add", "a.txt");
+    git(root, "commit", "-q", "-m", "second");
+    const after = await index.gitStatus();
+    expect(after!.oid).toBe(git(root, "rev-parse", "HEAD").trim());
+    expect(after!.files).toEqual([]);
+    // gitDiff on the same index now diffs against the NEW HEAD blob, and a
+    // repeated call (served from the cached tree) agrees.
+    fs.writeFileSync(join(root, "a.txt"), "one changed again\n");
+    const diff = await index.gitDiff("a.txt");
+    expect(diff!.oldText).toBe("one changed\n");
+    expect(diff!.newText).toBe("one changed again\n");
+    expect((await index.gitDiff("a.txt"))!.oldText).toBe("one changed\n");
+    await expectStatusMatchesGit(root, "after HEAD moved");
+  });
+});
+
+// gitStatus()'s `read_blob` opens a worktree path BY NAME on the pool. With
+// `watch: true` the worker trusts the watcher-fresh stat cache, so a path
+// swapped after the last delivered watcher batch is opened under a stale
+// "regular file" classification: that open must never follow a symlink out
+// of the root and must never block on a writer-less FIFO.
+describe.skipIf(isWindows)("gitStatus() worktree files replaced after the stat cache was filled", () => {
+  type FI = InstanceType<typeof Bun.FileIndex>;
+  function nextChangeTo(index: FI, path: string): Promise<void> {
+    return new Promise(resolve => {
+      index.onchange = events => {
+        if (events.some(e => e.path === path)) {
+          index.onchange = null;
+          resolve();
+        }
+      };
+    });
+  }
+
+  async function statusOfSwapped(root: string, swap: (abs: string) => void) {
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+    const index = new Bun.FileIndex(root, { watch: true });
+    await index.ready;
+    // Same-size, different-content write: the cached stat then differs
+    // from `.git/index` only in mtime/ctime, which is exactly the case
+    // that forces gitStatus to HASH the worktree file (`read_blob`)
+    // instead of deciding from the size alone.
+    const changed = nextChangeTo(index, "victim.txt");
+    fs.writeFileSync(join(root, "victim.txt"), "two\n");
+    await changed;
+    // Swap the path and snapshot the status in the SAME turn: the
+    // watcher's (debounced) batch for the swap cannot have been applied
+    // yet, so the worker opens "victim.txt" believing it is regular.
+    fs.unlinkSync(join(root, "victim.txt"));
+    swap(join(root, "victim.txt"));
+    try {
+      return (await index.gitStatus())!;
+    } finally {
+      index.close();
+    }
+  }
+
+  test("swapped for an out-of-root symlink holding HEAD's content: never reported clean", async () => {
+    // The link's target has the COMMITTED content: reading *through* it
+    // would hash equal to HEAD and report the modified path as clean.
+    using outside = tempDir("file-index-git-symlink-outside", { "secret.txt": "one\n" });
+    using dir = tempDir("file-index-git-symlink", { "victim.txt": "one\n" });
+    const status = await statusOfSwapped(String(dir), abs => fs.symlinkSync(join(String(outside), "secret.txt"), abs));
+    // ` M`, not absent: the worker hashed through `read_blob` (the cached
+    // stat still says "regular file") and the guarded open refused the
+    // link. A read-through would have hashed equal to HEAD => clean.
+    expect(status.files).toEqual([{ path: "victim.txt", status: " M" }]);
+  });
+
+  test("swapped for a writer-less FIFO: terminates and is never reported clean", async () => {
+    using dir = tempDir("file-index-git-fifo", { "victim.txt": "one\n" });
+    const status = await statusOfSwapped(String(dir), abs => {
+      expect(Bun.spawnSync({ cmd: ["mkfifo", abs] }).exitCode).toBe(0);
+    });
+    // ` M` (hashed as empty through the guarded open), not ` D` — proof
+    // the worker took the cached-stat path and opened the FIFO by name.
+    expect(status.files).toEqual([{ path: "victim.txt", status: " M" }]);
+  });
+});
+
+describe("Bun.FileIndex gitignore sources", () => {
+  test.skipIf(isWindows)("a linked worktree's `.git` file resolves $GIT_COMMON_DIR/info/exclude", async () => {
+    using dir = tempDir("file-index-exclude-linked", {
+      "main/a.txt": "alpha\n",
+    });
+    const main = join(String(dir), "main");
+    const linked = join(String(dir), "linked");
+    initRepo(main);
+    git(main, "add", ".");
+    git(main, "commit", "-q", "-m", "init");
+    git(main, "worktree", "add", "-q", "-b", "wt", linked);
+    // The shared exclude file lives in the COMMON dir, reached through the
+    // linked worktree's `.git` FILE (`gitdir:`) + `commondir` indirection.
+    fs.mkdirSync(join(main, ".git/info"), { recursive: true });
+    fs.writeFileSync(join(main, ".git/info/exclude"), "hidden.txt\n");
+    fs.writeFileSync(join(linked, "hidden.txt"), "h\n");
+    fs.writeFileSync(join(linked, "visible.txt"), "v\n");
+    // git agrees: the exclude applies inside the linked worktree.
+    expect(git(linked, "check-ignore", "hidden.txt").trim()).toBe("hidden.txt");
+
+    using index = new Bun.FileIndex(linked);
+    await index.ready;
+    const paths = index.glob("**/*").sort();
+    expect(paths).toContain("visible.txt");
+    expect(paths).not.toContain("hidden.txt");
+    // And `gitStatus()` therefore agrees with `git status` exactly.
+    await expectStatusMatchesGit(linked, "linked worktree info/exclude");
+  });
+
+  test("an index rooted at a subdirectory applies every ancestor .gitignore, anchored like git", async () => {
+    using dir = tempDir("file-index-ancestor-gitignore", {
+      // Anchored, dir-only and basename patterns in BOTH ancestors. The
+      // anchored ones name paths relative to THEIR directory, not the root.
+      ".gitignore": "*.log\n/mid/sub/gen/\n/sub/\nbuild/\n",
+      "mid/.gitignore": "/sub/local.txt\nnested.md\n",
+      "mid/sub/.gitignore": "!keep.log\n",
+      "mid/sub/a.ts": "a\n",
+      "mid/sub/b.log": "b\n",
+      "mid/sub/keep.log": "k\n",
+      "mid/sub/local.txt": "l\n",
+      "mid/sub/nested.md": "n\n",
+      "mid/sub/gen/out.js": "o\n",
+      "mid/sub/build/x.js": "x\n",
+      "mid/sub/deep/nested.md": "n\n",
+      "mid/sub/sub/inner.txt": "i\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    const sub = join(root, "mid", "sub");
+    using index = new Bun.FileIndex(sub);
+    await index.ready;
+    const paths = new Set(index.glob("**/*"));
+    // Differential: git's own verdict from inside `sub` for every probe.
+    const probes = [
+      "a.ts",
+      "b.log",
+      "keep.log",
+      "local.txt",
+      "nested.md",
+      "gen/out.js",
+      "build/x.js",
+      "deep/nested.md",
+      // `/sub/` in the TOP-LEVEL .gitignore is anchored at the work tree:
+      // it must NOT ignore `<root>/sub` two levels down.
+      "sub/inner.txt",
+    ];
+    for (const probe of probes) {
+      const ignoredByGit =
+        Bun.spawnSync({ cmd: ["git", "check-ignore", "-q", probe], cwd: sub, env: gitEnv }).exitCode === 0;
+      expect(paths.has(probe), `${probe}: git says ignored=${ignoredByGit}`).toBe(!ignoredByGit);
+    }
+    // The witnesses, spelled out (so the differential is never vacuous).
+    expect([...paths].filter(p => !index.stat(p) || index.stat(p)!.kind !== "dir").sort()).toEqual([
+      ".gitignore",
+      "a.ts",
+      "keep.log",
+      "sub/inner.txt",
+    ]);
+  });
+
+  test.skipIf(isWindows)(
+    "git's global excludes file: core.excludesFile, $XDG_CONFIG_HOME, ~/.config fallback",
+    async () => {
+      using dir = tempDir("file-index-global-exclude", {
+        "repo/a.ts": "a\n",
+        "repo/skip-xdg.txt": "x\n",
+        "repo/skip-home.txt": "h\n",
+        "repo/skip-conf.txt": "c\n",
+        "xdg/git/ignore": "skip-xdg.txt\n",
+        "home/.config/git/ignore": "skip-home.txt\n",
+        "conf/excludes": "skip-conf.txt\n",
+        "list.ts": `using index = new Bun.FileIndex(process.argv[2]);
+await index.ready;
+console.log(JSON.stringify(index.glob("**/*").sort()));`,
+      });
+      const root = String(dir);
+      const repo = join(root, "repo");
+      initRepo(repo);
+      // Hermetic: HOME/XDG_CONFIG_HOME point INTO the fixture, never at the
+      // machine's real global ignore, so each source is exercised in a
+      // subprocess with exactly the environment it documents.
+      const list = async (env: Record<string, string | undefined>) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "list.ts", repo],
+          cwd: root,
+          env: { ...bunEnv, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), exitCode }, stderr).toMatchObject({ exitCode: 0 });
+        return JSON.parse(stdout) as string[];
+      };
+      const home = join(root, "home");
+      const xdg = join(root, "xdg");
+      // $XDG_CONFIG_HOME/git/ignore wins over ~/.config/git/ignore.
+      expect(await list({ HOME: home, XDG_CONFIG_HOME: xdg })).toEqual(["a.ts", "skip-conf.txt", "skip-home.txt"]);
+      // Without XDG_CONFIG_HOME, ~/.config/git/ignore applies.
+      expect(await list({ HOME: home, XDG_CONFIG_HOME: undefined })).toEqual(["a.ts", "skip-conf.txt", "skip-xdg.txt"]);
+      // `core.excludesFile` in the repository config overrides both.
+      git(repo, "config", "core.excludesFile", join(root, "conf/excludes"));
+      expect(await list({ HOME: home, XDG_CONFIG_HOME: xdg })).toEqual(["a.ts", "skip-home.txt", "skip-xdg.txt"]);
+      // gitignore: false disables every source, including the global ones.
+      using all = new Bun.FileIndex(repo, { gitignore: false });
+      await all.ready;
+      expect(all.glob("**/*").sort()).toEqual(["a.ts", "skip-conf.txt", "skip-home.txt", "skip-xdg.txt"]);
+    },
+  );
+});
+
 describe("Bun.FileIndex gitDiff()", () => {
   test("resolves null outside a git work tree", async () => {
     using dir = tempDir("file-index-diff-none", { "a.txt": "alpha\n" });
@@ -579,6 +848,38 @@ describe("Bun.FileIndex gitDiff()", () => {
     expect(await bunGitDiff(root, "does/not/exist.txt")).toBeNull();
   });
 
+  // The worktree side is opened BY NAME on the pool through the guarded
+  // open(O_NOFOLLOW|O_NONBLOCK) + fstat(fd) helper: a tracked path swapped
+  // for a symlink diffs the LINK TARGET STRING (git mode-120000 semantics,
+  // never the bytes it points at), and one swapped for a writer-less FIFO
+  // terminates instead of wedging the pool thread.
+  test.skipIf(isWindows)("a tracked path replaced by an out-of-root symlink or a FIFO", async () => {
+    using outside = tempDir("file-index-gitdiff-outside", { "secret.txt": "OUT OF ROOT\n" });
+    using dir = tempDir("file-index-gitdiff-swapped", {
+      "link.txt": "one\n",
+      "pipe.txt": "two\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+    const target = join(String(outside), "secret.txt");
+    fs.unlinkSync(join(root, "link.txt"));
+    fs.symlinkSync(target, join(root, "link.txt"));
+    fs.unlinkSync(join(root, "pipe.txt"));
+    expect(Bun.spawnSync({ cmd: ["mkfifo", join(root, "pipe.txt")] }).exitCode).toBe(0);
+
+    using index = new Bun.FileIndex(root);
+    await index.ready;
+    const linkDiff = await index.gitDiff("link.txt");
+    expect(linkDiff!.oldText).toBe("one\n");
+    expect(linkDiff!.newText).toBe(target);
+    // A FIFO is not a diffable worktree file: only the HEAD side remains.
+    const pipeDiff = await index.gitDiff("pipe.txt");
+    expect(pipeDiff!.oldText).toBe("two\n");
+    expect(pipeDiff!.newText).toBeNull();
+  });
+
   test("a binary file yields null texts and no hunks", async () => {
     const oldBytes = Buffer.from([0x62, 0x69, 0x6e, 0x00, 0x01, 0x02, 0x0a]);
     using dir = tempDir("file-index-diff-binary", { "bin.dat": oldBytes, "text.txt": "text\n" });
@@ -706,11 +1007,8 @@ describe("Bun.FileIndex gitignore differential vs git", () => {
       .sort();
     using index = new Bun.FileIndex(root);
     await index.ready;
-    // `ls-files` lists files only; the index also holds directories.
-    const fromBun = index
-      .glob("**/*")
-      .filter(p => index.stat(p)!.kind !== "dir")
-      .sort();
+    // `ls-files` lists files only, and so does `glob()` by default.
+    const fromBun = index.glob("**/*").sort();
     expect(fromGit.length).toBeGreaterThan(20);
     expect(fromBun).toEqual(fromGit);
   });

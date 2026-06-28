@@ -173,3 +173,40 @@ fn long_chain_deep_nesting() {
     assert!(!chain.is_ignored(&deep_path, false));
     assert!(chain.is_ignored(&other, false));
 }
+
+/// [`IgnoreFile::parse_above`]: a file in an ANCESTOR of the index root
+/// (the work-tree `.gitignore` chain above a sub-directory root,
+/// `info/exclude`, the global excludes file) is evaluated against the
+/// path PREFIXED with the root's offset below it — exactly what git does
+/// when `git status` runs in a subdirectory of the work tree.
+#[test]
+fn parse_above_anchors_an_ancestor_file_at_its_own_directory() {
+    // <worktree>/.gitignore, index rooted at <worktree>/a/b.
+    let above = IgnoreFile::parse_above(b"a/b", b"/a/b/gen/\nout/\n*.log\n!keep.log\n/top.txt\n");
+    let chain = IgnoreChain::empty().append(above);
+
+    // Anchored pattern `/a/b/gen/` names <worktree>/a/b/gen == <root>/gen.
+    assert_eq!(chain.matches(b"gen", true), Match::Ignore);
+    assert_eq!(chain.matches(b"gen", false), Match::None);
+    assert!(chain.is_ignored(b"gen/x.txt", false));
+    // Non-anchored patterns are depth-independent: identical behavior.
+    assert_eq!(chain.matches(b"x/out", true), Match::Ignore);
+    assert_eq!(chain.matches(b"x/build.log", false), Match::Ignore);
+    assert_eq!(chain.matches(b"x/keep.log", false), Match::Whitelist);
+    // `/top.txt` is anchored at the WORK TREE, not the index root: the
+    // index-relative `top.txt` is <worktree>/a/b/top.txt and must NOT match.
+    assert_eq!(chain.matches(b"top.txt", false), Match::None);
+
+    // A deeper in-tree `.gitignore` still wins over the ancestor file.
+    let deeper = chain.append(IgnoreFile::parse(b"", b"!gen/\n"));
+    assert_eq!(deeper.matches(b"gen", true), Match::Whitelist);
+}
+
+/// `parse_above(b"", ..)` (root == work-tree top) is exactly `parse(b"", ..)`.
+#[test]
+fn parse_above_with_an_empty_prefix_matches_like_a_root_file() {
+    let chain = IgnoreChain::empty().append(IgnoreFile::parse_above(b"", b"/dir/\n*.log\n"));
+    assert_eq!(chain.matches(b"dir", true), Match::Ignore);
+    assert_eq!(chain.matches(b"a/b.log", false), Match::Ignore);
+    assert_eq!(chain.matches(b"sub/dir", true), Match::None);
+}

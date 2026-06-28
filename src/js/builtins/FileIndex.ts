@@ -1,11 +1,21 @@
 interface FileIndex {
-  readonly root: string;
   $pull(pattern, options): Promise<unknown[]>;
-  /** Native candidate snapshot for RegExp grep (see FileIndex.classes.ts). */
-  $paths(options): { paths: string[]; maxFileSize: number };
+  /**
+   * Native candidate snapshot for RegExp grep (see FileIndex.classes.ts).
+   * `paths` are relative to the `cwd` option; `prefix` is that cwd ("" or
+   * "dir/"), which `$read` needs to locate a candidate from the root.
+   */
+  $paths(options): { paths: string[]; prefix: string; maxFileSize: number };
+  /**
+   * Guarded native read of one candidate, off the JS thread: the same
+   * `open(O_NOFOLLOW|O_NONBLOCK)` + `fstat(fd)` the literal worker uses, so
+   * a candidate swapped for a symlink is never read through and one swapped
+   * for a writer-less FIFO never blocks. Resolves `null` for a vanished,
+   * non-regular, oversized, or binary candidate.
+   */
+  $read(relPath: string, maxFileSize: number): Promise<string | null>;
   /** `true` once `close()` has run. Never throws. */
   $closeRequested(): boolean;
-  stat(path: string): { size: number; kind: string } | null;
 }
 
 export function grep(this: FileIndex, pattern, options) {
@@ -13,8 +23,7 @@ export function grep(this: FileIndex, pattern, options) {
   // Validate (and snapshot the candidate set) synchronously so bad arguments
   // and a closed index throw from `grep()` itself, not from the first `next()`.
   if ($isRegExpObject(pattern)) {
-    const { paths, maxFileSize } = index.$paths(options);
-    const root: string = index.root;
+    const { paths, prefix, maxFileSize } = index.$paths(options);
     // `$paths` already range-validated both; `??` only normalizes absence.
     const limit: number = options?.limit ?? Infinity;
     const context: number = options?.context ?? 0;
@@ -26,26 +35,15 @@ export function grep(this: FileIndex, pattern, options) {
 
     /** Files read concurrently per batch. */
     const READ_CONCURRENCY = 16;
-    /**
-     * A NUL within the first 8 KiB marks a file binary; mirrors the native
-     * literal path's window (`bun_file_index::grep_file`).
-     */
-    const BINARY_SNIFF_LEN = 8192;
 
-    async function readCandidate(this: string, relPath: string): Promise<string | null> {
-      // `maxFileSize` (and "is it still a regular file") is enforced from a
-      // fresh stat at open time, mirroring the native literal path's
-      // `fstat(fd)` after `open()` — the index has no crawl-time sizes.
-      // `index.stat()` also caches the answer in the index's stat cache.
-      const st = index.stat(relPath);
-      if (st === null || st.kind !== "file" || st.size > maxFileSize) return null;
-      // A candidate that vanished (or became unreadable) since the snapshot
-      // is simply not searched, exactly like the native literal path.
-      try {
-        return await Bun.file(this + "/" + relPath).text();
-      } catch {
-        return null;
-      }
+    function readCandidate(this: FileIndex, relPath: string): Promise<string | null> {
+      // The guarded native read (`__grepRead`): admission (still a regular
+      // file, within `maxFileSize`, not binary) is decided from the OPENED
+      // fd on the thread pool, mirroring the literal worker. A candidate
+      // that vanished or was swapped for a symlink/FIFO since the snapshot
+      // resolves `null` and is simply not searched. `relPath` is relative
+      // to the grep's `cwd`; `$read` wants it relative to the root.
+      return this.$read(prefix + relPath, maxFileSize);
     }
     function stripCR(line: string): string {
       return line.endsWith("\r") ? line.slice(0, -1) : line;
@@ -64,12 +62,10 @@ export function grep(this: FileIndex, pattern, options) {
       for (let i = 0; i < paths.length && emitted < limit; i += READ_CONCURRENCY) {
         if (index.$closeRequested()) return;
         const batch = paths.slice(i, i + READ_CONCURRENCY);
-        const texts: (string | null)[] = await Promise.all(batch.map(readCandidate, root));
+        const texts: (string | null)[] = await Promise.all(batch.map(readCandidate, index));
         for (let j = 0; j < batch.length && emitted < limit; j++) {
           const text = texts[j];
           if (text === null) continue;
-          const nul = text.indexOf("\0");
-          if (nul !== -1 && nul < BINARY_SNIFF_LEN) continue;
           const path = batch[j];
           const lines = text.split("\n");
           // The element after a trailing newline is not a line.

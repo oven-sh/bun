@@ -9373,8 +9373,8 @@ declare module "bun" {
    */
   interface FileIndexCompletion {
     /**
-     * The matched path, relative to the index root and `/`-separated on all
-     * platforms (including Windows).
+     * The matched path, `/`-separated on all platforms (including Windows)
+     * and relative to the call's `cwd` option (the index root by default).
      */
     path: string;
     /**
@@ -9395,11 +9395,18 @@ declare module "bun" {
    * One content-search hit yielded by {@link FileIndex.grep}.
    */
   interface FileIndexGrepMatch {
-    /** Matched file's path, relative to the index root and `/`-separated. */
+    /**
+     * Matched file's path, `/`-separated and relative to the call's `cwd`
+     * option (the index root by default).
+     */
     path: string;
     /** 1-based line number of the match. */
     line: number;
-    /** 1-based column (byte offset within the line) where the match starts. */
+    /**
+     * 1-based offset of the match within `lineText`, in UTF-16 code units
+     * (the same unit as `lineText.indexOf()` / `String#charAt`), for
+     * literal and `RegExp` patterns alike.
+     */
     column: number;
     /** The full text of the matching line, without the trailing newline. */
     lineText: string;
@@ -9477,8 +9484,15 @@ declare module "bun" {
    */
   interface FileIndexOptions {
     /**
-     * Respect `.gitignore` files (per-directory, with `!` negation and
-     * last-match-wins, exactly like git) and `.git/info/exclude`.
+     * Respect every gitignore source git itself consults, with git's
+     * semantics (per-directory `.gitignore` files with `!` negation and
+     * last-match-wins): `.gitignore` in every directory from the work-tree
+     * top down (including the ancestors of a `root` that is a subdirectory
+     * of its work tree), `$GIT_COMMON_DIR/info/exclude` (resolved through a
+     * linked worktree's `.git` file), and git's global excludes file
+     * (`core.excludesFile`, else `$XDG_CONFIG_HOME/git/ignore`, else
+     * `~/.config/git/ignore`). The git-specific sources apply only when
+     * `root` is inside a git work tree.
      *
      * The `.git` directory itself is always skipped regardless of this option.
      *
@@ -9534,8 +9548,11 @@ declare module "bun" {
    * and editor tooling: fuzzy filename autocomplete, glob queries, content
    * search, change tracking, and in-process git status/diff.
    *
-   * Paths returned by and accepted from every method are **relative to `root`
-   * and `/`-separated on all platforms**, including Windows. Path arguments
+   * Paths returned by and accepted from every method are **relative and
+   * `/`-separated on all platforms**, including Windows: relative to `root`,
+   * or — for {@link FileIndex.complete}, {@link FileIndex.glob}, and
+   * {@link FileIndex.grep} called with a `cwd` option — relative to that
+   * `cwd`, exactly like {@link Glob.scan}. Path arguments
    * must stay inside the root: a NUL byte, an absolute path, or any `..`
    * component throws `ERR_INVALID_ARG_VALUE`. Paths must also be valid UTF-8
    * to round-trip: an indexed entry whose name is not valid UTF-8 is
@@ -9659,7 +9676,9 @@ declare module "bun" {
      * Fuzzy filename autocomplete (fzf-style subsequence scoring).
      *
      * Synchronous: operates entirely on the in-memory index with no I/O, and
-     * is designed to run in well under a millisecond at 100k indexed paths.
+     * is intended to be cheap enough to call on every keystroke (each call
+     * also caches its survivor set, so a query that *extends* the previous
+     * one over an unchanged index only re-ranks those survivors).
      * Recently {@link FileIndex.touch | touched} paths receive a recency boost.
      *
      * @param query - The fuzzy query, e.g. `"srvidx"` to match
@@ -9667,8 +9686,10 @@ declare module "bun" {
      *   unless the query contains an uppercase letter.
      * @param options - Filtering options.
      * @param options.limit - Maximum number of results to return. @default 64
-     * @param options.cwd - Only return paths under this prefix (relative to
-     *   `root`, `/`-separated). @default undefined
+     * @param options.cwd - Match inside this indexed directory (relative to
+     *   `root`, `/`-separated), like {@link Glob.scan}'s `cwd`: the query is
+     *   matched against — and returned paths and `positions` are relative
+     *   to — that directory. @default undefined
      * @param options.directories - Return only directories. @default false
      * @returns Matches sorted best-first.
      *
@@ -9690,11 +9711,17 @@ declare module "bun" {
          */
         limit?: number;
         /**
-         * Only return paths under this prefix (relative to `root`, `/`-separated).
+         * Match inside this indexed directory (relative to `root`,
+         * `/`-separated), with the same meaning as {@link Glob.scan}'s
+         * `cwd`: only entries under it are candidates, the query is matched
+         * against the path *relative to it*, and the returned `path`s and
+         * `positions` are relative to it. A `cwd` that is not an indexed
+         * directory matches nothing.
          */
         cwd?: string;
         /**
-         * Return only directories.
+         * Return only directories (`glob()`'s `onlyFiles: false` is the
+         * superset: files, directories, and symlinks).
          * @default false
          */
         directories?: boolean;
@@ -9704,15 +9731,18 @@ declare module "bun" {
     /**
      * Match indexed paths against a glob pattern. Synchronous, no I/O — this
      * queries the in-memory index rather than walking the filesystem (unlike
-     * {@link Glob.scan}).
+     * {@link Glob.scan}, whose `cwd` and `onlyFiles` options it mirrors).
      *
      * @param pattern - A glob pattern (same syntax as {@link Bun.Glob}),
-     *   matched against `/`-separated paths relative to `root`.
+     *   matched against `/`-separated paths relative to `cwd` (which
+     *   defaults to the index root).
      * @param options - Filtering options.
      * @param options.limit - Maximum number of paths to return. @default Infinity
-     * @param options.cwd - Only match paths under this prefix (relative to
-     *   `root`, `/`-separated). @default undefined
-     * @returns Matching paths, relative to `root`.
+     * @param options.cwd - Match inside this indexed directory (relative to
+     *   `root`, `/`-separated); returned paths are relative to it. @default undefined
+     * @param options.onlyFiles - Return only files; `false` also returns
+     *   directories and symlinks. @default true
+     * @returns Matching paths, relative to `cwd` (or to `root` without one).
      *
      * @example
      * ```ts
@@ -9720,6 +9750,7 @@ declare module "bun" {
      * await index.ready;
      *
      * const tests = index.glob("test/**" + "/*.test.ts");
+     * // ["index.ts", "server/index.ts", ...] — relative to `src`, like Bun.Glob.
      * const srcOnly = index.glob("**" + "/*.ts", { cwd: "src" });
      * ```
      */
@@ -9731,9 +9762,20 @@ declare module "bun" {
          */
         limit?: number;
         /**
-         * Only match paths under this prefix (relative to `root`, `/`-separated).
+         * Match inside this indexed directory (relative to `root`,
+         * `/`-separated), with the same meaning as {@link Glob.scan}'s
+         * `cwd`: the pattern is interpreted relative to it and the returned
+         * paths are relative to it. A `cwd` that is not an indexed
+         * directory matches nothing.
          */
         cwd?: string;
+        /**
+         * Return only files. Pass `false` to also return directories and
+         * symlinks (`complete()`'s `directories: true` is the
+         * directories-only subset of that).
+         * @default true
+         */
+        onlyFiles?: boolean;
       },
     ): string[];
 
@@ -9784,8 +9826,9 @@ declare module "bun" {
     /**
      * Content search ("grep") over the indexed files.
      *
-     * File contents are read from disk in parallel on Bun's thread pool at
-     * call time — nothing is cached or retained by the index. Files containing
+     * File contents are read from disk in parallel — the candidate set is
+     * split into chunks that fan out as concurrent thread-pool tasks — at
+     * call time; nothing is cached or retained by the index. Files containing
      * a NUL byte in their first 8 KiB are treated as binary and skipped, as
      * are files larger than `maxFileSize`.
      *
@@ -9800,13 +9843,16 @@ declare module "bun" {
      *
      * @param pattern - A literal string (fast path) or a `RegExp`.
      * @param options - Search options.
-     * @param options.glob - Only search files matching this glob (relative to `root`). @default undefined
-     * @param options.cwd - Only search files under this prefix (relative to `root`). @default undefined
+     * @param options.glob - Only search files matching this glob (relative to `cwd`, which defaults to `root`). @default undefined
+     * @param options.cwd - Only search inside this indexed directory
+     *   (relative to `root`); matched paths are reported relative to it. @default undefined
      * @param options.limit - Stop after this many matches. @default Infinity
      * @param options.maxFileSize - Skip files larger than this many bytes. @default 1048576
      * @param options.caseSensitive - Match case-sensitively. @default true
      * @param options.context - Lines of context to include before and after each match. @default 0
-     * @returns An async iterable of matches in no guaranteed order across files.
+     * @returns An async iterable of matches, ordered by `path`, then `line`,
+     *   then `column` (the parallel reads are merged and sorted before the
+     *   first match is yielded).
      *
      * @example
      * ```ts
@@ -9825,11 +9871,16 @@ declare module "bun" {
       pattern: string | RegExp,
       options?: {
         /**
-         * Only search files matching this glob, relative to `root`.
+         * Only search files matching this glob, relative to `cwd` (which
+         * defaults to the index root).
          */
         glob?: string;
         /**
-         * Only search files under this prefix (relative to `root`, `/`-separated).
+         * Only search inside this indexed directory (relative to `root`,
+         * `/`-separated). The `glob` option and every matched `path` are
+         * relative to it — the same meaning `cwd` has for
+         * {@link FileIndex.glob} and {@link Glob.scan}. A `cwd` that is not
+         * an indexed directory matches nothing.
          */
         cwd?: string;
         /**
@@ -9887,7 +9938,10 @@ declare module "bun" {
      *
      * @param path - The file to diff, relative to `root` and `/`-separated.
      * @returns A promise for the diff, or `null` if `root` is not inside a git
-     *   work tree or `path` is not tracked.
+     *   work tree or `path` exists in neither `HEAD` nor the working tree.
+     *   An untracked file that exists on disk is a full all-additions diff
+     *   (`oldText: null`); a tracked file deleted from the working tree is a
+     *   full all-deletions diff (`newText: null`).
      *
      * @example
      * ```ts

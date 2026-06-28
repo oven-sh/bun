@@ -44,11 +44,11 @@ const has = (kind: ChangeEvent["kind"], path: string) => (events: ChangeEvent[])
 describe.skipIf(!watchSupported)("Bun.FileIndex watch", () => {
   test("watching reflects reality and close() is idempotent", async () => {
     using dir = tempDir("fi-watch-basic", { "a.txt": "a" });
-    const plain = new Bun.FileIndex(String(dir));
-    expect(plain.watching).toBe(false);
-    plain.close();
-
-    const index = new Bun.FileIndex(String(dir), { watch: true });
+    {
+      using plain = new Bun.FileIndex(String(dir));
+      expect(plain.watching).toBe(false);
+    }
+    using index = new Bun.FileIndex(String(dir), { watch: true });
     expect(index.watching).toBe(true);
     await index.ready;
     expect(index.watching).toBe(true);
@@ -234,7 +234,7 @@ describe.skipIf(!watchSupported)("Bun.FileIndex watch", () => {
 
   test("close() stops events; a closed index delivers nothing pending", async () => {
     using dir = tempDir("fi-watch-close", { "a.txt": "a" });
-    const index = new Bun.FileIndex(String(dir), { watch: true });
+    using index = new Bun.FileIndex(String(dir), { watch: true });
     await index.ready;
     let fired = 0;
     index.onchange = () => void fired++;
@@ -352,9 +352,20 @@ describe.skipIf(!watchSupported)("Bun.FileIndex watch", () => {
   });
 
   test("a watching index keeps the process alive until close()", async () => {
+    // The child's last statement leaves ONLY the watching index alive: no
+    // stdin listener, no timer. The parent then proves the child is still
+    // alive AND processing (an `onchange` round-trip through its stdout
+    // strictly after "end of script"), then makes it close() — via another
+    // watcher event, the only channel it has — and awaits a clean exit 0.
     using dir = tempDir("fi-watch-keepalive", {
       "main.ts": `
         const index = new Bun.FileIndex(process.argv[2], { watch: true });
+        index.onchange = events => {
+          for (const e of events) {
+            console.log("EV " + e.kind + " " + e.path);
+            if (e.path === "please-close") index.close();
+          }
+        };
         await index.ready;
         if (process.argv[3] === "close") index.close();
         console.log("end of script");
@@ -362,6 +373,7 @@ describe.skipIf(!watchSupported)("Bun.FileIndex watch", () => {
     });
     using watched = tempDir("fi-watch-keepalive-root", {});
 
+    // close() before the end of the script: the process must exit on its own.
     const closed = Bun.spawnSync({
       cmd: [bunExe(), join(String(dir), "main.ts"), String(watched), "close"],
       env: bunEnv,
@@ -369,26 +381,43 @@ describe.skipIf(!watchSupported)("Bun.FileIndex watch", () => {
     expect(closed.stdout.toString()).toBe("end of script\n");
     expect(closed.exitCode).toBe(0);
 
-    // Without close() the watcher refs the event loop: the process keeps
-    // running after the script ends and has to be killed.
+    // Without close(), the watcher refs the event loop past the last statement.
     await using open = Bun.spawn({
       cmd: [bunExe(), join(String(dir), "main.ts"), String(watched)],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    let sawEnd = false;
-    for await (const chunk of open.stdout) {
-      if (Buffer.from(chunk).toString().includes("end of script")) {
-        sawEnd = true;
-        break;
+    const lines = (async function* () {
+      let buffered = "";
+      for await (const chunk of open.stdout) {
+        buffered += Buffer.from(chunk).toString();
+        let nl: number;
+        while ((nl = buffered.indexOf("\n")) !== -1) {
+          yield buffered.slice(0, nl);
+          buffered = buffered.slice(nl + 1);
+        }
       }
-    }
-    expect(sawEnd).toBe(true);
-    // Still running after the script's last statement.
-    expect(open.exitCode).toBeNull();
-    open.kill();
-    await open.exited;
+    })();
+    // Pulls with `next()` (a `for await` + `return` would close the shared
+    // generator and cancel the child's stdout for the later waits).
+    const until = async (pred: (line: string) => boolean) => {
+      while (true) {
+        const { value, done } = await lines.next();
+        if (done) throw new Error("child stdout ended before the expected line");
+        if (pred(value)) return value;
+      }
+    };
+    await until(line => line === "end of script");
+    // The script body has ended; the event loop must still be alive and the
+    // watcher still delivering: a write is observed via onchange afterwards.
+    await Bun.write(join(String(watched), "alive-probe.txt"), "x");
+    await until(line => line === "EV create alive-probe.txt");
+    // Now make the child call close(); with the watcher gone, nothing keeps
+    // the process alive and it must exit 0 on its own (not be killed).
+    await Bun.write(join(String(watched), "please-close"), "x");
+    expect(await open.exited).toBe(0);
+    expect(open.signalCode).toBeNull();
   });
 });
 

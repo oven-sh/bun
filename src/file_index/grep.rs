@@ -73,8 +73,10 @@ impl GrepQuery {
     }
 }
 
-/// One match. `line` and `column` are 1-based; `column` is a byte offset
-/// within the line. `line_text` excludes the trailing `\n` (and `\r`).
+/// One match. `line` and `column` are 1-based; `column` is a BYTE offset
+/// within the line — this layer never decodes. The runtime converts the
+/// emitted hits to UTF-16 code units (what `FileIndex.grep()` documents),
+/// using `line_text`, which excludes the trailing `\n` (and `\r`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GrepHit<'a> {
     pub byte_offset: usize,

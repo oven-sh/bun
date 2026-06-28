@@ -16,20 +16,22 @@
 //!   comparison, so it is classified for real (`git status` semantics: the
 //!   tracked set is not subject to ignore rules) rather than reported ` D`.
 
+use std::sync::Arc;
+
 use bun_event_loop::TaskTag;
-use bun_file_index::{EntryKind, Meta};
+use bun_file_index::{EntryKind, FileReadOutcome, Meta, read_regular_at};
 use bun_git::{
-    DiffOrigin, GitError, Hunk, Repository, StatusOptions, WorktreeEntry, diff_lines, hash_blob,
-    is_gitlink_mode, is_symlink_mode,
+    DiffOrigin, GitError, Hunk, Oid, Repository, StatusOptions, TreeEntry, WorktreeEntry,
+    diff_lines, hash_blob, is_gitlink_mode, is_symlink_mode,
 };
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
     JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated, StringJsc as _, Strong,
     SysErrorJsc as _,
 };
-use bun_sys::{E, Fd, File};
+use bun_sys::{E, Fd};
 
-use super::{FileIndex, utf8_js};
+use super::{FileIndex, join_abs, schedule, utf8_js};
 
 /// `gitDiff()` does not read either side of the diff past this many bytes;
 /// an over-limit file is reported exactly like a binary one.
@@ -44,6 +46,73 @@ const MAX_SYMLINK_TARGET: usize = 1024 * 1024;
 
 pub type GitStatusTask<'a> = ConcurrentPromiseTask<'a, GitStatusJob<'a>>;
 pub type GitDiffTask<'a> = ConcurrentPromiseTask<'a, GitDiffJob<'a>>;
+
+/// `HEAD`'s flattened tree, cached on the `FileIndex` (JS-thread state) and
+/// keyed by the resolved `HEAD` commit. Re-reading and re-flattening the
+/// whole tree out of the odb (packfile + delta + zlib for thousands of tree
+/// objects) dominated `gitStatus()` on large repositories; the worker now
+/// resolves `HEAD` cheaply and only rebuilds when the commit moved.
+#[derive(Clone)]
+pub(crate) struct HeadTreeCache {
+    /// The (peeled) commit `HEAD` pointed at when `tree` was flattened.
+    oid: Oid,
+    /// Path-sorted; shared with in-flight workers by refcount.
+    tree: Arc<Vec<TreeEntry>>,
+}
+
+impl HeadTreeCache {
+    /// Approximate retained bytes, mirrored into the index's GC-visible
+    /// `estimatedSize`.
+    pub(crate) fn memory_cost(&self) -> usize {
+        self.tree
+            .iter()
+            .map(|e| e.path.capacity() + size_of::<TreeEntry>())
+            .sum()
+    }
+}
+
+/// Resolve HEAD's flattened tree, reusing `cached` when HEAD still names
+/// the same commit. The second element is `Some` when the tree had to be
+/// rebuilt (the JS thread caches it).
+///
+/// The object database is only opened — through `odb`, which fills the
+/// caller's slot — when the tree actually has to be rebuilt: `Odb::open`
+/// reads and validates every `.idx` in the repository (O(objects)), which
+/// profiling showed was the OTHER dominant per-call cost of `gitStatus()`
+/// on a large repository, and a status served from the cache never needs
+/// an object.
+fn head_tree_cached(
+    repo: &Repository,
+    odb: &mut Option<bun_git::Odb>,
+    cached: Option<&HeadTreeCache>,
+) -> Result<(Arc<Vec<TreeEntry>>, Option<HeadTreeCache>), GitError> {
+    match repo.head()?.oid() {
+        None => Ok((Arc::new(Vec::new()), None)),
+        Some(oid) => match cached {
+            Some(cache) if cache.oid == oid => Ok((Arc::clone(&cache.tree), None)),
+            _ => {
+                let tree = Arc::new(repo.tree_at(odb_lazy(repo, odb)?, oid)?);
+                let fresh = HeadTreeCache {
+                    oid,
+                    tree: Arc::clone(&tree),
+                };
+                Ok((tree, Some(fresh)))
+            }
+        },
+    }
+}
+
+/// Open the repository's object database into `slot` on first use.
+fn odb_lazy<'a>(
+    repo: &Repository,
+    slot: &'a mut Option<bun_git::Odb>,
+) -> Result<&'a bun_git::Odb, GitError> {
+    if slot.is_none() {
+        *slot = Some(repo.odb()?);
+    }
+    // Filled by every path above.
+    Ok(slot.as_ref().expect("odb slot was just filled"))
+}
 
 /// `index.gitStatus()`. Snapshots the store's non-directory entries (sorted,
 /// root-relative) on the JS thread and resolves with the marshalled status.
@@ -89,6 +158,8 @@ pub(crate) fn start_status(
             root: Box::from(index.root_bytes()),
             worktree,
             generation,
+            cached_tree: index.head_tree_cache(),
+            fresh_tree: None,
             fresh: Vec::new(),
             result: Ok(None),
         }),
@@ -96,27 +167,24 @@ pub(crate) fn start_status(
 }
 
 /// `index.gitDiff(path)`. `rel` is the normalized root-relative path.
-pub(crate) fn start_diff(index: &FileIndex, global: &JSGlobalObject, rel: Vec<u8>) -> JSValue {
+pub(crate) fn start_diff(
+    index: &FileIndex,
+    global: &JSGlobalObject,
+    this_value: JSValue,
+    rel: Vec<u8>,
+) -> JSValue {
     schedule(
         global,
         Box::new(GitDiffJob {
             global,
+            this_strong: Strong::create(this_value, global),
             root: Box::from(index.root_bytes()),
             rel,
+            cached_tree: index.head_tree_cache(),
+            fresh_tree: None,
             result: Ok(None),
         }),
     )
-}
-
-fn schedule<C: ConcurrentPromiseTaskContext>(global: &JSGlobalObject, job: Box<C>) -> JSValue {
-    let task = ConcurrentPromiseTask::create_on_js_thread(global, job);
-    let promise = task.promise.value();
-    let raw = bun_core::heap::into_raw(task);
-    // SAFETY: `raw` is freshly leaked; `schedule()` only writes the intrusive
-    // `task` field into the work-pool queue (same hand-off as
-    // `grep_task::start`). Freed by `run_then_destroy!` after dispatch.
-    unsafe { (*raw).schedule() };
-    promise
 }
 
 /// `GitError` -> JS `Error`. I/O errors keep the full syscall error (errno,
@@ -146,6 +214,11 @@ pub struct GitStatusJob<'a> {
     /// [`bun_file_index::Store::generation`] at snapshot time; the
     /// write-back is dropped if the store mutated under the task.
     generation: u64,
+    /// The index's cached HEAD tree, if any (see [`HeadTreeCache`]).
+    cached_tree: Option<HeadTreeCache>,
+    /// Set by the worker when it had to (re)flatten the HEAD tree; cached
+    /// on the index by `then`.
+    fresh_tree: Option<HeadTreeCache>,
     /// What the worker `lstat`ed: the fresh stat to cache, or `None` for a
     /// candidate that is no longer statable.
     fresh: Vec<(Box<[u8]>, Option<Meta>)>,
@@ -165,16 +238,25 @@ impl ConcurrentPromiseTaskContext for GitStatusJob<'_> {
     const TASK_TAG: TaskTag = bun_event_loop::task_tag::FileIndexGitStatusTask;
 
     fn run(&mut self) {
-        self.result = compute_status(&self.root, &self.worktree, &mut self.fresh);
+        self.result = compute_status(
+            &self.root,
+            &self.worktree,
+            &mut self.fresh,
+            self.cached_tree.as_ref(),
+            &mut self.fresh_tree,
+        );
     }
 
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
         let global = self.global;
-        // Cache the worker's lstat results before marshalling (JS thread).
-        if !self.fresh.is_empty()
-            && let Some(index) = self.this_strong.get().as_class_ref::<FileIndex>()
-        {
-            index.absorb_fresh_stats(self.generation, core::mem::take(&mut self.fresh));
+        // Cache what the worker rebuilt before marshalling (JS thread).
+        if let Some(index) = self.this_strong.get().as_class_ref::<FileIndex>() {
+            if let Some(tree) = self.fresh_tree.take() {
+                index.cache_head_tree(global, tree);
+            }
+            if !self.fresh.is_empty() {
+                index.absorb_fresh_stats(self.generation, core::mem::take(&mut self.fresh));
+            }
         }
         match core::mem::replace(&mut self.result, Ok(None)) {
             Err(err) => promise.reject(global, Ok(git_error_js(global, err))),
@@ -216,14 +298,19 @@ fn compute_status(
     root: &[u8],
     snapshot: &[(Box<[u8]>, Option<Meta>)],
     fresh: &mut Vec<(Box<[u8]>, Option<Meta>)>,
+    cached_tree: Option<&HeadTreeCache>,
+    fresh_tree: &mut Option<HeadTreeCache>,
 ) -> Result<Option<StatusOut>, GitError> {
     let Some(repo) = Repository::discover(root)? else {
         return Ok(None);
     };
     let head = repo.head()?;
     let index = repo.read_index()?;
-    let odb = repo.odb()?;
-    let head_tree = repo.head_tree(&odb)?;
+    // `status()` never reads an object: the odb is only opened (inside
+    // `head_tree_cached`) when the HEAD tree is not already cached.
+    let mut odb = None;
+    let (head_tree, rebuilt) = head_tree_cached(&repo, &mut odb, cached_tree)?;
+    *fresh_tree = rebuilt;
 
     // The git index and HEAD tree are work-tree-relative; the snapshot is
     // root-relative. When the index root is a subdirectory of the work tree,
@@ -333,9 +420,15 @@ fn compute_status(
 
 pub struct GitDiffJob<'a> {
     global: &'a JSGlobalObject,
+    /// JS-thread handle (see [`GitStatusJob::this_strong`]); keeps the
+    /// index alive so the HEAD-tree write-back has somewhere to land.
+    this_strong: Strong,
     root: Box<[u8]>,
     /// Normalized root-relative path of the file to diff.
     rel: Vec<u8>,
+    /// See the same pair on [`GitStatusJob`].
+    cached_tree: Option<HeadTreeCache>,
+    fresh_tree: Option<HeadTreeCache>,
     result: Result<Option<DiffOut>, GitError>,
 }
 
@@ -367,11 +460,21 @@ impl ConcurrentPromiseTaskContext for GitDiffJob<'_> {
     const TASK_TAG: TaskTag = bun_event_loop::task_tag::FileIndexGitDiffTask;
 
     fn run(&mut self) {
-        self.result = compute_diff(&self.root, &self.rel);
+        self.result = compute_diff(
+            &self.root,
+            &self.rel,
+            self.cached_tree.as_ref(),
+            &mut self.fresh_tree,
+        );
     }
 
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
         let global = self.global;
+        if let Some(tree) = self.fresh_tree.take()
+            && let Some(index) = self.this_strong.get().as_class_ref::<FileIndex>()
+        {
+            index.cache_head_tree(global, tree);
+        }
         match core::mem::replace(&mut self.result, Ok(None)) {
             Err(err) => promise.reject(global, Ok(git_error_js(global, err))),
             Ok(None) => promise.resolve(global, JSValue::NULL),
@@ -445,15 +548,21 @@ fn optional_text(global: &JSGlobalObject, text: Option<&[u8]>) -> JsResult<JSVal
     }
 }
 
-fn compute_diff(root: &[u8], rel: &[u8]) -> Result<Option<DiffOut>, GitError> {
+fn compute_diff(
+    root: &[u8],
+    rel: &[u8],
+    cached_tree: Option<&HeadTreeCache>,
+    fresh_tree: &mut Option<HeadTreeCache>,
+) -> Result<Option<DiffOut>, GitError> {
     let Some(repo) = Repository::discover(root)? else {
         return Ok(None);
     };
     let prefix = work_tree_prefix(repo.work_tree(), root);
     let repo_rel = join_rel(&prefix, rel);
 
-    let odb = repo.odb()?;
-    let head_tree = repo.head_tree(&odb)?;
+    let mut odb = None;
+    let (head_tree, rebuilt) = head_tree_cached(&repo, &mut odb, cached_tree)?;
+    *fresh_tree = rebuilt;
     let mut too_large = false;
 
     let old_text = match head_tree.binary_search_by(|e| e.path.as_slice().cmp(repo_rel.as_slice()))
@@ -463,6 +572,7 @@ fn compute_diff(root: &[u8], rel: &[u8]) -> Result<Option<DiffOut>, GitError> {
         Ok(i) if is_gitlink_mode(head_tree[i].mode) => None,
         Ok(i) => {
             let entry = &head_tree[i];
+            let odb = odb_lazy(&repo, &mut odb)?;
             let (_, size) = odb.kind_and_size(entry.oid)?;
             if size > MAX_DIFF_FILE_SIZE {
                 too_large = true;
@@ -490,7 +600,17 @@ fn compute_diff(root: &[u8], rel: &[u8]) -> Result<Option<DiffOut>, GitError> {
             } else if is_symlink_mode(mode) {
                 Some(read_link_target(&abs)?)
             } else if (mode & bun_git::MODE_TYPE_MASK) == bun_git::MODE_FILE {
-                Some(File::read_from(Fd::cwd(), &abs)?)
+                match read_regular_at(Fd::cwd(), &abs, MAX_DIFF_FILE_SIZE)? {
+                    FileReadOutcome::Contents(bytes) => Some(bytes),
+                    FileReadOutcome::TooLarge => {
+                        too_large = true;
+                        None
+                    }
+                    // Vanished — or swapped for a symlink/FIFO — between the
+                    // `lstat` above and this open: never read through, never
+                    // block, never report out-of-tree bytes as the worktree.
+                    FileReadOutcome::NotFound | FileReadOutcome::NotRegular => None,
+                }
             } else {
                 // A directory (or fifo/socket/device) is not a diffable file.
                 None
@@ -576,17 +696,16 @@ fn join_rel(prefix: &[u8], rel: &[u8]) -> Vec<u8> {
     out
 }
 
-/// `dir` is absolute with no trailing separator; `rel` is `/`-separated.
-fn join_abs(dir: &[u8], rel: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(dir.len() + rel.len() + 1);
-    out.extend_from_slice(dir);
-    out.push(b'/');
-    out.extend_from_slice(rel);
-    out
-}
-
 /// The worktree bytes git would hash for `repo_rel`: the symlink target for
 /// symlinks, the raw file contents otherwise (no content filters).
+///
+/// The by-name open of a regular file is the guarded one
+/// ([`bun_file_index::read_regular_at`]): the path was classified by an
+/// earlier `lstat` (or a cached stat), and between that and this read it
+/// can have been swapped for a symlink (never read through) or a
+/// writer-less FIFO (never blocks). A path that stopped being a regular
+/// file hashes as empty — never as out-of-tree content — and is therefore
+/// reported modified, exactly like a vanishing race in `git status`.
 fn read_worktree_file(
     work_tree: &[u8],
     repo_rel: &[u8],
@@ -594,9 +713,13 @@ fn read_worktree_file(
 ) -> Result<Vec<u8>, GitError> {
     let abs = join_abs(work_tree, repo_rel);
     if symlink {
-        read_link_target(&abs)
-    } else {
-        Ok(File::read_from(Fd::cwd(), &abs)?)
+        return read_link_target(&abs);
+    }
+    match read_regular_at(Fd::cwd(), &abs, u64::MAX)? {
+        FileReadOutcome::Contents(bytes) => Ok(bytes),
+        FileReadOutcome::NotFound | FileReadOutcome::NotRegular | FileReadOutcome::TooLarge => {
+            Ok(Vec::new())
+        }
     }
 }
 

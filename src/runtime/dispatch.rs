@@ -119,8 +119,8 @@ use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::file_index::{
     CrawlTask as FileIndexCrawlTask, GitDiffTask as FileIndexGitDiffTask,
-    GitStatusTask as FileIndexGitStatusTask, GrepTask as FileIndexGrepTask,
-    WatchDelivery as FileIndexWatchTask,
+    GitStatusTask as FileIndexGitStatusTask, GrepReadTask as FileIndexGrepReadTask,
+    GrepTask as FileIndexGrepTask, WatchDelivery as FileIndexWatchTask,
 };
 use crate::image::AsyncImageTask;
 #[cfg(not(windows))]
@@ -299,6 +299,7 @@ pub fn run_task(
             FileIndexCrawlTask::run_from_js(cast_ptr!(FileIndexCrawlTask))?;
         }
         task_tag::FileIndexGrepTask => run_then_destroy!(FileIndexGrepTask<'_>),
+        task_tag::FileIndexGrepReadTask => run_then_destroy!(FileIndexGrepReadTask<'_>),
         task_tag::FileIndexGitStatusTask => run_then_destroy!(FileIndexGitStatusTask<'_>),
         task_tag::FileIndexGitDiffTask => run_then_destroy!(FileIndexGitDiffTask<'_>),
         // The pointer is an `Arc::into_raw` reference to the watcher's
@@ -603,7 +604,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 102,
+    task_tag::COUNT == 103,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1220,6 +1221,7 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
         // here we only unref and drop — `JSPromiseStrong: Drop` releases the
         // handle.
         task_tag::FileIndexGrepTask
+        | task_tag::FileIndexGrepReadTask
         | task_tag::FileIndexGitStatusTask
         | task_tag::FileIndexGitDiffTask => {
             macro_rules! __fi_release {
@@ -1236,6 +1238,7 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
             }
             match task.tag {
                 task_tag::FileIndexGrepTask => __fi_release!(FileIndexGrepTask<'_>),
+                task_tag::FileIndexGrepReadTask => __fi_release!(FileIndexGrepReadTask<'_>),
                 task_tag::FileIndexGitStatusTask => __fi_release!(FileIndexGitStatusTask<'_>),
                 task_tag::FileIndexGitDiffTask => __fi_release!(FileIndexGitDiffTask<'_>),
                 // SAFETY: the outer arm guard proves one of the three matched.

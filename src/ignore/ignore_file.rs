@@ -12,6 +12,12 @@ const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
 /// inside are matched relative to `base`.
 pub struct IgnoreFile {
     base: Vec<u8>,
+    /// For a file that lives in an ANCESTOR of the index root (the work-tree
+    /// `.gitignore` chain above a sub-directory root, `info/exclude`, the
+    /// global excludes file): the index root's path relative to the file's
+    /// own directory (`/`-separated, no separators at either end). Empty for
+    /// an ordinary in-tree file. See [`IgnoreFile::parse_above`].
+    above: Vec<u8>,
     /// All pattern bodies, concatenated; `Pattern`s index into it.
     buf: Vec<u8>,
     patterns: Vec<Pattern>,
@@ -45,9 +51,28 @@ impl IgnoreFile {
         file
     }
 
+    /// [`IgnoreFile::parse`] for a file in a directory ABOVE the index root.
+    ///
+    /// `above` is the index root's path relative to the directory holding
+    /// the file (`/`-separated, no leading or trailing `/`, e.g. `b"a/b"`
+    /// for `<worktree>/.gitignore` when the index root is `<worktree>/a/b`).
+    /// Its patterns are evaluated against `above + "/" + rel_path` — exactly
+    /// how git evaluates an ancestor `.gitignore` (dir.c `prep_exclude()`
+    /// loads every level from the work-tree top down).
+    ///
+    /// An empty `above` is the index root itself (identical to
+    /// `parse(b"", ..)`); `info/exclude` and the global excludes file are
+    /// anchored at the work-tree top the same way.
+    pub fn parse_above(above: &[u8], contents: &[u8]) -> IgnoreFile {
+        let mut file = IgnoreFile::parse(b"", contents);
+        file.above = above.to_vec();
+        file
+    }
+
     fn with_capacity(base: &[u8], bytes: usize) -> IgnoreFile {
         IgnoreFile {
             base: base.to_vec(),
+            above: Vec::new(),
             buf: Vec::with_capacity(bytes),
             patterns: Vec::new(),
         }
@@ -64,6 +89,12 @@ impl IgnoreFile {
         &self.base
     }
 
+    /// The index root relative to this file's directory (empty unless the
+    /// file was built with [`IgnoreFile::parse_above`]).
+    pub(crate) fn above(&self) -> &[u8] {
+        &self.above
+    }
+
     pub fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
@@ -75,7 +106,10 @@ impl IgnoreFile {
 
     /// Approximate heap bytes held (for the memory budget).
     pub fn memory_cost(&self) -> usize {
-        self.base.capacity() + self.buf.capacity() + self.patterns.capacity() * size_of::<Pattern>()
+        self.base.capacity()
+            + self.above.capacity()
+            + self.buf.capacity()
+            + self.patterns.capacity() * size_of::<Pattern>()
     }
 
     /// dir.c `last_matching_pattern_from_list()`: scans the patterns in

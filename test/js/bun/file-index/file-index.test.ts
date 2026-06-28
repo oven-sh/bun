@@ -4,9 +4,10 @@ import { isWindows, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 
-// Every indexed path is `/`-separated and relative to `root`.
+// Every indexed entry (files, directories, symlinks), `/`-separated and
+// relative to `root`. `glob()` defaults to `onlyFiles: true` like `Bun.Glob`.
 function indexed(index: InstanceType<typeof Bun.FileIndex>): string[] {
-  return index.glob("**/*").sort();
+  return index.glob("**/*", { onlyFiles: false }).sort();
 }
 
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
@@ -56,10 +57,9 @@ describe("Bun.FileIndex", () => {
       // The constructor's probe succeeds, then the root vanishes before the
       // crawl completes: `ready` must reject with the syscall error rather
       // than resolving an empty index.
-      const index = new Bun.FileIndex(empty);
+      using index = new Bun.FileIndex(empty);
       fs.rmdirSync(empty);
       await expect(index.ready).rejects.toMatchObject({ code: "ENOENT" });
-      index.close();
     });
 
     test("invalid arguments throw synchronously", () => {
@@ -144,6 +144,10 @@ describe("Bun.FileIndex", () => {
 
     test(".git is always skipped and .git/info/exclude is honored", async () => {
       using dir = tempDir("file-index-exclude", {
+        // `info/exclude` is resolved through repository discovery (the same
+        // `gitdir:`/`commondir`-aware walk gitStatus uses), which — like
+        // git itself — requires `.git/HEAD` to consider `.git` a git dir.
+        ".git/HEAD": "ref: refs/heads/main\n",
         ".git/config": "[core]",
         ".git/info/exclude": "secret.txt\n*.tmp\n",
         "secret.txt": "excluded",
@@ -258,11 +262,59 @@ describe("Bun.FileIndex", () => {
       // An empty needle matches everything (bounded by `limit`).
       expect(index.complete("", { limit: 2 })).toHaveLength(2);
       expect(index.complete("", { limit: 0 })).toEqual([]);
+      // `cwd` is Bun.Glob's: candidates restricted to it, the query matched
+      // against — and paths returned relative to — the cwd-relative path.
       const inSrc = index.complete("index", { cwd: "src" });
-      expect(inSrc.map(r => r.path).sort()).toEqual(["src/index.ts", "src/server/index.ts"]);
+      expect(inSrc.map(r => r.path).sort()).toEqual(["index.ts", "server/index.ts"]);
+      // The query never matches inside the `cwd` prefix itself.
+      expect(index.complete("src", { cwd: "src" })).toEqual([]);
+      // `positions` index the returned (cwd-relative) string.
+      for (const r of index.complete("index", { cwd: "src" })) {
+        expect(r.positions.map(p => r.path[p]).join("")).toBe("index");
+      }
+      // A cwd that is not an indexed directory matches nothing.
+      expect(index.complete("index", { cwd: "nope" })).toEqual([]);
+      expect(index.complete("readme", { cwd: "docs/readme.md" })).toEqual([]);
       const dirs = index.complete("", { directories: true });
       expect(dirs.map(r => r.path).sort()).toEqual(["docs", "src", "src/server"]);
       expect(() => (index as any).complete(1)).toThrow("expects a string");
+    });
+
+    // The per-keystroke narrowing cache must be semantically invisible: an
+    // incrementally-typed sequence (each query extending the last, which is
+    // exactly what the cache accelerates) returns the same results as a cold
+    // call on a fresh index, including after a mutation between keystrokes.
+    test("incremental typing matches cold calls, including across a refresh()", async () => {
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 400; i++) files[`pkg${i % 7}/src/module_${i}.ts`] = "x";
+      files["src/server/index.ts"] = "x";
+      files["src/server/inspector.ts"] = "x";
+      using dir = tempDir("file-index-complete-cache", files);
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      const shape = (r: { path: string; score: number; positions: number[] }) =>
+        `${r.path}:${r.score}:${r.positions.join(",")}`;
+      async function cold(q: string, opts?: Parameters<typeof index.complete>[1]) {
+        using fresh = new Bun.FileIndex(String(dir));
+        await fresh.ready;
+        return fresh.complete(q, opts).map(shape);
+      }
+      // Typed incrementally on one index (the cache narrows each step).
+      for (const q of ["s", "sr", "srv", "srvi"]) {
+        expect(index.complete(q).map(shape), q).toEqual(await cold(q));
+      }
+      // A mutation between keystrokes: "sr" primed the cache, the tree then
+      // changed (refresh), and "srn" extends "sr" — a stale survivor set
+      // captured before the refresh could not contain the new file.
+      fs.writeFileSync(join(String(dir), "src/server/srnew.ts"), "x");
+      expect(index.complete("sr").length).toBeGreaterThan(0);
+      await index.refresh();
+      expect(index.complete("srn").map(r => r.path)).toContain("src/server/srnew.ts");
+      expect(index.complete("srn").map(shape)).toEqual(await cold("srn"));
+      // And narrowing under a cwd stays equivalent too.
+      for (const q of ["i", "in", "ind", "index"]) {
+        expect(index.complete(q, { cwd: "src/server" }).map(shape), q).toEqual(await cold(q, { cwd: "src/server" }));
+      }
     });
 
     test("positions index the JS string, not its UTF-8 bytes", async () => {
@@ -321,20 +373,36 @@ describe("Bun.FileIndex", () => {
     // "complete", not "usable".
     test("size grows and queries answer on partial data before ready", async () => {
       // The shape matters: `wide/` alone overflows the crawl's batch target
-      // (4096), so its entries are delivered (and applied) while the rest
-      // of the crawl is still enumerating `chain/` — a 1300-deep directory
-      // chain whose tasks are serialized parent → child, which the event
-      // loop's batch application cannot outrun.
+      // (4096), so its entries are delivered (and applied) while the rest of
+      // the crawl is still enumerating the `chainN/d/d/…` directory chains,
+      // whose tasks are serialized parent → child, which the event loop's
+      // batch application cannot outrun. The chains are 220 deep, not one
+      // 1300-deep path: the deepest ABSOLUTE path must stay well inside
+      // macOS's PATH_MAX (1024 bytes) or the fixture cannot even be created.
       const files: Record<string, string> = {};
-      const wide = 4300;
-      const depth = 1300;
-      for (let f = 0; f < wide; f++) files[`wide/f${f}.txt`] = "x";
-      const chain = `chain/${Buffer.alloc(depth * 2 - 1, "d/")
-        .toString()
-        .slice(0, depth * 2 - 1)}`;
+      // 90 directories of 50 files: enough entries for the crawl to flush
+      // its first ≥4096-entry batch long before it completes, from many
+      // small parallel tasks that finish early.
+      const wideDirs = 90;
+      const perDir = 50;
+      for (let d = 0; d < wideDirs; d++) {
+        for (let f = 0; f < perDir; f++) files[`wide${d}/f${f}.txt`] = "x";
+      }
+      // One 300-deep chain whose every level also holds a 16 KiB
+      // `.gitignore` the walker must open and parse: a serialized tail the
+      // event loop's batch application cannot fail to outrun.
+      const depth = 300;
+      let chain = "chain";
+      for (let level = 0; level <= depth; level++) {
+        files[`${chain}/.gitignore`] = Buffer.alloc(16 * 1024, "# nothing is ignored here\n").toString();
+        if (level < depth) chain += "/d";
+      }
       files[`${chain}/leaf.txt`] = "x";
-      // wide/* + wide + chain dirs (chain, chain/d, …) + leaf.txt
-      const total = wide + 1 + (depth + 1) + 1;
+      const total = wideDirs * perDir + wideDirs + (depth + 1) * 2 + 1;
+      const txtFiles = wideDirs * perDir + 1;
+      const deepest = Object.keys(files).reduce((a, b) => (b.length > a.length ? b : a));
+      // tempDir prefixes are well under ~200 bytes on every CI platform.
+      expect(deepest.length).toBeLessThan(700);
       using dir = tempDir("file-index-progressive", files);
       using index = new Bun.FileIndex(String(dir));
       expect(index.size).toBe(0);
@@ -351,7 +419,10 @@ describe("Bun.FileIndex", () => {
             complete: index.complete("txt", { limit: 1 << 30 }).map(m => m.path),
           };
         }
-        await Bun.sleep(0);
+        // `setImmediate`, not a timer: one event-loop turn per sample, so
+        // the window between "first batch applied" and "crawl complete" is
+        // sampled as finely as the loop can turn.
+        await new Promise(resolve => setImmediate(resolve));
       }
       await ready;
       const finalSize = index.size;
@@ -367,7 +438,7 @@ describe("Bun.FileIndex", () => {
       expect(during!.glob.length).toBeLessThan(finalGlob.size);
       expect(during!.glob.every(p => finalGlob.has(p))).toBe(true);
       const finalComplete = new Set(index.complete("txt", { limit: 1 << 30 }).map(m => m.path));
-      expect(finalComplete.size).toBe(wide + 1);
+      expect(finalComplete.size).toBe(txtFiles);
       expect(during!.complete.length).toBeGreaterThan(0);
       expect(during!.complete.length).toBeLessThan(finalComplete.size);
       expect(during!.complete.every(p => finalComplete.has(p))).toBe(true);
@@ -386,7 +457,29 @@ describe("Bun.FileIndex", () => {
       await index.ready;
       expect(index.glob("**/*.ts").sort()).toEqual(["src/deep/y.ts", "src/x.ts"]);
       expect(index.glob("*.ts")).toEqual([]);
-      expect(index.glob("**/*.ts", { cwd: "src/deep" })).toEqual(["src/deep/y.ts"]);
+      // `cwd` rebases the pattern AND the returned paths (Bun.Glob semantics).
+      expect(index.glob("**/*.ts", { cwd: "src/deep" })).toEqual(["y.ts"]);
+      expect(index.glob("*.ts", { cwd: "src" })).toEqual(["x.ts"]);
+      expect(index.glob("deep/*", { cwd: "src" }).sort()).toEqual(["deep/y.ts", "deep/z.css"]);
+      // A cwd that is not an indexed directory matches nothing.
+      expect(index.glob("**/*", { cwd: "nope" })).toEqual([]);
+      expect(index.glob("**/*", { cwd: "a.md" })).toEqual([]);
+      // Files only by default (Bun.Glob's `onlyFiles`); `false` adds dirs.
+      expect(index.glob("**/*").sort()).toEqual(["a.md", "src/deep/y.ts", "src/deep/z.css", "src/x.ts"]);
+      expect(index.glob("**/*", { onlyFiles: false }).sort()).toEqual([
+        "a.md",
+        "src",
+        "src/deep",
+        "src/deep/y.ts",
+        "src/deep/z.css",
+        "src/x.ts",
+      ]);
+      expect(index.glob("**/*", { cwd: "src", onlyFiles: false }).sort()).toEqual([
+        "deep",
+        "deep/y.ts",
+        "deep/z.css",
+        "x.ts",
+      ]);
       expect(index.glob("**/*.ts", { limit: 1 })).toHaveLength(1);
       expect(index.glob("**/*.ts", { limit: 0 })).toEqual([]);
       expect(() => (index as any).glob()).toThrow("expects a string");
@@ -403,6 +496,47 @@ describe("Bun.FileIndex", () => {
       expect(typeof st.mode).toBe("number");
       expect(index.stat("src")?.kind).toBe("dir");
       expect(index.stat("missing.ts")).toBeNull();
+    });
+
+    // The contract for `cwd` and `onlyFiles` is "exactly what Bun.Glob
+    // means by them": same pattern, same cwd, same result set (over a tree
+    // with nothing for gitignore to drop, the one thing FileIndex filters
+    // that Bun.Glob does not).
+    test("glob(pattern, { cwd }) === new Bun.Glob(pattern).scanSync({ cwd })", async () => {
+      using dir = tempDir("file-index-glob-equiv", {
+        "README.md": "1",
+        "a.ts": "1",
+        "src/index.ts": "1",
+        "src/util.ts": "1",
+        "src/deep/index.ts": "1",
+        "src/deep/er/leaf.css": "1",
+        "lib/main.rs": "1",
+        "lib/sub/mod.rs": "1",
+      });
+      const root = String(dir);
+      using index = new Bun.FileIndex(root);
+      await index.ready;
+      const patterns = ["**/*", "*", "*.ts", "**/*.ts", "*/*.ts", "**/index.*", "deep/**/*", "nope/**"];
+      const cwds = [undefined, "src", "src/deep", "lib", "src/deep/er"];
+      for (const cwd of cwds) {
+        for (const pattern of patterns) {
+          const abs = cwd === undefined ? root : join(root, cwd);
+          const fromGlob = new Set(new Bun.Glob(pattern).scanSync({ cwd: abs }));
+          const fromIndex = new Set(index.glob(pattern, { cwd, onlyFiles: true }));
+          expect(fromIndex, `${pattern} in ${cwd ?? "<root>"}`).toEqual(fromGlob);
+          // `onlyFiles: true` is the default.
+          expect(new Set(index.glob(pattern, { cwd })), `${pattern} in ${cwd ?? "<root>"}`).toEqual(fromGlob);
+        }
+      }
+      // `onlyFiles: false` includes directories, exactly like Bun.Glob's.
+      for (const cwd of [undefined, "src"]) {
+        const abs = cwd === undefined ? root : join(root, cwd);
+        expect(new Set(index.glob("**/*", { cwd, onlyFiles: false }))).toEqual(
+          new Set(new Bun.Glob("**/*").scanSync({ cwd: abs, onlyFiles: false })),
+        );
+      }
+      // The fixture is not vacuous: every cwd yields something for "**/*".
+      for (const cwd of cwds) expect(index.glob("**/*", { cwd }).length).toBeGreaterThan(0);
     });
 
     // Design requirement 5: the crawl is enumeration-only (the dirent gives
@@ -481,7 +615,14 @@ describe("Bun.FileIndex", () => {
         paths(await collect(index.grep("needle", { maxFileSize: 4 * 1024 * 1024, glob: "huge.txt", limit: 1 }))),
       ).toEqual(["huge.txt"]);
       expect(paths(await collect(index.grep("needle", { glob: "**/*.ts" })))).toEqual(["small.ts", "sub/inner.ts"]);
-      expect(paths(await collect(index.grep("needle", { cwd: "sub" })))).toEqual(["sub/inner.md", "sub/inner.ts"]);
+      // `cwd` is Bun.Glob's: hit paths (and the `glob` option) are relative
+      // to it, for the literal and the RegExp engine alike.
+      for (const pattern of ["needle", /needle/] as const) {
+        expect(paths(await collect(index.grep(pattern as string, { cwd: "sub" })))).toEqual(["inner.md", "inner.ts"]);
+        expect(paths(await collect(index.grep(pattern as string, { cwd: "sub", glob: "*.ts" })))).toEqual(["inner.ts"]);
+        // A cwd that is not an indexed directory matches nothing.
+        expect(await collect(index.grep(pattern as string, { cwd: "nope" }))).toEqual([]);
+      }
       expect(await collect(index.grep("needle", { limit: 2 }))).toHaveLength(2);
       expect(await collect(index.grep("needle", { limit: 0 }))).toEqual([]);
       expect(paths(await collect(index.grep("nEEdle")))).toEqual([]);
@@ -491,6 +632,34 @@ describe("Bun.FileIndex", () => {
         "sub/inner.ts",
         "upper.txt",
       ]);
+    });
+
+    // FileIndexOptions.maxFileSize is grep's default cap; the per-call
+    // option overrides it (in both directions) on the literal AND the
+    // RegExp engine, and is enforced from the OPEN file's size (the
+    // enumeration-only crawl records none).
+    test("the constructor's maxFileSize is grep's default cap; per-call overrides it", async () => {
+      using dir = tempDir("file-index-grep-maxfilesize", {
+        "small.txt": "needle\n",
+        "big.txt": Buffer.alloc(8 * 1024, "needle\n").toString(),
+      });
+      using index = new Bun.FileIndex(String(dir), { maxFileSize: 1024 });
+      await index.ready;
+      const paths = (hits: { path: string }[]) => new Set(hits.map(h => h.path));
+      for (const pattern of ["needle", /needle/] as const) {
+        const label = String(pattern);
+        // big.txt (8 KiB) is over the constructor's 1 KiB cap.
+        expect(paths(await collect(index.grep(pattern as string))), label).toEqual(new Set(["small.txt"]));
+        // The per-call option overrides the constructor's, both ways.
+        expect(paths(await collect(index.grep(pattern as string, { maxFileSize: 64 * 1024 }))), label).toEqual(
+          new Set(["big.txt", "small.txt"]),
+        );
+        expect(await collect(index.grep(pattern as string, { maxFileSize: 4 })), label).toEqual([]);
+      }
+      // Without the constructor option, the 1 MiB default admits both.
+      using plain = new Bun.FileIndex(String(dir));
+      await plain.ready;
+      expect(paths(await collect(plain.grep("needle")))).toEqual(new Set(["big.txt", "small.txt"]));
     });
 
     test("context lines surround each hit and are clamped to the file", async () => {
@@ -515,6 +684,58 @@ describe("Bun.FileIndex", () => {
       // Without `context` the keys are absent entirely.
       const plain = await collect(index.grep("needle", { glob: "edge.txt" }));
       expect(Object.keys(plain[0]).sort()).toEqual(["column", "line", "lineText", "path"]);
+    });
+
+    // `column` is 1-based UTF-16 code units into `lineText` (the unit JS
+    // string indices use) for BOTH pattern kinds; the leaf grep speaks byte
+    // offsets and the runtime converts. Byte offsets would be 12 (bmp.txt:
+    // `ï` is 2 UTF-8 bytes, `—` is 3) and 10 (astral.txt: each `𝛅` is 4).
+    test("column is 1-based UTF-16 code units into lineText (non-ASCII and astral planes)", async () => {
+      using dir = tempDir("file-index-grep-utf16", {
+        "ascii.txt": "a needle\n",
+        "bmp.txt": "naïve — needle\n",
+        "astral.txt": "𝛅𝛅 needle\n",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      for (const pattern of ["needle", /needle/] as const) {
+        const hits = await collect(index.grep(pattern as string));
+        expect(hits).toHaveLength(3);
+        for (const hit of hits) {
+          // The load-bearing contract: `lineText` indexed at `column - 1`
+          // is where the match starts.
+          expect(hit.column, `${hit.path} ${String(pattern)}`).toBe(hit.lineText.indexOf("needle") + 1);
+        }
+        const byPath = Object.fromEntries(hits.map(h => [h.path, h.column]));
+        expect(byPath).toEqual({ "ascii.txt": 3, "bmp.txt": 9, "astral.txt": 6 });
+      }
+    });
+
+    // The candidate set fans out as concurrent thread-pool chunks (32
+    // candidates per chunk); the result must still be every hit, ordered by
+    // (path, line, column), with `limit` returning exactly the first N.
+    test("a many-file grep is chunked across the pool and stays ordered and exact", async () => {
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 130; i++) {
+        files[`d${i % 7}/f${String(i).padStart(3, "0")}.txt`] = "alpha\nneedle one needle\nomega needle\n";
+      }
+      files["nohit.txt"] = "nothing\n";
+      using dir = tempDir("file-index-grep-chunks", files);
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      const paths = index
+        .glob("**/*.txt")
+        .sort()
+        .filter(p => p !== "nohit.txt");
+      expect(paths).toHaveLength(130);
+      const hits = await collect(index.grep("needle"));
+      expect(hits.map(h => `${h.path}:${h.line}:${h.column}`)).toEqual(
+        paths.flatMap(p => [`${p}:2:1`, `${p}:2:12`, `${p}:3:7`]),
+      );
+      // `limit` is exact and is the FIRST n in that order, on both paths.
+      const limited = await collect(index.grep("needle", { limit: 5 }));
+      expect(limited).toEqual(hits.slice(0, 5));
+      expect(await collect(index.grep(/needle/, { limit: 5 }))).toEqual(limited);
     });
 
     test("argument validation", async () => {
@@ -655,6 +876,60 @@ describe("Bun.FileIndex", () => {
     });
   });
 
+  // Candidates are opened by NAME after the snapshot, so a path can have
+  // been swapped for anything: every read goes through one guarded
+  // open(O_NOFOLLOW|O_NONBLOCK) + fstat(fd) helper, on the literal AND the
+  // RegExp path.
+  describe.skipIf(isWindows)("grep() candidates replaced after `ready`", () => {
+    function mkfifo(path: string) {
+      const { exitCode } = Bun.spawnSync({ cmd: ["mkfifo", path] });
+      expect(exitCode).toBe(0);
+    }
+
+    test("a candidate swapped for a symlink outside the root never yields the target's content", async () => {
+      using outside = tempDir("file-index-grep-outside", { "secret.txt": "needle OUTSIDE the root\n" });
+      using dir = tempDir("file-index-grep-symlink", {
+        "victim.txt": "needle inside\n",
+        "zafter.txt": "needle after\n",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      // Pin the index's cached view of `victim.txt` as a regular file
+      // before the swap: admission must come from the OPENED fd, never
+      // from a cached (now stale) stat.
+      expect(index.stat("victim.txt")?.kind).toBe("file");
+      fs.unlinkSync(join(String(dir), "victim.txt"));
+      fs.symlinkSync(join(String(outside), "secret.txt"), join(String(dir), "victim.txt"));
+      for (const pattern of ["needle", /needle/] as const) {
+        const hits = await collect(index.grep(pattern as string));
+        expect(
+          hits.map(h => `${h.path}:${h.lineText}`),
+          String(pattern),
+        ).toEqual(["zafter.txt:needle after"]);
+      }
+    });
+
+    test("a candidate swapped for a writer-less FIFO terminates instead of blocking", async () => {
+      using dir = tempDir("file-index-grep-fifo", {
+        "victim.txt": "needle inside\n",
+        "zafter.txt": "needle after\n",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      expect(index.stat("victim.txt")?.kind).toBe("file");
+      fs.unlinkSync(join(String(dir), "victim.txt"));
+      // A blocking `open(2)` on a FIFO with no writer never returns.
+      mkfifo(join(String(dir), "victim.txt"));
+      for (const pattern of ["needle", /needle/] as const) {
+        const hits = await collect(index.grep(pattern as string));
+        expect(
+          hits.map(h => h.path),
+          String(pattern),
+        ).toEqual(["zafter.txt"]);
+      }
+    });
+  });
+
   describe("path argument validation", () => {
     test("NUL bytes, absolute paths, and `..` components are rejected, never normalized", async () => {
       using dir = tempDir("file-index-validate", { "a.txt": "x", "a/b.txt": "y" });
@@ -686,7 +961,8 @@ describe("Bun.FileIndex", () => {
       // Benign normalization (leading "./", trailing "/") still works.
       expect(index.has("./a.txt")).toBe(true);
       expect(index.has("a/b.txt/")).toBe(true);
-      expect(index.complete("b", { cwd: "./a/" }).map(r => r.path)).toEqual(["a/b.txt"]);
+      // (cwd-relative result: `cwd` has Bun.Glob's semantics.)
+      expect(index.complete("b", { cwd: "./a/" }).map(r => r.path)).toEqual(["b.txt"]);
     });
   });
 
@@ -734,8 +1010,8 @@ describe("Bun.FileIndex", () => {
       expect(index.truncated).toBe(true);
       expect(index.memoryUsage).toBeLessThanOrEqual(maxMemory);
       expect(index.size).toBeLessThan(210);
-      // Whatever fit is still fully queryable.
-      expect(index.glob("**/*").length).toBe(index.size);
+      // Whatever fit is still fully queryable (`size` counts directories).
+      expect(index.glob("**/*", { onlyFiles: false }).length).toBe(index.size);
 
       using big = new Bun.FileIndex(String(dir));
       await big.ready;
@@ -794,7 +1070,8 @@ describe("Bun.FileIndex", () => {
   describe("close() and Symbol.dispose", () => {
     test("close is idempotent, releases memory, and later calls throw", async () => {
       using dir = tempDir("file-index-close", { "a.txt": "needle" });
-      const index = new Bun.FileIndex(String(dir));
+      // `using`: if an assertion below throws, the index is still released.
+      using index = new Bun.FileIndex(String(dir));
       await index.ready;
       expect(index.memoryUsage).toBeGreaterThan(0);
       index.close();
@@ -826,13 +1103,13 @@ describe("Bun.FileIndex", () => {
       using dir = tempDir("file-index-close-inflight", { "a.txt": "needle\n" });
       {
         // Closed before the initial crawl completes: `ready` still resolves.
-        const index = new Bun.FileIndex(String(dir));
+        using index = new Bun.FileIndex(String(dir));
         index.close();
         expect(await index.ready).toBe(index);
         expect(index.size).toBe(0);
       }
       {
-        const index = new Bun.FileIndex(String(dir));
+        using index = new Bun.FileIndex(String(dir));
         await index.ready;
         const refresh = index.refresh();
         // Iterators obtained BEFORE close(): the native pull promise still

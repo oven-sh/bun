@@ -139,10 +139,17 @@ test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) r
     await againClosed.promise;
     expect(sessionErrors).toEqual([]);
 
-    // Exactly one RST_STREAM (REFUSED_STREAM) went out for the pushed stream id, and the client
-    // never sent HEADERS or DATA on it.
-    const pushedRsts = clientFrames.filter(f => f.type === 3 && f.streamId === pushedId);
-    expect(pushedRsts.map(f => f.payload.readUInt32BE(0))).toEqual([http2.constants.NGHTTP2_REFUSED_STREAM]);
+    // Exactly one RST_STREAM(REFUSED_STREAM) went out for the pushed stream id (it comes first);
+    // any later RST for it is the RFC 9113 5.1 closed-stream answer to pushed-response frames
+    // that raced the refusal (pinned deterministically by the next test). The client never sent
+    // HEADERS or DATA on the pushed stream.
+    const pushedRstCodes = clientFrames
+      .filter(f => f.type === 3 && f.streamId === pushedId)
+      .map(f => f.payload.readUInt32BE(0));
+    expect(pushedRstCodes[0]).toBe(http2.constants.NGHTTP2_REFUSED_STREAM);
+    expect(pushedRstCodes.filter(code => code !== http2.constants.NGHTTP2_STREAM_CLOSED)).toEqual([
+      http2.constants.NGHTTP2_REFUSED_STREAM,
+    ]);
     expect(clientFrames.filter(f => (f.type === 0 || f.type === 1) && f.streamId === pushedId)).toEqual([]);
 
     // Graceful close still reaches 'close': the refused push does not pin the session open.

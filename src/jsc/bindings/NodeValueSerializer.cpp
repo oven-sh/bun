@@ -222,9 +222,12 @@ private:
         m_buffer.append(std::span<const uint8_t>(data, length));
     }
 
-    void throwDataCloneError(const String& msg)
+    // Takes the caller's ThrowScope so the throw is charged against the scope
+    // whose function actually returns after it (required by
+    // BUN_JSC_validateExceptionChecks; a nested scope here would leave the
+    // caller's scope looking unchecked).
+    void throwDataCloneError(JSC::ThrowScope& scope, const String& msg)
     {
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
         throwException(m_globalObject, scope, createDOMException(m_globalObject, ExceptionCode::DataCloneError, msg));
     }
 
@@ -288,7 +291,7 @@ private:
         }
 
         if (!value.isObject()) {
-            throwDataCloneError("unserializable value"_s);
+            throwDataCloneError(scope, "unserializable value"_s);
             return false;
         }
 
@@ -368,7 +371,7 @@ private:
         if (obj->isCallable() || obj->inherits<JSC::JSPromise>()
             || obj->inherits<JSC::JSWeakMap>() || obj->inherits<JSC::JSWeakSet>()
             || obj->inherits<JSC::JSWeakObjectRef>() || obj->inherits<JSC::JSFinalizationRegistry>()) {
-            throwDataCloneError("The object could not be cloned."_s);
+            throwDataCloneError(scope, "The object could not be cloned."_s);
             return false;
         }
 
@@ -458,15 +461,16 @@ private:
 
     bool writeHostArrayBufferView(JSArrayBufferView* view)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         if (view->isDetached()) {
-            throwDataCloneError("An ArrayBuffer is detached and could not be cloned."_s);
+            throwDataCloneError(scope, "An ArrayBuffer is detached and could not be cloned."_s);
             return false;
         }
         // The wire format stores the length as a 32-bit varint. Narrowing a
         // larger size_t would silently truncate, so refuse it like V8 does.
         size_t byteLength = view->byteLength();
         if (byteLength > UINT32_MAX) {
-            throwDataCloneError("An ArrayBuffer view is larger than 4 GiB and could not be cloned."_s);
+            throwDataCloneError(scope, "An ArrayBuffer view is larger than 4 GiB and could not be cloned."_s);
             return false;
         }
         writeTag(V8Tag::kHostObject);
@@ -523,20 +527,21 @@ private:
 
     bool writeArrayBuffer(JSArrayBuffer* jsBuffer)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         ArrayBuffer* buffer = jsBuffer->impl();
         if (!buffer || buffer->isDetached()) {
-            throwDataCloneError("An ArrayBuffer is detached and could not be cloned."_s);
+            throwDataCloneError(scope, "An ArrayBuffer is detached and could not be cloned."_s);
             return false;
         }
         if (buffer->isShared()) {
-            throwDataCloneError("A SharedArrayBuffer could not be cloned over IPC."_s);
+            throwDataCloneError(scope, "A SharedArrayBuffer could not be cloned over IPC."_s);
             return false;
         }
         // Both lengths travel as 32-bit varints; see writeHostArrayBufferView.
         size_t byteLength = buffer->byteLength();
         size_t maxByteLength = buffer->maxByteLength().value_or(byteLength);
         if (byteLength > UINT32_MAX || maxByteLength > UINT32_MAX) {
-            throwDataCloneError("An ArrayBuffer is larger than 4 GiB and could not be cloned."_s);
+            throwDataCloneError(scope, "An ArrayBuffer is larger than 4 GiB and could not be cloned."_s);
             return false;
         }
         if (buffer->isResizableOrGrowableShared()) {
@@ -772,9 +777,10 @@ public:
     }
 
 private:
-    void throwFormatError()
+    // See NodeValueSerializer::throwDataCloneError for why the caller's
+    // ThrowScope is taken instead of declaring a nested one here.
+    void throwFormatError(JSC::ThrowScope& scope)
     {
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
         throwException(m_globalObject, scope, createDOMException(m_globalObject, ExceptionCode::DataCloneError, "Unable to deserialize cloned data."_s));
     }
 
@@ -850,7 +856,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto tag = readTag();
         if (!tag) {
-            throwFormatError();
+            throwFormatError(scope);
             return {};
         }
 
@@ -960,7 +966,7 @@ private:
             break;
         }
 
-        throwFormatError();
+        throwFormatError(scope);
         return {};
     }
 
@@ -1053,7 +1059,7 @@ private:
         RETURN_IF_EXCEPTION(scope, {});
         RegExp* regExp = RegExp::create(m_vm, patternString, yarrFlags);
         if (!regExp->isValid()) {
-            throwFormatError();
+            throwFormatError(scope);
             return {};
         }
         RegExpObject* obj = RegExpObject::create(m_vm, m_globalObject->regExpStructure(), regExp);

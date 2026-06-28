@@ -750,7 +750,7 @@ describe("expect()", () => {
         // revoked proxy comparison should throw, not crash
         const { proxy, revoke } = Proxy.revocable({ a: 1 }, {});
         revoke();
-        expect(() => Bun.deepEquals(proxy, { a: 1 }, true)).toThrow();
+        expect(() => Bun.deepEquals(proxy, { a: 1 }, true)).toThrow(TypeError);
       }
     });
   }

@@ -2724,35 +2724,31 @@ fn entry_is_symlink(_dir: Fd, entry: &sys::dir_iterator::IteratorResult) -> bool
 pub(crate) fn prune_dangling_bin_links(bin_dir: Fd) {
     let mut name_buf = PathBuffer::uninit();
     let mut iter = sys::iterate_dir(bin_dir);
-    'iterator: loop {
+    loop {
         let Ok(Some(entry)) = iter.next() else { break };
-        match entry.kind {
-            EntryKind::SymLink => {
-                // A symlink whose target no longer exists cannot be opened.
-                // `access` would not work here because it does not resolve
-                // symlinks. Only a missing target makes a link dangling;
-                // other open failures (EACCES, EMFILE, transient I/O) can
-                // happen to a perfectly good shim and must not delete it.
-                let name = entry.name.slice_u8();
-                name_buf[..name.len()].copy_from_slice(name);
-                name_buf[name.len()] = 0;
-                let buf: &ZStr = ZStr::from_buf(&name_buf, name.len());
+        if !entry_is_symlink(bin_dir, &entry) {
+            continue;
+        }
+        // A symlink whose target no longer exists cannot be opened.
+        // `access` would not work here because it does not resolve
+        // symlinks. Only a missing target makes a link dangling;
+        // other open failures (EACCES, EMFILE, transient I/O) can
+        // happen to a perfectly good shim and must not delete it.
+        let name = entry.name.slice_u8();
+        name_buf[..name.len()].copy_from_slice(name);
+        name_buf[name.len()] = 0;
+        let buf: &ZStr = ZStr::from_buf(&name_buf, name.len());
 
-                match sys::File::openat(bin_dir, buf, sys::O::RDONLY, 0) {
-                    Ok(file) => {
-                        let _ = file.close();
-                    }
-                    Err(err)
-                        if err.get_errno() == sys::E::ENOENT
-                            || err.get_errno() == sys::E::ENOTDIR =>
-                    {
-                        let _ = sys::unlinkat(bin_dir, buf);
-                        continue 'iterator;
-                    }
-                    Err(_) => {}
-                }
+        match sys::File::openat(bin_dir, buf, sys::O::RDONLY, 0) {
+            Ok(file) => {
+                let _ = file.close();
             }
-            _ => {}
+            Err(err)
+                if err.get_errno() == sys::E::ENOENT || err.get_errno() == sys::E::ENOTDIR =>
+            {
+                let _ = sys::unlinkat(bin_dir, buf);
+            }
+            Err(_) => {}
         }
     }
     let _ = sys::close(bin_dir);

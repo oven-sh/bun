@@ -2314,8 +2314,17 @@ mod posix_impl {
         }
     }
 
+    // `syscall` is the JS-facing `err.syscall` tag (`stat`/`lstat`/`fstat`):
+    // node reports the operation name, never the `statx(2)` implementation
+    // detail, and the non-statx fallback below already uses those same tags.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn statx_impl(fd: Fd, path: Option<&ZStr>, flags: c_int, mask: u32) -> Maybe<PosixStat> {
+    fn statx_impl(
+        fd: Fd,
+        path: Option<&ZStr>,
+        flags: c_int,
+        mask: u32,
+        syscall: Tag,
+    ) -> Maybe<PosixStat> {
         use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
@@ -2356,7 +2365,7 @@ mod posix_impl {
                 }
                 return Err(Error {
                     errno: raw_errno as _,
-                    syscall: Tag::statx,
+                    syscall,
                     ..Default::default()
                 });
             }
@@ -2400,11 +2409,17 @@ mod posix_impl {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn fstatx(fd: Fd, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask)
+        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask, Tag::fstat)
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), 0, mask)
+        statx_impl(
+            Fd::from_native(libc::AT_FDCWD),
+            Some(path),
+            0,
+            mask,
+            Tag::stat,
+        )
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
@@ -2413,6 +2428,7 @@ mod posix_impl {
             Some(path),
             libc::AT_SYMLINK_NOFOLLOW,
             mask,
+            Tag::lstat,
         )
     }
 

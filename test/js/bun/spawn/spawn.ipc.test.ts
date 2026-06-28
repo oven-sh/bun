@@ -290,6 +290,42 @@ describe("ipc mode advanced", () => {
     expect(got.pair[1].byteOffset).toBe(2);
     expect(await child.exited).toBe(0);
   });
+
+  // V8 serializes a length-tracking view over a resizable ArrayBuffer with a
+  // wire byteLength of 0 and flags = isLengthTracking | isBackedByRab (0x03);
+  // the real extent is the whole buffer tail past byteOffset, and the view
+  // keeps tracking after the buffer is resized. Treating that byteLength 0
+  // literally produces an empty view.
+  // Payload is `new v8.Serializer()` output for `{view: t}` where
+  // `t = new Uint8Array(new ArrayBuffer(4, {maxByteLength: 8}))` over [1,2,3,4].
+  rawInjection("a length-tracking view over a resizable ArrayBuffer stays length-tracking", async () => {
+    const payload = "ff0f6f2204766965777e04080102030456420000037b01";
+    const { promise, resolve } = Promise.withResolvers<any>();
+    await using child = Bun.spawn({
+      cmd: [
+        process.execPath,
+        "-e",
+        `const p = Buffer.from("${payload}", "hex");
+         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+         require("fs").writeSync(3, Buffer.concat([be(p.length), p]));`,
+      ],
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      env: bunEnv,
+      ipc(message) {
+        resolve(message);
+      },
+    });
+    const got = await promise;
+    expect(got.view).toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect(got.view.buffer.resizable).toBe(true);
+    expect(got.view.buffer.maxByteLength).toBe(8);
+    // Length-tracking is the load-bearing property: growing the buffer must
+    // grow the view. V8's own deserializer reports length 8 here.
+    got.view.buffer.resize(8);
+    expect(got.view.length).toBe(8);
+    expect(await child.exited).toBe(0);
+  });
 });
 
 // Node's "advanced" IPC uses V8's value-serializer format behind a 4-byte

@@ -1307,18 +1307,37 @@ private:
         auto subtag = readByte();
         auto byteOffset = readVarint();
         auto byteLength = readVarint();
-        // V8 appends a flags varint only for wire version >= 14. Reading it
-        // unconditionally on an older stream would eat the parent container's
-        // next tag byte when the buffer+view pair is nested in an object.
-        if (m_version >= 14 && !readVarint()) return {};
+        // V8 appends a flags varint only for wire version >= 14: bit 0 is
+        // "length-tracking" and bit 1 is "backed by a resizable buffer".
+        // Reading it unconditionally on an older stream would eat the parent
+        // container's next tag byte when the buffer+view pair is nested.
+        uint32_t flags = 0;
+        if (m_version >= 14) {
+            auto read = readVarint();
+            if (!read) return {};
+            flags = *read;
+        }
         if (!subtag || !byteOffset || !byteLength) return {};
         RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
-        if (*byteOffset > buffer->byteLength() || *byteLength > buffer->byteLength() - *byteOffset) return {};
+        bool bufferIsResizable = buffer->isResizableOrGrowableShared();
+        // V8 writes byteLength 0 for a length-tracking view; the view's real
+        // extent is the whole tail of the (resizable) buffer past byteOffset.
+        // Accepting the flag over a fixed buffer would be a malformed frame.
+        bool isLengthTracking = flags & 1;
+        if (isLengthTracking && !bufferIsResizable) return {};
+        if (*byteOffset > buffer->byteLength() || (!isLengthTracking && *byteLength > buffer->byteLength() - *byteOffset)) return {};
         JSObject* view = nullptr;
         auto makeView = [&](TypedArrayType type, uint32_t elementSize) -> JSObject* {
-            if (*byteLength % elementSize != 0) return nullptr;
-            uint32_t count = *byteLength / elementSize;
-            Structure* structure = m_globalObject->typedArrayStructure(type, false);
+            if (*byteOffset % elementSize != 0) return nullptr;
+            // A length-tracking view has no stored length: JSC auto-tracks the
+            // buffer when `std::nullopt` is passed. Otherwise the wire
+            // byteLength fixes the element count.
+            std::optional<size_t> count;
+            if (!isLengthTracking) {
+                if (*byteLength % elementSize != 0) return nullptr;
+                count = *byteLength / elementSize;
+            }
+            Structure* structure = m_globalObject->typedArrayStructure(type, bufferIsResizable);
             switch (type) {
             case TypeInt8:
                 return JSInt8Array::create(m_globalObject, structure, WTF::move(buffer), *byteOffset, count);
@@ -1345,7 +1364,7 @@ private:
             case TypeBigUint64:
                 return JSBigUint64Array::create(m_globalObject, structure, WTF::move(buffer), *byteOffset, count);
             case TypeDataView:
-                return JSDataView::create(m_globalObject, structure, WTF::move(buffer), *byteOffset, *byteLength);
+                return JSDataView::create(m_globalObject, structure, WTF::move(buffer), *byteOffset, isLengthTracking ? std::nullopt : std::optional<size_t>(*byteLength));
             default:
                 return nullptr;
             }

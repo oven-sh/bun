@@ -2993,6 +2993,23 @@ describe("Connection: close request header", () => {
     }).toEqual({ servedA: true, servedB: false, closeHeader: true, serverClosed: true });
   });
 
+  // The built-in 404 (no matching route, no fetch handler) is its own end
+  // call site and must also thread the close flag through.
+  it("sends Connection: close on the default 404 response", async () => {
+    using server = serve({ port: 0, routes: { "/only": new Response("only") } });
+    const { raw, serverClosed } = await exchange(
+      server.port,
+      `GET /nope HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n${B}`,
+      r => r.includes("saw /b"),
+    );
+    expect({
+      status404: raw.startsWith("HTTP/1.1 404"),
+      servedB: raw.includes("saw /b"),
+      closeHeader: hasCloseHeader(raw),
+      serverClosed,
+    }).toEqual({ status404: true, servedB: false, closeHeader: true, serverClosed: true });
+  });
+
   // HEAD responses go through the separate end-without-body path.
   it("closes after a HEAD response to a close-flagged request", async () => {
     const seen: string[] = [];

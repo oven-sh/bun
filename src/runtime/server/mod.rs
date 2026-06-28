@@ -2930,7 +2930,7 @@ mod trampoline {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
         resp.write_status(b"404 Not Found");
-        resp.end(b"", false);
+        resp.end(b"", resp.should_close_connection());
     }
 
     pub(super) extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(

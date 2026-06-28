@@ -766,10 +766,10 @@ impl Route {
                         // TODO: Show a generic error page.
                     }
                     resp.write_status(b"500 Build Failed");
-                    resp.end_without_body(false);
+                    resp.end_without_body(resp.should_close_connection());
                 }
                 _ => {
-                    resp.end_without_body(false);
+                    resp.end_without_body(resp.should_close_connection());
                 }
             }
         }

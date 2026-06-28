@@ -2998,12 +2998,13 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
     ["single method char with full line", "G / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
   ])("%s", async (_name, payload) => {
     const events: string[] = [];
+    const { promise: errored, resolve: onErrored, reject: onErroredFail } = Promise.withResolvers<void>();
     const server = createServer((req, res) => {
       events.push("request");
       res.end("should not reach here");
+      onErroredFail(new Error("unexpected request"));
     });
     server.on("connection", () => events.push("connection"));
-    const { promise: errored, resolve: onErrored, reject: onErroredFail } = Promise.withResolvers<void>();
     server.on("clientError", (err: any, s) => {
       events.push("clientError " + err.code);
       try {

@@ -936,3 +936,150 @@ test("scan handles a cwd with redundant trailing separators when following symli
   );
   expect(exitCode).toBe(0);
 });
+
+// A pattern segment that spells out a leading `.` is an explicit request for
+// that dotfile/dot-directory, so the `dot: false` default must not hide it.
+// This matches bash, picomatch, minimatch and fast-glob.
+describe("explicit dotfile segments match without dot:true", () => {
+  const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
+  const files = {
+    ".dotdir/inner.txt": "x",
+    ".dotdir/.hidden.txt": "x",
+    ".dotdir/foo/.dotdir/inner.txt": "x",
+    ".env": "x",
+    "sub/.dotdir/inner.txt": "x",
+    "sub/visible.txt": "x",
+    "visible.txt": "x",
+  };
+
+  test.each([
+    [".dotdir/inner.txt", [".dotdir/inner.txt"]],
+    [".dotdir/*.txt", [".dotdir/inner.txt"]],
+    [".*/inner.txt", [".dotdir/inner.txt"]],
+    [".env", [".env"]],
+    [".*", [".env"]],
+    // `**` may advance to an explicit `.dotdir` segment but must not itself
+    // recurse through a hidden dir: `.dotdir/foo/.dotdir/inner.txt` must not
+    // match since the only decomposition needs `**` to consume `.dotdir/foo`.
+    ["**/.dotdir/inner.txt", [".dotdir/inner.txt", "sub/.dotdir/inner.txt"]],
+    ["sub/.dotdir/*.txt", ["sub/.dotdir/inner.txt"]],
+  ])("pattern %j finds explicitly-named dotfiles", (pattern, expected) => {
+    using dir = tempDir("glob-scan-explicit-dot", files);
+    const result = Array.from(new Glob(pattern).scanSync({ cwd: String(dir) }));
+    expect(norm(result)).toEqual(expected.sort());
+  });
+
+  test.each([
+    ["*", ["visible.txt"]],
+    ["*.txt", ["visible.txt"]],
+    ["*/inner.txt", []],
+    ["**/inner.txt", []],
+    ["**/*.txt", ["visible.txt", "sub/visible.txt"]],
+  ])("wildcard pattern %j still hides dotfiles by default", (pattern, expected) => {
+    using dir = tempDir("glob-scan-wildcard-dot", files);
+    const result = Array.from(new Glob(pattern).scanSync({ cwd: String(dir) }));
+    expect(norm(result)).toEqual(expected.sort());
+  });
+
+  test("async scan finds explicitly-named dotfiles", async () => {
+    using dir = tempDir("glob-scan-explicit-dot-async", files);
+    const result = await Array.fromAsync(new Glob(".dotdir/inner.txt").scan({ cwd: String(dir) }));
+    expect(norm(result)).toEqual([".dotdir/inner.txt"]);
+  });
+});
+
+// `followSymlinks` controls whether wildcard traversal descends through
+// symlinked directories. A segment that names the symlink literally is an
+// explicit path the user wrote; it should resolve regardless, matching
+// fast-glob and bash.
+const canCreateDirSymlink = (() => {
+  using probe = tempDir("glob-scan-symlink-probe", { "target/x": "" });
+  try {
+    fs.symlinkSync("target", path.join(String(probe), "link"), "dir");
+    return true;
+  } catch (err: any) {
+    if (err.code === "EPERM" || err.code === "EACCES") return false;
+    throw err;
+  }
+})();
+
+describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked directory", () => {
+  const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
+
+  function makeTree(prefix: string) {
+    const dir = tempDir(prefix, {
+      "realdir/file.txt": "x",
+      "realdir/nested/deep.txt": "x",
+      "plain/file.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(dir), "linkdir"), "dir");
+    return dir;
+  }
+
+  test("literal segment resolves through a symlink with followSymlinks:false", () => {
+    using dir = makeTree("glob-scan-symlink-literal");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: false })));
+
+    expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
+    expect(scan("linkdir/*.txt")).toEqual(["linkdir/file.txt"]);
+    expect(scan("linkdir/nested/deep.txt")).toEqual(["linkdir/nested/deep.txt"]);
+    expect(scan("linkdir/**/*.txt")).toEqual(["linkdir/file.txt", "linkdir/nested/deep.txt"]);
+  });
+
+  test("wildcard segment still respects followSymlinks:false", () => {
+    using dir = makeTree("glob-scan-symlink-wildcard");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: false })));
+
+    expect(scan("*/file.txt")).toEqual(["plain/file.txt", "realdir/file.txt"]);
+    expect(scan("**/file.txt")).toEqual(["plain/file.txt", "realdir/file.txt"]);
+    expect(scan("link*/file.txt")).toEqual([]);
+  });
+
+  test("followSymlinks:true still traverses via wildcards", () => {
+    using dir = makeTree("glob-scan-symlink-follow");
+    const cwd = String(dir);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd, followSymlinks: true })));
+
+    expect(scan("*/file.txt")).toEqual(["linkdir/file.txt", "plain/file.txt", "realdir/file.txt"]);
+    expect(scan("linkdir/file.txt")).toEqual(["linkdir/file.txt"]);
+  });
+
+  // The SymLink (and DT_UNKNOWN) readdir arms pre-filter entries through
+  // eval_impl before eval_dir runs. eval_impl must therefore admit the same
+  // `**/.X` peek that eval_dir does, or a symlinked `.dotdir` (and a real
+  // `.dotdir` reported as DT_UNKNOWN on NFS/overlayfs/FUSE) would be dropped
+  // before the explicit-dot logic ever sees it.
+  test("**/.dotdir peek works when .dotdir is a symlink", () => {
+    using dir = tempDir("glob-scan-symlink-dotdir", {
+      "realdir/inner.txt": "x",
+    });
+    fs.symlinkSync("realdir", path.join(String(dir), ".dotdir"), "dir");
+    const cwd = String(dir);
+    const scan = (p: string, opts: GlobScanOptions) => norm(Array.from(new Glob(p).scanSync({ cwd, ...opts })));
+
+    expect(scan("**/.dotdir/inner.txt", { followSymlinks: true })).toEqual([".dotdir/inner.txt"]);
+    expect(scan(".dotdir/inner.txt", { followSymlinks: true })).toEqual([".dotdir/inner.txt"]);
+    expect(scan(".dotdir/inner.txt", { followSymlinks: false })).toEqual([".dotdir/inner.txt"]);
+  });
+
+  test("symlink cycles do not loop when reached via a literal segment", () => {
+    using dir = tempDir("glob-scan-symlink-cycle", {
+      "top/file.txt": "x",
+    });
+    fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
+    // `top` is reached literally; the `loop -> .` symlink inside is only ever
+    // reached via `**`, which must not follow it with followSymlinks:false.
+    const result = norm(Array.from(new Glob("top/**/*.txt").scanSync({ cwd: String(dir), followSymlinks: false })));
+    expect(result).toEqual(["top/file.txt"]);
+  });
+
+  test("async scan resolves a literal path through a symlink", async () => {
+    using dir = makeTree("glob-scan-symlink-literal-async");
+    const result = await Array.fromAsync(
+      new Glob("linkdir/file.txt").scan({ cwd: String(dir), followSymlinks: false }),
+    );
+    expect(norm(result)).toEqual(["linkdir/file.txt"]);
+  });
+});

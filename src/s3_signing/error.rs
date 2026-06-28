@@ -46,6 +46,52 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
     }
 }
 
+/// Canonical S3 error code + message for an HTTP status. Used when the
+/// response carries no XML error document (HEAD responses never have a body),
+/// covering the statuses with exactly one canonical code in the S3 error table.
+pub fn get_error_code_and_message_for_status(status: u32) -> Option<ErrorCodeAndMessage> {
+    // https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
+    Some(match status {
+        403 => ErrorCodeAndMessage {
+            code: b"AccessDenied",
+            message: b"Access Denied",
+        },
+        404 => ErrorCodeAndMessage {
+            code: b"NoSuchKey",
+            message: b"The specified key does not exist.",
+        },
+        405 => ErrorCodeAndMessage {
+            code: b"MethodNotAllowed",
+            message: b"The specified method is not allowed against this resource.",
+        },
+        411 => ErrorCodeAndMessage {
+            code: b"MissingContentLength",
+            message: b"You must provide the Content-Length HTTP header.",
+        },
+        412 => ErrorCodeAndMessage {
+            code: b"PreconditionFailed",
+            message: b"At least one of the preconditions you specified did not hold.",
+        },
+        416 => ErrorCodeAndMessage {
+            code: b"InvalidRange",
+            message: b"The requested range is not satisfiable.",
+        },
+        500 => ErrorCodeAndMessage {
+            code: b"InternalError",
+            message: b"We encountered an internal error. Please try again.",
+        },
+        501 => ErrorCodeAndMessage {
+            code: b"NotImplemented",
+            message: b"A header you provided implies functionality that is not implemented.",
+        },
+        503 => ErrorCodeAndMessage {
+            code: b"ServiceUnavailable",
+            message: b"Service is unable to handle request.",
+        },
+        _ => return None,
+    })
+}
+
 // `getJSSignError` / `throwSignError` live as extension-trait methods in the
 // `*_jsc` crate (see PORTING.md §Idiom map).
 

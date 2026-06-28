@@ -14,7 +14,9 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
-use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
+use bun_s3_signing::error::{
+    S3Error, get_error_code_and_message_for_status, get_sign_error_code_and_message,
+};
 use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
 use bun_url::URL;
@@ -271,6 +273,21 @@ impl S3HttpSimpleTask {
             }
         }
 
+        // HEAD responses never carry an XML error document (HTTP forbids a
+        // body on HEAD), so the status code is the only error signal S3 gives
+        // us. Map it to the canonical S3 error code when the body had none.
+        if !has_error_code {
+            if let Some(metadata) = &self.result.metadata {
+                if let Some(status_err) =
+                    get_error_code_and_message_for_status(metadata.response.status_code)
+                {
+                    code = status_err.code;
+                    message = status_err.message;
+                    has_error_code = true;
+                }
+            }
+        }
+
         if error_type == ErrorType::NotFound {
             if !has_error_code {
                 code = b"NoSuchKey";
@@ -287,9 +304,11 @@ impl S3HttpSimpleTask {
     fn fail_if_contains_error(&mut self, status: u32) -> JsTerminatedResult<bool> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
+        let mut has_error_code = false;
 
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
+            has_error_code = true;
         } else if let Some(body) = &self.result.body {
             let bytes = body.list.as_slice();
             let mut has_error = false;
@@ -302,6 +321,7 @@ impl S3HttpSimpleTask {
                         if let Some(end) = strings::index_of(bytes, b"</Code>") {
                             if end >= value_start {
                                 code = &bytes[value_start..end];
+                                has_error_code = true;
                             }
                         }
                     }
@@ -320,6 +340,14 @@ impl S3HttpSimpleTask {
             }
         } else if status == 200 || status == 206 {
             return Ok(false);
+        }
+        // No <Code> in the body: derive the S3 error code from the HTTP status
+        // (a body-less error response has no XML error document to parse).
+        if !has_error_code {
+            if let Some(status_err) = get_error_code_and_message_for_status(status) {
+                code = status_err.code;
+                message = status_err.message;
+            }
         }
         self.callback.fail(code, message, self.callback_context)?;
         Ok(true)

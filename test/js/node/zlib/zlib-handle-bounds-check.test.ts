@@ -185,6 +185,28 @@ describe("zlib native handle argument validation", () => {
     });
   });
 
+  test("a rejected initParamsArray leaves the zstd handle un-initialized", () => {
+    const handle = new NativeZstd(10);
+    const writeState = new Uint32Array(2);
+    expect(caught(() => handle.init(new Float64Array(2), 0, writeState, cb))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "initParamsArray" argument must be of type Uint32Array. Received an instance of Float64Array`,
+    });
+    // initParamsArray is validated before the ZSTD context is allocated, so a
+    // throwing init() must not leave a usable encoder configured with default
+    // parameters: a write on this handle moves no bytes, exactly like a write
+    // on a handle whose init() was never called.
+    const input = Buffer.from("hello hello hello hello hello hello");
+    const out = Buffer.alloc(256);
+    handle.writeSync(2 /* ZSTD_e_end */, input, 0, input.length, out, 0, out.length);
+    expect({ availOut: writeState[0], availIn: writeState[1] }).toEqual({
+      availOut: out.length,
+      availIn: input.length,
+    });
+    handle.close();
+  });
+
   test.each(["write", "writeSync"] as const)("%s validates its 7 arguments", method => {
     const inBuf = new Uint8Array(4);
     const outBuf = new Uint8Array(16);

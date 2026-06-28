@@ -3488,10 +3488,9 @@ pub mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                 }
-                // Node branches on `typeof options === 'object'`, so a
-                // `String` wrapper is an options bag (the block above), never
-                // a positional mode. `is_string()` is string-like and would
-                // route the wrapper through both.
+                // Node branches on `typeof options === 'object'`, so a `String`
+                // wrapper is an options bag (the block above), never a positional
+                // mode; the string-like `is_string()` would route it through both.
                 if val.is_number() || val.is_string_literal() {
                     mode = node::mode_from_js(ctx, val)?.unwrap_or(mode);
                 }

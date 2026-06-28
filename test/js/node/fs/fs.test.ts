@@ -1825,18 +1825,23 @@ describe("open flag string validation matches node", () => {
     // Node's stringToFlags is a strict-equality switch, so only a primitive
     // string can match; `new String("w")` is an object and must throw.
     using dir = tempDir("fs-flags-string-object", {});
-    expect(() => readFileSync(join(String(dir), "f.txt"), { flag: new String("w") as any })).toThrowWithCode(
+    const file = join(String(dir), "f.txt");
+    expect(() => readFileSync(file, { flag: new String("w") as any })).toThrowWithCode(
       TypeError,
       "ERR_INVALID_ARG_VALUE",
     );
+    expect(() => writeFileSync(file, "y", { flag: new String("w") as any })).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_VALUE",
+    );
+    expect(existsSync(file)).toBe(false);
   });
 });
 
 describe("open/mkdir mode string validation matches node", () => {
-  // The last two hold a non-Latin-1 code unit, so JSC stores them 16-bit.
-  // They are rejected by content, and they also guard against the 8-bit-only
-  // byte view being read out of a UTF-16 buffer: "\u3737" is one code unit
-  // whose low byte is 0x37 ("7"), which a raw byte read accepts as mode 7.
+  // The last two hold a non-Latin-1 code unit, so JSC stores them 16-bit; a
+  // raw 8-bit read of the UTF-16 buffer sees only "\u3737"'s low byte 0x37
+  // ("7") and would wrongly accept it as mode 7.
   const invalidModes = ["0o755", "+755", "7_5_5", "888", "7a5", "", "7\u20225", "\u3737"];
 
   it.each(invalidModes)("openSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {
@@ -1900,11 +1905,9 @@ describe("open/mkdir mode string validation matches node", () => {
   });
 
   it("mkdirSync treats a String wrapper as an options bag, like node", () => {
-    // Node branches on `typeof options === 'object'`, and `typeof new String`
-    // is "object", so the wrapper is an options bag (its `.mode` is undefined
-    // and the default mode applies). It must NOT be parsed as the mode "700"
-    // and it must not throw. Compare against an options-less mkdirSync in the
-    // same process so the assertion is independent of the umask.
+    // `typeof new String` is "object", so Node treats the wrapper as an options
+    // bag and applies the default mode rather than parsing it as "700". Compare
+    // against an options-less mkdirSync in the same process so umask cancels out.
     using dir = tempDir("fs-mode-mkdir-string-object", {});
     const wrapped = join(String(dir), "wrapped");
     const plain = join(String(dir), "plain");

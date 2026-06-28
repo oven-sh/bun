@@ -488,10 +488,9 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     return Bun::toStringRef(builder.toString());
 }
 
-// Node's ERR_INVALID_ARG_VALUE renders the received value with `util.inspect`
-// ('w' for strings), not `determineSpecificType` ("type string ('w')"). Expose
-// the same formatter the C++ INVALID_ARG_VALUE overloads use so Rust-side
-// error paths match them exactly.
+// Node's ERR_INVALID_ARG_VALUE renders the value with `util.inspect` ('w'),
+// not `determineSpecificType` ("type string ('w')"). Expose the formatter the
+// C++ INVALID_ARG_VALUE overloads use so Rust-side error paths match exactly.
 extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));

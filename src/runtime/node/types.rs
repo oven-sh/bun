@@ -1614,10 +1614,9 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 
         let mut zig_str = ZigString::EMPTY;
         value.to_zig_string(&mut zig_str, ctx)?;
-        // `to_slice()` handles both the 8-bit and 16-bit storage forms; the
-        // 8-bit-only `slice()` view would misread a UTF-16 buffer. (JSC may
-        // store an all-ASCII string 16-bit, so bitness says nothing about
-        // whether the content is octal.)
+        // `to_slice()` handles both storage forms: the 8-bit-only `slice()`
+        // would misread a UTF-16 buffer, and JSC can store pure-ASCII content
+        // 16-bit, so bitness cannot be used to pre-filter.
         let utf8 = zig_str.to_slice();
         let slice = utf8.slice();
 
@@ -1635,12 +1634,9 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
                 .throw());
         }
 
-        // Node parses the octal string into a Number and range-checks it with
-        // the same validateUint32 used for numeric modes, so a value past
-        // u32::MAX is ERR_OUT_OF_RANGE, not ERR_INVALID_ARG_VALUE. `slice` is
-        // already [0-7]+, so the only possible parse error is Overflow (>21
-        // octal digits); u64::MAX keeps any such value on the out-of-range
-        // path.
+        // Node range-checks the parsed octal string with the same validateUint32
+        // as numeric modes (> u32::MAX is ERR_OUT_OF_RANGE). `slice` is already
+        // [0-7]+, so the only parse error is Overflow; u64::MAX stays out of range.
         let parsed = strings::parse_int::<u64>(slice, 8).unwrap_or(u64::MAX);
         validators::validate_uint32(
             ctx,

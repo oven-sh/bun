@@ -632,10 +632,9 @@ declare module "bun:ffi" {
    * return value must satisfy {@link FFITypeToJSCallbackReturnsType}.
    */
   type JSCallbackFunction<Def extends FFIFunction = FFIFunction> = {
-    // A method signature (rather than a function type) keeps parameter
-    // checking bivariant, so narrower handwritten parameter types like
-    // `(ptr: Pointer) => void` remain assignable where the derived type is
-    // `(ptr: Pointer | null) => void`.
+    // A method signature (vs a function type) keeps parameter checking
+    // bivariant, so a narrower handwritten `(ptr: Pointer) => void` stays
+    // assignable where the derived type is `(ptr: Pointer | null) => void`.
     fn(
       ...args: Def["args"] extends infer A extends readonly FFITypeOrString[]
         ? { [L in keyof A]: FFITypeToJSCallbackArgsType[ToFFIType<A[L]>] }

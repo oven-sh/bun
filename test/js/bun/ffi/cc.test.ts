@@ -1,4 +1,4 @@
-import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
+import { cc, CString, FFIType, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
 import { bunEnv, bunExe, isArm64, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
@@ -228,8 +228,10 @@ describe.skipIf(isFFIUnavailable)("cc applies the same conversions as dlopen", (
         returns: "int",
       },
       napi_echo: {
-        args: ["napi_env", "napi_value"],
-        returns: "napi_value",
+        // The numeric enum spellings cover the FFIType reverse lookup for
+        // the types above 17, which the string spellings bypass.
+        args: [FFIType.napi_env, FFIType.napi_value],
+        returns: FFIType.napi_value,
       },
     },
   );

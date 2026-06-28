@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("expect.toEqual does not crash when regex has overridden toString", async () => {
+test.concurrent("expect.toEqual does not crash when regex has overridden toString", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -18,14 +18,15 @@ test("expect.toEqual does not crash when regex has overridden toString", async (
     `,
     ],
     env: bunEnv,
+    stderr: "pipe",
   });
 
-  const exitCode = await proc.exited;
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
+  expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
 });
 
-test("expect.toEqual does not crash when regex toString returns non-primitive", async () => {
+test.concurrent("expect.toEqual does not crash when regex toString returns non-primitive", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -42,9 +43,10 @@ test("expect.toEqual does not crash when regex toString returns non-primitive", 
     `,
     ],
     env: bunEnv,
+    stderr: "pipe",
   });
 
-  const exitCode = await proc.exited;
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
+  expect({ stderr, exitCode }).toMatchObject({ exitCode: 0 });
 });

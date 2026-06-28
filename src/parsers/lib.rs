@@ -1,17 +1,23 @@
 #![warn(unused_must_use)]
 #![allow(unexpected_cfgs)]
-
-// ───── json_lexer ─────────────────────────────────────────────────────────
-// JSON-only subset of `bun_js_parser::js_lexer`. Breaks the
-// GENUINE T4 cycle (`bun_js_parser` → `bun_interchange` → `bun_js_parser`)
-// so `json.rs` can build without an upward dep. See module doc-comment.
-// Crate-private: implementation detail of `json.rs`; no external consumers.
-mod json_lexer;
+// `Vec<T, bun_alloc::AstAlloc>` (the AST's PropertyList / ExprNodeList) is
+// built directly by the JSON parser.
+#![feature(allocator_api)]
 
 // ───── json ───────────────────────────────────────────────────────────────
-// Real port — wired against `crate::json_lexer` (the cycle-break above) and
-// `bun_ast::js_ast`; resolves against the local lexer so `bun_js_parser`
-// is not an upward dep.
+// Two-stage JSON/JSONC parser:
+//   `json_index`  — stage 1: the structural indexer (Highway SIMD kernel with
+//                   a comment/single-quote-aware scalar fallback)
+//   `json_stage2` — stage 2: recursive descent over the index array
+//   `json`        — the public entry points + options
+pub mod json_index;
+mod json_stage2;
+
+// Native shims so `cargo test -p bun_parsers` links without Bun's C++ side
+// (see scripts/bench-json-rust.sh --test).
+#[cfg(test)]
+mod native_test_shims;
+
 #[path = "json.rs"]
 pub mod json;
 

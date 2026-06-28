@@ -994,10 +994,9 @@ impl<'a> PackageInstall<'a> {
         if package_json_checker.parse_expr().is_err() {
             return false;
         }
-        // Reshaped for borrowck — `log` is exclusively borrowed by the
-        // checker's lexer; route the read through `lexer.log_mut()` (single
-        // provenance chain, see PackageJSONVersionChecker doc).
-        if package_json_checker.lexer.log_mut().errors > 0 || !package_json_checker.has_found_name {
+        // `log` is exclusively borrowed by the checker; read the error count
+        // through it.
+        if package_json_checker.has_errors() || !package_json_checker.has_found_name {
             return false;
         }
         // workspaces aren't required to have a version

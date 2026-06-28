@@ -87,6 +87,14 @@ unsafe extern "C" {
     ) -> usize;
 
     fn highway_count_mapping_delims(bytes: *const u8, len: usize) -> usize;
+
+    fn highway_json_index(
+        input: *const u8,
+        len: usize,
+        out_indices: *mut u32,
+        out_dirty: *mut u64,
+        out_flags: *mut u32,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -587,6 +595,40 @@ pub fn count_mapping_delims(bytes: &[u8]) -> usize {
     }
     // SAFETY: `bytes.ptr/len` are a valid readable range.
     unsafe { highway_count_mapping_delims(bytes.as_ptr(), bytes.len()) }
+}
+
+/// JSON structural index (simdjson-style stage 1) — see
+/// `src/jsc/bindings/highway_json.cpp` for the kernel and
+/// `bun_parsers::json_index` for the consumer and the output contract.
+///
+/// Requirements (asserted): `out.len() >= input.len() + 66` (CompressStore may
+/// overshoot by a vector and two sentinels are appended) and
+/// `dirty.len() >= (input.len()/64 + 63)/64 + 1`. Neither buffer needs to be
+/// zeroed: the kernel assigns every slot it makes visible.
+///
+/// Returns `(n, flags)`. When `flags & ODDITY == 0`, `out[..n + 2]` holds the
+/// `n` structural indices in document order plus two `input.len()` sentinels,
+/// and `dirty` holds one bit per 64-byte input block ("contains a backslash
+/// or control char inside a string").
+#[inline(always)]
+pub fn json_structural_index(input: &[u8], out: &mut [u32], dirty: &mut [u64]) -> (usize, u32) {
+    assert!(out.len() >= input.len() + 66);
+    assert!(dirty.len() >= (input.len() / 64).div_ceil(64) + 1);
+    let mut flags: u32 = 0;
+    // SAFETY: pointers/lengths come from live slices whose sizes satisfy the
+    // kernel's documented requirements (asserted above); the kernel writes at
+    // most `input.len() + 2` index entries and `ceil(ceil(len/64)/64)` dirty
+    // words, and `out_flags` is a valid out-pointer.
+    let n = unsafe {
+        highway_json_index(
+            input.as_ptr(),
+            input.len(),
+            out.as_mut_ptr(),
+            dirty.as_mut_ptr(),
+            &mut flags,
+        )
+    };
+    (n, flags)
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

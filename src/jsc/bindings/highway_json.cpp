@@ -1,0 +1,242 @@
+// SIMD structural indexer for JSON (simdjson-style "stage 1"), runtime-
+// dispatched via Google Highway (same mechanism as highway_strings.cpp /
+// highway_sourcemap.cpp). Consumed by `bun_parsers::json_index` (Rust), which
+// also owns the scalar fallback for documents this kernel rejects.
+//
+// One pass over the document emits the byte offset of every
+//
+//   - `{` `}` `[` `]` `:` `,` outside of strings
+//   - opening AND closing `"` of every string
+//   - first byte of every other run of non-whitespace bytes outside strings
+//     (numbers, true/false/null, garbage)
+//
+// in document order into `out` (u32 each), followed by two sentinel entries
+// equal to `len`. Stage 2 parses by walking these indices and never re-scans
+// string bodies: their bounds are consecutive indices.
+//
+// Per 64-byte block:
+//   1. classify bytes with two nibble LUTs (one TableLookupBytes pair) into
+//      structural / whitespace / oddity / control classes, plus Eq for
+//      backslash and quote                                            [SIMD]
+//   2. resolve escaped quotes with the odd-length-backslash-run trick
+//   3. compute the in-string mask with a prefix-XOR over unescaped quotes
+//   4. expand the emit bitmask into indices with CompressStore (branchless;
+//      structural density of minified JSON is ~20%, so a per-bit loop is the
+//      bottleneck if you let it be one)
+//
+// It also fills `out_dirty` (one bit per 64-byte block: "a backslash or a
+// control character inside a string lives here", assigned, never OR'd, so the
+// caller does not need to zero the buffer) and returns document-global flags.
+//
+// Comments and single-quoted strings (both accepted by Bun's JSON parser)
+// cannot be folded into the quote-parity math: a `"` inside `// comment`
+// poisons the in-string mask. The first `/` or `'` seen outside a string sets
+// BUN_JSON_IDX_ODDITY and the kernel returns immediately; the Rust side
+// re-indexes with its scalar indexer. Valid JSON documents contain `/` and
+// `'` only inside strings, so the bail-out never costs the hot path anything.
+//
+// The two-nibble classification is exact for ASCII; bytes >= 0x80 can false-
+// positive as structural/whitespace. Outside strings such bytes only occur in
+// exotic unicode whitespace (BOM, NBSP, U+2028...) or invalid documents, both
+// handled by stage 2's cold path, and inside strings they are masked.
+
+#undef HWY_TARGET_INCLUDE
+#define HWY_TARGET_INCLUDE "highway_json.cpp"
+#include <hwy/foreach_target.h> // Must come before highway.h
+#include <hwy/highway.h>
+
+#include <string.h>
+
+// Output flag bits (mirrored in Rust: `bun_parsers::json_index::FLAG_*`).
+#define BUN_JSON_IDX_HAS_BACKSLASH_IN_STRING (1u << 0)
+#define BUN_JSON_IDX_HAS_CTRL_IN_STRING (1u << 1)
+#define BUN_JSON_IDX_HAS_NON_ASCII (1u << 2)
+#define BUN_JSON_IDX_ODDITY (1u << 3)
+
+HWY_BEFORE_NAMESPACE();
+namespace bun {
+namespace HWY_NAMESPACE {
+
+namespace hn = hwy::HWY_NAMESPACE;
+
+// Process 64 input bytes per step regardless of the native vector width.
+// CappedTag keeps lane count <= 64 on very wide targets (SVE/RVV).
+using D8 = hn::CappedTag<uint8_t, 64>;
+
+static HWY_INLINE uint64_t PrefixXor(uint64_t x)
+{
+    // Carryless multiply by ~0 == prefix XOR; the shift ladder is portable
+    // and fast enough (the in-string chain is not the bottleneck).
+    x ^= x << 1;
+    x ^= x << 2;
+    x ^= x << 4;
+    x ^= x << 8;
+    x ^= x << 16;
+    x ^= x << 32;
+    return x;
+}
+
+// Class bits produced by the two-nibble lookup (cls = lo[b & 0xf] & hi[b >> 4]):
+//   0x07 structural { } [ ] : ,     0x18 whitespace sp \t \n \r
+//   0x20 oddity / '                 0x40 control < 0x20
+// Derived from simdjson's tables with the oddity/control classes folded in.
+alignas(16) static const uint8_t kLutLo[16] = { 0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60,
+    0x40, 0x48, 0x4C, 0x41, 0x42, 0x49, 0x40, 0x60 };
+alignas(16) static const uint8_t kLutHi[16] = { 0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00, 0x00 };
+
+size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint32_t* HWY_RESTRICT out,
+    uint64_t* HWY_RESTRICT out_dirty, uint32_t* HWY_RESTRICT out_flags)
+{
+    const D8 d;
+    const size_t N = hn::Lanes(d);
+    const hn::ScalableTag<uint32_t> d32;
+    const size_t L = hn::Lanes(d32);
+
+    const auto v_bs = hn::Set(d, (uint8_t)'\\');
+    const auto v_quote = hn::Set(d, (uint8_t)'"');
+    const auto v_0f = hn::Set(d, (uint8_t)0x0f);
+    const auto lut_lo = hn::LoadDup128(d, kLutLo);
+    const auto lut_hi = hn::LoadDup128(d, kLutHi);
+    const auto v_op_bits = hn::Set(d, (uint8_t)0x07);
+    const auto v_opws_bits = hn::Set(d, (uint8_t)0x1f);
+    const auto v_odd_bits = hn::Set(d, (uint8_t)0x20);
+    const auto v_ctrl_bits = hn::Set(d, (uint8_t)0x40);
+    const auto v_zero = hn::Zero(d);
+    const auto iota32 = hn::Iota(d32, 0);
+
+    uint64_t prev_escaped = 0;
+    uint64_t prev_in_string = 0; // ~0 if the previous block ended inside a string
+    uint64_t prev_scalar = 0; // bit 0: last byte of previous block was a scalar char
+    uint64_t acc_bs_in_str = 0;
+    uint64_t acc_ctrl_in_str = 0;
+    uint64_t dirty_acc = 0;
+    auto acc_or = hn::Zero(d);
+    uint32_t flags = 0;
+    size_t n_out = 0;
+
+    size_t pos = 0;
+    while (pos < len) {
+        const uint8_t* p = input + pos;
+        size_t rem = len - pos;
+        uint64_t valid = ~(uint64_t)0;
+        uint8_t tmp[64];
+        if (rem < 64) {
+            memset(tmp, 0, sizeof(tmp));
+            memcpy(tmp, p, rem);
+            p = tmp;
+            valid = (((uint64_t)1) << rem) - 1;
+        }
+
+        uint64_t m_bs = 0, m_quote = 0, m_op = 0, m_opws = 0, m_odd = 0, m_ctrl = 0;
+        for (size_t v = 0; v < 64 / N; ++v) {
+            const auto chunk = hn::LoadU(d, p + v * N);
+            acc_or = hn::Or(acc_or, chunk);
+            const unsigned sh = (unsigned)(v * N);
+            m_bs |= hn::BitsFromMask(d, hn::Eq(chunk, v_bs)) << sh;
+            m_quote |= hn::BitsFromMask(d, hn::Eq(chunk, v_quote)) << sh;
+            const auto cls = hn::And(hn::TableLookupBytes(lut_lo, hn::And(chunk, v_0f)),
+                hn::TableLookupBytes(lut_hi, hn::ShiftRight<4>(chunk)));
+            m_op |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_op_bits), v_zero)) << sh;
+            m_opws |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_opws_bits), v_zero)) << sh;
+            m_odd |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_odd_bits), v_zero)) << sh;
+            m_ctrl |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_ctrl_bits), v_zero)) << sh;
+        }
+
+        // --- escaped characters (simdjson's find_escaped) ---
+        uint64_t escaped;
+        if (m_bs == 0) {
+            escaped = prev_escaped;
+            prev_escaped = 0;
+        } else {
+            const uint64_t even_bits = 0x5555555555555555ULL;
+            uint64_t bs = m_bs & ~prev_escaped;
+            uint64_t follows_escape = (bs << 1) | prev_escaped;
+            uint64_t odd_sequence_starts = bs & ~even_bits & ~follows_escape;
+            uint64_t sequences_starting_on_even_bits;
+            prev_escaped = __builtin_add_overflow(odd_sequence_starts, bs, &sequences_starting_on_even_bits)
+                ? 1
+                : 0;
+            uint64_t invert_mask = sequences_starting_on_even_bits << 1;
+            escaped = (even_bits ^ invert_mask) & follows_escape;
+        }
+
+        // --- strings ---
+        const uint64_t rq = m_quote & ~escaped;
+        // in_str covers the opening quote through the byte before the closing quote.
+        const uint64_t in_str = PrefixXor(rq) ^ prev_in_string;
+        prev_in_string = (uint64_t)((int64_t)in_str >> 63);
+
+        const uint64_t dirty = (m_bs | m_ctrl) & in_str & valid;
+        acc_bs_in_str |= m_bs & in_str & valid;
+        acc_ctrl_in_str |= m_ctrl & in_str & valid;
+        const size_t block = pos >> 6;
+        dirty_acc |= (uint64_t)(dirty != 0) << (block & 63);
+        if ((block & 63) == 63) {
+            out_dirty[block >> 6] = dirty_acc;
+            dirty_acc = 0;
+        }
+
+        // A '/' or '\'' outside a double-quoted string: comments / single
+        // quotes are in play and the quote parity above can't be trusted.
+        if (m_odd & ~in_str & valid) {
+            *out_flags = flags | BUN_JSON_IDX_ODDITY;
+            return 0;
+        }
+
+        // --- emit set ---
+        const uint64_t op_out = m_op & ~in_str;
+        const uint64_t scalar = ~m_opws & ~in_str & ~rq;
+        const uint64_t scalar_start = scalar & ~((scalar << 1) | prev_scalar);
+        prev_scalar = scalar >> 63;
+        const uint64_t emit = (op_out | rq | scalar_start) & valid;
+
+        // --- flatten: branchless CompressStore of iota+base, L bits at a time ---
+        const uint32_t base = (uint32_t)pos;
+        for (size_t k = 0; k < 64; k += L) {
+            uint64_t slice = (emit >> k) & (L >= 64 ? ~(uint64_t)0 : (((uint64_t)1 << L) - 1));
+            uint8_t slice_bytes[8];
+            memcpy(slice_bytes, &slice, 8);
+            const auto m = hn::LoadMaskBits(d32, slice_bytes);
+            const auto v = hn::Add(hn::Set(d32, base + (uint32_t)k), iota32);
+            n_out += hn::CompressStore(v, m, d32, out + n_out);
+        }
+
+        pos += 64;
+    }
+
+    // Flush the final partial dirty word.
+    const size_t nblocks = (len + 63) >> 6;
+    if (nblocks != 0 && (nblocks & 63) != 0) {
+        out_dirty[(nblocks - 1) >> 6] = dirty_acc;
+    }
+
+    if (!hn::AllTrue(d, hn::Lt(acc_or, hn::Set(d, (uint8_t)0x80)))) {
+        flags |= BUN_JSON_IDX_HAS_NON_ASCII;
+    }
+    if (acc_bs_in_str) flags |= BUN_JSON_IDX_HAS_BACKSLASH_IN_STRING;
+    if (acc_ctrl_in_str) flags |= BUN_JSON_IDX_HAS_CTRL_IN_STRING;
+    *out_flags = flags;
+
+    // Two sentinels so stage 2 can always read `indices[i + 1]`.
+    out[n_out] = (uint32_t)len;
+    out[n_out + 1] = (uint32_t)len;
+    return n_out;
+}
+
+// NOLINTNEXTLINE(google-readability-namespace-comments)
+} // namespace HWY_NAMESPACE
+} // namespace bun
+HWY_AFTER_NAMESPACE();
+
+#if HWY_ONCE
+namespace bun {
+HWY_EXPORT(JsonIndexImpl);
+
+extern "C" size_t highway_json_index(const uint8_t* input, size_t len, uint32_t* out_indices,
+    uint64_t* out_dirty, uint32_t* out_flags)
+{
+    return HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(input, len, out_indices, out_dirty, out_flags);
+}
+} // namespace bun
+#endif

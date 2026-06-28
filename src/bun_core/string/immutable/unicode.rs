@@ -722,16 +722,20 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
             let mut out: Vec<u16> = Vec::new();
             out.try_reserve_exact(out_length)
                 .map_err(|_| ToUTF16Error::OutOfMemory)?;
-            // SAFETY: `out_length` u16s were just reserved and `write_bytes`
-            // zero-fills all of them before `set_len` exposes them. `write_bytes`
-            // is a memset; `Vec::resize`/`fill` are scalar loops in debug builds.
-            unsafe {
-                core::ptr::write_bytes(out.as_mut_ptr(), 0, out_length);
-                out.set_len(out_length);
-            }
-
-            let res = simdutf::convert::utf8::to::utf16::with_errors::le(bytes, &mut out);
-            if res.status == simdutf::Status::SUCCESS {
+            // SAFETY: `out` has >= `out_length` u16 of capacity (just reserved).
+            // simdutf never reads the output buffer and writes at most
+            // `out_length` code units, so passing uninitialised storage is
+            // sound; the length is only ever set to what simdutf has written.
+            let res = unsafe {
+                simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    out.as_mut_ptr(),
+                )
+            };
+            if res.is_successful() {
+                // SAFETY: on success simdutf initialised exactly `out_length` units.
+                unsafe { out.set_len(out_length) };
                 crate::scoped_log!(
                     strings,
                     "toUTF16 {} UTF8 -> {} UTF16",
@@ -741,8 +745,11 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 return Ok(Some((out, [0; 3], 0)));
             }
 
-            // `out.len() == out_length`; `first_non_ascii_idx <= out.len()`.
-            out.truncate(first_non_ascii_idx);
+            // SAFETY: simdutf converts sequentially and the first error is at or
+            // after the first non-ASCII byte, so the leading `first_non_ascii_idx`
+            // code units (one per ASCII prefix byte, `<= out_length`) are
+            // initialised; keep exactly those.
+            unsafe { out.set_len(first_non_ascii_idx) };
             break 'output out;
         }
     } else {

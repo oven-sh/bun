@@ -14,6 +14,7 @@ use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 use bun_threading::{ThreadPool, WaitGroup};
 
+use crate::lockfile::package::PackageColumns as _;
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
@@ -2616,7 +2617,7 @@ pub(crate) fn prune_extraneous_node_modules(
         if name.is_empty() || name[0] == b'.' {
             continue;
         }
-        if keep_symlinks && matches!(entry.kind, EntryKind::SymLink) {
+        if keep_symlinks && entry_is_symlink(node_modules, &entry) {
             continue;
         }
         names.push(name.to_vec());
@@ -2643,6 +2644,78 @@ pub(crate) fn prune_extraneous_node_modules(
             prune_dangling_bin_links(bin_dir);
         }
     }
+}
+
+/// Insert the alias of every package with a `patchedDependencies` entry into
+/// `expected`. `bun patch` materializes the package being patched at the root
+/// `node_modules/<name>` (under the isolated linker, as a symlink into the
+/// store) even when no tree places it there, so the prune must treat those
+/// names as expected or `bun patch --commit` removes the folder it just told
+/// the user about. Matches packages to patches the same way the installer
+/// does: by the hash of `name@version`.
+pub(crate) fn extend_expected_with_patched_packages(
+    expected: &mut StringHashMap<()>,
+    lockfile: &Lockfile,
+) -> Result<(), bun_alloc::AllocError> {
+    if lockfile.patched_dependencies.count() == 0 {
+        return Ok(());
+    }
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let pkgs = lockfile.packages.slice();
+    let names = pkgs.items_name();
+    let resolutions = pkgs.items_resolution();
+    let mut resolution_buf = [0u8; 512];
+    let mut name_and_version: Vec<u8> = Vec::new();
+    for i in 0..pkgs.len() {
+        let Ok(version) = bun_core::fmt::buf_print(
+            &mut resolution_buf,
+            format_args!(
+                "{}",
+                resolutions[i].fmt(string_buf, bun_core::fmt::PathSep::Posix)
+            ),
+        ) else {
+            continue;
+        };
+        name_and_version.clear();
+        use std::io::Write;
+        write!(
+            &mut name_and_version,
+            "{}@{}",
+            bstr::BStr::new(names[i].slice(string_buf)),
+            bstr::BStr::new(version),
+        )
+        .expect("writing to a Vec cannot fail");
+        let name_and_version_hash = bun_semver::string::Builder::string_hash(&name_and_version);
+        if lockfile
+            .patched_dependencies
+            .get(&name_and_version_hash)
+            .is_some()
+        {
+            expected.put(names[i].slice(string_buf), ())?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a directory entry is a symlink. `readdir` leaves `d_type` unset on
+/// some filesystems (NFS, FUSE, bind mounts), so `Unknown` is resolved with an
+/// `lstat` rather than treated as "not a symlink": misclassifying a symlink
+/// here would delete a `bun link` registration.
+#[cfg(not(windows))]
+fn entry_is_symlink(dir: Fd, entry: &sys::dir_iterator::IteratorResult) -> bool {
+    match entry.kind {
+        EntryKind::SymLink => true,
+        EntryKind::Unknown => matches!(
+            sys::lstatat(dir, entry.name.as_zstr()),
+            Ok(st) if sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink
+        ),
+        _ => false,
+    }
+}
+/// Windows directory iteration always reports accurate kinds.
+#[cfg(windows)]
+fn entry_is_symlink(_dir: Fd, entry: &sys::dir_iterator::IteratorResult) -> bool {
+    matches!(entry.kind, EntryKind::SymLink)
 }
 
 /// Unlink every dangling symlink in the already-open `.bin` directory and
@@ -2711,7 +2784,7 @@ fn prune_extraneous_scope(
         if name.is_empty() {
             continue;
         }
-        if name[0] == b'.' || (keep_symlinks && matches!(entry.kind, EntryKind::SymLink)) {
+        if name[0] == b'.' || (keep_symlinks && entry_is_symlink(scope_dir.fd(), &entry)) {
             has_remaining = true;
             continue;
         }

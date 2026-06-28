@@ -148,20 +148,26 @@ pub(crate) fn install_hoisted_packages(
         let mut set = StringHashMap::<()>::with_capacity(
             root_tree_dep_ids.len() + root_pkg_deps.len as usize,
         );
-        let mut keep = |dep_id: DependencyID| {
+        // An incomplete kept set would delete entries the lockfile still
+        // places at the root, so insertion failures must not be ignored.
+        let mut keep = |dep_id: DependencyID| -> Result<(), bun_alloc::AllocError> {
             if let Some(dep) = deps.get(dep_id as usize) {
                 let alias = dep.name.slice(string_buf);
                 if !alias.is_empty() {
-                    let _ = set.put(alias, ());
+                    set.put(alias, ())?;
                 }
             }
+            Ok(())
         };
         for &dep_id in root_tree_dep_ids {
-            keep(dep_id);
+            keep(dep_id)?;
         }
         for dep_id in root_pkg_deps.begin()..root_pkg_deps.end() {
-            keep(dep_id);
+            keep(dep_id)?;
         }
+        // `bun patch` materializes the patched package at the root even when
+        // no tree places it there; its folder must survive reinstalls.
+        package_install::extend_expected_with_patched_packages(&mut set, &this.lockfile)?;
         break 'expected Some(set);
     };
 

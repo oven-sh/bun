@@ -1995,22 +1995,31 @@ pub(crate) fn install_isolated_packages(
         {
             let root_pkg_deps = pkgs.items_dependencies()[0];
             let deps = lockfile_ro.buffers.dependencies.as_slice();
+            // An incomplete kept set would delete entries the lockfile still
+            // places at the root, so insertion failures must not be ignored.
             let mut expected =
                 bun_collections::StringHashMap::<()>::with_capacity(root_pkg_deps.len as usize);
             for dep_id in root_pkg_deps.begin()..root_pkg_deps.end() {
                 let alias = deps[dep_id as usize].name.slice(string_buf);
                 if !alias.is_empty() {
-                    let _ = expected.put(alias, ());
+                    expected.put(alias, ())?;
                 }
             }
             if let Some(public_hoist_pattern) = &manager.options.public_hoist_pattern {
                 for dep in deps {
                     let alias = dep.name.slice(string_buf);
                     if !alias.is_empty() && public_hoist_pattern.is_match(alias) {
-                        let _ = expected.put(alias, ());
+                        expected.put(alias, ())?;
                     }
                 }
             }
+            // `bun patch` materializes the patched package as a root symlink
+            // into the store even when it is not a root dependency; it must
+            // survive reinstalls.
+            crate::package_install::extend_expected_with_patched_packages(
+                &mut expected,
+                lockfile_ro,
+            )?;
             if let Ok(fd) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") {
                 // `keep_symlinks: false`: the isolated linker's own root
                 // entries are symlinks into `node_modules/.bun`, so they must

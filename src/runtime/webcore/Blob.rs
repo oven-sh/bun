@@ -3979,31 +3979,39 @@ enum FormDataComponent {
 fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Option<Box<[u8]>> {
     let escape = component != FormDataComponent::StringValue;
     let normalize = component != FormDataComponent::Filename;
-    if !bytes
-        .iter()
-        .any(|&b| matches!(b, b'\r' | b'\n') || (escape && b == b'"'))
-    {
-        return None;
-    }
+    // Only the bytes a transform rewrites are needles; for a string value a
+    // `"` stays literal and must not force a copy. With >= 2 needles
+    // `index_of_any` dispatches to the highway SIMD scan.
+    let needles: &'static [u8] = if escape { b"\"\r\n" } else { b"\r\n" };
+
+    // The first scan doubles as the "needs a copy at all?" fast path.
+    let mut i = strings::index_of_any(bytes, needles)? as usize;
+    let mut remain = bytes;
     let mut out = Vec::with_capacity(bytes.len() + 8);
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
+    loop {
+        out.extend_from_slice(&remain[..i]);
+        let b = remain[i];
+        let mut consumed = 1;
         match b {
-            b'"' if escape => out.extend_from_slice(b"%22"),
-            b'\r' | b'\n' if normalize => {
+            // `"` is a needle only when `escape` is set.
+            b'"' => out.extend_from_slice(b"%22"),
+            _ if normalize => {
+                // CR, LF, and CRLF all normalize to one CRLF before escaping.
                 out.extend_from_slice(if escape { b"%0D%0A" } else { b"\r\n" });
-                // A CRLF pair is already one normalized newline: consume both.
-                if b == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
-                    i += 1;
+                if b == b'\r' && remain.get(i + 1) == Some(&b'\n') {
+                    consumed = 2;
                 }
             }
             b'\r' => out.extend_from_slice(b"%0D"),
-            b'\n' => out.extend_from_slice(b"%0A"),
-            _ => out.push(b),
+            _ => out.extend_from_slice(b"%0A"),
         }
-        i += 1;
+        remain = &remain[i + consumed..];
+        match strings::index_of_any(remain, needles) {
+            Some(next) => i = next as usize,
+            None => break,
+        }
     }
+    out.extend_from_slice(remain);
     Some(out.into_boxed_slice())
 }
 

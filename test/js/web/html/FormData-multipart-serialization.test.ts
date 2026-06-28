@@ -92,6 +92,24 @@ describe("multipart serialization (new Response(formData))", () => {
     );
   });
 
+  test("normalizes newlines in a large string value", async () => {
+    // 4 KiB runs of ordinary bytes between the newlines exercise the bulk-copy
+    // path of the serializer's scan, not just the per-byte rewrites.
+    const run = Buffer.alloc(4096, "a").toString();
+    const formData = new FormData();
+    formData.append("big", `${run}\r${run}\n${run}\r\n${run}`);
+
+    const response = new Response(formData);
+    const contentType = response.headers.get("Content-Type")!;
+    const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
+
+    expect(await response.text()).toBe(
+      `--${boundary}\r\nContent-Disposition: form-data; name="big"\r\n\r\n` +
+        `${run}\r\n${run}\r\n${run}\r\n${run}\r\n` +
+        `--${boundary}--\r\n`,
+    );
+  });
+
   test("round-trips every entry kind through Response.formData()", async () => {
     const formData = new FormData();
     formData.append("simple", "value");

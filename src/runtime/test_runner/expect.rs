@@ -2481,7 +2481,7 @@ impl ExpectAny {
 
         let constructor = arguments[0];
         constructor.ensure_still_alive();
-        if !constructor.is_constructor() {
+        if !constructor.is_callable() {
             const FMT: &str = "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n";
             return Err(global_this.throw_pretty(format_args!("{FMT}")));
         }

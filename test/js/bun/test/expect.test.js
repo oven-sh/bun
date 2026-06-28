@@ -875,6 +875,21 @@ describe("expect()", () => {
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
   });
 
+  test("toThrow honors Symbol.hasInstance with a primitive thrown value", () => {
+    class H {
+      static [Symbol.hasInstance]() {
+        return true;
+      }
+    }
+    expect(1 instanceof H).toBe(true);
+    expect(() => {
+      throw 1;
+    }).toThrow(H);
+    expect(() => {
+      throw 1;
+    }).not.toThrow(Error);
+  });
+
   test("toThrow", () => {
     expect(() => {
       throw new Error("hello");
@@ -4108,6 +4123,28 @@ describe("expect()", () => {
       expect(expect.any(Boolean)).toEqual(new Boolean(true));
       expect(expect.any(BigInt)).toEqual(Object(1n));
       expect(expect.any(Symbol)).toEqual(Object(Symbol()));
+    });
+
+    test("expect.any honors Symbol.hasInstance", () => {
+      class H {
+        static [Symbol.hasInstance](v) {
+          return typeof v === "number";
+        }
+      }
+      expect(1 instanceof H).toBe(true);
+      expect(1).toEqual(expect.any(H));
+      expect("x").not.toEqual(expect.any(H));
+
+      // Non-constructor callable, matching Jest's `typeof expected === "function"` check.
+      const F = () => {};
+      Object.defineProperty(F, Symbol.hasInstance, { value: v => typeof v === "number" });
+      expect(1 instanceof F).toBe(true);
+      expect(1).toEqual(expect.any(F));
+      expect("x").not.toEqual(expect.any(F));
+
+      // Non-callables are still rejected.
+      expect(() => expect.any(1)).toThrow("Expected a constructor");
+      expect(() => expect.any({})).toThrow("Expected a constructor");
     });
 
     //test('Any.toAsymmetricMatcher()', () => {

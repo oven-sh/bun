@@ -1,0 +1,388 @@
+---
+title: FileIndex
+description: Build agent and editor tooling with Bun's in-memory, gitignore-aware file index
+---
+
+`Bun.FileIndex` is an in-memory, gitignore-aware index of a directory tree, designed for building agent and editor tooling: fuzzy filename autocomplete, glob queries over the indexed paths, content search, file-access history, and in-process git status and diff.
+
+The index crawls a directory once (in parallel, on Bun's thread pool), respecting `.gitignore` semantics exactly the way git does, and keeps only paths and stat metadata in memory. After that, autocomplete and glob queries are synchronous and answer from memory in well under a millisecond, even at 100k paths.
+
+All paths accepted and returned by `Bun.FileIndex` are **relative to `root` and `/`-separated on every platform**, including Windows.
+
+## Quickstart
+
+**Fuzzy filename autocomplete:**
+
+```ts
+using index = new Bun.FileIndex(process.cwd());
+await index.ready;
+
+// "srvidx" matches "src/server/index.ts"
+for (const { path, score, positions } of index.complete("srvidx")) {
+  console.log(path, score);
+}
+```
+
+**Query indexed paths with a glob (no I/O):**
+
+```ts
+using index = new Bun.FileIndex(process.cwd());
+await index.ready;
+
+const tests = index.glob("**/*.test.ts");
+console.log(`${tests.length} test files`);
+```
+
+**Search file contents:**
+
+```ts
+using index = new Bun.FileIndex(process.cwd());
+await index.ready;
+
+for await (const match of index.grep("TODO", { glob: "**/*.ts" })) {
+  console.log(`${match.path}:${match.line}:${match.column}: ${match.lineText}`);
+}
+```
+
+## Creating an index
+
+`new Bun.FileIndex(root, options?)` starts a background crawl of `root` and returns immediately. The `ready` promise resolves with the index once the crawl finishes:
+
+```ts
+const index = new Bun.FileIndex("/path/to/project", {
+  // Respect .gitignore and .git/info/exclude (default true).
+  // The .git directory itself is always skipped.
+  gitignore: true,
+
+  // Extra ignore patterns in gitignore syntax, rooted at `root`.
+  ignore: ["dist/**", "*.log", "!important.log"],
+
+  // Keep the index live with a filesystem watcher (default false).
+  watch: false,
+
+  // Hard cap on bytes retained by the index (default 64 MiB).
+  maxMemory: 64 * 1024 * 1024,
+
+  // grep() skips files larger than this (default 1 MiB).
+  maxFileSize: 1024 * 1024,
+});
+
+await index.ready;
+console.log(index.root, index.size, index.memoryUsage);
+```
+
+A few rules worth knowing:
+
+- Construction never throws for a missing or unreadable `root` — `index.ready` rejects instead.
+- Queries issued before `ready` resolves operate on whatever has been indexed so far (initially nothing).
+- `FileIndex` implements `Disposable`, so `using index = new Bun.FileIndex(...)` calls `close()` automatically at the end of the scope.
+
+### gitignore semantics
+
+With `gitignore: true` (the default), the crawl implements the full [gitignore](https://git-scm.com/docs/gitignore) specification: per-directory `.gitignore` stacks, `!` negation, last-match-wins, `**` globs, anchored vs. basename patterns, directory-only patterns, and the rule that a file inside an excluded directory cannot be re-included. `.git/info/exclude` is honored too. The crawler never descends into an ignored directory.
+
+Patterns passed via the `ignore` option use the same syntax and are rooted at `root`.
+
+## Querying the index
+
+### `complete()` — fuzzy autocomplete
+
+`index.complete(query, options?)` performs fzf-style fuzzy matching over every indexed path and returns the best matches, sorted best-first. It is synchronous and does no I/O.
+
+```ts
+const results = index.complete("bdts", { limit: 10 });
+// [{ path: "packages/bun-types/bun.d.ts", score: 412, positions: [9, 13, 27, 29] }, ...]
+```
+
+- `limit` — maximum results to return (default `64`).
+- `cwd` — only return paths under this prefix (relative to `root`).
+- `directories` — return only directories (default `false`).
+
+Matching is smart-case (case-insensitive unless the query contains an uppercase letter), and matches in the basename outrank the same match earlier in the path. `positions` are the indices into `path` that matched, for highlighting in a UI.
+
+Paths you've recorded with [`touch()`](#touch-and-recent-access-history) get a recency boost, so frequently-opened files surface first.
+
+### `glob()` — match indexed paths
+
+`index.glob(pattern, options?)` matches the indexed paths against a glob and returns the matching paths. Unlike [`Bun.Glob`](/runtime/glob)'s `scan()`, this never touches the filesystem — it queries the in-memory index, so it is synchronous and respects everything `.gitignore` excluded:
+
+```ts
+const sources = index.glob("src/**/*.ts");
+const docs = index.glob("**/*.mdx", { cwd: "docs" });
+```
+
+The pattern syntax is the same as [`Bun.Glob`](/runtime/glob).
+
+### `has()` and `stat()`
+
+`index.has(path)` reports whether a path is in the index. `index.stat(path)` returns the metadata recorded for it, or `null`:
+
+```ts
+index.has("package.json"); // true
+
+const info = index.stat("src/index.ts");
+// { size: 1024, mtimeMs: 1717171717000, mode: 33188, kind: "file" }
+```
+
+`stat()` reads from the in-memory index, **not** the filesystem. The values reflect the last crawl (or watcher update), not necessarily the file's current state on disk. Use `Bun.file(path).stat()` when you need a fresh `lstat`.
+
+## `grep()` — content search
+
+`index.grep(pattern, options?)` searches the contents of indexed files and returns an async iterable of matches. Unlike the other queries, `grep` reads from disk: nothing is cached by the index, so results always reflect the files' current contents.
+
+```ts
+for await (const match of index.grep("FIXME", { glob: "src/**", context: 2 })) {
+  console.log(`${match.path}:${match.line}:${match.column}`);
+  for (const line of match.before ?? []) console.log(`  ${line}`);
+  console.log(`> ${match.lineText}`);
+  for (const line of match.after ?? []) console.log(`  ${line}`);
+}
+```
+
+Each match has `path`, a 1-based `line` and `column`, and the full `lineText`. With `context: n`, the surrounding lines are included as `before` and `after`.
+
+Options:
+
+- `glob` — only search files matching this glob (relative to `root`).
+- `cwd` — only search files under this prefix.
+- `limit` — stop after this many matches.
+- `maxFileSize` — skip files larger than this many bytes (default 1 MiB, or the constructor's `maxFileSize`).
+- `caseSensitive` — default `true`.
+- `context` — lines of context before/after each match (default `0`).
+
+Two kinds of files are always skipped: files larger than `maxFileSize`, and files that look binary (a NUL byte in the first 8 KiB).
+
+**Note**: String patterns are the fast path — they're matched with a SIMD literal search inside the worker threads that read the files. `RegExp` patterns are supported but slower, because each candidate line has to be decoded and tested by the JavaScript regular-expression engine on the main thread. Prefer string literals when you can.
+
+## `touch()` and `recent()` — access history
+
+`index.touch(path)` records an access to a path. Touched paths get a recency boost in `complete()` results, which is how an editor or agent gets "frecency"-aware autocomplete for free — just call `touch()` whenever the user opens a file.
+
+```ts
+index.touch("src/server/index.ts");
+index.touch("README.md");
+
+index.recent(5); // ["README.md", "src/server/index.ts"]
+```
+
+`index.recent(limit?)` returns the most recently touched paths, newest first.
+
+## Git integration
+
+`Bun.FileIndex` can compute git status and per-file diffs **entirely in-process**: Bun reads `.git/index`, refs, loose objects, and packfiles directly and never spawns a `git` subprocess. Both methods run on the thread pool and return a promise.
+
+### `gitStatus()`
+
+Returns the current branch and a `git status --porcelain=v1`-equivalent file list, or `null` if `root` isn't inside a git work tree:
+
+```ts
+const status = await index.gitStatus();
+if (status) {
+  console.log(status.detached ? `HEAD detached at ${status.oid}` : `On branch ${status.branch}`);
+  for (const { path, status: xy } of status.files) {
+    console.log(xy, path); // "??", " M", "M ", "MM", "A ", " D", ...
+  }
+}
+```
+
+`status` is the two-character porcelain `XY` code: the first character is the staged (index) state, the second the working-tree state.
+
+### `gitDiff()`
+
+Returns a line-level diff of the working-tree file against the version in `HEAD`, or `null` if `root` isn't in a git work tree or the path isn't tracked:
+
+```ts
+const diff = await index.gitDiff("src/index.ts");
+for (const hunk of diff?.hunks ?? []) {
+  console.log(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
+  for (const { kind, text } of hunk.lines) {
+    const sign = kind === "add" ? "+" : kind === "del" ? "-" : " ";
+    console.log(sign + text);
+  }
+}
+```
+
+`oldText` and `newText` hold the full before/after contents (`null` when the file didn't exist on that side).
+
+## Watching for changes
+
+Pass `watch: true` to keep the index live. Bun registers OS-level filesystem watches (inotify on Linux, FSEvents on macOS, `ReadDirectoryChangesW` on Windows) and applies changes to the index incrementally. Watches are never registered inside ignored directories — that's what keeps a watched `node_modules`-heavy tree under Linux's `inotify` watch limit.
+
+Assign `onchange` (or pass it as a constructor option) to receive batched change events:
+
+```ts
+const index = new Bun.FileIndex(process.cwd(), { watch: true });
+
+index.onchange = events => {
+  for (const { kind, path } of events) {
+    console.log(kind, path); // "create" | "modify" | "delete"
+  }
+};
+
+await index.ready;
+```
+
+Events are coalesced per path and debounced (about 20 ms after the last event in a burst), so a build that writes 500 files produces one callback, not 500. Changes inside gitignored directories never fire. Editing any `.gitignore` (or `.git/info/exclude`) triggers a debounced background re-crawl so the index stays consistent with the new rules.
+
+A watching index keeps the process alive until you call `close()`.
+
+### `refresh()`
+
+`index.refresh()` discards the index and re-crawls `root` from scratch, resolving with the index when done. Useful when you're not watching but know the tree changed:
+
+```ts
+await index.refresh();
+console.log(index.size);
+```
+
+### `close()`
+
+`index.close()` stops the watcher, frees the native index, and releases its memory. It is idempotent. After `close()`, every other method throws; promises that were already in flight still settle.
+
+`Symbol.dispose` is an alias for `close()`, so `using` handles cleanup for you:
+
+```ts
+{
+  using index = new Bun.FileIndex("./src");
+  await index.ready;
+  // ...
+} // index.close() runs here
+```
+
+## Memory budget
+
+The index enforces a hard cap on the bytes it retains, set by `maxMemory` (default 64 MiB). This is a budget, not a hint:
+
+- If the crawl would exceed the cap, further entries are **dropped**, `index.truncated` becomes `true`, and the index keeps working on the entries that fit. It never throws and never exceeds the budget.
+- `index.memoryUsage` reports the bytes currently retained.
+- The retained bytes are reported to the JavaScript garbage collector, so a large index correctly increases GC pressure instead of looking like a 16-byte wrapper object.
+
+```ts
+const index = new Bun.FileIndex(hugeMonorepo, { maxMemory: 8 * 1024 * 1024 });
+await index.ready;
+
+if (index.truncated) {
+  console.warn(`Index is incomplete: ${index.size} entries in ${index.memoryUsage} bytes`);
+}
+```
+
+The budget covers paths and metadata only — `grep()` reads file contents from disk on demand and retains nothing.
+
+## Performance & threading model
+
+The initial crawl, `refresh()`, `grep()`, `gitStatus()`, and `gitDiff()` all run on Bun's thread pool and never block the event loop; they hand back plain data when they finish. Everything else — `complete()`, `glob()`, `has()`, `stat()`, `touch()`, `recent()` — is a synchronous read of the in-memory index on the JavaScript thread, with no locks and no I/O, so it's safe to call on every keystroke: a `complete()` over ~100k indexed paths typically finishes in well under a millisecond.
+
+## What it is not
+
+`Bun.FileIndex` is deliberately small. To set expectations:
+
+- **It is not a daemon.** The index lives inside your process and dies with it. There's no socket, no protocol, and nothing persists to disk between runs.
+- **It is not a language server.** It knows about paths and bytes, not symbols, types, or references.
+- **`grep()` does not cache file contents.** Every call re-reads matching files from disk. A content cache (and faster repeated regex search) is future work.
+- **`RegExp` grep is the slow path.** Only literal string patterns get the parallel SIMD search today.
+
+## Reference
+
+> **Note**: The following type signatures are simplified for documentation purposes. See [`packages/bun-types/bun.d.ts`](https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts) for the full type definitions.
+
+```ts
+interface FileIndexOptions {
+  /** Respect .gitignore / .git/info/exclude (default true). `.git` itself is always skipped. */
+  gitignore?: boolean;
+  /** Extra ignore patterns (gitignore syntax, rooted at `root`). */
+  ignore?: string[];
+  /** Keep the index live with a filesystem watcher (default false). */
+  watch?: boolean;
+  /** Hard cap on bytes retained by the index (default 64 MiB). */
+  maxMemory?: number;
+  /** grep() skips files larger than this (default 1 MiB). */
+  maxFileSize?: number;
+  onchange?: FileIndex["onchange"];
+}
+
+class FileIndex implements Disposable {
+  constructor(root: string, options?: FileIndexOptions);
+
+  /** Resolves when the initial crawl completes (or immediately if it already has). */
+  readonly ready: Promise<FileIndex>;
+  readonly root: string;
+  /** Number of indexed entries (files + directories + symlinks). */
+  readonly size: number;
+  /** Bytes retained by the native index. */
+  readonly memoryUsage: number;
+  /** True if maxMemory was hit and the index is incomplete. */
+  readonly truncated: boolean;
+  readonly watching: boolean;
+
+  /** Fuzzy filename autocomplete. Synchronous; operates on the in-memory index. */
+  complete(
+    query: string,
+    options?: { limit?: number; cwd?: string; directories?: boolean },
+  ): Array<{ path: string; score: number; positions: number[] }>;
+
+  /** Match indexed paths against a glob. Synchronous, no I/O. */
+  glob(pattern: string, options?: { limit?: number; cwd?: string }): string[];
+
+  has(path: string): boolean;
+  stat(path: string): {
+    size: number;
+    mtimeMs: number;
+    mode: number;
+    kind: "file" | "dir" | "symlink";
+  } | null;
+
+  /** Content search over indexed files. Reads from disk in parallel on the thread pool. */
+  grep(
+    pattern: string | RegExp,
+    options?: {
+      glob?: string;
+      cwd?: string;
+      limit?: number;
+      maxFileSize?: number;
+      caseSensitive?: boolean;
+      context?: number;
+    },
+  ): AsyncIterable<{
+    path: string;
+    line: number;
+    column: number;
+    lineText: string;
+    before?: string[];
+    after?: string[];
+  }>;
+
+  /** In-process `git status --porcelain` (+ branch). null if root isn't in a git repo. */
+  gitStatus(): Promise<{
+    branch: string | null;
+    oid: string | null;
+    detached: boolean;
+    files: Array<{ path: string; status: string }>;
+  } | null>;
+
+  /** Line diff of the worktree file vs HEAD. null if not in git / not tracked. */
+  gitDiff(path: string): Promise<{
+    oldText: string | null;
+    newText: string | null;
+    hunks: Array<{
+      oldStart: number;
+      oldLines: number;
+      newStart: number;
+      newLines: number;
+      lines: Array<{ kind: "context" | "add" | "del"; text: string }>;
+    }>;
+  } | null>;
+
+  /** Record an access (boosts this path in complete()). */
+  touch(path: string): void;
+  recent(limit?: number): string[];
+
+  /** Full re-crawl. */
+  refresh(): Promise<FileIndex>;
+
+  /** Batched, debounced change events. Only fires when constructed with watch: true. */
+  onchange: ((events: Array<{ kind: "create" | "modify" | "delete"; path: string }>) => void) | null;
+
+  close(): void;
+  [Symbol.dispose](): void;
+}
+```

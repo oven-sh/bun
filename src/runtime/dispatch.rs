@@ -115,6 +115,7 @@ use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
+use crate::file_index::{CrawlTask as FileIndexCrawlTask, GrepTask as FileIndexGrepTask};
 use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::image::AsyncImageTask;
@@ -286,6 +287,14 @@ pub fn run_task(
         task_tag::ArchiveFilesTask => {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
         }
+
+        // ── Bun.FileIndex ────────────────────────────────────────────────
+        // `cast_ptr!` yields the heap-allocated task registered with this
+        // tag; `run_from_js` takes ownership (`heap::take`) of it.
+        task_tag::FileIndexCrawlTask => {
+            FileIndexCrawlTask::run_from_js(cast_ptr!(FileIndexCrawlTask))?;
+        }
+        task_tag::FileIndexGrepTask => run_then_destroy!(FileIndexGrepTask<'_>),
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
@@ -583,7 +592,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 97,
+    task_tag::COUNT == 99,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

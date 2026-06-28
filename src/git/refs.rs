@@ -74,12 +74,23 @@ pub(crate) fn parse_ref_file(data: &[u8]) -> Result<RefFile, GitError> {
         }
         return Ok(RefFile::Symbolic(target.to_vec()));
     }
+    // `refs.c:parse_loose_ref_contents`: after the object name the next
+    // byte must be NUL, whitespace or end-of-input ("if (parse_oid_hex(...)
+    // || (*p != '\0' && !isspace(*p))) return -1"). 40 hex digits followed
+    // by other garbage is corrupt, not a detached oid.
     if line.len() >= OID_HEX_LEN
+        && (line.len() == OID_HEX_LEN || is_git_space(line[OID_HEX_LEN]))
         && let Some(oid) = Oid::from_hex(&line[..OID_HEX_LEN])
     {
         return Ok(RefFile::Direct(oid));
     }
     Err(GitError::Corrupt("ref: unrecognized contents"))
+}
+
+/// C `isspace()` in the "C" locale, the predicate `parse_loose_ref_contents`
+/// uses (git-compat-util.h `sane_istest`/`GIT_SPACE` plus `\v`/`\f`).
+fn is_git_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
 }
 
 /// The `$GIT_COMMON_DIR/packed-refs` file: optional `# pack-refs with: ...`
@@ -232,6 +243,29 @@ mod tests {
             b"ref: refs/heads/x\x00y",
         ] {
             assert!(parse_ref_file(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// `refs.c:parse_loose_ref_contents`: the byte after the 40-hex object
+    /// name must be NUL, whitespace or end-of-input. Hex followed
+    /// immediately by garbage is corrupt, not a detached oid; hex followed
+    /// by whitespace-separated trailing data is accepted (git ignores it).
+    #[test]
+    fn detached_oid_must_be_delimited() {
+        for bad in *b"z0." {
+            let mut contents = H1.to_vec();
+            contents.push(bad);
+            assert!(parse_ref_file(&contents).is_err(), "{contents:?}");
+        }
+        for sep in *b" \t\n\x0b\x0c\r" {
+            let mut contents = H1.to_vec();
+            contents.push(sep);
+            contents.extend_from_slice(b"trailing junk");
+            assert_eq!(
+                parse_ref_file(&contents).unwrap(),
+                RefFile::Direct(Oid::from_hex(H1).unwrap()),
+                "{contents:?}"
+            );
         }
     }
 

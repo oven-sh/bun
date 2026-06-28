@@ -33,6 +33,13 @@ pub const MAX_OBJECT_SIZE: usize = 1 << 30;
 /// A loose object file whose *compressed* size exceeds this cannot inflate
 /// to something acceptable either.
 const MAX_LOOSE_FILE_SIZE: usize = MAX_OBJECT_SIZE;
+/// Cumulative ceiling on the bytes inflated while resolving ONE object
+/// (its delta chain's every delta plus its root base). [`MAX_DELTA_DEPTH`]
+/// bounds the chain *length* but not its total expansion: without this, 64
+/// links each declaring a [`MAX_OBJECT_SIZE`] delta would inflate 64 GiB
+/// for one read. 4x the single-object ceiling leaves room for a maximal
+/// base, a maximal result and generously sized deltas in between.
+pub(crate) const MAX_DELTA_CHAIN_INFLATED_BYTES: u64 = 4 * MAX_OBJECT_SIZE as u64;
 /// `"<type> <size>\0"` is at most `"commit" + " " + 20 digits + NUL`.
 const MAX_LOOSE_HEADER: usize = 32;
 
@@ -174,7 +181,7 @@ impl Odb {
     /// Read and fully materialize an object into `out` (replacing its
     /// contents). Returns the object's kind.
     pub fn read(&self, oid: Oid, out: &mut Vec<u8>) -> Result<ObjectKind, GitError> {
-        self.read_with_depth(oid, out, 0)
+        self.read_with_depth(oid, out, 0, &mut ChainBudget::new())
     }
 
     /// Object kind and size. For non-delta pack entries this needs only the
@@ -194,7 +201,7 @@ impl Odb {
                     return Ok((kind, header.size));
                 }
                 let mut out = Vec::new();
-                let kind = self.read_pack_at(pack, offset, &mut out, 0)?;
+                let kind = self.read_pack_at(pack, offset, &mut out, 0, &mut ChainBudget::new())?;
                 return Ok((kind, out.len() as u64));
             }
         }
@@ -206,13 +213,16 @@ impl Odb {
         oid: Oid,
         out: &mut Vec<u8>,
         depth: u32,
+        budget: &mut ChainBudget,
     ) -> Result<ObjectKind, GitError> {
         if let Some(file) = self.open_loose(oid)? {
-            return read_loose(&file, out);
+            let kind = read_loose(&file, out)?;
+            budget.charge(out.len())?;
+            return Ok(kind);
         }
         for pack in &self.packs {
             if let Some(offset) = pack.idx.find(oid) {
-                return self.read_pack_at(pack, offset, out, depth);
+                return self.read_pack_at(pack, offset, out, depth, budget);
             }
         }
         Err(GitError::MissingObject(oid))
@@ -227,45 +237,200 @@ impl Odb {
         }
     }
 
-    /// Materialize the object at `offset` in `pack`, resolving delta chains
-    /// up to [`MAX_DELTA_DEPTH`]. Recursion depth is exactly the (checked)
-    /// chain depth.
+    /// Materialize the object at `offset` in `pack` via
+    /// [`resolve_pack_object`].
     fn read_pack_at(
         &self,
         pack: &Pack,
         offset: u64,
         out: &mut Vec<u8>,
         depth: u32,
+        budget: &mut ChainBudget,
     ) -> Result<ObjectKind, GitError> {
-        if depth >= MAX_DELTA_DEPTH {
-            return Err(GitError::TooLarge("delta chain depth"));
+        resolve_pack_object(
+            &mut OdbPackSource { odb: self, pack },
+            offset,
+            out,
+            depth,
+            budget,
+        )
+    }
+}
+
+/// Running total of bytes inflated while resolving one object's delta
+/// chain, capped at [`MAX_DELTA_CHAIN_INFLATED_BYTES`].
+pub(crate) struct ChainBudget {
+    inflated: u64,
+}
+
+impl ChainBudget {
+    pub(crate) fn new() -> ChainBudget {
+        ChainBudget { inflated: 0 }
+    }
+
+    /// Charge `bytes` of inflated output. Called BEFORE the inflation so a
+    /// hostile declared size is rejected without being allocated.
+    pub(crate) fn charge(&mut self, bytes: usize) -> Result<(), GitError> {
+        // Both operands are bounded well below u64::MAX, but stay saturating.
+        self.inflated = self.inflated.saturating_add(bytes as u64);
+        if self.inflated > MAX_DELTA_CHAIN_INFLATED_BYTES {
+            return Err(GitError::TooLarge("delta chain inflated bytes"));
         }
-        let (header, raw, raw_len) = read_entry_header(pack, offset)?;
+        Ok(())
+    }
+}
+
+/// One pack entry after its type/size header (and, for deltas, the base
+/// reference that follows the header) has been decoded and validated.
+/// `size` is the entry's own declared *inflated* size (for a delta, the size
+/// of the delta stream, not of the result); `data_offset` is where its zlib
+/// stream begins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PackEntry {
+    Base {
+        kind: ObjectKind,
+        size: usize,
+        data_offset: u64,
+    },
+    OfsDelta {
+        base_offset: u64,
+        size: usize,
+        data_offset: u64,
+    },
+    RefDelta {
+        base_oid: Oid,
+        size: usize,
+        data_offset: u64,
+    },
+}
+
+/// The I/O a delta-chain resolution needs, injected so the chain ordering
+/// and budget bookkeeping in [`resolve_pack_object`] are unit-testable
+/// without a packfile or the zlib C symbol.
+pub(crate) trait PackSource {
+    fn entry(&mut self, offset: u64) -> Result<PackEntry, GitError>;
+    fn inflate(
+        &mut self,
+        data_offset: u64,
+        expected: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<(), GitError>;
+    /// Offset of `oid` within this pack, for in-pack ref-deltas.
+    fn find(&mut self, oid: Oid) -> Option<u64>;
+    /// Resolve a ref-delta base that is NOT in this pack (thin-pack
+    /// leftovers): loose objects and other packs.
+    fn read_external(
+        &mut self,
+        oid: Oid,
+        out: &mut Vec<u8>,
+        depth: u32,
+        budget: &mut ChainBudget,
+    ) -> Result<ObjectKind, GitError>;
+}
+
+/// Materialize the (possibly deltified) entry at `offset`, resolving delta
+/// chains up to [`MAX_DELTA_DEPTH`] deep and [`MAX_DELTA_CHAIN_INFLATED_BYTES`]
+/// cumulative inflated bytes.
+///
+/// Ordering is load-bearing for memory: a delta's BASE is fully resolved
+/// before the delta itself is inflated, so at any instant at most one base,
+/// one delta and one result buffer are live. (Inflating the delta first
+/// would keep every level's delta buffer — up to [`MAX_DELTA_DEPTH`] of
+/// them, each up to the attacker-declared size — alive across the whole
+/// recursion.) Every inflation is charged to `budget` before it happens.
+pub(crate) fn resolve_pack_object(
+    src: &mut dyn PackSource,
+    offset: u64,
+    out: &mut Vec<u8>,
+    depth: u32,
+    budget: &mut ChainBudget,
+) -> Result<ObjectKind, GitError> {
+    if depth >= MAX_DELTA_DEPTH {
+        return Err(GitError::TooLarge("delta chain depth"));
+    }
+    match src.entry(offset)? {
+        PackEntry::Base {
+            kind,
+            size,
+            data_offset,
+        } => {
+            budget.charge(size)?;
+            src.inflate(data_offset, size, out)?;
+            Ok(kind)
+        }
+        PackEntry::OfsDelta {
+            base_offset,
+            size,
+            data_offset,
+        } => {
+            let mut base = Vec::new();
+            let kind = resolve_pack_object(src, base_offset, &mut base, depth + 1, budget)?;
+            budget.charge(size)?;
+            let mut delta = Vec::new();
+            src.inflate(data_offset, size, &mut delta)?;
+            *out = apply_delta(&base, &delta, MAX_OBJECT_SIZE)?;
+            Ok(kind)
+        }
+        PackEntry::RefDelta {
+            base_oid,
+            size,
+            data_offset,
+        } => {
+            let mut base = Vec::new();
+            // The base is usually in the same pack; fall back to a full
+            // object lookup for thin-pack leftovers.
+            let kind = match src.find(base_oid) {
+                Some(base_offset) => {
+                    resolve_pack_object(src, base_offset, &mut base, depth + 1, budget)?
+                }
+                None => src.read_external(base_oid, &mut base, depth + 1, budget)?,
+            };
+            budget.charge(size)?;
+            let mut delta = Vec::new();
+            src.inflate(data_offset, size, &mut delta)?;
+            *out = apply_delta(&base, &delta, MAX_OBJECT_SIZE)?;
+            Ok(kind)
+        }
+    }
+}
+
+/// The real [`PackSource`] over an open pack file. The only code paths that
+/// reach the zlib C symbol are `inflate` and (via `read_external`) the loose
+/// reader, so nothing here is reachable from a `#[test]`.
+struct OdbPackSource<'a> {
+    odb: &'a Odb,
+    pack: &'a Pack,
+}
+
+impl PackSource for OdbPackSource<'_> {
+    fn entry(&mut self, offset: u64) -> Result<PackEntry, GitError> {
+        let (header, raw, raw_len) = read_entry_header(self.pack, offset)?;
         let raw = &raw[..raw_len];
         let size = checked_usize(header.size, "pack object size")?;
         if size > MAX_OBJECT_SIZE {
             return Err(GitError::TooLarge("pack object size"));
         }
-        let mut data_offset = offset + header.header_len as u64;
-        match header.kind {
+        let data_offset = offset + header.header_len as u64;
+        Ok(match header.kind {
             PackObjType::Commit | PackObjType::Tree | PackObjType::Blob | PackObjType::Tag => {
-                inflate_pack_entry(&pack.file, data_offset, pack.size, size, out)?;
-                // `object_kind_of` is total for the four base kinds.
-                object_kind_of(header.kind).ok_or(GitError::Corrupt("pack: object type"))
+                PackEntry::Base {
+                    // `object_kind_of` is total for the four base kinds.
+                    kind: object_kind_of(header.kind)
+                        .ok_or(GitError::Corrupt("pack: object type"))?,
+                    size,
+                    data_offset,
+                }
             }
             PackObjType::OfsDelta => {
                 let (distance, used) = parse_ofs_delta_distance(&raw[header.header_len..])?;
-                data_offset += used as u64;
                 if distance == 0 || distance > offset {
                     return Err(GitError::Corrupt("pack: ofs-delta base before pack start"));
                 }
-                let base_offset = offset - distance;
-                let mut delta = Vec::new();
-                inflate_pack_entry(&pack.file, data_offset, pack.size, size, &mut delta)?;
-                let mut base = Vec::new();
-                let kind = self.read_pack_at(pack, base_offset, &mut base, depth + 1)?;
-                *out = apply_delta(&base, &delta, MAX_OBJECT_SIZE)?;
-                Ok(kind)
+                PackEntry::OfsDelta {
+                    base_offset: offset - distance,
+                    size,
+                    data_offset: data_offset + used as u64,
+                }
             }
             PackObjType::RefDelta => {
                 let after = &raw[header.header_len..];
@@ -274,23 +439,36 @@ impl Odb {
                 }
                 let mut base_oid = [0u8; OID_RAW_LEN];
                 base_oid.copy_from_slice(&after[..OID_RAW_LEN]);
-                let base_oid = Oid(base_oid);
-                data_offset += OID_RAW_LEN as u64;
-                let mut delta = Vec::new();
-                inflate_pack_entry(&pack.file, data_offset, pack.size, size, &mut delta)?;
-                let mut base = Vec::new();
-                // The base is usually in the same pack; fall back to a full
-                // object lookup for thin-pack leftovers.
-                let kind = match pack.idx.find(base_oid) {
-                    Some(base_offset) => {
-                        self.read_pack_at(pack, base_offset, &mut base, depth + 1)?
-                    }
-                    None => self.read_with_depth(base_oid, &mut base, depth + 1)?,
-                };
-                *out = apply_delta(&base, &delta, MAX_OBJECT_SIZE)?;
-                Ok(kind)
+                PackEntry::RefDelta {
+                    base_oid: Oid(base_oid),
+                    size,
+                    data_offset: data_offset + OID_RAW_LEN as u64,
+                }
             }
-        }
+        })
+    }
+
+    fn inflate(
+        &mut self,
+        data_offset: u64,
+        expected: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<(), GitError> {
+        inflate_pack_entry(&self.pack.file, data_offset, self.pack.size, expected, out)
+    }
+
+    fn find(&mut self, oid: Oid) -> Option<u64> {
+        self.pack.idx.find(oid)
+    }
+
+    fn read_external(
+        &mut self,
+        oid: Oid,
+        out: &mut Vec<u8>,
+        depth: u32,
+        budget: &mut ChainBudget,
+    ) -> Result<ObjectKind, GitError> {
+        self.odb.read_with_depth(oid, out, depth, budget)
     }
 }
 
@@ -401,6 +579,247 @@ fn inflate_pack_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::delta::test_encode::{DeltaOp, encode_delta};
+
+    /// In-memory [`PackSource`]: `entries` keyed by entry offset, `data`
+    /// keyed by data offset holding the already-"inflated" payload. `log`
+    /// records the order in which payloads were inflated.
+    #[derive(Default)]
+    struct FakeSource {
+        entries: Vec<(u64, PackEntry)>,
+        data: Vec<(u64, Vec<u8>)>,
+        log: Vec<u64>,
+    }
+
+    impl FakeSource {
+        fn add(&mut self, offset: u64, entry: PackEntry, payload: Vec<u8>) {
+            let data_offset = match entry {
+                PackEntry::Base { data_offset, .. }
+                | PackEntry::OfsDelta { data_offset, .. }
+                | PackEntry::RefDelta { data_offset, .. } => data_offset,
+            };
+            self.entries.push((offset, entry));
+            self.data.push((data_offset, payload));
+        }
+    }
+
+    impl PackSource for FakeSource {
+        fn entry(&mut self, offset: u64) -> Result<PackEntry, GitError> {
+            self.entries
+                .iter()
+                .find(|(o, _)| *o == offset)
+                .map(|(_, e)| *e)
+                .ok_or(GitError::Corrupt("test: unknown entry offset"))
+        }
+
+        fn inflate(
+            &mut self,
+            data_offset: u64,
+            expected: usize,
+            out: &mut Vec<u8>,
+        ) -> Result<(), GitError> {
+            let payload = self
+                .data
+                .iter()
+                .find(|(o, _)| *o == data_offset)
+                .map(|(_, d)| d.clone())
+                .ok_or(GitError::Corrupt("test: unknown data offset"))?;
+            assert_eq!(payload.len(), expected, "declared size disagrees");
+            self.log.push(data_offset);
+            out.clear();
+            out.extend_from_slice(&payload);
+            Ok(())
+        }
+
+        fn find(&mut self, _oid: Oid) -> Option<u64> {
+            None
+        }
+
+        fn read_external(
+            &mut self,
+            oid: Oid,
+            _out: &mut Vec<u8>,
+            _depth: u32,
+            _budget: &mut ChainBudget,
+        ) -> Result<ObjectKind, GitError> {
+            Err(GitError::MissingObject(oid))
+        }
+    }
+
+    const BASE: &[u8] = b"hello world base";
+
+    /// `base @100 <- ofs-delta @200 <- ofs-delta @300`. Payload data offsets
+    /// are the entry offset + 1000.
+    fn chain() -> (FakeSource, Vec<u8>) {
+        let d1 = encode_delta(
+            BASE.len() as u64,
+            9,
+            &[
+                DeltaOp::Copy { offset: 0, size: 5 },
+                DeltaOp::Insert(b"-one"),
+            ],
+        );
+        let r1 = b"hello-one";
+        let d2 = encode_delta(
+            r1.len() as u64,
+            9,
+            &[
+                DeltaOp::Copy { offset: 0, size: 5 },
+                DeltaOp::Insert(b"-two"),
+            ],
+        );
+        let mut src = FakeSource::default();
+        src.add(
+            100,
+            PackEntry::Base {
+                kind: ObjectKind::Blob,
+                size: BASE.len(),
+                data_offset: 1100,
+            },
+            BASE.to_vec(),
+        );
+        src.add(
+            200,
+            PackEntry::OfsDelta {
+                base_offset: 100,
+                size: d1.len(),
+                data_offset: 1200,
+            },
+            d1,
+        );
+        let d2_len = d2.len();
+        src.add(
+            300,
+            PackEntry::OfsDelta {
+                base_offset: 200,
+                size: d2_len,
+                data_offset: 1300,
+            },
+            d2,
+        );
+        (src, b"hello-two".to_vec())
+    }
+
+    /// The base must be fully resolved BEFORE the delta that needs it is
+    /// inflated, at every level: deepest base first. (Inflating outermost-
+    /// delta-first keeps every level's delta buffer live simultaneously.)
+    #[test]
+    fn delta_chain_inflates_base_before_delta() {
+        let (mut src, want) = chain();
+        let mut out = Vec::new();
+        let kind =
+            resolve_pack_object(&mut src, 300, &mut out, 0, &mut ChainBudget::new()).unwrap();
+        assert_eq!(kind, ObjectKind::Blob);
+        assert_eq!(out, want);
+        assert_eq!(src.log, vec![1100, 1200, 1300]);
+    }
+
+    #[test]
+    fn ref_delta_resolves_through_external_lookup_error() {
+        let mut src = FakeSource::default();
+        src.add(
+            100,
+            PackEntry::RefDelta {
+                base_oid: Oid([9; 20]),
+                size: 4,
+                data_offset: 1100,
+            },
+            b"junk".to_vec(),
+        );
+        let mut out = Vec::new();
+        let err =
+            resolve_pack_object(&mut src, 100, &mut out, 0, &mut ChainBudget::new()).unwrap_err();
+        assert!(matches!(err, GitError::MissingObject(_)));
+        // The base failed to resolve, so the delta was never inflated.
+        assert!(src.log.is_empty());
+    }
+
+    #[test]
+    fn chain_budget_arithmetic() {
+        let mut b = ChainBudget::new();
+        b.charge(MAX_DELTA_CHAIN_INFLATED_BYTES as usize).unwrap();
+        assert!(matches!(
+            b.charge(1),
+            Err(GitError::TooLarge("delta chain inflated bytes"))
+        ));
+        // Saturating: never wraps back into budget.
+        assert!(b.charge(usize::MAX).is_err());
+    }
+
+    /// The budget is charged BEFORE inflating: an entry that would push the
+    /// chain past the ceiling never reaches `inflate`.
+    #[test]
+    fn chain_budget_is_charged_before_inflating() {
+        let (mut src, _) = chain();
+        let mut budget = ChainBudget::new();
+        budget
+            .charge((MAX_DELTA_CHAIN_INFLATED_BYTES as usize) - BASE.len() - 1)
+            .unwrap();
+        let mut out = Vec::new();
+        // The base (16 bytes) still fits; the first delta does not.
+        let err = resolve_pack_object(&mut src, 300, &mut out, 0, &mut budget).unwrap_err();
+        assert!(matches!(
+            err,
+            GitError::TooLarge("delta chain inflated bytes")
+        ));
+        assert_eq!(src.log, vec![1100]);
+    }
+
+    /// Every inflated byte in the chain counts: base + both deltas.
+    #[test]
+    fn chain_budget_accumulates_across_the_whole_chain() {
+        let (src, _) = chain();
+        let total: usize = src.data.iter().map(|(_, d)| d.len()).sum();
+        for (headroom, ok) in [(total, true), (total - 1, false)] {
+            let (mut src, _) = chain();
+            let mut budget = ChainBudget::new();
+            budget
+                .charge((MAX_DELTA_CHAIN_INFLATED_BYTES as usize) - headroom)
+                .unwrap();
+            let mut out = Vec::new();
+            let result = resolve_pack_object(&mut src, 300, &mut out, 0, &mut budget);
+            assert_eq!(result.is_ok(), ok, "headroom {headroom}");
+        }
+    }
+
+    #[test]
+    fn delta_chain_depth_limit_through_resolver() {
+        // 100 <- 200 <- 300 <- ... a chain longer than MAX_DELTA_DEPTH.
+        let mut src = FakeSource::default();
+        src.add(
+            100,
+            PackEntry::Base {
+                kind: ObjectKind::Blob,
+                size: 1,
+                data_offset: 1100,
+            },
+            b"x".to_vec(),
+        );
+        let identity = encode_delta(1, 1, &[DeltaOp::Copy { offset: 0, size: 1 }]);
+        for level in 1..=u64::from(MAX_DELTA_DEPTH) {
+            src.add(
+                100 + 100 * level,
+                PackEntry::OfsDelta {
+                    base_offset: 100 * level,
+                    size: identity.len(),
+                    data_offset: 1100 + 100 * level,
+                },
+                identity.clone(),
+            );
+        }
+        let top = 100 + 100 * u64::from(MAX_DELTA_DEPTH);
+        let mut out = Vec::new();
+        let err =
+            resolve_pack_object(&mut src, top, &mut out, 0, &mut ChainBudget::new()).unwrap_err();
+        assert!(matches!(err, GitError::TooLarge("delta chain depth")));
+        // The deepest link tripped the limit before anything was inflated.
+        assert!(src.log.is_empty());
+        // One link shorter resolves fine.
+        let mut out = Vec::new();
+        let kind =
+            resolve_pack_object(&mut src, top - 100, &mut out, 0, &mut ChainBudget::new()).unwrap();
+        assert_eq!((kind, out.as_slice()), (ObjectKind::Blob, b"x".as_slice()));
+    }
 
     #[test]
     fn object_kind_names_round_trip() {

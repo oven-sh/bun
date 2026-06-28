@@ -8,9 +8,10 @@
 //! worst case: past it the sub-range degrades to a whole-range replacement
 //! instead of an optimal diff.
 
-/// Whole-input ceilings. Above either, the result is a single whole-file
-/// hunk (see [`diff_lines`]); above the byte ceiling the contents are not
-/// even split into lines (each side becomes one pseudo-line).
+/// Whole-input ceilings, enforced BEFORE any per-line allocation: line
+/// counting (one `memchr` pass) is the only O(input) work done on an
+/// over-ceiling input. Above either, the result is the O(1)-sized
+/// "everything changed" hunk described on [`diff_lines`].
 const MAX_DIFF_TOTAL_LINES: usize = 200_000;
 const MAX_DIFF_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 /// Per-split edit-cost ceiling, after which the split is abandoned and the
@@ -51,6 +52,18 @@ pub struct Hunk {
 
 /// Line-level diff of `old` against `new` with `context` lines of context.
 /// Identical inputs yield no hunks.
+///
+/// Resource ceilings: if the inputs together exceed `MAX_DIFF_TOTAL_BYTES`
+/// (256 MiB) or `MAX_DIFF_TOTAL_LINES` (200,000), no per-line state is
+/// allocated at all (the only whole-input work is the `memchr` newline
+/// count) and the result is a single O(1)-sized "everything changed" hunk
+/// covering both files: its `lines` vector is EMPTY, `old_lines`/`new_lines`
+/// carry each side's total line count (saturated at `u32::MAX`) and
+/// `old_start`/`new_start` follow the usual `@@ -a,b +c,d @@` convention.
+/// Callers must treat an over-ceiling result as "too large to diff", not as
+/// an applicable patch. Below the ceilings, memory and time are
+/// O(`old.len() + new.len()`) plus the bounded Myers search
+/// (`MYERS_MAX_COST`).
 pub fn diff_lines(old: &[u8], new: &[u8], context: u32) -> Vec<Hunk> {
     diff_lines_impl(
         old,
@@ -71,43 +84,42 @@ pub(crate) fn diff_lines_impl(
     if old == new {
         return Vec::new();
     }
-    if old.len().saturating_add(new.len()) > max_total_bytes {
-        // Whole-file replacement without splitting into lines: each side is
-        // a single pseudo-"line" spanning all of its bytes.
-        let mut lines = Vec::new();
-        if !old.is_empty() {
-            lines.push(DiffLine {
-                origin: DiffOrigin::Del,
-                content: 0..old.len(),
-            });
-        }
-        if !new.is_empty() {
-            lines.push(DiffLine {
-                origin: DiffOrigin::Add,
-                content: 0..new.len(),
-            });
-        }
-        return vec![Hunk {
-            old_start: u32::from(!old.is_empty()),
-            old_lines: u32::from(!old.is_empty()),
-            new_start: u32::from(!new.is_empty()),
-            new_lines: u32::from(!new.is_empty()),
-            lines,
-        }];
+    // Both ceilings are enforced on COUNTS computed without allocating: a
+    // 100 MB file of newlines must never materialize 100 M `Line` records
+    // (or per-line bool/DiffLine vectors) before being rejected.
+    let old_count = count_lines(old);
+    let new_count = count_lines(new);
+    if old.len().saturating_add(new.len()) > max_total_bytes
+        || old_count.saturating_add(new_count) > max_total_lines
+    {
+        return vec![oversize_hunk(old_count, new_count)];
     }
 
     let a = split_lines(old);
     let b = split_lines(new);
     let mut removed = vec![false; a.len()];
     let mut added = vec![false; b.len()];
-
-    if a.len() + b.len() > max_total_lines {
-        removed.fill(true);
-        added.fill(true);
-    } else {
-        myers_mark(old, new, &a, &b, &mut removed, &mut added);
-    }
+    myers_mark(old, new, &a, &b, &mut removed, &mut added);
     build_hunks(&a, &b, &removed, &added, context)
+}
+
+/// Number of lines [`split_lines`] would produce, without allocating: the
+/// number of newlines, plus one for a trailing fragment with no newline.
+fn count_lines(data: &[u8]) -> usize {
+    let Some(&last) = data.last() else { return 0 };
+    memchr::memchr_iter(b'\n', data).count() + usize::from(last != b'\n')
+}
+
+/// The O(1) "everything changed" marker hunk returned above the ceilings.
+fn oversize_hunk(old_count: usize, new_count: usize) -> Hunk {
+    let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    Hunk {
+        old_start: u32::from(old_count > 0),
+        old_lines: clamp(old_count),
+        new_start: u32::from(new_count > 0),
+        new_lines: clamp(new_count),
+        lines: Vec::new(),
+    }
 }
 
 /// A line's byte range plus a cheap content hash used to short-circuit
@@ -321,6 +333,14 @@ fn build_hunks(
         }
         while j < b.len() && added[j] {
             j += 1;
+        }
+        // Forced progress. With marks produced by `myers_mark` at least one
+        // side always advances here (the unmarked subsequences have equal
+        // length), but termination must not hinge on that non-local
+        // invariant: inconsistent marks degrade to one final change group.
+        if i == i0 && j == j0 {
+            i = a.len();
+            j = b.len();
         }
         groups.push((i0, i, j0, j));
     }
@@ -637,42 +657,90 @@ mod tests {
         }
     }
 
-    /// Above the line ceiling everything is reported changed, but the
-    /// apply-property still holds.
+    /// `count_lines` must agree exactly with `split_lines` (the ceiling is
+    /// enforced on the count, the diff runs on the split).
     #[test]
-    fn line_limit_falls_back_to_whole_file() {
-        let old = b"a\nb\nc\nd\n";
-        let new = b"a\nX\nc\nd\n";
-        let hunks = diff_lines_impl(old, new, 0, 2, MAX_DIFF_TOTAL_BYTES);
-        assert_eq!(apply(old, new, &hunks), new);
-        assert_eq!(hunks.len(), 1);
-        let h = &hunks[0];
-        assert_eq!((h.old_lines, h.new_lines), (4, 4));
-        assert!(h.lines.iter().all(|l| l.origin != DiffOrigin::Context));
+    fn count_lines_matches_split_lines() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"\n",
+            b"a",
+            b"a\n",
+            b"a\nb",
+            b"a\nb\n",
+            b"\n\n\n",
+            b"\r\n",
+            b"no newline at all",
+        ];
+        for case in cases {
+            assert_eq!(count_lines(case), split_lines(case).len(), "{case:?}");
+        }
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        for _ in 0..200 {
+            let mut data = Vec::new();
+            for _ in 0..(seed % 64) {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                data.push(if seed.is_multiple_of(3) { b'\n' } else { b'x' });
+            }
+            assert_eq!(count_lines(&data), split_lines(&data).len());
+        }
     }
 
-    /// Above the byte ceiling the inputs are not split into lines at all.
+    /// Above the line ceiling the result is the O(1) marker hunk: NO
+    /// per-line `DiffLine`s are materialized, and the line counts are exact.
     #[test]
-    fn byte_limit_yields_single_pseudo_lines() {
-        let old = b"old contents\nwith lines\n";
+    fn line_limit_yields_empty_marker_hunk() {
+        let old = b"a\nb\nc\nd\n";
+        let new = b"a\nX\nc\nd\nE\n";
+        let hunks = diff_lines_impl(old, new, 0, 2, MAX_DIFF_TOTAL_BYTES);
+        assert_eq!(hunks.len(), 1);
+        let h = &hunks[0];
+        assert_eq!(
+            (h.old_start, h.old_lines, h.new_start, h.new_lines),
+            (1, 4, 1, 5)
+        );
+        assert!(h.lines.is_empty());
+        // One line under the same ceiling diffs normally.
+        let hunks = diff_lines_impl(old, new, 0, 9, MAX_DIFF_TOTAL_BYTES);
+        assert_eq!(apply(old, new, &hunks), new);
+        assert!(hunks.iter().all(|h| !h.lines.is_empty()));
+    }
+
+    /// Above the byte ceiling: same O(1) marker hunk, line counts intact.
+    #[test]
+    fn byte_limit_yields_empty_marker_hunk() {
+        let old = b"old contents\nwith lines\nand no trailing newline";
         let new = b"new\n";
         let hunks = diff_lines_impl(old, new, 3, MAX_DIFF_TOTAL_LINES, 8);
         assert_eq!(hunks.len(), 1);
         let h = &hunks[0];
         assert_eq!(
             (h.old_start, h.old_lines, h.new_start, h.new_lines),
-            (1, 1, 1, 1)
+            (1, 3, 1, 1)
         );
-        assert_eq!(h.lines.len(), 2);
-        assert_eq!(h.lines[0].origin, DiffOrigin::Del);
-        assert_eq!(h.lines[0].content, 0..old.len());
-        assert_eq!(h.lines[1].origin, DiffOrigin::Add);
-        assert_eq!(h.lines[1].content, 0..new.len());
+        assert!(h.lines.is_empty());
         // One empty side.
         let hunks = diff_lines_impl(b"", b"123456789", 3, MAX_DIFF_TOTAL_LINES, 4);
         assert_eq!(hunks.len(), 1);
-        assert_eq!(hunks[0].old_lines, 0);
-        assert_eq!(hunks[0].lines.len(), 1);
+        let h = &hunks[0];
+        assert_eq!(
+            (h.old_start, h.old_lines, h.new_start, h.new_lines),
+            (0, 0, 1, 1)
+        );
+        assert!(h.lines.is_empty());
+    }
+
+    /// `build_hunks` must terminate even on marks that violate the
+    /// "unmarked subsequences have equal length" invariant.
+    #[test]
+    fn build_hunks_forces_progress_on_inconsistent_marks() {
+        let a = split_lines(b"a\nb\n");
+        let b = split_lines(b"a\n");
+        let hunks = build_hunks(&a, &b, &[false, false], &[false], 0);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!((hunks[0].old_lines, hunks[0].new_lines), (1, 0));
     }
 
     /// A pathological input (every line distinct on both sides) is bounded

@@ -37,10 +37,36 @@ const EXT_KNOWN_MASK: u16 = EXT_FLAG_SKIP_WORKTREE | EXT_FLAG_INTENT_TO_ADD;
 /// The on-disk count is attacker-controlled; each entry occupies at least
 /// [`ENTRY_FIXED_LEN`] bytes so this also bounds memory by the file size.
 const MAX_INDEX_ENTRIES: u32 = 1 << 24;
-/// Hard ceiling on the path arena. Index v4 prefix compression can expand
-/// quadratically relative to the file size, so the decoded total is capped
-/// independently of the input length.
+/// Absolute ceiling on the decoded path arena, independent of input size.
 const MAX_PATH_ARENA_BYTES: usize = 256 * 1024 * 1024;
+/// Input-relative ceiling on the decoded path arena: see [`path_arena_cap`].
+const MAX_PATH_EXPANSION_FACTOR: usize = 128;
+/// Additive slack in [`path_arena_cap`] so a degenerate tiny input is never
+/// rejected by rounding alone (one maximal 4 KiB path).
+const PATH_ARENA_SLACK: usize = 4096;
+
+/// Ceiling on the total decoded path bytes for an index of `input_len`
+/// on-disk bytes: the smaller of [`MAX_PATH_ARENA_BYTES`] and
+/// `input_len * MAX_PATH_EXPANSION_FACTOR + PATH_ARENA_SLACK`.
+///
+/// Index v4 prefix compression stores only the suffix that differs from the
+/// previous path, so the decoded total is quadratic in the worst case
+/// (entry k can rebuild a k-byte path from a ~1-byte suffix): a ~1.5 MB
+/// crafted index would otherwise reach the 256 MiB absolute cap (~170x
+/// amplification). The relative cap bounds the amplification itself.
+/// Factor: git's writer (`read-cache.c:ce_write_entry`) spends at least
+/// `ENTRY_FIXED_LEN` (62) + 1 varint byte + 1 NUL = 64 input bytes per
+/// entry, and a legitimately decoded path is a real filesystem path, so at
+/// most `PATH_MAX` (4096) bytes; the expansion a legitimate v4 writer can
+/// produce is therefore at most 4096/64 = 64x. 128 gives 2x headroom.
+/// (v2/v3 store paths verbatim, so their expansion is always < 1x.)
+fn path_arena_cap(input_len: usize) -> usize {
+    MAX_PATH_ARENA_BYTES.min(
+        input_len
+            .saturating_mul(MAX_PATH_EXPANSION_FACTOR)
+            .saturating_add(PATH_ARENA_SLACK),
+    )
+}
 
 bitflags::bitflags! {
     /// Per-entry flags, normalized across index versions.
@@ -129,7 +155,8 @@ impl Index {
 
     /// Parse the raw bytes of a `.git/index` file. Purely structural: the
     /// trailing SHA-1 is *recorded* but not recomputed here (see
-    /// [`crate::odb::verify_index_checksum`]).
+    /// `verify_trailing_sha1` in the `hash` module, which
+    /// [`crate::Repository::read_index`] calls before parsing).
     pub fn parse(data: &[u8]) -> Result<Index, GitError> {
         if data.len() < INDEX_HEADER_LEN + INDEX_TRAILER_LEN {
             return Err(GitError::Corrupt("index: file too short"));
@@ -163,9 +190,10 @@ impl Index {
             .map_err(|_| GitError::TooLarge("index entry count"))?;
         let mut paths: Vec<u8> = Vec::new();
         let mut prev_range: (u32, u32) = (0, 0);
+        let arena_cap = path_arena_cap(data.len());
 
         for i in 0..entry_count {
-            let entry = parse_entry(&mut r, version, &mut paths, prev_range)?;
+            let entry = parse_entry(&mut r, version, &mut paths, prev_range, arena_cap)?;
             if i > 0 {
                 let prev = &paths[prev_range.0 as usize..prev_range.1 as usize];
                 let cur = &paths[entry.path_range.0 as usize..entry.path_range.1 as usize];
@@ -242,13 +270,16 @@ impl Index {
     }
 }
 
+/// Append one decoded path to the arena, enforcing `arena_cap`
+/// (see [`path_arena_cap`]) BEFORE allocating.
 fn push_path(
     paths: &mut Vec<u8>,
     prefix_of_prev: &[u8],
     suffix: &[u8],
+    arena_cap: usize,
 ) -> Result<(u32, u32), GitError> {
     let total = prefix_of_prev.len() + suffix.len();
-    if paths.len() + total > MAX_PATH_ARENA_BYTES {
+    if paths.len() + total > arena_cap {
         return Err(GitError::TooLarge("index path arena"));
     }
     let start = paths.len();
@@ -257,7 +288,8 @@ fn push_path(
         .map_err(|_| GitError::TooLarge("index path arena"))?;
     paths.extend_from_slice(prefix_of_prev);
     paths.extend_from_slice(suffix);
-    // `start + total <= MAX_PATH_ARENA_BYTES` < u32::MAX, so these casts are exact.
+    // `start + total <= arena_cap <= MAX_PATH_ARENA_BYTES` < u32::MAX, so
+    // these casts are exact.
     Ok((start as u32, (start + total) as u32))
 }
 
@@ -266,6 +298,7 @@ fn parse_entry(
     version: u32,
     paths: &mut Vec<u8>,
     prev_range: (u32, u32),
+    arena_cap: usize,
 ) -> Result<IndexEntry, GitError> {
     let entry_start = r.pos();
     if r.remaining() < ENTRY_FIXED_LEN {
@@ -353,7 +386,7 @@ fn parse_entry(
         }
         // `prev` borrows the arena; copy the prefix out before it grows.
         let prefix = prev[..keep].to_vec();
-        push_path(paths, &prefix, suffix)?
+        push_path(paths, &prefix, suffix, arena_cap)?
     } else {
         let name = if name_len_field == FLAG_NAME_MASK {
             // Name length >= 0xFFF: recover the real length from the NUL
@@ -380,7 +413,7 @@ fn parse_entry(
             return Err(GitError::Corrupt("index: name not NUL-terminated"));
         }
         debug_assert_eq!(r.pos() - entry_start, padded);
-        push_path(paths, b"", name)?
+        push_path(paths, b"", name, arena_cap)?
     };
 
     if path_range.0 == path_range.1 {
@@ -655,6 +688,88 @@ mod tests {
             assert!(index.entries().is_empty());
             assert_eq!(index.checksum(), Oid([0xcc; 20]));
         }
+    }
+
+    #[test]
+    fn path_arena_cap_shape() {
+        // Tiny inputs keep the additive slack.
+        assert_eq!(path_arena_cap(0), PATH_ARENA_SLACK);
+        // Mid-range inputs are bounded relative to their own length.
+        assert_eq!(
+            path_arena_cap(100_000),
+            100_000 * MAX_PATH_EXPANSION_FACTOR + PATH_ARENA_SLACK
+        );
+        assert!(path_arena_cap(100_000) < MAX_PATH_ARENA_BYTES);
+        // Large inputs are clamped by the absolute cap, and the arithmetic
+        // never overflows.
+        assert_eq!(path_arena_cap(8 * 1024 * 1024), MAX_PATH_ARENA_BYTES);
+        assert_eq!(path_arena_cap(usize::MAX), MAX_PATH_ARENA_BYTES);
+    }
+
+    /// The arena cap is exact: a path that fills it is accepted, one byte
+    /// more is rejected (before any allocation).
+    #[test]
+    fn push_path_boundary() {
+        let mut paths = Vec::new();
+        assert!(push_path(&mut paths, b"abc", b"de", 5).is_ok());
+        assert_eq!(paths.len(), 5);
+        assert!(matches!(
+            push_path(&mut paths, b"", b"x", 5),
+            Err(GitError::TooLarge("index path arena"))
+        ));
+        assert!(push_path(&mut paths, b"", b"x", 6).is_ok());
+    }
+
+    /// A crafted v4 index whose prefix-compressed paths decode to far more
+    /// than [`MAX_PATH_EXPANSION_FACTOR`] times the file size must be
+    /// rejected by the input-relative cap (the absolute 256 MiB cap alone
+    /// lets a ~83 KB file allocate ~14 MB here, and proportionally more for
+    /// larger inputs).
+    #[test]
+    fn v4_path_arena_is_bounded_relative_to_input() {
+        // 200 sorted 70,000-byte paths sharing a 69,998-byte prefix: each
+        // entry after the first costs ~66 on-disk bytes but decodes 70,000.
+        let prefix = vec![b'p'; 69_998];
+        let entries: Vec<SpecEntry> = (0..200u8)
+            .map(|i| {
+                let mut path = prefix.clone();
+                path.push(b'a' + i / 26);
+                path.push(b'a' + i % 26);
+                SpecEntry::new(&path, 1)
+            })
+            .collect();
+        let data = encode(4, &entries);
+        let decoded_total = 200 * 70_000;
+        assert!(decoded_total > path_arena_cap(data.len()));
+        assert!(decoded_total < MAX_PATH_ARENA_BYTES);
+        assert!(matches!(
+            Index::parse(&data),
+            Err(GitError::TooLarge("index path arena"))
+        ));
+    }
+
+    /// A legitimately shaped large v4 index — long, deeply nested paths
+    /// that prefix-compress extremely well (~55x expansion, near the
+    /// theoretical maximum a real `PATH_MAX`-bounded writer can produce;
+    /// see [`path_arena_cap`]) — must still parse.
+    #[test]
+    fn v4_legitimate_high_compression_index_fits() {
+        let prefix = vec![b'q'; 3_996];
+        let entries: Vec<SpecEntry> = (0..1000u32)
+            .map(|i| {
+                let mut path = prefix.clone();
+                path.extend_from_slice(format!("{i:04}").as_bytes());
+                SpecEntry::new(&path, 1)
+            })
+            .collect();
+        let data = encode(4, &entries);
+        let decoded_total = 1000 * 4_000;
+        // The fixture really is high-expansion (>32x), and within the cap.
+        assert!(decoded_total > data.len() * 32);
+        assert!(decoded_total < path_arena_cap(data.len()));
+        let index = Index::parse(&data).unwrap();
+        assert_eq!(index.entries().len(), 1000);
+        assert_eq!(index.path(&index.entries()[999]).len(), 4000);
     }
 
     #[test]

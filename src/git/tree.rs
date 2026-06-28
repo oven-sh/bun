@@ -19,10 +19,15 @@ pub const MODE_SYMLINK: u32 = 0o120000;
 /// Submodule (gitlink). `Documentation/gitformat-index.txt`: `1110...`.
 pub const MODE_GITLINK: u32 = 0o160000;
 
-/// Hard ceiling on the number of paths a flattened tree may produce.
+/// Hard ceiling on the TOTAL number of tree records parsed by one
+/// [`flatten_tree`] traversal (and therefore also on the number of paths it
+/// can produce). Charging every *parsed* record — not just emitted blobs —
+/// bounds the memory of the per-frame entry vectors: a hostile DAG that
+/// re-reads large subtrees at many positions runs out of budget before it
+/// can hold an unbounded number of fully-parsed copies.
 pub const MAX_TREE_ENTRIES: usize = 1 << 22;
-/// Hard ceiling on tree nesting depth (a hostile self-referencing tree would
-/// otherwise expand forever; git's own limit on tree depth is similar).
+/// Hard ceiling on tree nesting depth (git's own limit on tree depth is
+/// similar). Cycles are detected separately and reported as `Corrupt`.
 pub const MAX_TREE_DEPTH: usize = 256;
 /// Hard ceiling on a single flattened path length.
 const MAX_TREE_PATH_LEN: usize = 4096;
@@ -59,9 +64,26 @@ pub(crate) struct RawTreeEntry {
     pub(crate) oid: Oid,
 }
 
+/// Test convenience over [`parse_tree_counted`] with a fresh budget.
+#[cfg(test)]
+fn parse_tree(data: &[u8]) -> Result<Vec<RawTreeEntry>, GitError> {
+    let mut records = 0usize;
+    parse_tree_counted(data, &mut records, MAX_TREE_ENTRIES)
+}
+
 /// Parse one tree object body. Names are validated to be non-empty and to
 /// contain neither `/` nor NUL (they are single path components).
-pub(crate) fn parse_tree(data: &[u8]) -> Result<Vec<RawTreeEntry>, GitError> {
+///
+/// `records` is a running total shared by every tree parsed in one
+/// traversal; it is checked BEFORE each record is appended, so the budget
+/// bounds the number of `RawTreeEntry` values that can ever exist
+/// simultaneously (across all stack frames), not just the number ultimately
+/// emitted.
+fn parse_tree_counted(
+    data: &[u8],
+    records: &mut usize,
+    max_records: usize,
+) -> Result<Vec<RawTreeEntry>, GitError> {
     let mut out = Vec::new();
     let mut rest = data;
     while !rest.is_empty() {
@@ -83,6 +105,10 @@ pub(crate) fn parse_tree(data: &[u8]) -> Result<Vec<RawTreeEntry>, GitError> {
         let mut raw = [0u8; OID_RAW_LEN];
         raw.copy_from_slice(&rest[..OID_RAW_LEN]);
         rest = &rest[OID_RAW_LEN..];
+        if *records >= max_records {
+            return Err(GitError::TooLarge("tree entry count"));
+        }
+        *records += 1;
         out.push(RawTreeEntry {
             mode,
             name: name.to_vec(),
@@ -133,6 +159,9 @@ fn parse_object_header_line(
 }
 
 struct Frame {
+    /// Oid of the tree this frame iterates: an entry naming an oid already
+    /// present in the stack is a reference cycle.
+    oid: Oid,
     entries: Vec<RawTreeEntry>,
     next: usize,
     /// Length to truncate the shared path buffer back to when popping.
@@ -144,15 +173,34 @@ struct Frame {
 /// without an object store; it must return the BODY of the tree object named
 /// by the oid. Uses an explicit stack with hard depth/size limits — never
 /// recursion on attacker-controlled depth.
+///
+/// A subtree oid that is already on the current stack path is a reference
+/// cycle and is rejected as `Corrupt` (git's hashing makes cycles impossible
+/// in honest data). The same oid reached on two *different* paths (a DAG)
+/// is fine and is flattened at each position.
 pub fn flatten_tree(
     root: Oid,
     read_tree: &mut dyn FnMut(Oid, &mut Vec<u8>) -> Result<(), GitError>,
 ) -> Result<Vec<TreeEntry>, GitError> {
+    flatten_tree_with_limits(root, read_tree, MAX_TREE_ENTRIES, MAX_TREE_DEPTH)
+}
+
+/// [`flatten_tree`] with injectable ceilings, so the budget/cycle logic is
+/// unit-testable without materializing [`MAX_TREE_ENTRIES`] records.
+fn flatten_tree_with_limits(
+    root: Oid,
+    read_tree: &mut dyn FnMut(Oid, &mut Vec<u8>) -> Result<(), GitError>,
+    max_records: usize,
+    max_depth: usize,
+) -> Result<Vec<TreeEntry>, GitError> {
     let mut out: Vec<TreeEntry> = Vec::new();
     let mut body: Vec<u8> = Vec::new();
+    // Total tree records parsed so far, across every frame of the traversal.
+    let mut records = 0usize;
     read_tree(root, &mut body)?;
     let mut stack: Vec<Frame> = vec![Frame {
-        entries: parse_tree(&body)?,
+        oid: root,
+        entries: parse_tree_counted(&body, &mut records, max_records)?,
         next: 0,
         parent_path_len: 0,
     }];
@@ -169,28 +217,31 @@ pub fn flatten_tree(
         let idx = frame.next;
         frame.next += 1;
         let base_len = path.len();
-        let entry = &frame.entries[idx];
+        // Re-borrow shared so the cycle scan below can also read `stack`.
+        let entry = &stack[depth - 1].entries[idx];
         if base_len + entry.name.len() > MAX_TREE_PATH_LEN {
             return Err(GitError::TooLarge("tree path"));
         }
         if is_tree_mode(entry.mode) {
-            if depth >= MAX_TREE_DEPTH {
+            if depth >= max_depth {
                 return Err(GitError::TooLarge("tree depth"));
             }
             let oid = entry.oid;
+            // `depth <= max_depth`, so this scan is O(MAX_TREE_DEPTH).
+            if stack.iter().any(|f| f.oid == oid) {
+                return Err(GitError::Corrupt("tree: cycle"));
+            }
             path.extend_from_slice(&entry.name);
             path.push(b'/');
             body.clear();
             read_tree(oid, &mut body)?;
             stack.push(Frame {
-                entries: parse_tree(&body)?,
+                oid,
+                entries: parse_tree_counted(&body, &mut records, max_records)?,
                 next: 0,
                 parent_path_len: base_len,
             });
         } else {
-            if out.len() >= MAX_TREE_ENTRIES {
-                return Err(GitError::TooLarge("tree entry count"));
-            }
             let mut full = Vec::with_capacity(base_len + entry.name.len());
             full.extend_from_slice(&path);
             full.extend_from_slice(&entry.name);
@@ -433,10 +484,11 @@ mod tests {
         ));
     }
 
-    /// A tree that lists ITSELF as a subtree must hit the depth limit, not
-    /// loop forever or blow the stack.
+    /// A tree that lists ITSELF as a subtree is a reference cycle: it must be
+    /// rejected as `Corrupt` on the FIRST descent (depth 1), never re-read
+    /// and re-parsed once per depth level until the depth limit.
     #[test]
-    fn flatten_self_referencing_tree_is_bounded() {
+    fn flatten_self_referencing_tree_is_a_cycle() {
         let root = Oid([1; 20]);
         let mut map = TreeMap::default();
         map.insert(
@@ -447,21 +499,27 @@ mod tests {
                 oid: root,
             }]),
         );
-        let mut read = reader(&map);
+        let mut reads = 0usize;
+        let mut inner = reader(&map);
+        let mut read = |oid: Oid, out: &mut Vec<u8>| {
+            reads += 1;
+            inner(oid, out)
+        };
         assert!(matches!(
             flatten_tree(root, &mut read),
-            Err(GitError::TooLarge("tree depth"))
+            Err(GitError::Corrupt("tree: cycle"))
         ));
+        // The root is read exactly once: the cycle is caught before the
+        // second read, so no second parsed copy ever exists.
+        assert_eq!(reads, 1);
     }
 
-    /// Two trees referencing each other with multiple fan-out entries would
-    /// expand combinatorially; the entry-count ceiling stops it.
+    /// Two trees referencing each other (with fan-out that would otherwise
+    /// expand combinatorially) form a 2-cycle.
     #[test]
-    fn flatten_entry_count_bomb_is_bounded() {
+    fn flatten_mutual_cycle_is_corrupt() {
         let a = Oid([1; 20]);
         let b = Oid([2; 20]);
-        // `a` has 4 blobs and 4 links to `b`; `b` has 4 blobs and 4 links to
-        // `a`. Depth 256 * fan-out 4 explodes without the entry ceiling.
         let make = |other: Oid| {
             let mut entries = Vec::new();
             for i in 0..4u8 {
@@ -479,9 +537,146 @@ mod tests {
         map.insert(b, make(a));
         let mut read = reader(&map);
         match flatten_tree(a, &mut read) {
-            Err(GitError::TooLarge(_)) => {}
-            other => panic!("expected TooLarge, got {other:?}"),
+            Err(GitError::Corrupt("tree: cycle")) => {}
+            other => panic!("expected cycle, got {other:?}"),
         }
+    }
+
+    /// A DAG (the same subtree reachable along two DIFFERENT paths) is not a
+    /// cycle: the oid is never on the stack twice at once and must flatten
+    /// normally at both positions.
+    #[test]
+    fn flatten_dag_diamond_is_not_a_cycle() {
+        let leaf = Oid([4; 20]);
+        let b = Oid([2; 20]);
+        let c = Oid([3; 20]);
+        let root = Oid([1; 20]);
+        let sub = |oid: Oid, name: &[u8]| RawTreeEntry {
+            mode: 0o40000,
+            name: name.to_vec(),
+            oid,
+        };
+        let mut map = TreeMap::default();
+        map.insert(leaf, encode_tree(&[raw(0o100644, b"f", 9)]));
+        map.insert(b, encode_tree(&[sub(leaf, b"l")]));
+        map.insert(c, encode_tree(&[sub(leaf, b"l")]));
+        map.insert(root, encode_tree(&[sub(b, b"b"), sub(c, b"c")]));
+        let mut read = reader(&map);
+        let flat = flatten_tree(root, &mut read).unwrap();
+        let got: Vec<Vec<u8>> = flat.iter().map(|e| e.path.clone()).collect();
+        assert_eq!(got, vec![b"b/l/f".to_vec(), b"c/l/f".to_vec()]);
+    }
+
+    /// The record budget is charged for every PARSED record (subtree records
+    /// included), not just emitted blobs: this acyclic tree parses 16
+    /// records (8 subtree records in the root + 1 blob in each subtree) but
+    /// only ever emits 8 blobs, so a budget of 12 that is enforced on
+    /// EMITTED entries would never fire. It must fire here.
+    #[test]
+    fn flatten_record_budget_counts_parsed_subtree_records() {
+        let root = Oid([1; 20]);
+        let subs: Vec<Oid> = (0..8u8).map(|i| Oid([0x10 + i; 20])).collect();
+        let mut map = TreeMap::default();
+        map.insert(
+            root,
+            encode_tree(
+                &subs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, oid)| RawTreeEntry {
+                        mode: 0o40000,
+                        name: vec![b'd', b'0' + i as u8],
+                        oid: *oid,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        );
+        for sub in &subs {
+            map.insert(*sub, encode_tree(&[raw(0o100644, b"f", 1)]));
+        }
+        let mut read = reader(&map);
+        assert_eq!(
+            flatten_tree_with_limits(root, &mut read, 16, MAX_TREE_DEPTH)
+                .unwrap()
+                .len(),
+            8
+        );
+        let mut read = reader(&map);
+        assert!(matches!(
+            flatten_tree_with_limits(root, &mut read, 12, MAX_TREE_DEPTH),
+            Err(GitError::TooLarge("tree entry count"))
+        ));
+    }
+
+    /// The budget is checked BEFORE a record is appended, so a single
+    /// over-budget tree body never materializes more than the budget.
+    #[test]
+    fn parse_tree_budget_checked_before_growth() {
+        let entries: Vec<RawTreeEntry> = (0..5u8).map(|i| raw(0o100644, &[b'a' + i], i)).collect();
+        let encoded = encode_tree(&entries);
+        let mut n = 0usize;
+        assert!(matches!(
+            parse_tree_counted(&encoded, &mut n, 3),
+            Err(GitError::TooLarge("tree entry count"))
+        ));
+        assert_eq!(n, 3);
+        let mut n = 0usize;
+        assert_eq!(parse_tree_counted(&encoded, &mut n, 5).unwrap().len(), 5);
+        assert_eq!(n, 5);
+    }
+
+    /// The depth ceiling still fires on a deep ACYCLIC chain of distinct
+    /// trees (the cycle check alone would not stop it).
+    #[test]
+    fn flatten_deep_acyclic_chain_hits_depth_limit() {
+        let mut map = TreeMap::default();
+        let oid_at = |i: usize| {
+            Oid([
+                i as u8,
+                (i >> 8) as u8,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+            ])
+        };
+        for i in 0..8usize {
+            map.insert(
+                oid_at(i),
+                encode_tree(&[RawTreeEntry {
+                    mode: 0o40000,
+                    name: b"d".to_vec(),
+                    oid: oid_at(i + 1),
+                }]),
+            );
+        }
+        map.insert(oid_at(8), encode_tree(&[raw(0o100644, b"f", 1)]));
+        let mut read = reader(&map);
+        assert!(matches!(
+            flatten_tree_with_limits(oid_at(0), &mut read, MAX_TREE_ENTRIES, 4),
+            Err(GitError::TooLarge("tree depth"))
+        ));
+        let mut read = reader(&map);
+        assert_eq!(
+            flatten_tree_with_limits(oid_at(0), &mut read, MAX_TREE_ENTRIES, 16)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

@@ -6,9 +6,12 @@
 //! length, offset and count read from disk is bounds-checked and surfaces
 //! as a [`GitError`], never a panic.
 //!
-//! See `/tmp/file-index-design.md` ("Crate 3: bun_git") and the format
-//! documents cited per module (`Documentation/gitformat-index.txt`,
-//! `gitformat-pack.txt`, `gitrepository-layout.txt`, `git-status.txt`).
+//! This is a pure leaf crate (no JSC, no event loop): callers hand it bytes
+//! and worktree listings and inject the blob reader / hasher, so every
+//! format parser and the status/diff logic are unit-testable on in-memory
+//! fixtures. The authoritative format documents are cited per module
+//! (`Documentation/gitformat-index.txt`, `gitformat-pack.txt`,
+//! `gitrepository-layout.txt`, `git-status.txt` in git.git).
 
 mod delta;
 mod diff;

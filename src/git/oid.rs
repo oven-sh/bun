@@ -19,6 +19,13 @@ impl Oid {
     /// The all-zero id git uses as "no object" (e.g. unborn refs).
     pub const ZERO: Oid = Oid([0; OID_RAW_LEN]);
 
+    /// `sha1("blob 0\0")` = `e69de29bb2d1d6434b8b29ae775ad8c2e48c5391`, the
+    /// id of the empty blob (`hash.h:EMPTY_BLOB_SHA1_BIN_LITERAL` in git).
+    pub const EMPTY_BLOB_SHA1: Oid = Oid([
+        0xe6, 0x9d, 0xe2, 0x9b, 0xb2, 0xd1, 0xd6, 0x43, 0x4b, 0x8b, 0x29, 0xae, 0x77, 0x5a, 0xd8,
+        0xc2, 0xe4, 0x8c, 0x53, 0x91,
+    ]);
+
     /// Parse exactly 40 lowercase/uppercase hex digits. Any other length or a
     /// non-hex byte returns `None`.
     pub fn from_hex(b: &[u8]) -> Option<Oid> {
@@ -124,6 +131,14 @@ mod tests {
         assert!(Oid::ZERO.is_zero());
         assert!(!Oid([1; 20]).is_zero());
         assert_eq!(&Oid::ZERO.to_hex()[..], [b'0'; 40]);
+    }
+
+    #[test]
+    fn empty_blob_oid() {
+        assert_eq!(
+            Some(Oid::EMPTY_BLOB_SHA1),
+            Oid::from_hex(b"e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
+        );
     }
 
     #[test]

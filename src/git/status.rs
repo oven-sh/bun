@@ -260,10 +260,14 @@ fn worktree_modified(
     }
     // Remaining cached stat fields, all stored 32-bit-truncated on disk.
     // Nanoseconds are intentionally not compared (default git build).
+    // `st_dev` is intentionally NOT compared: `read-cache.c:
+    // ce_match_stat_basic` only does so under `#ifdef USE_STDEV` ("st_dev
+    // breaks on network filesystems where different clients see the same
+    // files as having different device numbers in the same file system"),
+    // which no shipped git build defines.
     let stat_clean = e.stat.size == (w.size as u32)
         && e.stat.mtime_s == (w.mtime_s as u32)
         && e.stat.ctime_s == (w.ctime_s as u32)
-        && e.stat.dev == (w.dev as u32)
         && e.stat.ino == (w.ino as u32)
         && e.stat.uid == w.uid
         && e.stat.gid == w.gid;
@@ -275,7 +279,13 @@ fn worktree_modified(
         Some((ts_s, _ts_ns)) => ts_s <= i64::from(e.stat.mtime_s),
         None => true,
     };
-    if stat_clean && !racy {
+    // `read-cache.c:ce_match_stat_basic`: "Racily smudged entry?" — a
+    // cached size of 0 whose oid is NOT the empty blob was deliberately
+    // smudged by `ce_smudge_racily_clean_entry` (or never stat'ed at all)
+    // and sets DATA_CHANGED even when every other stat field matches, which
+    // forces the content comparison below.
+    let smudged = e.stat.size == 0 && e.oid != Oid::EMPTY_BLOB_SHA1;
+    if stat_clean && !racy && !smudged {
         return Ok(false);
     }
     let contents = read_blob(w.path)?;
@@ -612,6 +622,68 @@ mod tests {
         assert_eq!(
             fx2.run_opts(&[w], StatusOptions::default(), Some(1)),
             vec![(b"f".to_vec(), code(b' ', b'M'))]
+        );
+    }
+
+    /// `read-cache.c:ce_match_stat_basic` "Racily smudged entry?": a cached
+    /// size of 0 whose oid is NOT the empty blob must set DATA_CHANGED and
+    /// be re-hashed even when EVERY other stat field (including the size,
+    /// because the worktree file is also 0 bytes now) matches. Without it, a
+    /// smudged entry whose file was later truncated to 0 reports clean.
+    #[test]
+    fn smudged_zero_size_with_matching_zero_worktree_size_is_rehashed() {
+        let mut zero = clean_stat();
+        zero.size = 0;
+        let mut e = SpecEntry::new(b"f", 0);
+        // Recorded oid is for "abcd"; the file on disk is now empty.
+        e.oid = fake_hash(b"abcd");
+        e.stat = zero;
+        let fx = Fixture {
+            index_data: encode(2, &[e]),
+            head: vec![tree_entry(b"f", fake_hash(b"abcd"), 0o100644)],
+            blobs: vec![(b"f".to_vec(), Vec::new())],
+        };
+        let listing = [wt(b"f", &zero)];
+        assert_eq!(
+            fx.run_opts(&listing, StatusOptions::default(), Some(1)),
+            vec![(b"f".to_vec(), code(b' ', b'M'))]
+        );
+        // The one entry git exempts: a cached size of 0 whose oid IS the
+        // empty blob really is a 0-byte file — clean, no content read.
+        let mut e = SpecEntry::new(b"f", 0);
+        e.oid = Oid::EMPTY_BLOB_SHA1;
+        e.stat = zero;
+        let fx = Fixture {
+            index_data: encode(2, &[e]),
+            head: vec![tree_entry(b"f", Oid::EMPTY_BLOB_SHA1, 0o100644)],
+            blobs: vec![],
+        };
+        assert!(
+            fx.run_opts(&listing, StatusOptions::default(), Some(0))
+                .is_empty()
+        );
+    }
+
+    /// `read-cache.c:ce_match_stat_basic`: `st_dev` is only compared under
+    /// `#ifdef USE_STDEV`, so a device-number difference alone (NFS,
+    /// overlayfs) must neither report a change nor force a re-hash.
+    #[test]
+    fn device_number_difference_alone_is_ignored() {
+        let content = b"abcd".to_vec();
+        let oid = fake_hash(&content);
+        let mut e = SpecEntry::new(b"f", 0);
+        e.oid = oid;
+        e.stat = clean_stat();
+        let fx = Fixture {
+            index_data: encode(2, &[e]),
+            head: vec![tree_entry(b"f", oid, 0o100644)],
+            blobs: vec![(b"f".to_vec(), content)],
+        };
+        let mut listing = [wt(b"f", &clean_stat())];
+        listing[0].dev = u64::from(clean_stat().dev) + 1;
+        assert!(
+            fx.run_opts(&listing, StatusOptions::default(), Some(0))
+                .is_empty()
         );
     }
 

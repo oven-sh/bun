@@ -197,9 +197,12 @@ pub(crate) fn to_throw(
 
         let mut expected_class = ZigString::EMPTY;
         expected_value.get_class_name(global, &mut expected_class)?;
-        let received_message: JSValue = result
-            .fast_get(global, bun_jsc::BuiltinName::Message)?
-            .unwrap_or(JSValue::UNDEFINED);
+        let received_message: JSValue = (if result.is_object() {
+            result.fast_get(global, bun_jsc::BuiltinName::Message)?
+        } else {
+            Some(JSValue::from_cell(result.to_js_string(global)?))
+        })
+        .unwrap_or(JSValue::UNDEFINED);
         return this.throw(
             global,
             signature,

@@ -888,6 +888,18 @@ describe("expect()", () => {
     expect(() => {
       throw 1;
     }).not.toThrow(Error);
+    // The .not failure path reads .message off the thrown value; it must
+    // produce a matcher error for a primitive thrown value.
+    expect(() =>
+      expect(() => {
+        throw 1;
+      }).not.toThrow(H),
+    ).toThrow(/Expected constructor: not/);
+    expect(() =>
+      expect(() => {
+        throw "boom";
+      }).not.toThrow(H),
+    ).toThrow(/Expected constructor: not/);
   });
 
   test("toThrow", () => {
@@ -4057,6 +4069,8 @@ describe("expect()", () => {
       expect("x").toBeInstanceOf(H);
       expect(null).toBeInstanceOf(H);
       expect(true).toBeInstanceOf(H);
+      // The .not failure path formats the primitive received value.
+      expect(() => expect(1).not.toBeInstanceOf(H)).toThrow(/Expected constructor: not/);
     });
 
     test("honors Symbol.hasInstance on class with object received", () => {
@@ -4142,7 +4156,7 @@ describe("expect()", () => {
       expect(1).toEqual(expect.any(F));
       expect("x").not.toEqual(expect.any(F));
 
-      // Non-callables are still rejected.
+      // Bun validates eagerly; Jest's expect.any only rejects undefined.
       expect(() => expect.any(1)).toThrow("Expected a constructor");
       expect(() => expect.any({})).toThrow("Expected a constructor");
     });

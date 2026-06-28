@@ -207,6 +207,41 @@ test.each([
   },
 );
 
+// Like Node's end(), a falsy chunk is treated as "no chunk" (Node gates
+// write_() and its type validation behind `if (chunk)`), so these report an
+// unmet Content-Length, not an invalid chunk type, with nothing on the wire.
+test.each([
+  ["0", () => 0],
+  ["false", () => false],
+  ["NaN", () => NaN],
+  ["0n", () => 0n],
+  ["an empty string", () => ""],
+] as const)(
+  "strictContentLength: end() with a falsy chunk (%s) throws a mismatch before any bytes reach the wire",
+  async (_name, makeChunk) => {
+    const { promise: handled, resolve, reject } = Promise.withResolvers<string>();
+    await using server = http.createServer((req, res) => {
+      req.resume();
+      res.strictContentLength = true;
+      res.writeHead(200, { "content-length": "10" });
+      try {
+        res.end(makeChunk() as any);
+        reject(new Error("end() should have thrown"));
+        return;
+      } catch (e: any) {
+        resolve(e.code);
+      }
+      setImmediate(() => res.socket!.end());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const wire = await requestRaw((server.address() as net.AddressInfo).port);
+    const code = await handled;
+
+    expect({ code, wire }).toEqual({ code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH", wire: "" });
+  },
+);
+
 // The http2 allowHTTP1 fallback drives ServerResponse with a JS shim handle
 // (createHttp1FallbackResponseHandle in http2.ts) that has no
 // getBytesWritten(), so the pre-flush check must not assume a native handle.

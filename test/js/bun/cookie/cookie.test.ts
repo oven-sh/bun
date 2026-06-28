@@ -365,7 +365,7 @@ test("delete cookie invalid path option", () => {
     `"Invalid cookie path: contains invalid characters"`,
   );
   expect(() => map.delete("a", { domain: "\n" })).toThrowErrorMatchingInlineSnapshot(
-    `"Invalid cookie domain: contains invalid characters"`,
+    `"Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen"`,
   );
   expect(() => map.delete("\n", {})).toThrowErrorMatchingInlineSnapshot(
     `"Invalid cookie name: contains invalid characters"`,

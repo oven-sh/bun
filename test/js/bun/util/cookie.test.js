@@ -252,7 +252,7 @@ test("cookie invalid surrogate pair", () => {
 test("validation errors", () => {
   const mycookie = new Bun.Cookie("a", "b");
   expect(() => (mycookie.domain = "ndcla \nkjnc iap!PL)P890u89iop")).toThrow(
-    /Invalid cookie domain: contains invalid characters/,
+    /Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen/,
   );
   expect(mycookie.domain).toBe(null);
   expect(() => (mycookie.path = "ndcla \nkjnc iap!PL)P890u89iop")).toThrow(
@@ -323,10 +323,10 @@ describe("Bun.Cookie domain validation", () => {
     `${maxLabel}a.com`,
   ])("rejects %s", domain => {
     expect(() => new Bun.Cookie("name", "value", { domain })).toThrow(
-      /Invalid cookie domain: contains invalid characters/,
+      /Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen/,
     );
     expect(() => Bun.Cookie.parse(`name=value; Domain=${domain}`)).toThrow(
-      /Invalid cookie domain: contains invalid characters/,
+      /Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen/,
     );
   });
 });
@@ -534,7 +534,7 @@ describe("cookie.serialize(name, value, options)", function () {
       ["example.com /* inject a comment */"],
     ])("should throw for invalid domain: %s", domain => {
       expect(() => cookie.serialize("foo", "bar", { domain })).toThrow(
-        /Invalid cookie domain: contains invalid characters/,
+        /Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen/,
       );
     });
   });

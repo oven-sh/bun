@@ -51,7 +51,7 @@ public:
             return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
         }
         if (!isValidCookieDomain(init.domain)) {
-            return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+            return Exception { TypeError, "Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen"_s };
         }
 
         return create(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned);
@@ -70,7 +70,7 @@ public:
     ExceptionOr<void> setDomain(const String& domain)
     {
         if (!isValidCookieDomain(domain)) {
-            return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+            return Exception { TypeError, "Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen"_s };
         }
         // RFC 6265 section 5.2.3: the Domain attribute is case-insensitive, so store it lowercased.
         m_domain = domain.convertToASCIILowercase();

@@ -45,7 +45,7 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
         return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
     }
     if (!isValidCookieDomain(domain)) {
-        return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
+        return Exception { TypeError, "Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen"_s };
     }
     // RFC 6265 section 5.2.3: the Domain attribute is case-insensitive, so store it lowercased.
     return adoptRef(*new Cookie(name, value, domain.convertToASCIILowercase(), path, expires, secure, sameSite, httpOnly, maxAge, partitioned));

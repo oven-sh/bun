@@ -115,13 +115,27 @@ pub(crate) fn install_hoisted_packages(
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
+    let _restore_buffers = scopeguard::guard(
+        (original_trees, original_tree_dep_ids),
+        move |(trees, dep_ids)| {
+            // SAFETY: `mgr_ptr` is the provenance root for every body access to
+            // `this` (see shadow-reborrow above); guard runs after all body
+            // borrows have ended.
+            let this = unsafe { &mut *mgr_ptr };
+            this.lockfile.buffers.trees = trees;
+            this.lockfile.buffers.hoisted_dependencies = dep_ids;
+        },
+    );
+
     // Every folder name the lockfile can legitimately place at the root
     // `node_modules`, so stale entries on disk can be pruned once the
     // directory is opened below: the root package's declared dependency
     // aliases (all behaviors, so `--production`/`--omit` never turn a
     // reinstall into a delete) unioned with the unfiltered root tree (the
-    // hoisted transitives that belong there; `original_trees` was snapshotted
-    // before `filter()`, so `--filter` cannot shrink it either).
+    // hoisted transitives that belong there; the pre-`filter()` snapshot is
+    // read back through `_restore_buffers`, so `--filter` cannot shrink it).
+    // Built after the restore guard is armed so a fallible step cannot
+    // return with the original buffers dropped.
     //
     // `None` (no prune) for:
     // - global installs: the global `node_modules` is also the `bun link`
@@ -136,13 +150,14 @@ pub(crate) fn install_hoisted_packages(
         }
         let deps = this.lockfile.buffers.dependencies.as_slice();
         let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        let (original_trees, original_tree_dep_ids) = &*_restore_buffers;
         // A lockfile with no dependencies at all has zero trees; that is a
         // legitimate state (the last dependency was just removed) in which
         // nothing belongs at the root, not a reason to skip the prune.
         let root_tree_dep_ids: &[DependencyID] = if original_trees.is_empty() {
             &[]
         } else {
-            original_trees[0].dependencies.get(&original_tree_dep_ids)
+            original_trees[0].dependencies.get(original_tree_dep_ids)
         };
         let root_pkg_deps = this.lockfile.packages.slice().items_dependencies()[0];
         let mut set = StringHashMap::<()>::with_capacity(
@@ -170,18 +185,6 @@ pub(crate) fn install_hoisted_packages(
         package_install::extend_expected_with_patched_packages(&mut set, &this.lockfile)?;
         break 'expected Some(set);
     };
-
-    let _restore_buffers = scopeguard::guard(
-        (original_trees, original_tree_dep_ids),
-        move |(trees, dep_ids)| {
-            // SAFETY: `mgr_ptr` is the provenance root for every body access to
-            // `this` (see shadow-reborrow above); guard runs after all body
-            // borrows have ended.
-            let this = unsafe { &mut *mgr_ptr };
-            this.lockfile.buffers.trees = trees;
-            this.lockfile.buffers.hoisted_dependencies = dep_ids;
-        },
-    );
 
     let mut download_node: ProgressNode;
     let mut install_node: ProgressNode = ProgressNode::default();

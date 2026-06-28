@@ -2617,8 +2617,14 @@ pub(crate) fn prune_extraneous_node_modules(
         if name.is_empty() || name[0] == b'.' {
             continue;
         }
-        if keep_symlinks && entry_is_symlink(node_modules, &entry) {
-            continue;
+        if entry_is_symlink(node_modules, &entry) {
+            // A `@scope` symlink is never descended into: `delete_tree` on a
+            // symlink unlinks the link itself without following it, but the
+            // scope walk below opens through the link and could delete the
+            // contents of a directory outside `node_modules`.
+            if keep_symlinks || name[0] == b'@' {
+                continue;
+            }
         }
         names.push(name.to_vec());
     }
@@ -2664,25 +2670,15 @@ pub(crate) fn extend_expected_with_patched_packages(
     let pkgs = lockfile.packages.slice();
     let names = pkgs.items_name();
     let resolutions = pkgs.items_resolution();
-    let mut resolution_buf = [0u8; 512];
     let mut name_and_version: Vec<u8> = Vec::new();
     for i in 0..pkgs.len() {
-        let Ok(version) = bun_core::fmt::buf_print(
-            &mut resolution_buf,
-            format_args!(
-                "{}",
-                resolutions[i].fmt(string_buf, bun_core::fmt::PathSep::Posix)
-            ),
-        ) else {
-            continue;
-        };
         name_and_version.clear();
         use std::io::Write;
         write!(
             &mut name_and_version,
             "{}@{}",
             bstr::BStr::new(names[i].slice(string_buf)),
-            bstr::BStr::new(version),
+            resolutions[i].fmt(string_buf, bun_core::fmt::PathSep::Posix),
         )
         .expect("writing to a Vec cannot fail");
         let name_and_version_hash = bun_semver::string::Builder::string_hash(&name_and_version);

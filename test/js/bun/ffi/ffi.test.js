@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { isGlibcVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isArm64, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
 import { platform } from "os";
 
 import {
@@ -675,6 +675,121 @@ it(".ptr is not leaked", () => {
     expect(fn).not.toHaveProperty("ptr");
     expect(fn.ptr).toBeUndefined();
   }
+});
+
+// TinyCC, which implements JSCallback and CFunction, is unavailable on Windows ARM64.
+const isFFIUnavailable = isWindows && isArm64;
+
+// Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
+// which the ASan lane's leak checker then reports against this file.
+it.skipIf(isFFIUnavailable)("JSCallback exceptions propagate out of the native call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { CFunction, JSCallback } from "bun:ffi";
+      const callback = new JSCallback(
+        () => {
+          throw new Error("boom");
+        },
+        { returns: "int32_t", args: [] },
+      );
+      const call = new CFunction({ ptr: callback.ptr, returns: "int32_t", args: [] });
+      try {
+        call();
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
+      }
+      call.close();
+      callback.close();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "caught boom\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// worker.terminate() delivered inside a threadsafe JSCallback used to trip
+// "ASSERTION FAILED: !isTerminationException(exception) || hasTerminationRequest()"
+// in JSC::VM::setException on the worker thread and re-enter the terminated VM.
+it.skipIf(isFFIUnavailable)("JSCallback tolerates worker.terminate() arriving inside the callback", async () => {
+  using dir = tempDir("ffi-jscallback-terminate", {
+    "main.js": `
+      import { join } from "node:path";
+      import { Worker } from "node:worker_threads";
+
+      const sab = new SharedArrayBuffer(4);
+      const flag = new Int32Array(sab);
+
+      const worker = new Worker(join(import.meta.dir, "worker.js"), { workerData: sab });
+      let terminating = false;
+      worker.on("error", err => {
+        console.error("worker error:", err);
+        process.exit(1);
+      });
+      worker.on("exit", code => {
+        if (!terminating) {
+          console.error("worker exited early:", code);
+          process.exit(1);
+        }
+      });
+
+      // Wait until the worker thread is inside the native -> JS callback frame.
+      await Atomics.waitAsync(flag, 0, 0).value;
+
+      terminating = true;
+      await worker.terminate();
+      console.log("done");
+    `,
+    "worker.js": `
+      import { CFunction, JSCallback } from "bun:ffi";
+      import { workerData } from "node:worker_threads";
+
+      const flag = new Int32Array(workerData);
+
+      const callback = new JSCallback(
+        () => {
+          // Tell the parent we are inside the native -> JS callback frame, then
+          // spin until worker.terminate() delivers the TerminationException.
+          Atomics.store(flag, 0, 1);
+          Atomics.notify(flag, 0);
+          while (true) {}
+        },
+        { returns: "void", args: [], threadsafe: true },
+      );
+
+      // CFunction makes the callback's native function pointer callable from JS. A threadsafe
+      // JSCallback enqueues a task instead of running synchronously, so the callback runs at
+      // the top of the worker's event loop once this module finishes evaluating.
+      const fire = new CFunction({ ptr: callback.ptr, returns: "void", args: [] });
+      fire();
+
+      // Keep the worker alive until the queued callback task runs.
+      setInterval(() => {}, 1000);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "done\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 const libPath =

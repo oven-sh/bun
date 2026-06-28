@@ -332,6 +332,12 @@ struct us_connecting_socket_t {
     uint16_t port;
     int error;
     struct addrinfo *addrinfo_head;
+    /* RFC 8305 connection-attempt delay: fires while the first batch of
+     * concurrent connects is still in EINPROGRESS (blackholed SYN) and starts
+     * the next untried address instead of waiting for kernel SYN-retry
+     * exhaustion. Closed in us_internal_free_closed_sockets (never from a
+     * ready-poll callback, so a same-batch tick cannot dispatch a freed timer). */
+    struct us_timer_t *connect_timer;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
     struct us_connecting_socket_t* prev_pending;

@@ -376,6 +376,12 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 
     for (struct us_connecting_socket_t *s = loop->data.closed_connecting_head; s; ) {
         struct us_connecting_socket_t *next = s->next;
+        /* The happy-eyeballs attempt timer is closed here, after the ready-poll
+         * dispatch batch, so a tick that was already pending when `s` was
+         * retired cannot dispatch against a freed timer (or a freed `s`). */
+        if (s->connect_timer) {
+            us_timer_close(s->connect_timer, 1);
+        }
         us_free(s);
         s = next;
     }

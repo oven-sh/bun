@@ -25,6 +25,10 @@
 #include <netinet/in.h>
 #endif
 #define CONCURRENT_CONNECTIONS 4
+/* RFC 8305 connection-attempt delay. Node's autoSelectFamilyAttemptTimeout
+ * defaults to 250 ms; use a slightly larger value so a healthy-but-slow first
+ * address is not raced on loaded hosts. */
+#define CONNECT_ATTEMPT_DELAY_MS 300
 
 #if defined(BUN_DEBUG) || (defined(__has_feature) && __has_feature(address_sanitizer)) || defined(__SANITIZE_ADDRESS__)
 #include <assert.h>
@@ -699,6 +703,48 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
     return opened;
 }
 
+/* RFC 8305 connection-attempt delay (Happy Eyeballs). A resolved address whose
+ * SYNs are silently discarded (filtered network, full accept queue) leaves its
+ * connect() in EINPROGRESS until the kernel exhausts SYN retransmits (~130 s on
+ * Linux). Without this timer the CONCURRENT_CONNECTIONS parallel attempts only
+ * advance to the next address when one of them hard-FAILS, so a later reachable
+ * address in the same DNS answer is never tried. This tick starts one extra
+ * attempt every CONNECT_ATTEMPT_DELAY_MS while addresses remain untried. */
+static void us_internal_connect_timer_cb(struct us_timer_t *t) {
+    struct us_connecting_socket_t *c = *(struct us_connecting_socket_t **) us_timer_ext(t);
+    /* addrinfo_head == NULL means either every address has already been started
+     * or the connecting socket finished (us_connecting_socket_free neutralizes
+     * it) earlier in this same ready-poll batch while `c` sits on the loop's
+     * deferred-free list. Either way: stop. */
+    if (c->addrinfo_head == NULL) {
+        c->connect_timer = NULL;
+        us_timer_close(t, 1);
+        return;
+    }
+    start_connections(c, 1);
+    if (c->addrinfo_head == NULL) {
+        c->connect_timer = NULL;
+        us_timer_close(t, 1);
+    }
+}
+
+static void us_internal_connect_timer_arm(struct us_connecting_socket_t *c) {
+    /* Nothing left to stagger. */
+    if (c->addrinfo_head == NULL) {
+        return;
+    }
+    /* fallthrough=1: the timer must not keep the loop alive; the in-flight
+     * connect polls already do. Returns NULL only if timerfd_create fails,
+     * in which case we silently fall back to the pre-timer behavior. */
+    struct us_timer_t *t = us_create_timer(c->loop, 1, sizeof(struct us_connecting_socket_t *));
+    if (t == NULL) {
+        return;
+    }
+    *(struct us_connecting_socket_t **) us_timer_ext(t) = c;
+    c->connect_timer = t;
+    us_timer_set(t, us_internal_connect_timer_cb, CONNECT_ATTEMPT_DELAY_MS, CONNECT_ATTEMPT_DELAY_MS);
+}
+
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     /* close_all() may have run between the DNS thread queuing this callback and
      * us reaching it; c->group is NULL'd at close so it can't be touched. The
@@ -741,7 +787,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
          * real connect failure must not be reported as a caller abort. */
         c->error = ECONNREFUSED;
         us_connecting_socket_close(c);
+        return;
     }
+    us_internal_connect_timer_arm(c);
 }
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {

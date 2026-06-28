@@ -122,7 +122,11 @@ describe("ipc mode advanced", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({ stdout: "SURVIVED RangeError", exitCode: 0, stderr: "" });
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
+      stdout: "SURVIVED RangeError",
+      exitCode: 0,
+      stderr: "",
+    });
   });
 
   it("a typed array larger than 4 GiB throws instead of truncating its length", async () => {

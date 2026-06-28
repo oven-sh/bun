@@ -354,6 +354,9 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         m_toParent.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
+    // A worker that posts during module evaluation reaches here before
+    // dispatchOnline() has posted the 'open' task; emit 'open' first.
+    dispatchOpenIfNeeded();
     bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
         dispatchEvent(event);
     });
@@ -390,6 +393,20 @@ void Worker::dispatchEvent(Event& event)
     if (m_terminateRequested.load() || m_state.load() == State::Closed)
         return;
     EventTargetWithInlineData::dispatchEvent(event);
+}
+
+// Dispatch 'open' (node's 'online') at most once, on the parent thread: from
+// dispatchOnline()'s posted task, or earlier from drainToParent() when the
+// worker posted a message during module evaluation (Node: 'online' precedes 'message').
+void Worker::dispatchOpenIfNeeded()
+{
+    if (m_openDispatched)
+        return;
+    m_openDispatched = true;
+    if (hasEventListeners(eventNames().openEvent)) {
+        auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
+        dispatchEvent(event);
+    }
 }
 
 bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
@@ -435,10 +452,7 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     }
 
     postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext&) {
-        if (protectedThis->hasEventListeners(eventNames().openEvent)) {
-            auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
-            protectedThis->dispatchEvent(event);
-        }
+        protectedThis->dispatchOpenIfNeeded();
     });
 
     auto* thisContext = workerGlobalObject->scriptExecutionContext();

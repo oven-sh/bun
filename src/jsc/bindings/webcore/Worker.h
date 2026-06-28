@@ -162,6 +162,7 @@ private:
 
     void enqueueToWorker(MessageWithMessagePorts&&);
     void drainToParent(ScriptExecutionContext&);
+    void dispatchOpenIfNeeded();
 
     WorkerOptions m_options;
 
@@ -176,6 +177,10 @@ private:
 
     std::atomic<State> m_state { State::Pending };
     std::atomic<bool> m_terminateRequested { false };
+
+    // Whether the 'open' event has been dispatched (dispatchOpenIfNeeded).
+    // Parent thread only, so it needs no synchronization.
+    bool m_openDispatched { false };
 
     // Stable for the process lifetime; used with ScriptExecutionContext::
     // postTaskTo() so the worker thread never dereferences the parent context

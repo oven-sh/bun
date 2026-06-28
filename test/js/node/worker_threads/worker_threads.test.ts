@@ -32,6 +32,67 @@ test("support eval in worker", async () => {
   await worker.terminate();
 });
 
+// Node documents 'online' as firing once the worker has started executing JS,
+// i.e. strictly before any 'message' the worker produces. Pool implementations
+// attach their real 'message' handler inside 'online'.
+test("'online' is emitted before any 'message' from the worker", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     parentPort.postMessage("a");
+     parentPort.postMessage("b");`,
+    { eval: true },
+  );
+  const events: string[] = [];
+  worker.on("online", () => events.push("online"));
+  worker.on("message", m => events.push("msg:" + m));
+  worker.on("error", e => events.push("error:" + e?.message));
+  const [code] = await once(worker, "exit");
+  events.push("exit:" + code);
+  expect(events).toEqual(["online", "msg:a", "msg:b", "exit:0"]);
+});
+
+test("'online' and a message posted before module evaluation completes are delivered", async () => {
+  // The worker's module never finishes evaluating (same shape as Node's
+  // test-worker-message-port-terminate-transfer-list.js).
+  const worker = new Worker(`require("node:worker_threads").parentPort.postMessage("ready"); for (;;);`, {
+    eval: true,
+  });
+  const events: string[] = [];
+  worker.on("online", () => events.push("online"));
+  worker.on("message", m => events.push("msg:" + m));
+  const [message] = await once(worker, "message");
+  expect(message).toBe("ready");
+  expect(events).toEqual(["online", "msg:ready"]);
+  await worker.terminate();
+});
+
+test("'online' precedes a message posted before a module evaluation error", async () => {
+  // In a subprocess so the worker's uncaught-exception path is the runtime
+  // one, not the bun:test variant.
+  const src = /* js */ `
+    const { Worker } = require("node:worker_threads");
+    const body = 'require("node:worker_threads").parentPort.postMessage("before-throw"); throw new Error("boom");';
+    const w = new Worker(body, { eval: true });
+    const ev = [];
+    w.on("online", () => ev.push("online"));
+    w.on("message", m => ev.push("msg:" + m));
+    w.on("error", () => ev.push("error"));
+    w.on("exit", c => { ev.push("exit:" + c); console.log(JSON.stringify(ev)); });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(["online", "msg:before-throw", "error", "exit:1"]),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");

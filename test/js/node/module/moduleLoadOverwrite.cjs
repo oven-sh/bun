@@ -4,6 +4,7 @@
 const assert = require("assert");
 const eql = assert.strictEqual;
 const path = require("path");
+const vm = require("vm");
 const Module = require("module");
 
 const originalLoad = Module._load;
@@ -51,5 +52,17 @@ eql(calls.length, 4);
 eql(Module._load("./moduleLoadOverwrite-fixture-2.cjs", module, false), "direct");
 eql(Module._load(path.join(__dirname, "moduleLoadOverwrite-fixture-2.cjs")), "direct");
 eql(typeof Module._load("fs", { filename: here }).readFileSync, "function");
+
+// https://github.com/oven-sh/bun/issues/5925: the `eval` npm package (used by
+// Docusaurus' SSG) builds its `require` shim as `Module._load(file, parentModule)`
+// and evaluates it inside `vm.runInNewContext`.
+eql(
+  vm.runInNewContext("Module._load(file, parentModule)", {
+    Module,
+    file: "./moduleLoadOverwrite-fixture-2.cjs",
+    parentModule: module,
+  }),
+  "direct",
+);
 
 console.log("--pass--");

@@ -508,13 +508,6 @@ public:
         {
         }
 
-        void call(napi_env env) const
-        {
-            if (callback && active) {
-                callback(env, data, hint);
-            }
-        }
-
         void deactivate(NapiEnv& env) const
         {
             if (env.isFinishingFinalizers()) {

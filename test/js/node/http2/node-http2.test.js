@@ -2811,8 +2811,18 @@ it("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) res
   // to reject it: node sends exactly one RST_STREAM(REFUSED_STREAM) for the pushed id, the
   // pushed stream errors with ERR_HTTP2_STREAM_ERROR, and the session (and the request that
   // carried the PUSH_PROMISE) keeps working.
+  // Any connection-level failure rejects every pending barrier so the test fails at its cause.
+  const barriers = [];
+  const barrier = () => {
+    const pending = Promise.withResolvers();
+    barriers.push(pending);
+    return pending;
+  };
+  const failTest = err => {
+    for (const pending of barriers) pending.reject(err);
+  };
   const server = http2.createServer();
-  const serverPushClosed = Promise.withResolvers();
+  const serverPushClosed = barrier();
   server.on("stream", (stream, headers) => {
     stream.pushStream({ ":path": "/pushed" }, (err, push) => {
       if (err) return serverPushClosed.reject(err);
@@ -2858,8 +2868,8 @@ it("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) res
     upstream.on("data", chunk => socket.write(chunk));
     socket.on("close", () => upstream.destroy());
     upstream.on("close", () => socket.destroy());
-    socket.on("error", () => {});
-    upstream.on("error", () => {});
+    socket.on("error", failTest);
+    upstream.on("error", failTest);
   });
   await new Promise(resolve => proxy.listen(0, "127.0.0.1", resolve));
 
@@ -2867,11 +2877,14 @@ it("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) res
   try {
     client = http2.connect(`http://127.0.0.1:${proxy.address().port}`);
     const sessionErrors = [];
-    client.on("error", err => sessionErrors.push(err));
+    client.on("error", err => {
+      sessionErrors.push(err);
+      failTest(err);
+    });
 
     const pushEvents = [];
-    const pushClosed = Promise.withResolvers();
-    const pushSurfaced = Promise.withResolvers();
+    const pushClosed = barrier();
+    const pushSurfaced = barrier();
     client.on("stream", (pushedStream, headers) => {
       pushEvents.push(`stream ${headers[":path"]} writableEnded=${pushedStream.writableEnded}`);
       let localClose;
@@ -2888,7 +2901,7 @@ it("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) res
       pushSurfaced.resolve({ id: pushedStream.id, localClose });
     });
 
-    const reqClosed = Promise.withResolvers();
+    const reqClosed = barrier();
     const req = client.request({ ":path": "/" });
     let body = "";
     req.setEncoding("utf8");
@@ -2912,7 +2925,7 @@ it("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) res
     await reqClosed.promise;
     expect(body).toBe("main-data");
     expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
-    const againClosed = Promise.withResolvers();
+    const againClosed = barrier();
     const again = client.request({ ":path": "/" });
     again.resume();
     again.on("error", againClosed.reject);
@@ -2927,7 +2940,7 @@ it("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) res
     expect(clientFrames.filter(f => (f.type === 0 || f.type === 1) && f.streamId === pushedId)).toEqual([]);
 
     // Graceful close still reaches 'close': the refused push does not pin the session open.
-    const sessionClosed = Promise.withResolvers();
+    const sessionClosed = barrier();
     client.on("close", sessionClosed.resolve);
     client.close();
     await sessionClosed.promise;
@@ -2958,10 +2971,20 @@ it("http2 client ignores the pushed response that races a push refusal", async (
     pushPromisePayload,
   ]);
 
+  // Any connection-level failure rejects every pending barrier so the test fails at its cause.
+  const barriers = [];
+  const barrier = () => {
+    const pending = Promise.withResolvers();
+    barriers.push(pending);
+    return pending;
+  };
+  const failTest = err => {
+    for (const pending of barriers) pending.reject(err);
+  };
   const clientFrames = [];
-  const gotRequest = Promise.withResolvers();
-  const gotPushRst = Promise.withResolvers();
-  const gotPingAck = Promise.withResolvers();
+  const gotRequest = barrier();
+  const gotPushRst = barrier();
+  const gotPingAck = barrier();
   const sockets = [];
   const server = net.createServer(socket => {
     sockets.push(socket);
@@ -2992,7 +3015,7 @@ it("http2 client ignores the pushed response that races a push refusal", async (
         if (frame.type === 6 && (frame.flags & 0x1) !== 0) gotPingAck.resolve();
       }
     });
-    socket.on("error", () => {});
+    socket.on("error", failTest);
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 
@@ -3000,16 +3023,19 @@ it("http2 client ignores the pushed response that races a push refusal", async (
   try {
     client = http2.connect(`http://127.0.0.1:${server.address().port}`);
     const sessionErrors = [];
-    client.on("error", err => sessionErrors.push(err));
+    client.on("error", err => {
+      sessionErrors.push(err);
+      failTest(err);
+    });
     const surfacedPushes = [];
-    const pushClosed = Promise.withResolvers();
+    const pushClosed = barrier();
     client.on("stream", (pushedStream, headers) => {
       surfacedPushes.push(headers[":path"]);
       pushedStream.on("error", () => {});
       pushedStream.on("close", () => pushClosed.resolve(pushedStream.rstCode));
       pushedStream.close(http2.constants.NGHTTP2_REFUSED_STREAM);
     });
-    const reqClosed = Promise.withResolvers();
+    const reqClosed = barrier();
     const req = client.request({ ":path": "/" });
     req.resume();
     req.on("error", reqClosed.reject);
@@ -3041,7 +3067,7 @@ it("http2 client ignores the pushed response that races a push refusal", async (
     expect(sessionErrors).toEqual([]);
 
     // Nothing is left pinning the session: a graceful close still reaches 'close'.
-    const sessionClosed = Promise.withResolvers();
+    const sessionClosed = barrier();
     client.on("close", sessionClosed.resolve);
     client.close();
     await sessionClosed.promise;

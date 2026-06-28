@@ -12,7 +12,6 @@ test.skipIf(!isLinux || isMusl)(
   async () => {
     const fixture = /* js */ `
       import { dlopen } from "bun:ffi";
-      import fs from "node:fs";
 
       const libc = dlopen("libc.so.6", {
         socket: { args: ["int", "int", "int"], returns: "int" },
@@ -70,22 +69,15 @@ test.skipIf(!isLinux || isMusl)(
       const host = "he-blackhole-" + port + ".test";
       const addrs = [...dead, "127.0.0.100"];
 
-      let restoreHosts;
       const internals = require("bun:internal-for-testing");
-      if (typeof internals.dnsCacheSeed === "function") {
-        internals.dnsCacheSeed(host, addrs);
-      } else if (typeof process.getuid === "function" && process.getuid() === 0) {
-        // Build predates the dnsCacheSeed test hook: feed the same address
-        // list through the real getaddrinfo path via the system hosts file.
-        const saved = fs.readFileSync("/etc/hosts", "utf8");
-        restoreHosts = () => { try { fs.writeFileSync("/etc/hosts", saved); } catch {} };
-        process.on("exit", restoreHosts);
-        fs.writeFileSync("/etc/hosts", saved + "\\n" + addrs.map(a => a + " " + host).join("\\n") + "\\n");
-      } else {
-        // No skip here on purpose: a build without the hook must fail this
-        // test loudly, not report a silent pass.
-        throw new Error("dnsCacheSeed is unavailable and the process is not root");
+      if (typeof internals.dnsCacheSeed !== "function") {
+        // A build without the hook (e.g. a released bun) has no hermetic way
+        // to control the resolved address list, so this test must FAIL on it,
+        // not skip: the parent asserts ok === true.
+        console.log(JSON.stringify({ ok: false, ms: 0, err: "dnsCacheSeed unavailable" }));
+        process.exit(0);
       }
+      internals.dnsCacheSeed(host, addrs);
 
       const t0 = performance.now();
       let result;
@@ -96,8 +88,6 @@ test.skipIf(!isLinux || isMusl)(
         result = { ok: true, ms: Math.round(performance.now() - t0), body: await res.text() };
       } catch (e) {
         result = { ok: false, ms: Math.round(performance.now() - t0), err: e?.name ?? String(e) };
-      } finally {
-        restoreHosts?.();
       }
       console.log(JSON.stringify(result));
       for (const fd of fds) libc.symbols.close(fd);

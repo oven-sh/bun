@@ -57,13 +57,19 @@ test("'online' and a message posted before module evaluation completes are deliv
   const worker = new Worker(`require("node:worker_threads").parentPort.postMessage("ready"); for (;;);`, {
     eval: true,
   });
-  const events: string[] = [];
-  worker.on("online", () => events.push("online"));
-  worker.on("message", m => events.push("msg:" + m));
-  const [message] = await once(worker, "message");
-  expect(message).toBe("ready");
-  expect(events).toEqual(["online", "msg:ready"]);
-  await worker.terminate();
+  try {
+    const events: string[] = [];
+    worker.on("online", () => events.push("online"));
+    worker.on("message", m => events.push("msg:" + m));
+    const [message] = await once(worker, "message");
+    expect(message).toBe("ready");
+    expect(events).toEqual(["online", "msg:ready"]);
+  } finally {
+    // The for(;;) worker only stops on terminate(); register it before the
+    // assertions so a failure does not leave a thread spinning at 100% CPU
+    // for the rest of the test file.
+    await worker.terminate();
+  }
 });
 
 test("'online' precedes a message posted before a module evaluation error", async () => {

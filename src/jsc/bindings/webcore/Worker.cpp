@@ -452,14 +452,8 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
     // a message post racing this transition either queues (drained below by
     // fireEarlyMessages) or posts directly — never both, never neither.
-    //
-    // This MUST happen BEFORE the open event is posted to the parent: the
-    // parent's `online` handler may immediately call getHeapSnapshot() (or
-    // anything else gated on isOnline() / postTaskToWorkerGlobalScope()). If
-    // the state flip happens after the post, a fast parent thread can run the
-    // open task while m_state is still Pending and observe
-    // ERR_WORKER_NOT_RUNNING — flaky `await once(worker, "online");
-    // worker.getHeapSnapshot()` in worker_threads.test.ts.
+    // dispatchOpenIfNeeded() takes the same edge on the parent thread, so an
+    // 'online' handler always observes isOnline() whichever side flips first.
     {
         Locker lock(m_pendingTasksMutex);
         m_state.store(State::Running);

@@ -9310,5 +9310,81 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);
       expect(await exists(join(packageDir, "node_modules", "local-pkg", "package.json"))).toBe(true);
     });
+
+    test("a dependency demoted to transitive-only leaves the root under the isolated linker", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      // `one-dep` depends on `no-deps@1.0.1`, so after `no-deps` stops being a
+      // direct dependency it is still reachable through `one-dep`.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "one-dep": "1.0.0",
+            "no-deps": "1.0.1",
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { "one-dep": "1.0.0" } }),
+      );
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      // `a-dep` left the graph entirely: gone on both linkers.
+      expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);
+      // `no-deps` is still in the graph as `one-dep`'s transitive. The hoisted
+      // linker legitimately places it at the root; the isolated linker only
+      // places direct dependencies there, so its root symlink must be removed
+      // or `require("no-deps")` keeps working with no declared dependency.
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(linker === "hoisted");
+    });
+
+    test("removing a dependency removes its dangling .bin link", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true },
+      });
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "what-bin": "1.0.0",
+            "a-dep": "1.0.1",
+          },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+      const binEntries = async () => {
+        try {
+          return (await readdirSorted(join(packageDir, "node_modules", ".bin"))).filter(e =>
+            e.startsWith("what-bin"),
+          );
+        } catch {
+          return [];
+        }
+      };
+      expect(await exists(join(packageDir, "node_modules", "what-bin", "package.json"))).toBe(true);
+      expect((await binEntries()).length).toBeGreaterThan(0);
+
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "a-dep": "1.0.1" } }));
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+
+      expect(await exists(join(packageDir, "node_modules", "what-bin"))).toBe(false);
+      if (!isWindows) {
+        // On Windows `.bin` holds `.exe`/`.bunx` shim files rather than
+        // symlinks, which the dangling-symlink sweep (shared with `bun rm`)
+        // does not cover.
+        expect(await binEntries()).toEqual([]);
+      }
+    });
   });
 }

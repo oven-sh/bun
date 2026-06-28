@@ -115,6 +115,50 @@ pub(crate) fn install_hoisted_packages(
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
+    // Every folder name the lockfile can legitimately place at the root
+    // `node_modules`, so stale entries on disk can be pruned once the
+    // directory is opened below: the root package's declared dependency
+    // aliases (all behaviors, so `--production`/`--omit` never turn a
+    // reinstall into a delete) unioned with the unfiltered root tree (the
+    // hoisted transitives that belong there; `original_trees` was snapshotted
+    // before `filter()`, so `--filter` cannot shrink it either). Skipped for
+    // the security scanner's narrowed pre-install pass; the full install
+    // that follows performs the prune.
+    let expected_root_entries: Option<StringHashMap<()>> = 'expected: {
+        if packages_to_install.is_some() || this.lockfile.packages.is_empty() {
+            break 'expected None;
+        }
+        let deps = this.lockfile.buffers.dependencies.as_slice();
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        // A lockfile with no dependencies at all has zero trees; that is a
+        // legitimate state (the last dependency was just removed) in which
+        // nothing belongs at the root, not a reason to skip the prune.
+        let root_tree_dep_ids: &[DependencyID] = if original_trees.is_empty() {
+            &[]
+        } else {
+            original_trees[0].dependencies.get(&original_tree_dep_ids)
+        };
+        let root_pkg_deps = this.lockfile.packages.slice().items_dependencies()[0];
+        let mut set = StringHashMap::<()>::with_capacity(
+            root_tree_dep_ids.len() + root_pkg_deps.len as usize,
+        );
+        let mut keep = |dep_id: DependencyID| {
+            if let Some(dep) = deps.get(dep_id as usize) {
+                let alias = dep.name.slice(string_buf);
+                if !alias.is_empty() {
+                    let _ = set.put(alias, ());
+                }
+            }
+        };
+        for &dep_id in root_tree_dep_ids {
+            keep(dep_id);
+        }
+        for dep_id in root_pkg_deps.begin()..root_pkg_deps.end() {
+            keep(dep_id);
+        }
+        break 'expected Some(set);
+    };
+
     let _restore_buffers = scopeguard::guard(
         (original_trees, original_tree_dep_ids),
         move |(trees, dep_ids)| {
@@ -215,12 +259,17 @@ pub(crate) fn install_hoisted_packages(
         }
     };
 
-    // Remove entries the cleaned lockfile no longer reaches, so a dependency
-    // dropped from `package.json` is also removed from disk by `bun install`.
-    // Skipped for the security scanner's narrowed pre-install pass; the full
-    // install that follows performs it.
-    if !new_node_modules && packages_to_install.is_none() {
-        package_install::prune_extraneous_node_modules(&this.lockfile, node_modules_folder.fd());
+    // Remove entries the cleaned lockfile no longer places at the root, so a
+    // dependency dropped from `package.json` is also removed from disk by
+    // `bun install`.
+    if !new_node_modules {
+        if let Some(expected) = expected_root_entries.as_ref() {
+            package_install::prune_extraneous_node_modules(
+                expected,
+                node_modules_folder.fd(),
+                this.options.bin_path.as_bytes(),
+            );
+        }
     }
 
     let mut skip_delete = new_node_modules;

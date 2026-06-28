@@ -1972,12 +1972,44 @@ pub(crate) fn install_isolated_packages(
         let pkg_resolutions = pkgs.items_resolution();
 
         // Remove root `node_modules` entries the cleaned lockfile no longer
-        // reaches, so a dependency dropped from `package.json` is also removed
-        // from disk by `bun install`. Skipped for the security scanner's
-        // narrowed pre-install pass; the full install that follows performs it.
-        if !is_new_bun_modules && packages_to_install.is_none() {
+        // places there, so a dependency dropped from `package.json` is also
+        // removed from disk by `bun install`. The kept set is the root
+        // package's declared dependency aliases (all behaviors, so
+        // `--production`/`--omit` never turn a reinstall into a delete)
+        // unioned with the root store entry's dependencies (which include
+        // `publicHoistPattern` hoists). A dependency that became transitive
+        // only is in neither set and is pruned, so the root symlink for it
+        // stops being importable. Skipped for the security scanner's narrowed
+        // pre-install pass; the full install that follows performs it.
+        if !is_new_bun_modules && packages_to_install.is_none() && !lockfile_ro.packages.is_empty()
+        {
+            let root_entry_deps =
+                entry_dependencies[store::entry::Id::ROOT.get() as usize].slice();
+            let root_pkg_deps = pkgs.items_dependencies()[0];
+            let deps = lockfile_ro.buffers.dependencies.as_slice();
+            let mut expected = bun_collections::StringHashMap::<()>::with_capacity(
+                root_entry_deps.len() + root_pkg_deps.len as usize,
+            );
+            let mut keep = |dep_id: DependencyID| {
+                if let Some(dep) = deps.get(dep_id as usize) {
+                    let alias = dep.name.slice(string_buf);
+                    if !alias.is_empty() {
+                        let _ = expected.put(alias, ());
+                    }
+                }
+            };
+            for dep in root_entry_deps {
+                keep(dep.dep_id);
+            }
+            for dep_id in root_pkg_deps.begin()..root_pkg_deps.end() {
+                keep(dep_id);
+            }
             if let Ok(fd) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") {
-                crate::package_install::prune_extraneous_node_modules(lockfile_ro, fd);
+                crate::package_install::prune_extraneous_node_modules(
+                    &expected,
+                    fd,
+                    manager.options.bin_path.as_bytes(),
+                );
                 use bun_sys::FdExt as _;
                 fd.close();
             }

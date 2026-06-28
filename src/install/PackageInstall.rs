@@ -2563,10 +2563,11 @@ impl<'a> PackageInstall<'a> {
 }
 
 /// Remove top-level entries from an already-open root `node_modules`
-/// directory that are not reachable from `lockfile`. Scoped packages are
-/// handled by descending one level into `@scope/` and removing the empty
-/// scope directory if nothing remains. Dot-prefixed entries (`.bin`, `.bun`,
-/// `.cache`, …) are never touched.
+/// directory whose names are not in `expected`. Scoped packages are handled
+/// by descending one level into `@scope/` and removing the empty scope
+/// directory if nothing remains. Dot-prefixed entries (`.bin`, `.bun`,
+/// `.cache`, …) are never touched. Finishes with a sweep of `bin_path` that
+/// unlinks any `.bin` entry left dangling by a deleted package.
 ///
 /// Called by both the hoisted and isolated install paths after
 /// `Lockfile::clean_with_logger` has rebuilt the lockfile, so a dependency
@@ -2574,32 +2575,21 @@ impl<'a> PackageInstall<'a> {
 /// `bun install` instead of remaining importable until the user deletes
 /// `node_modules` by hand.
 ///
-/// The kept set is every dependency alias in the lockfile (the alias is the
-/// `node_modules/<name>` folder both installers write), not the subset this
-/// particular invocation places at the root. That keeps the prune keyed to
-/// the lockfile graph rather than to install flags, so `--production`,
-/// `--omit`, `--filter`, and `--cpu`/`--os` overrides never turn a reinstall
-/// into a delete of packages the lockfile still contains.
-pub(crate) fn prune_extraneous_node_modules(lockfile: &Lockfile, node_modules: Fd) {
-    // A valid project always has at least the root package after `clean`, so
-    // zero packages means this lockfile never resolved; refuse to prune
-    // against it. A root with zero dependencies is a legitimate state (the
-    // last dependency was just removed) and must still prune.
-    if lockfile.packages.is_empty() {
-        return;
-    }
-
-    let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let deps = lockfile.buffers.dependencies.as_slice();
-    let mut expected = StringHashMap::<()>::with_capacity(deps.len());
-    for dep in deps {
-        let alias = dep.name.slice(string_buf);
-        if !alias.is_empty() {
-            let _ = expected.put(alias, ());
-        }
-    }
-    let expected = &expected;
-
+/// Each linker builds `expected` as "every folder name the lockfile can
+/// legitimately place at the root", independent of install flags: the root
+/// package's declared dependency aliases (all behaviors, so `--production`
+/// or `--omit` never turn a reinstall into a delete) unioned with the
+/// linker's own root placements (the hoisted root tree, or the isolated root
+/// store entry's dependencies which include `publicHoistPattern` hoists).
+///
+/// The prune is best effort: a stale directory the filesystem refuses to
+/// delete (locked, read-only) is left behind rather than failing the
+/// install, matching the uninstall paths elsewhere in this file.
+pub(crate) fn prune_extraneous_node_modules(
+    expected: &StringHashMap<()>,
+    node_modules: Fd,
+    bin_path: &[u8],
+) {
     let dir = Dir::borrow(&node_modules);
 
     // Snapshot the listing before deleting anything. `delete_tree` mutates
@@ -2620,22 +2610,67 @@ pub(crate) fn prune_extraneous_node_modules(lockfile: &Lockfile, node_modules: F
         names.push(name.to_vec());
     }
 
+    let mut removed_any = false;
     for name in &names {
         if name[0] == b'@' {
-            prune_extraneous_scope(node_modules, name, expected);
+            removed_any |= prune_extraneous_scope(node_modules, name, expected);
             continue;
         }
         if expected.contains_key(name.as_slice()) {
             continue;
         }
-        let _ = dir.delete_tree(name);
+        if dir.delete_tree(name).is_ok() {
+            removed_any = true;
+        }
+    }
+
+    // A deleted package's `.bin` symlink now dangles; sweep it so scripts get
+    // "command not found" instead of an ENOENT on the link target.
+    if removed_any {
+        if let Ok(bin_dir) = sys::open_dir_for_iteration(Fd::cwd(), bin_path) {
+            prune_dangling_bin_links(bin_dir);
+        }
     }
 }
 
-fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>) {
+/// Unlink every dangling symlink in the already-open `.bin` directory and
+/// close `bin_dir`. Shared by the install-time prune above and the
+/// `bun remove` cleanup in `updatePackageJSONAndInstall.rs`.
+pub(crate) fn prune_dangling_bin_links(bin_dir: Fd) {
+    let mut name_buf = PathBuffer::uninit();
+    let mut iter = sys::iterate_dir(bin_dir);
+    'iterator: loop {
+        let Ok(Some(entry)) = iter.next() else { break };
+        match entry.kind {
+            EntryKind::SymLink => {
+                // Any symlink we cannot open is assumed dangling. `access`
+                // would not work here because it does not resolve symlinks.
+                let name = entry.name.slice_u8();
+                name_buf[..name.len()].copy_from_slice(name);
+                name_buf[name.len()] = 0;
+                let buf: &ZStr = ZStr::from_buf(&name_buf, name.len());
+
+                match sys::File::openat(bin_dir, buf, sys::O::RDONLY, 0) {
+                    Ok(file) => {
+                        let _ = file.close();
+                    }
+                    Err(_) => {
+                        let _ = sys::unlinkat(bin_dir, buf);
+                        continue 'iterator;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let _ = sys::close(bin_dir);
+}
+
+/// Returns `true` if anything was deleted.
+fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>) -> bool {
     let scope_fd = match sys::open_dir_for_iteration(parent, scope) {
         Ok(fd) => fd,
-        Err(_) => return,
+        Err(_) => return false,
     };
     let scope_dir = Dir::from_fd(scope_fd);
 
@@ -2646,7 +2681,7 @@ fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>
         let entry = match iter.next() {
             Ok(Some(e)) => e,
             Ok(None) => break,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let name = entry.name.slice_u8();
         if name.is_empty() {
@@ -2659,6 +2694,7 @@ fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>
         names.push(name.to_vec());
     }
 
+    let mut removed_any = false;
     for name in &names {
         let mut full = Vec::with_capacity(scope.len() + 1 + name.len());
         full.extend_from_slice(scope);
@@ -2670,7 +2706,9 @@ fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>
             continue;
         }
 
-        if scope_dir.delete_tree(name).is_err() {
+        if scope_dir.delete_tree(name).is_ok() {
+            removed_any = true;
+        } else {
             has_remaining = true;
         }
     }
@@ -2686,6 +2724,8 @@ fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>
         let z = ZStr::from_buf(&buf, scope.len());
         let _ = sys::rmdirat(parent, z);
     }
+
+    removed_any
 }
 
 type Walker = walker_skippable::Walker;

@@ -339,6 +339,8 @@ public:
 
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
+        /* Read before ~HttpResponseData(): is onData parsing this socket? */
+        bool isParsingHttp = responseData->isParsingHttp;
 
         /* Destroy HttpResponseData */
         responseData->~HttpResponseData();
@@ -365,8 +367,9 @@ public:
             httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
         }
 
-        /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (httpContextData->flags.isParsingHttp) {
+        /* Only hand the new socket back to onData when onData is the caller
+         * (it is parsing this socket); an "async" upgrade has no onData tail. */
+        if (isParsingHttp) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }

@@ -265,7 +265,6 @@ private:
         ((AsyncSocket<SSL> *) s)->cork();
 
         /* Mark that we are inside the parser now */
-        httpContextData->flags.isParsingHttp = true;
         httpResponseData->isParsingHttp = true;
         httpResponseData->isIdle = false;
 
@@ -412,7 +411,6 @@ private:
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
         /* Mark that we are no longer parsing Http */
-        httpContextData->flags.isParsingHttp = false;
         httpResponseData->isParsingHttp = false;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {

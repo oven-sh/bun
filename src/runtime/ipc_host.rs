@@ -187,6 +187,16 @@ pub(crate) fn do_send(
                         return do_send_err(global_object, callback, ex, from);
                     }
                 }
+            } else {
+                // serialize() returned a handle but it carries no transferable
+                // fd (e.g. a net.Socket that isn't connected yet, or a listener
+                // that isn't listening). Don't silently send the message with no
+                // handle — serialize() may have already detached the sender's
+                // socket, so report the failure instead.
+                let ex = global_object.create_type_error_instance(format_args!(
+                    "The handle could not be sent over IPC: it has no transferable file descriptor"
+                ));
+                return do_send_err(global_object, callback, ex, from);
             }
         }
     }

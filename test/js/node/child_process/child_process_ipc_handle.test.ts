@@ -446,6 +446,34 @@ describe.skipIf(isWindows)("send(message, netSocket)", () => {
     });
     expect(await run(String(dir))).toEqual({ stdout: "got:Socket", exitCode: 0 });
   });
+
+  // Handing off an accepted socket must decrement the server's connection count
+  // synchronously (Node semantics). With allowHalfOpen the detached socket's
+  // _destroy never runs, so without the synchronous decrement server.close()
+  // would never drain and never emit 'close'.
+  test("server.close() drains after handing off an accepted socket with allowHalfOpen", async () => {
+    using dir = tempDir("ipc-send-socket-drain", {
+      "child.mjs": /* js */ `
+        process.on("message", (m, handle) => { if (handle) handle.resume(); });
+        process.on("disconnect", () => process.exit(0));
+      `,
+      "parent.mjs": /* js */ `
+        import { fork } from "node:child_process";
+        import net from "node:net";
+        const child = fork(new URL("./child.mjs", import.meta.url).pathname);
+        const srv = net.createServer({ allowHalfOpen: true }, sock => {
+          child.send("conn", sock);
+          srv.close();
+        });
+        srv.on("close", () => { console.log("closed"); child.kill(); process.exit(0); });
+        srv.listen(0, "127.0.0.1", () => {
+          const c = net.connect(srv.address().port, "127.0.0.1");
+          c.on("error", () => {});
+        });
+      `,
+    });
+    expect(await run(String(dir))).toEqual({ stdout: "closed", exitCode: 0 });
+  });
 });
 
 test("send(message, handle) with an unsupported handle type throws, never drops silently", async () => {

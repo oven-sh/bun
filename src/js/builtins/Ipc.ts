@@ -51,6 +51,14 @@ export function serialize(message, handle, options) {
     // (matching Node); the receiver reconstructs a plain net.Socket around
     // the transferred fd — TLS session state is not transferable.
     if (!options?.keepOpen) {
+      // For a server-accepted socket, decrement the server's connection count
+      // now (Node does this synchronously on handoff) and null `.server` so the
+      // deferred `_destroy` doesn't double-count — otherwise with allowHalfOpen
+      // the server never drains and `server.close()` never emits 'close'.
+      if (handle.server) {
+        handle.server._connections--;
+        handle.server = null;
+      }
       // Node detaches the sender's socket the moment it is sent. Closing the
       // native handle is deferred one tick — past `do_send`'s dup — so the
       // sender's event loop stops consuming bytes that now belong to the

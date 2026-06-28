@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
 
-// bun-debug ships with ASAN but is not named bun-asan, so isASAN is false
-// there; scale for either. The spawned fixture takes ~130ms in release but
-// ~8s under debug+ASAN (crash reporting alone dominates on the failing path),
-// so the default 5s per-test budget kills the child before it can exit.
+// The spawned fixture takes ~130ms in release but ~8s under debug+ASAN (crash
+// reporting dominates the failing path), so the default 5s per-test budget
+// kills the child before it can exit. Debug builds get the largest multiplier
+// since they are both ASAN-instrumented and unoptimized.
 const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
 
 // H2FrameParser::on_auto_flush calls flush -> uncork -> unregister_auto_flush,

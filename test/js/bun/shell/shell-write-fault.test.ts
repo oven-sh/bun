@@ -1,21 +1,15 @@
 // An LD_PRELOAD shim makes send() on the shell pipeline's socketpair fail with
-// ENOMEM, so the subshell's stdout IOWriter hits a fatal (non-EPIPE) write
-// error after its first chunk. The IOWriter must then refuse the chunks the
-// remaining statements enqueue: before the fix it queued them, cleared them
-// inside on_error, and closed its poll handle, so the second `echo` waited
-// forever on a callback that could never fire (and in a build with debug
-// assertions, a later write() asserted `matches!(handle, PollOrFd::Poll(_))`
-// on the closed handle).
+// ENOMEM (a fatal, non-EPIPE write error). The IOWriter must report that error
+// to every chunk enqueued afterwards instead of queueing onto the dead writer.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// SHELL_FAIL_SEND=1: every send() on an AF_UNIX socket that is not
-// stdin/stdout/stderr fails with ENOMEM. The shell's pipeline "pipes" are
-// AF_UNIX socketpairs and its IOWriter uses send(MSG_DONTWAIT|MSG_NOSIGNAL)
-// on them, so this faults exactly the pipeline write path and nothing else.
+// SHELL_FAIL_SEND=1: every send() on a non-stdio AF_UNIX socket fails with
+// ENOMEM. The shell's pipeline pipes are AF_UNIX socketpairs written with
+// send(), so this faults exactly the pipeline write path and nothing else.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -50,11 +44,9 @@ ssize_t send(int fd, const void *buf, size_t len, int flags) {
 }
 `;
 
-// The subshell runs three statements that all write to the same stdout
-// IOWriter (the socketpair feeding \`cat\`). The first chunk's send() fails;
-// the second and third enqueues land on the already-errored writer. The
-// whole command must still finish: cat (last in the pipeline) sees EOF and
-// exits 0, and nothing made it through the pipe.
+// All three statements write to the same stdout IOWriter (the socketpair
+// feeding \`cat\`). The first chunk's send() fails; the later enqueues must
+// fail fast so the pipeline still finishes (cat sees EOF and exits 0).
 const FIXTURE = /* js */ `
 import { $ } from "bun";
 const r = await $\`(echo one; echo two; echo three) | cat\`.quiet().nothrow();

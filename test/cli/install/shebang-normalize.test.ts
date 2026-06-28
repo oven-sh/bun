@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { parseBinShebang } from "bun:internal-for-testing";
+import * as internalForTesting from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { chmodSync, readFileSync } from "fs";
 import { mkdir, readFile, stat, writeFile } from "fs/promises";
@@ -12,6 +12,8 @@ import { join } from "path";
 // binding to assert `env -S` (and the joined `-Sbun`) don't end up as the
 // launcher program. Without the fix, the launcher kept the `-S` token and the
 // shim tried to spawn `-S`, failing with `interpreter executable "-S" not found`.
+// Namespace import so the binding being absent surfaces as a per-test
+// assertion failure rather than a module-load error.
 test.each([
   ["#!/usr/bin/env -S bun --no-env-file\n", "bun --no-env-file", true],
   ["#!/usr/bin/env -S node --experimental-vm-modules\n", "node --experimental-vm-modules", true],
@@ -20,7 +22,8 @@ test.each([
   ["#!/usr/bin/env bun\n", "bun", true],
   ["#!/bin/env -S bun --flag\n", "bun --flag", true],
 ])("parseBinShebang(%j) strips env -S and keeps the real interpreter", (contents, launcher, isNodeOrBun) => {
-  expect(parseBinShebang(contents, "index.js")).toEqual({ launcher, isNodeOrBun });
+  expect(typeof internalForTesting.parseBinShebang).toBe("function");
+  expect(internalForTesting.parseBinShebang(contents, "index.js")).toEqual({ launcher, isNodeOrBun });
 });
 
 test.skipIf(isWindows)("bin linking normalizes CRLF in shebang", async () => {

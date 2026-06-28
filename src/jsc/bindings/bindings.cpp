@@ -842,6 +842,23 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict) {
+        // Reaching here with two arrays means a Proxy skipped the fast path above, and
+        // the generic path below never sees "length" (it is not enumerable), so trailing
+        // holes would go unnoticed. Compare the observable lengths through the traps.
+        if (v1Array && v2Array) {
+            JSValue lengthValue = o1->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            uint64_t length1 = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            lengthValue = o2->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, false);
+            uint64_t length2 = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (length1 != length2) {
+                return false;
+            }
+        }
+
         if (c1->type() == ProxyObjectType || c2->type() == ProxyObjectType) {
             // calculatedClassName() reports the internal "ProxyObject" for any Proxy, so
             // compare observable prototypes instead. A transparent Proxy then matches its

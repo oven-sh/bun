@@ -703,6 +703,15 @@ describe("expect()", () => {
         expect(new Proxy(arr, {})).not.toStrictEqual([1, 2, 4]);
         expect(new Proxy(arr, {})).not.toStrictEqual([1, 2]);
         expect(new Proxy(arr, {})).not.toStrictEqual({ 0: 1, 1: 2, 2: 3 });
+
+        // A trailing hole changes length but not the own-enumerable property
+        // set, and a Proxy skips the array fast path that compares lengths.
+        const sparse = [1, 2, 3];
+        sparse.length = 4;
+        expect(new Proxy([1, 2, 3], {})).not.toStrictEqual(sparse);
+        expect(new Proxy(sparse, {})).not.toStrictEqual([1, 2, 3]);
+        expect(new Proxy([1, 2, 3], {})).not.toStrictEqual(new Proxy(sparse, {}));
+        expect(new Proxy(sparse, {})).toStrictEqual(sparse);
       }
       {
         // class instances: proxy over instance equals another instance,

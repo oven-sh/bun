@@ -78,6 +78,16 @@ describe("input types", () => {
     );
   });
 
+  test("lone surrogates: replaced in string input (USVString), rejected in byte input", () => {
+    // A JS string is converted to UTF-8 before parsing, so unpaired
+    // surrogates become U+FFFD (the same semantics as TextEncoder and the
+    // YAML/JSON5 siblings). The same content as bytes is ill-formed UTF-8
+    // and must be rejected.
+    expect(TOML.parse('a = "\uD800"')).toEqual({ a: "�" });
+    const encodedSurrogate = new Uint8Array([0x61, 0x20, 0x3d, 0x20, 0x22, 0xed, 0xa0, 0x80, 0x22]);
+    expect(syntaxError(encodedSurrogate).message).toBe("TOML Parse error: Invalid UTF-8 byte sequence");
+  });
+
   test("UTF-8 BOM is skipped in both string and byte input", () => {
     expect(TOML.parse("\uFEFFa = 1")).toEqual({ a: 1 });
     expect(TOML.parse(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x20, 0x3d, 0x20, 0x31]))).toEqual({ a: 1 });

@@ -344,7 +344,7 @@ const setOnResolve = new CFunction({
 });
 
 // This code runs slightly faster:
-setOnResolve(onResolve.ptr!);
+setOnResolve(onResolve.ptr);
 
 // Compared to this:
 setOnResolve(onResolve);

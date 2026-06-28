@@ -207,6 +207,19 @@ tsd.expectType<number>(compiled.symbols.mul(1, 2));
 // @ts-expect-error too many arguments
 compiled.symbols.mul(1, 2, 3);
 
+// every string spelling the runtime accepts resolves to the same FFI type as
+// its enum counterpart
+const spelled = dlopen(path, {
+  setCallback: { args: ["function"], returns: "void" },
+  aliases: {
+    args: ["c_int", "c_uint", "isize", "char*", "void*", "fn", "i64_fast", "u64_fast"],
+    returns: "callback",
+  },
+});
+tsd.expectTypeEquals<Parameters<(typeof spelled)["symbols"]["setCallback"]>, [Pointer | JSCallback]>(true);
+spelled.symbols.setCallback(new JSCallback(() => {}, {}));
+tsd.expectTypeEquals<ReturnType<(typeof spelled)["symbols"]["aliases"]>, Pointer | null>(true);
+
 // CFunction infers its call signature from the definition
 const getVersion = CFunction({
   returns: FFIType.cstring,

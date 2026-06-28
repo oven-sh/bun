@@ -198,9 +198,6 @@ describe.skipIf(isFFIUnavailable)("given a strlen(cstring) function", () => {
   });
 }); // </given a strlen(cstring) function>
 
-// These conversions are shared with dlopen(), but `cc` used to skip them
-// entirely because it looked up symbol definitions on the options object
-// instead of options.symbols.
 // Successful compiles are fine under ASan; the setjmp/longjmp conflict only
 // affects TinyCC's error handling, which these tests never reach.
 describe.skipIf(isFFIUnavailable)("cc applies the same conversions as dlopen", () => {

@@ -481,11 +481,19 @@ declare module "bun:ffi" {
     ["bool"]: FFIType.bool;
     ["ptr"]: FFIType.ptr;
     ["pointer"]: FFIType.pointer;
+    ["void*"]: FFIType.ptr;
+    ["char*"]: FFIType.ptr;
     ["void"]: FFIType.void;
     ["cstring"]: FFIType.cstring;
-    ["function"]: FFIType.pointer; // for now
-    ["usize"]: FFIType.uint64_t; // for now
-    ["callback"]: FFIType.pointer; // for now
+    ["i64_fast"]: FFIType.i64_fast;
+    ["u64_fast"]: FFIType.u64_fast;
+    ["function"]: FFIType.function;
+    ["callback"]: FFIType.function;
+    ["fn"]: FFIType.function;
+    ["usize"]: FFIType.uint64_t;
+    ["isize"]: FFIType.int64_t;
+    ["c_int"]: FFIType.int32_t;
+    ["c_uint"]: FFIType.uint32_t;
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;
     ["buffer"]: FFIType.buffer;

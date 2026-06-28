@@ -14,9 +14,11 @@ const node = nodeExe();
 
 // Passing a net.Server handle over IPC duplicates the listening socket's fd to
 // the child via SCM_RIGHTS, which is POSIX-only.
-test.skipIf(isWindows).concurrent("fork() + subprocess.send(msg, server) gives the child a usable net.Server", async () => {
-  using dir = tempDir("ipc-server-handle", {
-    "parent.js": `
+test
+  .skipIf(isWindows)
+  .concurrent("fork() + subprocess.send(msg, server) gives the child a usable net.Server", async () => {
+    using dir = tempDir("ipc-server-handle", {
+      "parent.js": `
 import { fork } from 'node:child_process';
 import { createServer, connect } from 'node:net';
 
@@ -52,7 +54,7 @@ server.listen(0, '127.0.0.1', () => {
   });
 });
 `,
-    "child.js": `
+      "child.js": `
 process.on('message', (m, server) => {
   if (m !== 'server') return;
   console.log('CHILD_TYPEOF:' + typeof server);
@@ -66,30 +68,32 @@ process.on('message', (m, server) => {
   process.send('ready');
 });
 `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain("CHILD_TYPEOF:object");
+    expect(stdout).toContain("RESPONSE:Hello from child");
+    expect(exitCode).toBe(0);
   });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "parent.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(stdout).toContain("CHILD_TYPEOF:object");
-  expect(stdout).toContain("RESPONSE:Hello from child");
-  expect(exitCode).toBe(0);
-});
 
 // The NODE_HANDLE envelope carries the user payload under `msg` (Node's wire
 // format), so a Bun parent can hand a net.Server to a Node child and the child
 // still receives the accompanying message.
-test.skipIf(isWindows || !node).concurrent("Bun parent can pass a net.Server (and message) to a Node child", async () => {
-  using dir = tempDir("ipc-server-handle-node", {
-    "parent.js": `
+test
+  .skipIf(isWindows || !node)
+  .concurrent("Bun parent can pass a net.Server (and message) to a Node child", async () => {
+    using dir = tempDir("ipc-server-handle-node", {
+      "parent.js": `
 import { fork } from 'node:child_process';
 import { createServer, connect } from 'node:net';
 
@@ -119,7 +123,7 @@ server.listen(0, '127.0.0.1', () => {
   });
 });
 `,
-    "child.js": `
+      "child.js": `
 const net = require('node:net');
 process.on('message', (m, server) => {
   if (!(server instanceof net.Server)) {
@@ -134,22 +138,22 @@ process.on('message', (m, server) => {
   process.send('ready');
 });
 `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain("RESPONSE:Hello from node child");
+    expect(exitCode).toBe(0);
   });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "parent.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(stdout).toContain("RESPONSE:Hello from node child");
-  expect(exitCode).toBe(0);
-});
 
 // A plain message sent right after a handle message must not overtake it: the
 // child reconstructs the server from the fd synchronously, so IPC stays in

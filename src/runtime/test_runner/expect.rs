@@ -2935,13 +2935,13 @@ impl ExpectMatcherUtils {
         {
             return Ok(JSValue::UNDEFINED);
         }
-        // Jest never gates `object`: each subset key (string or symbol) is
-        // checked against it, and none can match a non-object, so an empty
-        // object stands in for one and both branches share one engine.
+        // Jest never gates `object`: no subset key can match a non-object, so a
+        // stand-in with a null prototype (the engine's key lookup walks the
+        // prototype chain) reproduces that and both branches share one engine.
         let object = if Self::is_typeof_object(object) {
             object
         } else {
-            JSValue::create_empty_object(global_this, 0)
+            JSValue::create_empty_object_with_null_prototype(global_this)
         };
         Ok(JSValue::from(object.jest_deep_match(subset, global_this, false)?))
     }

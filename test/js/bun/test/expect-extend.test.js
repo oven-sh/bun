@@ -151,6 +151,7 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
         subsetEqUndefObjWeakMap: this.utils.subsetEquality(undefined, new WeakMap()),
         subsetEqNullObjNonEmpty: this.utils.subsetEquality(null, { a: 1 }),
         subsetEqNullObjSymbol: this.utils.subsetEquality(null, { [Symbol("s")]: 1 }),
+        subsetEqNullObjProtoKey: this.utils.subsetEquality(null, { constructor: Object }),
         subsetEqFnObj: this.utils.subsetEquality(fnWithProp, { a: 2 }),
         subsetEqFnObjEmpty: this.utils.subsetEquality(fnWithProp, {}),
       };
@@ -198,6 +199,8 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
   expect(captured.subsetEqUndefObjWeakMap).toBe(true);
   expect(captured.subsetEqNullObjNonEmpty).toBe(false);
   expect(captured.subsetEqNullObjSymbol).toBe(false);
+  // Even a subset key that exists on Object.prototype cannot match a null object.
+  expect(captured.subsetEqNullObjProtoKey).toBe(false);
   expect(captured.subsetEqFnObj).toBe(false);
   expect(captured.subsetEqFnObjEmpty).toBe(true);
 });

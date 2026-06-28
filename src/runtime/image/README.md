@@ -15,8 +15,8 @@ off the JS thread.
 | `quantize.rs`                            | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
 | `backend_coregraphics.rs`                | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
 | `backend_wic.rs`                         | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
-| `../bun.js/bindings/image_resize.cpp`    | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
-| `../bun.js/bindings/image_avif_shim.cpp` | dlopen'd libavif.so.16 loader + decode/encode wrapper; pinned v1.0.0 struct layout                              | libavif ABI bumps                        |
+| `../../jsc/bindings/image_resize.cpp`    | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
+| `../../jsc/bindings/image_avif_shim.cpp` | dlopen'd libavif.so.16 loader + decode/encode wrapper; pinned v1.0.0 struct layout                              | libavif ABI bumps                        |
 
 `system_backend` in `codecs.rs` is a cfg-gated module re-export — absent on Linux (callers gate on `HAS_SYSTEM_BACKEND`), so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns

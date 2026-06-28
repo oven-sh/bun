@@ -1403,12 +1403,11 @@ private:
             return true;
         }
 
-        // A view over a SharedArrayBuffer in a payload reduced to bytes (forStorage,
-        // cross-process IPC) carries a byte copy of the backing store, matching Node.js.
-        // Only a directly referenced SharedArrayBuffer is rejected (in dumpIfTerminal).
-        if (arrayBuffer->isShared()
-            && (m_forStorage == SerializationForStorage::Yes
-                || m_forTransfer == SerializationForCrossProcessTransfer::Yes)) {
+        // A view over a SharedArrayBuffer crosses a process boundary as a byte copy of
+        // the backing store, matching Node.js advanced IPC; only a SharedArrayBuffer
+        // referenced directly is rejected, in dumpIfTerminal. The forStorage paths do
+        // not need this escape: they byte-copy through dumpIfTerminal's fallthrough.
+        if (arrayBuffer->isShared() && m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
             JSValue bufferValue = toJSArrayBuffer(*arrayBuffer);
             if (!startObjectInternal(asObject(bufferValue))) // handle duplicates
                 return true;
@@ -1883,14 +1882,12 @@ private:
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
-                // A SharedArrayBuffer's Data Block only exists in this process. Payloads
-                // reduced to bytes (forStorage, cross-process IPC) cannot carry it, so a
-                // directly referenced SharedArrayBuffer is rejected, matching Node.js. A
-                // view over one is byte-copied instead (see dumpArrayBufferView). Checked
-                // before the duplicate lookup so a buffer a view already copied still errors.
-                if (arrayBuffer->isShared()
-                    && (m_forStorage == SerializationForStorage::Yes
-                        || m_forTransfer == SerializationForCrossProcessTransfer::Yes)) {
+                // A SharedArrayBuffer's Data Block only exists in this process, so a
+                // directly referenced one cannot cross a process boundary. Reject it for
+                // cross-process IPC, matching Node.js; a view over one is byte-copied
+                // instead (see dumpArrayBufferView). Checked before the duplicate lookup
+                // so a buffer a view already copied still errors when referenced directly.
+                if (arrayBuffer->isShared() && m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
@@ -1903,7 +1900,11 @@ private:
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
 
-                if (arrayBuffer->isShared()) {
+                // Payloads reduced to self-contained bytes (bun:jsc / node:v8 serialize)
+                // cannot carry the out-of-band shared Data Block, so they byte-copy the
+                // SharedArrayBuffer below. serialize(serialize(x)) depends on this:
+                // bun:jsc serialize returns a SharedArrayBuffer by design.
+                if (arrayBuffer->isShared() && m_forStorage == SerializationForStorage::No) {
                     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
                     // StructuredSerializeInternal re-shares the Data Block; it never copies it.
                     if (!JSC::Options::useSharedArrayBuffer()) {

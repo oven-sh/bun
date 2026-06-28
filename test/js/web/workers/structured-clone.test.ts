@@ -1066,29 +1066,30 @@ describe("structuredClone of a SharedArrayBuffer", () => {
     expect(clone[0]).toBe(9);
   });
 
-  // bun:jsc serialize (which node:v8 serialize wraps) produces bytes meant to be
-  // stored or deserialized elsewhere; a Data Block cannot travel that way. Node's
-  // v8.serialize throws for a directly referenced SharedArrayBuffer but byte-copies
-  // the backing store of a view over one. Match both halves.
-  test("serialize() to bytes rejects a directly referenced SharedArrayBuffer", () => {
-    expect(thrownName(() => serialize(new SharedArrayBuffer(8)))).toBe("DataCloneError");
-    expect(thrownName(() => serialize({ nested: new SharedArrayBuffer(8) }))).toBe("DataCloneError");
-  });
-
-  test("serialize() to bytes copies a view over a SharedArrayBuffer", () => {
+  // bun:jsc serialize (which node:v8 serialize wraps) produces self-contained bytes,
+  // so the Data Block cannot travel: a SharedArrayBuffer becomes a byte copy. This is
+  // the pre-existing contract: bun:jsc serialize itself returns a SharedArrayBuffer,
+  // so serialize(serialize(x)) depends on it (see test/js/bun/jsc/bun-jsc.test.ts).
+  test("serialize() to bytes copies a SharedArrayBuffer and a view over one", () => {
     const sab = new SharedArrayBuffer(8);
     new Uint8Array(sab)[0] = 5;
-    const roundTripped = deserialize(serialize(new Uint8Array(sab)));
-    expect(roundTripped).toBeInstanceOf(Uint8Array);
-    expect(roundTripped.buffer).toBeInstanceOf(ArrayBuffer);
-    expect(roundTripped[0]).toBe(5);
-    // A direct reference to the same buffer anywhere in the payload still rejects,
-    // even after a view over it was already byte-copied.
-    expect(thrownName(() => serialize([new Uint8Array(sab), sab]))).toBe("DataCloneError");
+
+    const direct = deserialize(serialize(sab));
+    expect(direct).toBeInstanceOf(ArrayBuffer);
+    expect(new Uint8Array(direct)[0]).toBe(5);
+    // The copy does not share: mutating the source is not visible through it.
+    new Uint8Array(sab)[0] = 6;
+    expect(new Uint8Array(direct)[0]).toBe(5);
+
+    const viaView = deserialize(serialize(new Uint8Array(sab)));
+    expect(viaView).toBeInstanceOf(Uint8Array);
+    expect(viaView.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(viaView[0]).toBe(6);
   });
 
-  // IPC crosses a process boundary, so the Data Block cannot be re-shared either.
-  // Node's advanced serialization makes the same direct-reference vs. view split.
+  // IPC crosses a process boundary, so the Data Block cannot be re-shared. Node's
+  // advanced serialization rejects a directly referenced SharedArrayBuffer but
+  // byte-copies the backing store of a view over one. Match both halves.
   test("subprocess.send() rejects a SharedArrayBuffer but copies a view over one", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "process.on('message', () => {});"],
@@ -1099,6 +1100,10 @@ describe("structuredClone of a SharedArrayBuffer", () => {
     });
     expect(thrownName(() => proc.send(new SharedArrayBuffer(8)))).toBe("DataCloneError");
     expect(thrownName(() => proc.send(new Uint8Array(new SharedArrayBuffer(8))))).toBeUndefined();
+    // A direct reference to the same buffer anywhere in the payload still rejects,
+    // even after a view over it was already byte-copied earlier in that payload.
+    const sab = new SharedArrayBuffer(8);
+    expect(thrownName(() => proc.send([new Uint8Array(sab), sab]))).toBe("DataCloneError");
     // A plain ArrayBuffer over the same channel is fine; only the direct SAB is rejected.
     expect(thrownName(() => proc.send(new ArrayBuffer(8)))).toBeUndefined();
   });

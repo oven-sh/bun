@@ -14,7 +14,7 @@ const node = nodeExe();
 
 // Passing a net.Server handle over IPC duplicates the listening socket's fd to
 // the child via SCM_RIGHTS, which is POSIX-only.
-test.skipIf(isWindows)("fork() + subprocess.send(msg, server) gives the child a usable net.Server", async () => {
+test.skipIf(isWindows).concurrent("fork() + subprocess.send(msg, server) gives the child a usable net.Server", async () => {
   using dir = tempDir("ipc-server-handle", {
     "parent.js": `
 import { fork } from 'node:child_process';
@@ -87,7 +87,7 @@ process.on('message', (m, server) => {
 // The NODE_HANDLE envelope carries the user payload under `msg` (Node's wire
 // format), so a Bun parent can hand a net.Server to a Node child and the child
 // still receives the accompanying message.
-test.skipIf(isWindows || !node)("Bun parent can pass a net.Server (and message) to a Node child", async () => {
+test.skipIf(isWindows || !node).concurrent("Bun parent can pass a net.Server (and message) to a Node child", async () => {
   using dir = tempDir("ipc-server-handle-node", {
     "parent.js": `
 import { fork } from 'node:child_process';
@@ -154,7 +154,7 @@ process.on('message', (m, server) => {
 // A plain message sent right after a handle message must not overtake it: the
 // child reconstructs the server from the fd synchronously, so IPC stays in
 // send order (Node guarantees this; a deferred emit would reorder).
-test.skipIf(isWindows)("a message sent after a net.Server handle is not reordered before it", async () => {
+test.skipIf(isWindows).concurrent("a message sent after a net.Server handle is not reordered before it", async () => {
   using dir = tempDir("ipc-server-handle-order", {
     "parent.js": `
 import { fork } from 'node:child_process';
@@ -212,7 +212,7 @@ process.on('message', (m, handle) => {
 // back to the primary as a cluster queryServer (the fd is worker-local). The
 // worker serves a connection to prove it owns the listening socket; with the
 // bug the primary crashes handling the spurious queryServer.
-test.skipIf(isWindows)("a net.Server handle sent to a cluster worker is adopted by the worker", async () => {
+test.skipIf(isWindows).concurrent("a net.Server handle sent to a cluster worker is adopted by the worker", async () => {
   using dir = tempDir("ipc-server-handle-cluster", {
     "entry.js": `
 import cluster from 'node:cluster';
@@ -293,7 +293,7 @@ async function run(dir: string) {
   return { stdout: stdout.trim(), exitCode };
 }
 
-describe.skipIf(isWindows)("send(message, netSocket)", () => {
+describe.skipIf(isWindows).concurrent("send(message, netSocket)", () => {
   test("parent passes an accepted net.Socket to a forked child", async () => {
     using dir = tempDir("ipc-send-socket", {
       "child.mjs": /* js */ `
@@ -476,7 +476,7 @@ describe.skipIf(isWindows)("send(message, netSocket)", () => {
   });
 });
 
-test("send(message, handle) with an unsupported handle type throws, never drops silently", async () => {
+test.concurrent("send(message, handle) with an unsupported handle type throws, never drops silently", async () => {
   using dir = tempDir("ipc-send-bad-handle", {
     "child.mjs": /* js */ `process.on("message", () => {}); process.on("disconnect", () => process.exit(0));`,
     "parent.mjs": /* js */ `

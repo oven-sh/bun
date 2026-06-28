@@ -38,9 +38,11 @@ export function serialize(message, handle, options) {
   }
   if (process.platform === "win32") {
     // Bun's Windows IPC channel is a libuv named pipe with no SOCKET
-    // duplication (uv_write2 / WSADuplicateSocketW) implemented.
-    const { throwNotImplemented } = require("internal/shared");
-    throwNotImplemented("Passing a net.Socket or net.Server over IPC on Windows");
+    // duplication (uv_write2 / WSADuplicateSocketW) yet, so fall back to sending
+    // the message with no handle (receiver sees handle === undefined) rather
+    // than throwing synchronously out of send() — matching the pre-feature
+    // behavior that cross-platform code and the Node IPC tests rely on.
+    return null;
   }
 
   const nativeHandle = handle._handle;

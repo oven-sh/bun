@@ -349,6 +349,22 @@ describe("robustness", () => {
     expect(() => TOML.parse("a = " + "{ b = ".repeat(depth) + "1" + " }".repeat(depth))).toThrow(RangeError);
   });
 
+  test("deep dotted keys parse beyond the old 512-segment cap", () => {
+    const depth = 1000;
+    const o = TOML.parse(Array(depth).fill("a").join(".") + " = 1");
+    let cur: any = o;
+    for (let i = 0; i < depth - 1; i++) cur = cur.a;
+    expect(cur).toEqual({ a: 1 });
+  });
+
+  test("extremely deep dotted keys and headers throw instead of crashing", () => {
+    // Parsing these is iterative; the recursion limit is hit when the result
+    // is converted to JS values, which must also fail cleanly.
+    const path = Array(100000).fill("a").join(".");
+    expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
+    expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
+  });
+
   test("a very long string value round-trips", () => {
     const long = Buffer.alloc(1 << 20, "x").toString();
     expect((TOML.parse(`a = "${long}"`) as any).a).toBe(long);

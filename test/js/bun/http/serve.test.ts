@@ -2970,12 +2970,13 @@ describe("Connection: close request header", () => {
   it("sends Connection: close on a streamed Response body", async () => {
     using server = serve({
       port: 0,
-      async fetch() {
+      async fetch(req) {
+        const pathname = new URL(req.url).pathname;
         await Bun.sleep(0);
         return new Response(
           new ReadableStream({
             start(c) {
-              c.enqueue("saw /a");
+              c.enqueue("saw " + pathname);
               c.close();
             },
           }),
@@ -3010,6 +3011,24 @@ describe("Connection: close request header", () => {
       closeHeader: hasCloseHeader(raw),
       serverClosed,
     }).toEqual({ status404: true, responses: 1, closeHeader: true, serverClosed: true });
+  });
+
+  // A Connection header the Response already carries suppresses the automatic
+  // one: exactly one Connection line on the wire, whichever side wrote it.
+  it("does not duplicate a user-written Connection header", async () => {
+    using server = serve({
+      port: 0,
+      fetch: () => new Response("saw /a", { headers: { "Connection": "close" } }),
+    });
+    const { raw, serverClosed } = await exchange(server.port, `${A}Connection: close\r\n\r\n${B}`, r =>
+      (r.match(/HTTP\/1\.1 /g)?.length ?? 0) > 1,
+    );
+    expect({
+      connectionHeaderLines: (raw.match(/\r\nconnection:/gi) ?? []).length,
+      closeHeader: hasCloseHeader(raw),
+      responses: raw.match(/HTTP\/1\.1 /g)?.length ?? 0,
+      serverClosed,
+    }).toEqual({ connectionHeaderLines: 1, closeHeader: true, responses: 1, serverClosed: true });
   });
 
   // HEAD responses go through the separate end-without-body path.

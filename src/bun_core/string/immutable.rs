@@ -3035,7 +3035,8 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     Ok(list)
 }
 
-/// Errors from `to_utf16_alloc` when `fail_if_invalid = true`.
+/// Errors from `to_utf16_alloc`. `InvalidByteSequence` is only returned when
+/// `fail_if_invalid = true`; `OutOfMemory` can be returned by any call.
 ///
 /// Re-exported from `unicode_draft` so that `to_utf16_alloc_maybe_buffered`
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error

@@ -373,6 +373,10 @@ describe("spawn stdin ReadableStream", () => {
         }
         await Promise.all(Array.from({ length: 8 }, round));
 
+        // Unhandled rejections are only reported after a microtask drain; give
+        // the tracker a turn so rejections from the last exits are counted.
+        await Bun.sleep(0);
+
         // Exit explicitly: on Windows an async iterable stdin does not tear
         // down after the child dies and would keep the event loop alive.
         // https://github.com/oven-sh/bun/issues/33020

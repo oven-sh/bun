@@ -198,6 +198,12 @@ void us_connecting_socket_free(struct us_connecting_socket_t *c) {
 void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->closed) return;
     c->closed = 1;
+    /* Neutralize the address list BEFORE Bun__addrinfo_freeRequest (which may
+     * free the result buffer addrinfo_head points into) and before
+     * us_dispatch_connecting_error runs user JS. That JS can re-enter the
+     * event loop; a connect_timer tick dispatched from the inner tick must
+     * not read a dangling list or start connects on a closed socket. */
+    c->addrinfo_head = NULL;
     for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
         us_internal_socket_group_unlink_socket(s->group, s);
 

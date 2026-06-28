@@ -1017,13 +1017,19 @@ impl Linux {
                     // the lock is held on this thread.
                     let watcher = unsafe { &mut *owner_watcher };
 
-                    // Build the path relative to this owner's root.
-                    let rel: &[u8] = if watcher_is_file {
-                        path::basename(watcher_path)
+                    // Build the path relative to this owner's root. inotify only
+                    // names directory *children*; events on the watched object
+                    // itself carry no name, so report the watched path's basename
+                    // (libuv does the same). For a wd added by the recursive
+                    // walk, `owner_subpath` already is that relative name.
+                    let rel: &[u8] = if name.is_empty() {
+                        if owner_subpath.is_empty() {
+                            path::basename(watcher_path)
+                        } else {
+                            owner_subpath
+                        }
                     } else if owner_subpath.is_empty() {
                         name
-                    } else if name.is_empty() {
-                        owner_subpath
                     } else {
                         join_string_buf::<platform::Posix>(
                             path_buf.as_mut_slice(),

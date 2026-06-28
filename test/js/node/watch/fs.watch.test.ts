@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, isLinux, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
@@ -198,6 +198,38 @@ describe("fs.watch", () => {
       const fd = fs.openSync(filepath, "w");
       fs.closeSync(fd);
     });
+  });
+
+  // inotify gives no name for events on the watched object itself; node (libuv)
+  // substitutes the watched path's basename. Linux-only: the macOS FSEvents
+  // backend deliberately drops the watched directory's own removal, and the
+  // FreeBSD kqueue backend has no filename to report (same as libuv there).
+  test.skipIf(!isLinux)("should report the watched directory's own basename when it is removed", async () => {
+    using root = tempDir("fs-watch-self-rm", { mydir: {} });
+    const target = path.join(String(root), "mydir");
+    const { promise, resolve, reject } = Promise.withResolvers<[string, string | null]>();
+    const watcher = fs.watch(target, (event, filename) => resolve([event, filename]));
+    watcher.on("error", reject);
+    try {
+      fs.rmdirSync(target);
+      expect(await promise).toEqual(["rename", "mydir"]);
+    } finally {
+      watcher.close();
+    }
+  });
+
+  test.skipIf(!isLinux)("should report the watched directory's own basename when it is renamed", async () => {
+    using root = tempDir("fs-watch-self-mv", { mydir: {} });
+    const target = path.join(String(root), "mydir");
+    const { promise, resolve, reject } = Promise.withResolvers<[string, string | null]>();
+    const watcher = fs.watch(target, (event, filename) => resolve([event, filename]));
+    watcher.on("error", reject);
+    try {
+      fs.renameSync(target, path.join(String(root), "moved"));
+      expect(await promise).toEqual(["rename", "mydir"]);
+    } finally {
+      watcher.close();
+    }
   });
 
   // https://github.com/oven-sh/bun/issues/5442

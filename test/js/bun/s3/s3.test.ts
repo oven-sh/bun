@@ -1621,6 +1621,10 @@ describe.concurrent("presign expiresIn validation", () => {
         expect(() => presign(8 * 24 * 60 * 60)).toThrow(
           `The value of "expiresIn" is out of range. It must be >= 1 and <= 604800. Received 691200`,
         );
+        // Values past i32 still report the SigV4 bound, not an integer-width bound.
+        expect(() => presign(2 ** 31)).toThrow(
+          `The value of "expiresIn" is out of range. It must be >= 1 and <= 604800. Received 2147483648`,
+        );
       });
       it("rejects expiresIn below 1", () => {
         expect(() => presign(0)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");

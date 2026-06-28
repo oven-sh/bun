@@ -1,14 +1,16 @@
 // Tests generated from the official toml-lang/toml-test conformance suite
 // Generated from toml-test commit: 4d77658d0f903a13454ece4dbfeafeb7c7f31c9f
-// Scope: TOML v1.0.0 manifest (tests/files-toml-1.0.0): 209 valid + 488 invalid cases
-// Regenerate with: bun run test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test]
+// Scope: TOML v1.0.0 manifest (tests/files-toml-1.0.0): 208 valid + 1 out-of-range-integer + 488 invalid cases
+// Regenerate with: bun bd test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test]
 //
 // TOML type encoding asserted by these tests:
-//   - integer: number when within Number.MAX_SAFE_INTEGER, BigInt otherwise
+//   - integer: number; values outside Number.MAX_SAFE_INTEGER throw (TOML
+//     requires lossless handling or an error — see the out-of-range block)
 //   - datetime, datetime-local, date-local, time-local: string (source text);
 //     compared after normalizing the date/time separator to "T", uppercasing
 //     "Z", and trimming trailing zeros from fractional seconds
-//   - invalid documents must throw SyntaxError
+//   - invalid documents throw SyntaxError; the exact full message is asserted
+//     where the in-tree parser produced a SyntaxError at generation time
 //
 // Excluded: 9 invalid-encoding inputs that are not valid UTF-8. Bun.TOML.parse
 // takes a JS string, so byte-level encoding rejection cannot be tested here:
@@ -752,13 +754,6 @@ describe("toml-test/valid", () => {
       oct2: 493,
       oct3: 501,
     };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/integer/long", () => {
-    const input: string =
-      '# int64 "should" be supported, but is not mandatory. It\'s fine to skip this\n# test.\nint64-max     = 9223372036854775807\nint64-max-neg = -9223372036854775808\n';
-    const expected: any = { "int64-max": 9223372036854775807n, "int64-max-neg": -9223372036854775808n };
     expectTomlEqual(TOML.parse(input), expected);
   });
 
@@ -2035,2476 +2030,5434 @@ describe("toml-test/valid", () => {
   });
 });
 
+// Upstream marks these valid, asserting exact 64-bit integers, which JS
+// numbers cannot represent. Bun rejects integers outside Number.MAX_SAFE_INTEGER
+// instead of returning corrupted values or mixed number/BigInt types; the
+// 64-bit range is a "should" in the spec (toml-lang/toml-test#154).
+describe("toml-test/valid-out-of-range-integer", () => {
+  test("valid/integer/long", () => {
+    const input: string =
+      '# int64 "should" be supported, but is not mandatory. It\'s fine to skip this\n# test.\nint64-max     = 9223372036854775807\nint64-max-neg = -9223372036854775808\n';
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+  });
+});
+
 describe("toml-test/invalid", () => {
   test("invalid/array/double-comma-01", () => {
     const input: string = "double-comma-01 = [1,,2]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/double-comma-02", () => {
     const input: string = "double-comma-02 = [1,2,,]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/extend-defined-aot", () => {
     const input: string = "[[tab.arr]]\n[tab]\narr.val1=1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/extending-table", () => {
     const input: string =
       "a = [{ b = 1 }]\n\n# Cannot extend tables within static arrays\n# https://github.com/toml-lang/toml/issues/908\n[a.c]\nfoo = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/missing-separator-01", () => {
     const input: string = "arrr = [true false]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/missing-separator-02", () => {
     const input: string = "wrong = [ 1 2 3 ]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-01", () => {
     const input: string = "no-close-01 = [ 1, 2, 3\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-02", () => {
     const input: string = "no-close-02 = [1,\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-03", () => {
     const input: string = "no-close-03 = [42 #]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-04", () => {
     const input: string = "no-close-04 = [{ key = 42\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-05", () => {
     const input: string = "no-close-05 = [{ key = 42}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-06", () => {
     const input: string = "no-close-06 = [{ key = 42 #}]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-07", () => {
     const input: string = "no-close-07 = [{ key = 42} #]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-08", () => {
     const input: string = "no-close-08 = [\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-table-01", () => {
     const input: string = "no-close-table-01 = [{ key = 42\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-table-02", () => {
     const input: string = "no-close-table-02 = [{ key = 42 #\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-table-03", () => {
     const input: string = "no-close-table-03 = [1,{a=1]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-close-table-04", () => {
     const input: string = "no-close-table-04 = [1,{2]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-comma-01", () => {
     const input: string = "no-comma-01 = [true false]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-comma-02", () => {
     const input: string = "no-comma-02 = [ 1 2 3 ]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/no-comma-03", () => {
     const input: string = "no-comma-03 = [ 1 #,]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/only-comma-01", () => {
     const input: string = "only-comma-01 = [,]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/only-comma-02", () => {
     const input: string = "only-comma-02 = [,,]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/tables-01", () => {
     const input: string = "# INVALID TOML DOC\nfruit = []\n\n[[fruit]] # Not allowed\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/tables-02", () => {
     const input: string =
       '# INVALID TOML DOC\n[[fruit]]\n  name = "apple"\n\n  [[fruit.variety]]\n    name = "red delicious"\n\n  # This table conflicts with the previous table\n  [fruit.variety]\n    name = "granny smith"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/text-after-array-entries", () => {
     const input: string = 'array = [\n  "Is there life after an array separator?", No\n  "Entry"\n]\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/text-before-array-separator", () => {
     const input: string = 'array = [\n  "Is there life before an array separator?" No,\n  "Entry"\n]\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/array/text-in-array", () => {
     const input: string = 'array = [\n  "Entry 1",\n  I don\'t belong,\n  "Entry 2",\n]\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/almost-false-with-extra", () => {
     const input: string = "almost-false-with-extra = falsify\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/almost-false", () => {
     const input: string = "almost-false            = fals\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/almost-true-with-extra", () => {
     const input: string = "almost-true-with-extra  = truthy\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/almost-true", () => {
     const input: string = "almost-true             = tru\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/capitalized-false", () => {
     const input: string = "capitalized-false        = False\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/capitalized-true", () => {
     const input: string = "capitalized-true         = True\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/just-f", () => {
     const input: string = "just-f                  = f\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/just-t", () => {
     const input: string = "just-t                  = t\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/mixed-case-false", () => {
     const input: string = "mixed-case-false        = falsE\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/mixed-case-true", () => {
     const input: string = "mixed-case-true         = trUe\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/mixed-case", () => {
     const input: string = "mixed-case              = valid   = False\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/starting-same-false", () => {
     const input: string = "starting-same-false     = falsey\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/starting-same-true", () => {
     const input: string = "starting-same-true      = truer\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/wrong-case-false", () => {
     const input: string = "wrong-case-false        = FALSE\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/bool/wrong-case-true", () => {
     const input: string = "wrong-case-true         = TRUE\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/bare-cr", () => {
     const input: string = "# The following line contains a single carriage return control character\r\n\r";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/bare-formfeed", () => {
     const input: string = "bare-formfeed     = \f\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/bare-null", () => {
     const input: string = 'bare-null         = "some value" \u0000\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/bare-vertical-tab", () => {
     const input: string = "bare-vertical-tab = \u000b\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/comment-cr", () => {
     const input: string = 'comment-cr   = "Carriage return in comment" # \ra=1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/comment-del", () => {
     const input: string = 'comment-del  = "0x7f"   # \u007f\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/comment-ff", () => {
     const input: string = 'comment-ff   = "0x7f"   # \f\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/comment-lf", () => {
     const input: string = 'comment-lf   = "ctrl-P" # \u0010\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/comment-null", () => {
     const input: string = 'comment-null = "null"   # \u0000\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/comment-us", () => {
     const input: string = 'comment-us   = "ctrl-_" # \u001f\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/linetab-number-01", () => {
     const input: string = "linetab-number-01 = 1\u000b\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/linetab-number-02", () => {
     const input: string = "linetab-number-02 = 1.5\u000b\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/linetab-number-03", () => {
     const input: string = "linetab-number-03 = 0xff\u000b\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/linetab-number-04", () => {
     const input: string = "linetab-number-04 = +inf\u000b\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/multi-del", () => {
     const input: string = 'multi-del  = """null\u007f"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/multi-lf", () => {
     const input: string = 'multi-lf   = """null\u0010"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/multi-null", () => {
     const input: string = 'multi-null = """null\u0000"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/multi-us", () => {
     const input: string = 'multi-us   = """null\u001f"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/only-ff", () => {
     const input: string = "\f";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/only-null", () => {
     const input: string = "\u0000";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/only-vt", () => {
     const input: string = "\u000b";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/rawmulti-del", () => {
     const input: string = "rawmulti-del  = '''null\u007f'''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/rawmulti-lf", () => {
     const input: string = "rawmulti-lf   = '''null\u0010'''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/rawmulti-null", () => {
     const input: string = "rawmulti-null = '''null\u0000'''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/rawmulti-us", () => {
     const input: string = "rawmulti-us   = '''null\u001f'''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/rawstring-cr", () => {
     const input: string = "rawstring-cr   = 'null\r'\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/rawstring-del", () => {
     const input: string = "rawstring-del  = 'null\u007f'\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/rawstring-lf", () => {
     const input: string = "rawstring-lf   = 'null\u0010'\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/rawstring-null", () => {
     const input: string = "rawstring-null = 'null\u0000'\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/rawstring-us", () => {
     const input: string = "rawstring-us   = 'null\u001f'\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/string-bs", () => {
     const input: string = 'string-bs   = "backspace\b"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/string-cr", () => {
     const input: string = 'string-cr   = "null\r"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/string-del", () => {
     const input: string = 'string-del  = "null\u007f"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/control/string-lf", () => {
     const input: string = 'string-lf   = "null\u0010"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/string-null", () => {
     const input: string = 'string-null = "null\u0000"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/control/string-us", () => {
     const input: string = 'string-us   = "null\u001f"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect((err as SyntaxError).message).toBe("Failed to parse JSON");
   });
 
   test("invalid/datetime/day-zero", () => {
     const input: string = "foo = 1997-09-00T09:09:09.09Z\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/feb-29", () => {
     const input: string = '"not a leap year" = 2100-02-29T15:15:15Z\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/feb-30", () => {
     const input: string = '"only 28 or 29 days in february" = 1988-02-30T15:15:15Z\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/hour-over", () => {
     const input: string = "# time-hour       = 2DIGIT  ; 00-23\nd = 2006-01-01T24:00:00-00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/leading-zero-date", () => {
     const input: string = "# No leading zero on year allowed.\nd = 02026-05-07\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/leading-zero-datetime", () => {
     const input: string = "# No leading zero on year allowed.\nd = 02026-05-07T14:15:16Z\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/mday-over", () => {
     const input: string =
       "# date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on\n#                           ; month/year\nd = 2006-01-32T00:00:00-00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/mday-under", () => {
     const input: string =
       "# date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on\n#                           ; month/year\nd = 2006-01-00T00:00:00-00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/minute-over", () => {
     const input: string = "# time-minute     = 2DIGIT  ; 00-59\nd = 2006-01-01T00:60:00-00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/month-over", () => {
     const input: string = "# date-month      = 2DIGIT  ; 01-12\nd = 2006-13-01T00:00:00-00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/month-under", () => {
     const input: string = "# date-month      = 2DIGIT  ; 01-12\nd = 2007-00-01T00:00:00-00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/no-date-time-sep", () => {
     const input: string = "foo = 1997-09-0909:09:09\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/no-leads-month", () => {
     const input: string =
       '# Month "7" instead of "07"; the leading zero is required.\nno-leads = 1987-7-05T17:45:00Z\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/no-leads-with-milli", () => {
     const input: string =
       '# Day "5" instead of "05"; the leading zero is required.\nwith-milli = 1987-07-5T17:45:00.12Z\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/no-leads", () => {
     const input: string =
       '# Month "7" instead of "07"; the leading zero is required.\nno-leads = 1987-7-05T17:45:00Z\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/no-secs", () => {
     const input: string = "# No seconds in time.\nno-secs = 1987-07-05T17:45Z\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/no-t", () => {
     const input: string = '# No "t" or "T" between the date and time.\nno-t = 1987-07-0517:45:00Z\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/no-year-month-sep", () => {
     const input: string = "foo = 199709-09\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-minus-minute-1digit", () => {
     const input: string = "foo = 1997-09-09T09:09:09.09+09:9\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-minus-no-hour-minute-sep", () => {
     const input: string = "foo = 1997-09-09T09:09:09.09+0909\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-minus-no-hour-minute", () => {
     const input: string = "foo = 1997-09-09T09:09:09.09+\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-minus-no-minute", () => {
     const input: string = "foo = 1997-09-09T09:09:09.09+09\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-overflow-hour", () => {
     const input: string = "# Hour must be 00-24\nd = 1985-06-18 17:04:07+25:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-overflow-minute", () => {
     const input: string = "d = 1985-06-18 17:04:07+12:60\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-plus-minute-1digit", () => {
     const input: string = "foo = 1997-09-09T09:09:09.09+09:9\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-plus-no-hour-minute-sep", () => {
     const input: string = "foo = 1997-09-09T09:09:09.09+0909\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-plus-no-hour-minute", () => {
     const input: string = "foo = 1997-09-09T09:09:09.09+\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/offset-plus-no-minute", () => {
     const input: string = "foo = 1997-09-09T09:09:09.09+09\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/only-T", () => {
     const input: string = "foo = T\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/only-TZ", () => {
     const input: string = "foo = TZ\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/only-Tdot", () => {
     const input: string = "foo = T.\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/second-over", () => {
     const input: string =
       "# time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second\n#                           ; rules\nd = 2006-01-01T00:00:61-00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/second-trailing-dot", () => {
     const input: string = "foo = 1997-09-09T09:09:09.\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/second-trailing-dotz", () => {
     const input: string = "foo = 2016-09-09T09:09:09.Z\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/time-no-leads", () => {
     const input: string = "# Leading 0 is always required.\nd = 2023-10-01T1:32:00Z\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/trailing-x", () => {
     const input: string = "sign=2020-01-01x\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/y10k-date", () => {
     const input: string = "# Maximum RFC3399 year is 9999.\nd = 10000-01-01\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/datetime/y10k-datetime", () => {
     const input: string = "# Maximum RFC3399 year is 9999.\nd = 10000-01-01 00:00:00z\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/encoding/bom-not-at-start-01", () => {
     const input: string = "# Contains UTF-8 BOM between = and 1\na=\ufeff1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/encoding/bom-not-at-start-02", () => {
     const input: string = "\ufeff\ufeff# Contains two UTF-8 BOMS at the start\na=1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/encoding/bom-not-at-start-03", () => {
     const input: string = "\ufeff\ufeffa=1\n# Contains two UTF-8 BOMS at the start\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/encoding/ideographic-space", () => {
     const input: string = '# First on next line is U+3000 IDEOGRAPHIC SPACE\n　foo = "bar"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/encoding/utf16-comment", () => {
     const input: string =
       "\u0000#\u0000 \u0000U\u0000T\u0000F\u0000-\u00001\u00006\u0000 \u0000w\u0000i\u0000t\u0000h\u0000o\u0000u\u0000t\u0000 \u0000B\u0000O\u0000M\u0000\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/encoding/utf16-key", () => {
     const input: string = '\u0000k\u0000 \u0000=\u0000 \u0000"\u0000v\u0000"\u0000\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/arabic-zero-01", () => {
     const input: string = "arabic-zero-01 = 1.٠\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/arabic-zero-02", () => {
     const input: string = "arabic-zero-02 = ٠\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/arabic-zero-03", () => {
     const input: string = "arabic-zero-03 = 1e٠\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/arabic-zero-04", () => {
     const input: string = "arabic-zero-04 = +٠\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/double-dot-01", () => {
     const input: string = "double-dot-01 = 0..1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/double-dot-02", () => {
     const input: string = "double-dot-02 = 0.1.2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-dot-01", () => {
     const input: string = "exp-dot-01 = 1e2.3\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-dot-02", () => {
     const input: string = "exp-dot-02 = 1.e2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-dot-03", () => {
     const input: string = "exp-dot-03 = 3.e+20\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-double-e-01", () => {
     const input: string = "exp-double-e-01 = 1ee2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-double-e-02", () => {
     const input: string = "exp-double-e-02 = 1e2e3\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-double-us", () => {
     const input: string = "exp-double-us = 1e__23\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-leading-us", () => {
     const input: string = "exp-leading-us = 1e_23\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-trailing-us-01", () => {
     const input: string = "exp-trailing-us-01 = 1_e2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-trailing-us-02", () => {
     const input: string = "exp-trailing-us-02 = 1.2_e2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/exp-trailing-us", () => {
     const input: string = "exp-trailing-us = 1e23_\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/inf-capital", () => {
     const input: string = "v = Inf\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/inf-incomplete-01", () => {
     const input: string = "inf-incomplete-01 = in\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/inf-incomplete-02", () => {
     const input: string = "inf-incomplete-02 = +in\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/inf-incomplete-03", () => {
     const input: string = "inf-incomplete-03 = -in\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/inf_underscore", () => {
     const input: string = "inf_underscore = in_f\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/leading-dot-neg", () => {
     const input: string = "leading-dot-neg = -.12345\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/leading-dot-plus", () => {
     const input: string = "leading-dot-plus = +.12345\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/leading-dot", () => {
     const input: string = "leading-dot = .12345\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/leading-us", () => {
     const input: string = "leading-us = _1.2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/leading-zero-neg", () => {
     const input: string = "leading-zero-neg = -03.14\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/leading-zero-plus", () => {
     const input: string = "leading-zero-plus = +03.14\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/leading-zero", () => {
     const input: string = "leading-zero = 03.14\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/nan-capital", () => {
     const input: string = "v = NaN\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/nan-incomplete-01", () => {
     const input: string = "nan-incomplete-01 = na\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/nan-incomplete-02", () => {
     const input: string = "nan-incomplete-02 = +na\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/nan-incomplete-03", () => {
     const input: string = "nan-incomplete-03 = -na\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/nan_underscore", () => {
     const input: string = "nan_underscore = na_n\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-dot-01", () => {
     const input: string = "trailing-point = 1.\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-dot-02", () => {
     const input: string = "a = 1.\nb = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-dot-min", () => {
     const input: string = "trailing-dot-min = -1.\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-dot-plus", () => {
     const input: string = "trailing-dot-plus = +1.\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-dot", () => {
     const input: string = "trailing-dot = 1.\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-exp-dot", () => {
     const input: string = "trailing-exp-dot =  0.e\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-exp-minus", () => {
     const input: string = "trailing-exp-minus = 0.0e-\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-exp-plus", () => {
     const input: string = "trailing-exp-plus = 0.0e+\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-exp", () => {
     const input: string = "trailing-exp = 0.0E\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-us-exp-01", () => {
     const input: string = "trailing-us-exp-1 = 1_e2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-us-exp-02", () => {
     const input: string = "trailing-us-exp-2 = 1.2_e2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/trailing-us", () => {
     const input: string = "trailing-us = 1.2_\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/us-after-dot", () => {
     const input: string = "us-after-dot = 1._2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/float/us-before-dot", () => {
     const input: string = "us-before-dot = 1_.2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/bad-key-syntax", () => {
     const input: string = "tbl = { a = 1, [b] }\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/double-comma", () => {
     const input: string = "t = {x=3,,y=4}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/duplicate-key-01", () => {
     const input: string = "# Duplicate keys within an inline table are invalid\na={b=1, b=2}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/duplicate-key-02", () => {
     const input: string = "table1 = { table2.dupe = 1, table2.dupe = 2 }\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/duplicate-key-03", () => {
     const input: string = 'tbl = { fruit = { apple.color = "red" }, fruit.apple.texture = { smooth = true } }\n\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/duplicate-key-04", () => {
     const input: string = 'tbl = { a.b = "a_b", a.b.c = "a_b_c" }\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/empty-01", () => {
     const input: string = "t = {,}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/empty-02", () => {
     const input: string = "t = {,\n}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/empty-03", () => {
     const input: string = "t = {\n,\n}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/linebreak-01", () => {
     const input: string =
       "# No newlines are allowed between the curly braces unless they are valid within\n# a value.\nsimple = { a = 1 \n}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/linebreak-02", () => {
     const input: string = "t = {a=1,\nb=2}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/linebreak-03", () => {
     const input: string = "t = {a=1\n,b=2}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/linebreak-04", () => {
     const input: string = 'json_like = {\n          first = "Tom",\n          last = "Preston-Werner"\n}\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/no-close-01", () => {
     const input: string = "a={\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/no-close-02", () => {
     const input: string = "a={b=1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/no-comma-01", () => {
     const input: string = "t = {x = 3 y = 4}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/no-comma-02", () => {
     const input: string = "arrr = { comma-missing = true valid-toml = false }\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-01", () => {
     const input: string =
       'a.b=0\n# Since table "a" is already defined, it can\'t be replaced by an inline table.\na={}\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-02", () => {
     const input: string = "a={}\n# Inline tables are immutable and can't be extended\n[a.b]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-03", () => {
     const input: string = "a = { b = 1 }\na.b = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-04", () => {
     const input: string = "inline-t = { nest = {} }\n\n[[inline-t.nest]]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-05", () => {
     const input: string = "inline-t = { nest = {} }\n\n[inline-t.nest]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-06", () => {
     const input: string = "a = { b = 1, b.c = 2 }\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-07", () => {
     const input: string = 'tab = { inner.table = [{}], inner.table.val = "bad" }';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-08", () => {
     const input: string = 'tab = { inner = { dog = "best" }, inner.cat = "worst" }';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-09", () => {
     const input: string = "[tab.nested]\ninline-t = { nest = {} }\n\n[tab]\nnested.inline-t.nest = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/overwrite-10", () => {
     const input: string =
       '# Set implicit "b", overwrite "b" (illegal!) and then set another implicit.\n#\n# Caused panic: https://github.com/BurntSushi/toml/issues/403\na = {b.a = 1, b = 2, b.c = 3}\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/inline-table/trailing-comma", () => {
     const input: string =
       "# A terminating comma (also called trailing comma) is not permitted after the\n# last key/value pair in an inline table\nabc = { abc = 123, }\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/arabic-zero-01", () => {
     const input: string = "arabic-zero-01 = 1٠\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/arabic-zero-02", () => {
     const input: string = "arabic-zero-02 = 1_0٠\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/arabic-zero-03", () => {
     const input: string = "arabic-zero-03 = ٠.1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/arabic-zero-04", () => {
     const input: string = "arabic-zero-04 = ٠e0\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/capital-bin", () => {
     const input: string = "capital-bin = 0B0\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/capital-hex", () => {
     const input: string = "capital-hex = 0X1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/capital-oct", () => {
     const input: string = "capital-oct = 0O0\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/double-sign-nex", () => {
     const input: string = "double-sign-nex = --99\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/double-sign-plus", () => {
     const input: string = "double-sign-plus = ++99\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/double-us", () => {
     const input: string = "double-us = 1__23\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/incomplete-bin", () => {
     const input: string = "incomplete-bin = 0b\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/incomplete-hex", () => {
     const input: string = "incomplete-hex = 0x\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/incomplete-oct", () => {
     const input: string = "incomplete-oct = 0o\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/invalid-bin", () => {
     const input: string = "invalid-bin = 0b0012\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/invalid-hex-01", () => {
     const input: string = "invalid-hex-01 = 0xaafz\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/invalid-hex-02", () => {
     const input: string = "invalid-hex-02 = 0xgabba00f1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/invalid-hex-03", () => {
     const input: string = "a = 0x-1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/invalid-oct", () => {
     const input: string = "invalid-oct = 0o778\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-us-bin", () => {
     const input: string = "leading-us-bin = _0b1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-us-hex", () => {
     const input: string = "leading-us-hex = _0x1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-us-oct", () => {
     const input: string = "leading-us-oct = _0o1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-us", () => {
     const input: string = "leading-us = _123\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-zero-01", () => {
     const input: string = "leading-zero-01 = 01\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-zero-02", () => {
     const input: string = "leading-zero-02 = 00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-zero-03", () => {
     const input: string = "leading-zero-03 = 0_0\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-zero-sign-01", () => {
     const input: string = "leading-zero-sign-01 = -01\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-zero-sign-02", () => {
     const input: string = "leading-zero-sign-02 = +01\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/leading-zero-sign-03", () => {
     const input: string = "leading-zero-sign-03 = +0_1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/negative-bin", () => {
     const input: string = "negative-bin = -0b11010110\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/negative-hex", () => {
     const input: string = "negative-hex = -0xff\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/negative-oct", () => {
     const input: string = "negative-oct = -0o755\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/positive-bin", () => {
     const input: string = "positive-bin = +0b11010110\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/positive-hex", () => {
     const input: string = "positive-hex = +0xff\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/positive-oct", () => {
     const input: string = "positive-oct = +0o755\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/text-after-integer", () => {
     const input: string = "answer = 42 the ultimate answer?\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/trailing-us-bin", () => {
     const input: string = "trailing-us-bin = 0b1_\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/trailing-us-hex", () => {
     const input: string = "trailing-us-hex = 0x1_\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/trailing-us-oct", () => {
     const input: string = "trailing-us-oct = 0o1_\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/trailing-us", () => {
     const input: string = "trailing-us = 123_\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/us-after-bin", () => {
     const input: string = "us-after-bin = 0b_1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/us-after-hex", () => {
     const input: string = "us-after-hex = 0x_1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/integer/us-after-oct", () => {
     const input: string = "us-after-oct = 0o_1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/after-array", () => {
     const input: string = '[[agencies]] owner = "S Cjelli"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/after-table", () => {
     const input: string = '[error] this = "should not be here"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/after-value", () => {
     const input: string = 'first = "Tom" last = "Preston-Werner" # INVALID\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/bare-invalid-character-01", () => {
     const input: string = "! = 123\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/bare-invalid-character-02", () => {
     const input: string = "bare!key = 123\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/dot", () => {
     const input: string = ". = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/dotdot", () => {
     const input: string = ".. = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/dotted-redefine-table-01", () => {
     const input: string = "a = false\na.b = true\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/dotted-redefine-table-02", () => {
     const input: string = "# Defined a.b as int\na.b = 1\n# Tries to access it as table: error\na.b.c = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-01", () => {
     const input: string = 'name = "Tom"\nname = "Pradyun"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-02", () => {
     const input: string = "dupe = false\ndupe = true\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-03", () => {
     const input: string = 'spelling   = "favorite"\n"spelling" = "favourite"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-04", () => {
     const input: string = 'spelling   = "favorite"\n\'spelling\' = "favourite"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-05", () => {
     const input: string = 'a        = 1\n"\\u0061" = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-06", () => {
     const input: string = '"a\'b"      = 1\n"a\\u0027b" = 2\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-07", () => {
     const input: string = '"" = 1\n"" = 2\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-08", () => {
     const input: string = "arr = [1]\narr = [2]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/duplicate-keys-09", () => {
     const input: string = "tbl = {k=1}\ntbl = {kk=2}\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/empty", () => {
     const input: string = " = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/end-in-escape", () => {
     const input: string = '"backslash is the last char\\\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/escape", () => {
     const input: string = '\\u00c0 = "latin capital letter A with grave"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/hash", () => {
     const input: string = "a# = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/multiline-key-01", () => {
     const input: string = '"""key""" = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/multiline-key-02", () => {
     const input: string = "'''key''' = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/multiline-key-03", () => {
     const input: string = '"""key""" = """v"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/multiline-key-04", () => {
     const input: string = "'''key''' = '''v'''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/newline-01", () => {
     const input: string = "barekey\n   = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/newline-02", () => {
     const input: string = '"quoted\nkey" = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/newline-03", () => {
     const input: string = "'quoted\nkey' = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/newline-04", () => {
     const input: string = '"""long\nkey""" = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/newline-05", () => {
     const input: string = "'''long\nkey''' = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/newline-06", () => {
     const input: string = "key =\n1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/no-eol-01", () => {
     const input: string = "a = 1 b = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/no-eol-02", () => {
     const input: string = "0=0r=false\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/no-eol-03", () => {
     const input: string = '0=""o=""m=""r=""00="0"q="""0"""e="""0"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/no-eol-04", () => {
     const input: string = '[[0000l0]]\n0="0"[[0000l0]]\n0="0"[[0000l0]]\n0="0"l="0"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/no-eol-05", () => {
     const input: string = '0=[0]00=[0,0,0]t=["0","0","0"]s=[1000-00-00T00:00:00Z,2000-00-00T00:00:00Z]\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/no-eol-06", () => {
     const input: string = "0=0r0=0r=false\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/no-eol-07", () => {
     const input: string = "0=0r0=0r=falsefal=false\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/only-float", () => {
     const input: string = "1.1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/only-int", () => {
     const input: string = "1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/only-str", () => {
     const input: string = '""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/open-bracket", () => {
     const input: string = "[abc = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/partial-quoted", () => {
     const input: string = 'partial"quoted" = 5\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/quoted-unclosed-01", () => {
     const input: string = '"key = x\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/quoted-unclosed-02", () => {
     const input: string = '"key\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/single-open-bracket", () => {
     const input: string = "[\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/space-quoted", () => {
     const input: string = '# Tab literal between a and b below.\n"a" "b" = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/space", () => {
     const input: string = "a b = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/special-character", () => {
     const input: string = 'μ = "greek small letter mu"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/start-bracket", () => {
     const input: string = "[a]\n[xyz = 5\n[b]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/start-dot", () => {
     const input: string = ".key = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/tab-quoted", () => {
     const input: string = '# Tab literal between a and b below.\n"a"\t"b" = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/tab", () => {
     const input: string = "# Tab literal between a and b below.\na\tb = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/two-equals-01", () => {
     const input: string = "key= = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/two-equals-02", () => {
     const input: string = "a==1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/two-equals-03", () => {
     const input: string = "a=b=1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/without-value-01", () => {
     const input: string = "key\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/without-value-02", () => {
     const input: string = "key = \n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/without-value-03", () => {
     const input: string = '"key"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/without-value-04", () => {
     const input: string = '"key" = \n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/without-value-05", () => {
     const input: string = "fs.fw\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/without-value-06", () => {
     const input: string = "fs.fw =\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/key/without-value-07", () => {
     const input: string = "fs.\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/day-1digit", () => {
     const input: string = "foo = 1997-09-9\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/feb-29", () => {
     const input: string = '"not a leap year" = 2100-02-29\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/feb-30", () => {
     const input: string = '"only 28 or 29 days in february" = 1988-02-30\n\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/mday-over", () => {
     const input: string =
       "# date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on\n#                           ; month/year\nd = 2006-01-32\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/mday-under", () => {
     const input: string =
       "# date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on\n#                           ; month/year\nd = 2006-01-00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/month-over", () => {
     const input: string = "# date-month      = 2DIGIT  ; 01-12\nd = 2006-13-01\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/month-under", () => {
     const input: string = "# date-month      = 2DIGIT  ; 01-12\nd = 2007-00-01\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/no-leads-with-milli", () => {
     const input: string = '# Day "5" instead of "05"; the leading zero is required.\nwith-milli = 1987-07-5\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/no-leads", () => {
     const input: string = '# Month "7" instead of "07"; the leading zero is required.\nno-leads = 1987-7-05\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/trailing-t", () => {
     const input: string = "# Date cannot end with trailing T\nd = 2006-01-30T\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/y10k", () => {
     const input: string = "# Maximum RFC3399 year is 9999.\nd = 10000-01-01\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-date/year-3digits", () => {
     const input: string = "foo = 199-09-09\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/feb-29", () => {
     const input: string = '"not a leap year" = 2100-02-29T15:15:15\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/feb-30", () => {
     const input: string = '"only 28 or 29 days in february" = 1988-02-30T15:15:15\n\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/hour-over", () => {
     const input: string = "# time-hour       = 2DIGIT  ; 00-23\nd = 2006-01-01T24:00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/mday-over", () => {
     const input: string =
       "# date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on\n#                           ; month/year\nd = 2006-01-32T00:00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/mday-under", () => {
     const input: string =
       "# date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on\n#                           ; month/year\nd = 2006-01-00T00:00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/minute-over", () => {
     const input: string = "# time-minute     = 2DIGIT  ; 00-59\nd = 2006-01-01T00:60:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/month-over", () => {
     const input: string = "# date-month      = 2DIGIT  ; 01-12\nd = 2006-13-01T00:00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/month-under", () => {
     const input: string = "# date-month      = 2DIGIT  ; 01-12\nd = 2007-00-01T00:00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/no-leads-with-milli", () => {
     const input: string =
       '# Day "5" instead of "05"; the leading zero is required.\nwith-milli = 1987-07-5T17:45:00.12\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/no-leads", () => {
     const input: string = '# Month "7" instead of "07"; the leading zero is required.\nno-leads = 1987-7-05T17:45:00\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/no-secs", () => {
     const input: string = "# No seconds in time.\nno-secs = 1987-07-05T17:45\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/no-t", () => {
     const input: string = '# No "t" or "T" between the date and time.\nno-t = 1987-07-0517:45:00\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/second-over", () => {
     const input: string =
       "# time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second\n#                           ; rules\nd = 2006-01-01T00:00:61\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/time-no-leads", () => {
     const input: string = "# Leading 0 is always required.\nd = 2023-10-01T1:32:00Z\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-datetime/y10k", () => {
     const input: string = "# Maximum RFC3399 year is 9999.\nd = 10000-01-01 00:00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-time/hour-over", () => {
     const input: string = "# time-hour       = 2DIGIT  ; 00-23\nd = 24:00:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-time/minute-over", () => {
     const input: string = "# time-minute     = 2DIGIT  ; 00-59\nd = 00:60:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-time/no-secs", () => {
     const input: string = "# No seconds in time.\nno-secs = 17:45\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-time/second-over", () => {
     const input: string =
       "# time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second\n#                           ; rules\nd = 00:00:61\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-time/time-no-leads-01", () => {
     const input: string = "# Leading 0 is always required.\nd = 1:32:00\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-time/time-no-leads-02", () => {
     const input: string = "# Leading 0 is always required.\nd = 01:32:0\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-time/trailing-dot", () => {
     const input: string = "t = 12:13:14.\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/local-time/trailing-dotdot", () => {
     const input: string = "t = 12:13:14..\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/spec-1.0.0/inline-table-2-0", () => {
     const input: string = '[product]\ntype = { name = "Nail" }\ntype.edible = false  # INVALID\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/spec-1.0.0/inline-table-3-0", () => {
     const input: string = '[product]\ntype.name = "Nail"\ntype = { edible = false }  # INVALID\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/spec-1.0.0/key-value-pair-1", () => {
     const input: string = "key = # INVALID\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/spec-1.0.0/keys-2", () => {
     const input: string =
       '= "no key name"  # INVALID\n"" = "blank"     # VALID but discouraged\n\'\' = \'blank\'     # VALID but discouraged\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/spec-1.0.0/string-4-0", () => {
     const input: string =
       'str4 = """Here are two quotation marks: "". Simple enough."""\nstr5 = """Here are three quotation marks: """."""  # INVALID\nstr5 = """Here are three quotation marks: ""\\"."""\nstr6 = """Here are fifteen quotation marks: ""\\"""\\"""\\"""\\"""\\"."""\n\n# "This," she said, "is just a pointless statement."\nstr7 = """"This," she said, "is just a pointless statement.""""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/spec-1.0.0/string-7-0", () => {
     const input: string =
       "quot15 = '''Here are fifteen quotation marks: \"\"\"\"\"\"\"\"\"\"\"\"\"\"\"'''\n\napos15 = '''Here are fifteen apostrophes: ''''''''''''''''''  # INVALID\napos15 = \"Here are fifteen apostrophes: '''''''''''''''\"\n\n# 'That,' she said, 'is still pointless.'\nstr = ''''That,' she said, 'is still pointless.''''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/spec-1.0.0/table-9-0", () => {
     const input: string =
       '[fruit]\napple.color = "red"\napple.taste.sweet = true\n\n[fruit.apple]  # INVALID\n# [fruit.apple.taste]  # INVALID\n\n[fruit.apple.texture]  # you can add sub-tables\nsmooth = true\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/spec-1.0.0/table-9-1", () => {
     const input: string =
       '[fruit]\napple.color = "red"\napple.taste.sweet = true\n\n# [fruit.apple]  # INVALID\n[fruit.apple.taste]  # INVALID\n\n[fruit.apple.texture]  # you can add sub-tables\nsmooth = true\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-byte-escape", () => {
     const input: string = 'naughty = "\\xAg"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-concat", () => {
     const input: string = 'no_concat = "first" "second"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-escape-01", () => {
     const input: string = 'invalid-escape = "This string has a bad \\a escape character."\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-escape-02", () => {
     const input: string = 'invalid-escape = "This string has a bad \\  escape character."\n\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-escape-03", () => {
     const input: string = 'backslash = "\\"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-escape-04", () => {
     const input: string = 'a = "a \\\\\\ b"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-escape-05", () => {
     const input: string = 'a = "a \\\\\\\\\\ b"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-hex-esc-01", () => {
     const input: string = 'bad-hex-esc-01 = "\\x0g"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-hex-esc-02", () => {
     const input: string = 'bad-hex-esc-02 = "\\xG0"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-hex-esc-03", () => {
     const input: string = 'bad-hex-esc-03 = "\\x"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-hex-esc-04", () => {
     const input: string = 'bad-hex-esc-04 = "\\x 50"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-hex-esc-05", () => {
     const input: string = 'bad-hex-esc-5 = "\\x 50"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-multiline", () => {
     const input: string = 'multi = "first line\nsecond line"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-slash-escape", () => {
     const input: string = 'invalid-escape = "This string has a bad \\/ escape character."\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-01", () => {
     const input: string = 'bad-uni-esc-01 = "val\\ue"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-02", () => {
     const input: string = 'bad-uni-esc-02 = "val\\Ux"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-03", () => {
     const input: string = 'bad-uni-esc-03 = "val\\U0000000"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-04", () => {
     const input: string = 'bad-uni-esc-04 = "val\\U0000"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-05", () => {
     const input: string = 'bad-uni-esc-05 = "val\\Ugggggggg"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-06", () => {
     const input: string = 'bad-uni-esc-06 = "This string contains a non scalar unicode codepoint \\uD801"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-07", () => {
     const input: string = 'bad-uni-esc-07 = "\\uabag"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-ml-01", () => {
     const input: string = 'bad-uni-esc-ml-01 = """val\\ue"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-ml-02", () => {
     const input: string = 'bad-uni-esc-ml-02 = """val\\Ux"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-ml-03", () => {
     const input: string = 'bad-uni-esc-ml-03 = """val\\U0000000"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-ml-04", () => {
     const input: string = 'bad-uni-esc-ml-04 = """val\\U0000"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-ml-05", () => {
     const input: string = 'bad-uni-esc-ml-05 = """val\\Ugggggggg"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-ml-06", () => {
     const input: string = 'bad-uni-esc-ml-06 = """This string contains a non scalar unicode codepoint \\uD801"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/bad-uni-esc-ml-07", () => {
     const input: string = 'bad-uni-esc-ml-07 = """\\uabag"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/basic-byte-escapes", () => {
     const input: string = 'answer = "\\x33"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/basic-multiline-out-of-range-unicode-escape-01", () => {
     const input: string = 'a = """\\UFFFFFFFF"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/basic-multiline-out-of-range-unicode-escape-02", () => {
     const input: string = 'a = """\\U00D80000"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/basic-multiline-quotes", () => {
     const input: string = 'str5 = """Here are three quotation marks: """."""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/basic-multiline-unknown-escape", () => {
     const input: string = 'a = """\\@"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/basic-out-of-range-unicode-escape-01", () => {
     const input: string = 'a = "\\UFFFFFFFF"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/basic-out-of-range-unicode-escape-02", () => {
     const input: string = 'a = "\\U00D80000"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/basic-unknown-escape", () => {
     const input: string = 'a = "\\@"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/literal-multiline-quotes-01", () => {
     const input: string = "a = '''6 apostrophes: ''''''\n\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/literal-multiline-quotes-02", () => {
     const input: string = "a = '''15 apostrophes: ''''''''''''''''''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/missing-quotes-array", () => {
     const input: string = "name = [value]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/missing-quotes-inline-table", () => {
     const input: string = "name = { key = value }\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/missing-quotes", () => {
     const input: string = "name = value\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-bad-escape-01", () => {
     const input: string = 'k = """t\\a"""\n\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-bad-escape-02", () => {
     const input: string = '# \\<Space> is not a valid escape.\nk = """t\\ t"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-bad-escape-03", () => {
     const input: string = '# \\<Space> is not a valid escape.\nk = """t\\ """\n\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-bad-escape-04", () => {
     const input: string = 'backslash = """\\"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-escape-space-01", () => {
     const input: string = 'a = """\n  foo \\ \\n\n  bar"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-escape-space-02", () => {
     const input: string = 'bee = """\nhee \\\n\ngee \\   """\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-lit-no-close-01", () => {
     const input: string = "invalid = '''\n    this will fail\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-lit-no-close-02", () => {
     const input: string = "x='''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-lit-no-close-03", () => {
     const input: string = "not-closed= '''\ndiibaa\nblibae ete\neteta\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-lit-no-close-04", () => {
     const input: string = "bee = '''\nhee\ngee ''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-no-close-01", () => {
     const input: string = 'invalid = """\n    this will fail\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-no-close-02", () => {
     const input: string = 'x="""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-no-close-03", () => {
     const input: string = 'not-closed= """\ndiibaa\nblibae ete\neteta\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-no-close-04", () => {
     const input: string = 'bee = """\nhee\ngee ""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-no-close-05", () => {
     const input: string = 'bee = """\nhee\ngee\\\t \n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/multiline-quotes-01", () => {
     const input: string = 'a = """6 quotes: """"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-01", () => {
     const input: string = 'no-ending-quote = "One time, at band camp\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-02", () => {
     const input: string = '"a-string".must-be = "closed\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-03", () => {
     const input: string = "no-ending-quote = 'One time, at band camp\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-04", () => {
     const input: string = "'a-string'.must-be = 'closed\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-05", () => {
     const input: string = '# No newline at end\nno-ending-quote = "One time, at band camp';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-06", () => {
     const input: string = '# No newline at end\n"a-string".must-be = "closed';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-07", () => {
     const input: string = "# No newline at end\nno-ending-quote = 'One time, at band camp";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-08", () => {
     const input: string = "# No newline at end\n'a-string'.must-be = 'closed";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-09", () => {
     const input: string = '# Newlines are not allowed in "-strings.\na = "\n"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-close-10", () => {
     const input: string = "# Newlines are not allowed in '-strings.\na = '\n'\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-open-01", () => {
     const input: string = 's = a"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-open-02", () => {
     const input: string = 'a = [a"]\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-open-03", () => {
     const input: string = "s = a'\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-open-04", () => {
     const input: string = "a = [a']\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-open-05", () => {
     const input: string = 'a = a"""\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-open-06", () => {
     const input: string = 'a = [a"""]\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-open-07", () => {
     const input: string = "a = a'''\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/no-open-08", () => {
     const input: string = "a = [a''']\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/text-after-string", () => {
     const input: string = 'string = "Is there life after strings?" No.\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/string/wrong-close", () => {
     const input: string = "bad-ending-quote = \"double and single'\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/append-with-dotted-keys-01", () => {
     const input: string =
       '# First a.b.c defines a table: a.b.c = {z=9}\n#\n# Then we define a.b.c.t = "str" to add a str to the above table, making it:\n#\n#   a.b.c = {z=9, t="..."}\n#\n# While this makes sense, logically, it was decided this is not valid TOML as\n# it\'s too confusing/convoluted.\n# \n# See: https://github.com/toml-lang/toml/issues/846\n#      https://github.com/toml-lang/toml/pull/859\n\n[a.b.c]\n  z = 9\n\n[a]\n  b.c.t = "Using dotted keys to add to [a.b.c] after explicitly defining it above is not allowed"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/append-with-dotted-keys-02", () => {
     const input: string =
       '# This is the same issue as in injection-1.toml, except that nests one level\n# deeper. See that file for a more complete description.\n\n[a.b.c.d]\n  z = 9\n\n[a]\n  b.c.d.k.t = "Using dotted keys to add to [a.b.c.d] after explicitly defining it above is not allowed"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/append-with-dotted-keys-03", () => {
     const input: string = "[[a.b]]\n\n[a]\nb.y = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/append-with-dotted-keys-04", () => {
     const input: string =
       '[dependencies.foo]\nversion = "0.16"\n\n[dependencies]\nlibc = "0.2"\n\n[dependencies]\nrand = "0.3.14"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/append-with-dotted-keys-05", () => {
     const input: string = "a.b.c = 1\na.b = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/append-with-dotted-keys-06", () => {
     const input: string = "a = 1\na.b = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/append-with-dotted-keys-07", () => {
     const input: string = 'a = {k1 = 1, k1.name = "joe"}\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/append-with-dotted-keys-08", () => {
     const input: string =
       '[a.b.c]\nz = 9\n\n[[totally_unrelated]]\nx = 123\n\n[a]\nb.c.t = "this should NOT be allowed"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/array-empty", () => {
     const input: string = '[[]]\nname = "Born to Run"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/array-implicit", () => {
     const input: string =
       '# This test is a bit tricky. It should fail because the first use of\n# `[[albums.songs]]` without first declaring `albums` implies that `albums`\n# must be a table. The alternative would be quite weird. Namely, it wouldn\'t\n# comply with the TOML spec: "Each double-bracketed sub-table will belong to \n# the most *recently* defined table element *above* it."\n#\n# This is in contrast to the *valid* test, table-array-implicit where\n# `[[albums.songs]]` works by itself, so long as `[[albums]]` isn\'t declared\n# later. (Although, `[albums]` could be.)\n[[albums.songs]]\nname = "Glory Days"\n\n[[albums]]\nname = "Born in the USA"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/array-no-close-01", () => {
     const input: string = '[[albums]\nname = "Born to Run"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/array-no-close-02", () => {
     const input: string = "[[closing-bracket.missing]\nblaa=2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/array-no-close-03", () => {
     const input: string = "[[a\n[[b]]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/array-no-close-04", () => {
     const input: string = "[[a\nb = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/bare-invalid-character-01", () => {
     const input: string = "[!]\nk = 123\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/bare-invalid-character-02", () => {
     const input: string = "[bare!key]\nk = 123\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/dot", () => {
     const input: string = "[.]\nk = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/dotdot", () => {
     const input: string = "[..]\nk = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-01", () => {
     const input: string = "[a]\nb = 1\n\n[a]\nc = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-02", () => {
     const input: string = '[fruit]\ntype = "apple"\n\n[fruit.type]\napple = "yes"\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-03", () => {
     const input: string = '[fruit]\napple.color = "red"\n\n[[fruit.apple]]\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-04", () => {
     const input: string = '[fruit]\napple.color = "red"\n\n[fruit.apple] # INVALID\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-05", () => {
     const input: string = "[fruit]\napple.taste.sweet = true\n\n[fruit.apple.taste] # INVALID\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-06", () => {
     const input: string = "[tbl]\n[[tbl]]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-07", () => {
     const input: string = "[[tbl]]\n[tbl]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-08", () => {
     const input: string = "[a]\nb = { c = 2, d = {} }\n[a.b]\nc = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-09", () => {
     const input: string = '[a]\nfoo="bar"\n[a.b]\nfoo="bar"\n[a]\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-10", () => {
     const input: string = "a = []\n[[a.b]]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-11", () => {
     const input: string = "[a]\n[a.b]\n[a.b]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/duplicate-key-12", () => {
     const input: string = "[a]\n[a.b]\nc = 1\n[a.b]\nc = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/empty-implicit-table", () => {
     const input: string = "[naughty..naughty]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/empty", () => {
     const input: string = "[]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/equals-sign", () => {
     const input: string = "[name=bad]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/llbrace", () => {
     const input: string = "[ [table]]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/multiline-key-01", () => {
     const input: string = '["""tbl"""]\nk = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/multiline-key-02", () => {
     const input: string = "['''tbl''']\nk = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/nested-brackets-close", () => {
     const input: string = "[a]b]\nzyx = 42\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/nested-brackets-open", () => {
     const input: string = "[a[b]\nzyx = 42\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/newline-01", () => {
     const input: string = "[tbl\n]\nk = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/newline-02", () => {
     const input: string = '["tbl\n"]\nk = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/newline-03", () => {
     const input: string = '["tbl"\n]\nk = 1\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/newline-04", () => {
     const input: string = "[tbl.\n]\nk = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/newline-05", () => {
     const input: string = "[tbl\n.sub]\nk = 1\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-01", () => {
     const input: string = "[where will it end\nname = value\n\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-02", () => {
     const input: string = "[closing-bracket.missingö\nblaa=2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-03", () => {
     const input: string = '["where will it end]\nname = value\n\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-04", () => {
     const input: string = "[\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-05", () => {
     const input: string = "[fwfw.wafw\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-06", () => {
     const input: string = "[a\n[b]\n[c\n[d]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-07", () => {
     const input: string = "[']\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-08", () => {
     const input: string = "[''']\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/no-close-09", () => {
     const input: string = '["where will it end""]\nname = value\n';
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/overwrite-array-in-parent", () => {
     const input: string = "[[parent-table.arr]]\n[parent-table]\nnot-arr = 1\narr = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/overwrite-bool-with-array", () => {
     const input: string = "a=true\n[[a]]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/overwrite-with-deep-table", () => {
     const input: string = "a=1\n[a.b.c.d]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/redefine-01", () => {
     const input: string = "# Define b as int, and try to use it as a table: error\n[a]\nb = 1\n\n[a.b]\nc = 2\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/redefine-02", () => {
     const input: string =
       "# Define t2 as a table via dotted key in [t1] block, and then redefine [t1.t2]\n[t1]\nt2.t3.v = 0\n[t1.t2]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/redefine-03", () => {
     const input: string =
       "# Define t2.t3 as a table via dotted key in [t1] block, and then redefine [t1.t2.t3]\n[t1]\nt2.t3.v = 0\n[t1.t2.t3]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/rrbrace", () => {
     const input: string = "[[table] ]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/super-twice", () => {
     const input: string = "[a.b]\n[a]\n[a]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/text-after-table", () => {
     const input: string = "[error] this shouldn't be here\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/trailing-dot", () => {
     const input: string = "[a.]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/whitespace", () => {
     const input: string = "[invalid key]\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 
   test("invalid/table/with-pound", () => {
     const input: string = "[key#group]\nanswer = 42\n";
-    expect(() => TOML.parse(input)).toThrow(SyntaxError);
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
   });
 });

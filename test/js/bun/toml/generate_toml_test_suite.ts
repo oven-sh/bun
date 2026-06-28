@@ -3,7 +3,10 @@
  * Generates toml-test-suite.test.ts from the official toml-lang/toml-test repository.
  *
  * Usage:
- *   bun run test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test] [--check]
+ *   bun bd test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test] [--check]
+ *
+ * Must run under the debug build (`bun bd`): rejection-test error messages are
+ * captured from the in-tree TOML.parse at generation time.
  *
  * If no path is given, clones toml-lang/toml-test into a temp directory.
  * Only tests in the TOML v1.0.0 manifest (tests/files-toml-1.0.0) are used.
@@ -12,9 +15,13 @@
  *
  * Expected values come from the suite's own tagged-JSON files (no reference
  * implementation needed). Encoding of TOML types in JS:
- *   - integers within Number.MAX_SAFE_INTEGER -> number, outside -> BigInt
+ *   - integers -> number; values outside Number.MAX_SAFE_INTEGER throw
+ *     (TOML requires lossless handling or an error; mixed number/BigInt
+ *     output is not acceptable API)
  *   - datetime/datetime-local/date-local/time-local -> string (source text),
  *     compared via separator/fraction normalization (see generated helper)
+ *   - invalid documents -> SyntaxError, with the exact full message asserted
+ *     when the in-tree parser produced a SyntaxError at generation time
  */
 
 import { execSync } from "node:child_process";
@@ -54,12 +61,14 @@ interface ValidCase {
   input: string;
   expected: unknown;
 }
-interface InvalidCase {
+interface RejectionCase {
   name: string;
   input: string;
+  message: string | undefined;
 }
 const validCases: ValidCase[] = [];
-const invalidCases: InvalidCase[] = [];
+const invalidCases: RejectionCase[] = [];
+const outOfRangeCases: RejectionCase[] = [];
 
 // ---------------------------------------------------------------------------
 // 3. Decode toml-test tagged JSON into JS values
@@ -116,6 +125,24 @@ function decodeTagged(v: unknown): unknown {
   throw new Error(`Unexpected raw value in tagged JSON: ${JSON.stringify(v)}`);
 }
 
+function containsBigInt(v: unknown): boolean {
+  if (typeof v === "bigint") return true;
+  if (Array.isArray(v)) return v.some(containsBigInt);
+  if (v instanceof TaggedDateTime) return false;
+  if (v !== null && typeof v === "object") return Object.values(v).some(containsBigInt);
+  return false;
+}
+
+// Exact message asserted by rejection tests; captured from the in-tree parser.
+function captureSyntaxErrorMessage(input: string): string | undefined {
+  try {
+    (Bun as { TOML: { parse: (s: string) => unknown } }).TOML.parse(input);
+  } catch (e) {
+    if (e instanceof SyntaxError) return e.message;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // 4. Collect cases
 // ---------------------------------------------------------------------------
@@ -132,9 +159,13 @@ for (const rel of manifest) {
   const name = rel.replace(/\.toml$/, "");
   if (rel.startsWith("valid/")) {
     const expected = decodeTagged(JSON.parse(readFileSync(tomlPath.replace(/\.toml$/, ".json"), "utf8")));
-    validCases.push({ name, input, expected });
+    if (containsBigInt(expected)) {
+      outOfRangeCases.push({ name, input, message: captureSyntaxErrorMessage(input) });
+    } else {
+      validCases.push({ name, input, expected });
+    }
   } else {
-    invalidCases.push({ name, input });
+    invalidCases.push({ name, input, message: captureSyntaxErrorMessage(input) });
   }
 }
 
@@ -151,7 +182,6 @@ function jsString(s: string): string {
 
 function valueToJS(val: unknown, indent: number = 0): string {
   if (typeof val === "boolean") return String(val);
-  if (typeof val === "bigint") return `${val}n`;
   if (typeof val === "number") {
     if (Number.isNaN(val)) return "NaN";
     if (val === Infinity) return "Infinity";
@@ -196,15 +226,17 @@ const kindUnion = DATETIME_KINDS.map(k => JSON.stringify(k)).join(" | ");
 
 let output = `// Tests generated from the official toml-lang/toml-test conformance suite
 // Generated from toml-test commit: ${commit}
-// Scope: TOML v1.0.0 manifest (tests/files-toml-1.0.0): ${validCases.length} valid + ${invalidCases.length} invalid cases
-// Regenerate with: bun run test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test]
+// Scope: TOML v1.0.0 manifest (tests/files-toml-1.0.0): ${validCases.length} valid + ${outOfRangeCases.length} out-of-range-integer + ${invalidCases.length} invalid cases
+// Regenerate with: bun bd test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test]
 //
 // TOML type encoding asserted by these tests:
-//   - integer: number when within Number.MAX_SAFE_INTEGER, BigInt otherwise
+//   - integer: number; values outside Number.MAX_SAFE_INTEGER throw (TOML
+//     requires lossless handling or an error — see the out-of-range block)
 //   - datetime, datetime-local, date-local, time-local: string (source text);
 //     compared after normalizing the date/time separator to "T", uppercasing
 //     "Z", and trimming trailing zeros from fractional seconds
-//   - invalid documents must throw SyntaxError
+//   - invalid documents throw SyntaxError; the exact full message is asserted
+//     where the in-tree parser produced a SyntaxError at generation time
 //
 // Excluded: ${excluded.length} invalid-encoding inputs that are not valid UTF-8. Bun.TOML.parse
 // takes a JS string, so byte-level encoding rejection cannot be tested here:
@@ -282,13 +314,35 @@ for (const tc of validCases) {
 }
 output += `});\n`;
 
-output += `\ndescribe("toml-test/invalid", () => {\n`;
-for (const tc of invalidCases) {
-  output += `  test(${jsString(tc.name)}, () => {\n`;
-  output += `    const input: string = ${jsString(tc.input)};\n`;
-  output += `    expect(() => TOML.parse(input)).toThrow(SyntaxError);\n`;
-  output += `  });\n\n`;
+function emitRejectionTest(tc: RejectionCase): string {
+  let body = `  test(${jsString(tc.name)}, () => {\n`;
+  body += `    const input: string = ${jsString(tc.input)};\n`;
+  body += `    let err: unknown;\n`;
+  body += `    try {\n`;
+  body += `      TOML.parse(input);\n`;
+  body += `    } catch (e) {\n`;
+  body += `      err = e;\n`;
+  body += `    }\n`;
+  body += `    expect(err).toBeInstanceOf(SyntaxError);\n`;
+  if (tc.message !== undefined) {
+    body += `    expect((err as SyntaxError).message).toBe(${jsString(tc.message)});\n`;
+  }
+  body += `  });\n\n`;
+  return body;
 }
+
+output += `
+// Upstream marks these valid, asserting exact 64-bit integers, which JS
+// numbers cannot represent. Bun rejects integers outside Number.MAX_SAFE_INTEGER
+// instead of returning corrupted values or mixed number/BigInt types; the
+// 64-bit range is a "should" in the spec (toml-lang/toml-test#154).
+describe("toml-test/valid-out-of-range-integer", () => {
+`;
+for (const tc of outOfRangeCases) output += emitRejectionTest(tc);
+output += `});\n`;
+
+output += `\ndescribe("toml-test/invalid", () => {\n`;
+for (const tc of invalidCases) output += emitRejectionTest(tc);
 output += `});\n`;
 
 const committedPath = join(import.meta.dir, "toml-test-suite.test.ts");

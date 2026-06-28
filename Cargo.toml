@@ -9,8 +9,11 @@ members = [
   "src/collections",
   "src/css",
   "src/errno",
+  "src/fuzzy",
+  "src/git",
   "src/glob",
   "src/http",
+  "src/ignore",
   "src/install",
   "src/install/windows-shim",
   "src/parsers",
@@ -360,7 +363,10 @@ bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
 bun_errno = { path = "src/errno" }
+bun_fuzzy = { path = "src/fuzzy" }
+bun_git = { path = "src/git" }
 bun_glob = { path = "src/glob" }
+bun_ignore = { path = "src/ignore" }
 bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }

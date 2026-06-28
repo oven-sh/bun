@@ -121,7 +121,8 @@ Bun.TOML.stringify({
 The top-level value must be an object — a TOML document is a table. `Date`
 values become TOML offset date-times. Because TOML cannot represent them,
 `null` values, `BigInt`, and circular structures throw; `undefined`,
-function, and symbol properties are skipped.
+function, and symbol properties are skipped (inside arrays they throw,
+since TOML arrays cannot have holes).
 
 ---
 

@@ -472,7 +472,14 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 }
                 Ok(HeaderSep::Close)
             }
-            _ => Err(self.err_char(self.pos, "Expected ']' to close a table header but found")),
+            _ => Err(if aot {
+                self.err_char(
+                    self.pos,
+                    "Expected ']]' to close an array-of-tables header but found",
+                )
+            } else {
+                self.err_char(self.pos, "Expected ']' to close a table header but found")
+            }),
         }
     }
 
@@ -1621,7 +1628,11 @@ impl<'a, 'log> Parser<'a, 'log> {
                             header_pos,
                             "Cannot redefine key",
                             seg.text,
-                            " as a table",
+                            if last && is_aot {
+                                " as an array of tables"
+                            } else {
+                                " as a table"
+                            },
                         ));
                     }
                 }

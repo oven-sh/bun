@@ -227,8 +227,8 @@ impl Stringifier {
             }
         }
 
-        // Pass 2: sections. Values are re-read; a getter that changes its
-        // answer between passes gets an error rather than invalid output.
+        // Pass 2: sections. Values are re-read; an array-of-tables element
+        // that is no longer a plain object during emission gets an error.
         let mut iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
         while let Some(prop_name) = iter.next()? {
             let value = iter.value.unwrap_boxed_primitive(global)?;
@@ -420,8 +420,10 @@ impl Stringifier {
             return;
         }
         if num == 0.0 {
-            // Only -0.0 reaches here (+0 is int32); the sign needs float form.
-            self.builder.append_latin1(b"-0.0");
+            // A double-encoded zero (is_int32 is an encoding check, not a
+            // value check); only the negative sign needs float form.
+            self.builder
+                .append_latin1(if num.is_sign_negative() { b"-0.0" } else { b"0" });
             return;
         }
         self.builder.append_double(num);

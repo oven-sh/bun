@@ -150,7 +150,7 @@ impl Default for IndentInfo {
 /// hold its own `&mut Log` (that would alias this pointer and any parser-side
 /// `&mut` deref would invalidate the lexer's SharedReadWrite tag — UB the next
 /// time the lexer reports an error). Parser-side log writes go through
-/// `log_mut()`. Matches the toml lexer's shape.
+/// `log_mut()`.
 pub struct Lexer<'a, 'bump> {
     // raw ptr — see struct doc.
     log: *mut bun_ast::Log,

@@ -805,7 +805,8 @@ declare module "bun" {
      * The top-level value must be an object (a TOML document is a table).
      * `Date` values become TOML offset date-times. `null`, `BigInt`, and
      * circular structures throw, since TOML cannot represent them;
-     * `undefined`, function, and symbol properties are skipped.
+     * `undefined`, function, and symbol properties are skipped (inside
+     * arrays they throw, since TOML arrays cannot have holes).
      *
      * @category Utilities
      *

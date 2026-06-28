@@ -7563,7 +7563,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+      "TOML Parse error: Expected ']]' to close an array-of-tables header but found (0x0A)",
     );
   });
 
@@ -7577,7 +7577,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      "TOML Parse error: Expected ']' to close a table header but found (0x0A)",
+      "TOML Parse error: Expected ']]' to close an array-of-tables header but found (0x0A)",
     );
   });
 
@@ -8078,7 +8078,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a' as a table");
+    expect((err as SyntaxError).message).toBe("TOML Parse error: Cannot redefine key 'a' as an array of tables");
   });
 
   test("invalid/table/overwrite-with-deep-table", () => {

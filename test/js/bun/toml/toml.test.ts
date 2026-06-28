@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 function syntaxError(input: string | Uint8Array): SyntaxError {
   let err: unknown;
   try {
-    TOML.parse(input as string);
+    TOML.parse(input);
   } catch (e) {
     err = e;
   }
@@ -490,6 +490,16 @@ describe("error contract", () => {
     );
   });
 
+  test("array-of-tables errors name the right header kind", () => {
+    expect(syntaxError("[[a").message).toBe(
+      "TOML Parse error: Expected ']]' to close an array-of-tables header but found end of file",
+    );
+    expect(syntaxError("a = 1\n[[a]]").message).toBe("TOML Parse error: Cannot redefine key 'a' as an array of tables");
+    // For a non-last segment the table wording is the correct one.
+    expect(syntaxError("a = 1\n[[a.b]]").message).toBe("TOML Parse error: Cannot redefine key 'a' as a table");
+    expect(syntaxError("a = 1\n[a]").message).toBe("TOML Parse error: Cannot redefine key 'a' as a table");
+  });
+
   test("unquoted string values name the fix", () => {
     // The old parser silently accepted bare words as strings; this is the
     // most common spec violation in real-world bunfig.toml files.
@@ -581,6 +591,9 @@ describe("TOML.stringify", () => {
       "i = 5\nf = 0.5\nnz = -0.0\nn = nan\np = inf\nm = -inf\n",
     );
     expect(TOML.stringify({ max: Number.MAX_SAFE_INTEGER })).toBe("max = 9007199254740991\n");
+    // A double-encoded +0 (not an int32-tagged value) must not gain a sign.
+    expect(TOML.stringify({ z: new Float64Array(1)[0] })).toBe("z = 0\n");
+    expect(Object.is(TOML.parse(TOML.stringify({ z: new Float64Array(1)[0] })).z, 0)).toBe(true);
   });
 
   test("integral doubles beyond the safe range are emitted as floats", () => {

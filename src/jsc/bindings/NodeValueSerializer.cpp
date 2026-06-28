@@ -663,6 +663,50 @@ private:
         return true;
     }
 
+    // Own-only property read. An earlier getter on the same object can delete
+    // a later name out of the snapshot; V8 skips such names
+    // (`LookupIterator::OWN` + "do not serialize it") where a prototype-walking
+    // `obj->get()` would emit an `undefined` (or a leaked inherited value).
+    // Returns an empty JSValue when the property is gone, matching
+    // CloneSerializer::getProperty in SerializedScriptValue.cpp.
+    JSValue getOwnProperty(JSObject* object, const Identifier& propertyName)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+        bool found = object->methodTable()->getOwnPropertySlot(object, m_globalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!found)
+            return {};
+        RELEASE_AND_RETURN(scope, slot.getValue(m_globalObject, propertyName));
+    }
+
+    // Shared body of writeArray / writePlainObject: emit the key then the
+    // value for every own name still present, skipping ones a getter removed.
+    // `skipLength` is set only for arrays, whose `length` is not a data
+    // property; a plain object's own `length` key is serialized normally.
+    bool writeOwnProperties(JSObject* obj, const PropertyNameArrayBuilder& names, bool skipLength, uint32_t& propsWritten)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        propsWritten = 0;
+        for (auto& name : names) {
+            if (skipLength && name == m_vm.propertyNames->length) continue;
+            JSValue propValue = getOwnProperty(obj, name);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!propValue) continue;
+            if (auto index = parseIndex(name)) {
+                writeTag(V8Tag::kUint32);
+                writeVarint(*index);
+            } else {
+                writeStringView(StringView(name.string()));
+            }
+            bool ok = writeValue(propValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!ok) return false;
+            propsWritten++;
+        }
+        return true;
+    }
+
     bool writeArray(JSObject* array)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -681,21 +725,9 @@ private:
         array->methodTable()->getOwnPropertyNames(array, m_globalObject, names, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
         uint32_t propsWritten = 0;
-        for (auto& name : names) {
-            if (name == m_vm.propertyNames->length) continue;
-            JSValue propValue = array->get(m_globalObject, name);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (auto index = parseIndex(name)) {
-                writeTag(V8Tag::kUint32);
-                writeVarint(*index);
-            } else {
-                writeStringView(StringView(name.string()));
-            }
-            bool ok = writeValue(propValue);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!ok) return false;
-            propsWritten++;
-        }
+        bool ok = writeOwnProperties(array, names, /* skipLength */ true, propsWritten);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!ok) return false;
 
         writeTag(V8Tag::kEndSparseJSArray);
         writeVarint(propsWritten);
@@ -711,20 +743,9 @@ private:
         obj->methodTable()->getOwnPropertyNames(obj, m_globalObject, names, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
         uint32_t propsWritten = 0;
-        for (auto& name : names) {
-            JSValue propValue = obj->get(m_globalObject, name);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (auto index = parseIndex(name)) {
-                writeTag(V8Tag::kUint32);
-                writeVarint(*index);
-            } else {
-                writeStringView(StringView(name.string()));
-            }
-            bool ok = writeValue(propValue);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!ok) return false;
-            propsWritten++;
-        }
+        bool ok = writeOwnProperties(obj, names, /* skipLength */ false, propsWritten);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!ok) return false;
         writeTag(V8Tag::kEndJSObject);
         writeVarint(propsWritten);
         return true;
@@ -908,7 +929,23 @@ private:
         case V8Tag::kObjectReference: {
             auto id = readVarint();
             if (!id || *id >= m_objectIds.size()) break;
-            return m_objectIds.at(*id);
+            JSValue referenced = m_objectIds.at(*id);
+            // V8's ReadObject consumes a trailing kArrayBufferView after ANY
+            // tag that resolved to an ArrayBuffer, including an object
+            // reference: a raw v8.Serializer emits the second view over an
+            // already-seen buffer as `^<id> V<subtag>...`. Without this peek
+            // the orphaned 'V' is read as the parent's next value and rejects
+            // the whole frame.
+            if (JSObject* referencedObj = referenced.getObject()) {
+                if (auto* jsBuffer = dynamicDowncast<JSArrayBuffer>(referencedObj)) {
+                    auto next = peekTag();
+                    if (next && *next == V8Tag::kArrayBufferView) {
+                        m_position++;
+                        RELEASE_AND_RETURN(scope, readArrayBufferView(jsBuffer));
+                    }
+                }
+            }
+            return referenced;
         }
         case V8Tag::kBeginJSObject:
             RELEASE_AND_RETURN(scope, readPlainObject());

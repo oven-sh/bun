@@ -1,8 +1,19 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { fork } from "child_process";
-import { bunEnv, bunExe, gcTick, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, nodeExe, tempDir } from "harness";
 import path from "path";
+
+// Several tests below inject hand-crafted wire bytes onto the advanced IPC
+// channel by having the child `fs.writeSync()` directly to the channel fd.
+// That only works where the channel is a plain POSIX fd (a socketpair end):
+// on Windows the channel is a libuv named pipe whose handle the child-side
+// runtime has already claimed with `uv_pipe_open` + `uv_read_start` before
+// user code runs, so a raw synchronous write to the same fd is not a
+// supported operation and the frame never reaches the parent. The decoder
+// and frame-rejection paths these tests cover are platform-independent and
+// are exercised by the Linux, macOS, and ASAN lanes.
+const rawInjection = it.skipIf(isWindows);
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
   it("the subprocess should be defined and the child should send", done => {
@@ -173,7 +184,7 @@ describe("ipc mode advanced", () => {
     expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
   });
 
-  it("a dense array whose trailer property count disagrees with the stream is rejected", async () => {
+  rawInjection("a dense array whose trailer property count disagrees with the stream is rejected", async () => {
     // V8 (and Node) emit arrays with the dense tag 'A' and end them with
     // kEndDenseJSArray followed by two redundant varints: the number of extra
     // named properties and the length. Both must match what was actually
@@ -219,7 +230,7 @@ describe("ipc mode advanced", () => {
   // This is the authoritative byte output of that serializer for
   // `{ view: new Uint8Array([10, 20, 30]) }` at wire version 15, where the
   // view record carries a trailing flags varint the reader must consume.
-  it("a raw V8 ArrayBuffer plus ArrayBufferView record deserializes to a typed array", async () => {
+  rawInjection("a raw V8 ArrayBuffer plus ArrayBufferView record deserializes to a typed array", async () => {
     const payload = "ff0f6f22047669657742030a141e56420003007b01";
     const { promise, resolve } = Promise.withResolvers<any>();
     await using child = Bun.spawn({
@@ -240,6 +251,43 @@ describe("ipc mode advanced", () => {
     const got = await promise;
     expect(got).toEqual({ view: new Uint8Array([10, 20, 30]) });
     expect(got.view).toBeInstanceOf(Uint8Array);
+    expect(await child.exited).toBe(0);
+  });
+
+  // V8's reader consumes a trailing kArrayBufferView after ANY tag that
+  // resolved to an ArrayBuffer, including an object reference. A raw
+  // `new v8.Serializer()` emits the second of two views over the same
+  // ArrayBuffer as `kObjectReference(<buffer id>) kArrayBufferView ...`; the
+  // orphaned 'V' must be consumed as the referenced buffer's view, not read
+  // as the parent container's next value (which would reject the frame).
+  // Payload is `new v8.Serializer()` output for `{pair: [a, b]}` where
+  // `a = new Uint8Array(ab, 0, 2)` and `b = new Uint8Array(ab, 2, 2)` share
+  // an `ArrayBuffer([10, 20, 30, 40])`.
+  rawInjection("two views over one ArrayBuffer via kObjectReference share the buffer", async () => {
+    const payload = "ff0f6f220470616972410242040a141e2856420002005e0256420202002400027b01";
+    const { promise, resolve } = Promise.withResolvers<any>();
+    await using child = Bun.spawn({
+      cmd: [
+        process.execPath,
+        "-e",
+        `const p = Buffer.from("${payload}", "hex");
+         const be = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+         require("fs").writeSync(3, Buffer.concat([be(p.length), p]));`,
+      ],
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      env: bunEnv,
+      ipc(message) {
+        resolve(message);
+      },
+    });
+    const got = await promise;
+    expect(got.pair).toEqual([new Uint8Array([10, 20]), new Uint8Array([30, 40])]);
+    // The defining property of the kObjectReference form: both views are
+    // backed by the SAME ArrayBuffer, at their original offsets.
+    expect(got.pair[0].buffer).toBe(got.pair[1].buffer);
+    expect(got.pair[0].byteOffset).toBe(0);
+    expect(got.pair[1].byteOffset).toBe(2);
     expect(await child.exited).toBe(0);
   });
 });
@@ -401,6 +449,30 @@ describe("ipc mode advanced structured clone", () => {
     expect(Buffer.isBuffer(got.buf)).toBe(true);
     expect(got.cyclic[1]).toBe(got.cyclic);
     expect(got.shared[0]).toBe(got.shared[1]);
+  });
+
+  // V8's serializer snapshots the own key list, then re-checks own-ness
+  // before reading each value ("If the property is no longer found, do not
+  // serialize it"). A getter that deletes a sibling must therefore not
+  // produce an `undefined`-valued (or inherited) entry for the deleted key;
+  // a prototype-walking `[[Get]]` on the stale name list would.
+  it("a property deleted by an earlier getter is omitted, not serialized as undefined", async () => {
+    using dir = tempDir("ipc-adv-deleted-prop", { "echo.cjs": ECHO_CHILD });
+    const sent = {
+      get a() {
+        delete (this as any).b;
+        return 1;
+      },
+      b: 2,
+      done: true,
+    };
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), bunExe(), sent);
+
+    // `toEqual` treats `{b: undefined}` and `{}` as equal, so assert the key
+    // list directly: `b` must not exist at all on the received object.
+    expect(Object.keys(got).sort()).toEqual(["a", "done"]);
+    expect("b" in got).toBe(false);
+    expect(got.a).toBe(1);
   });
 
   // The serializer must enumerate only an array's own keys. Probing every

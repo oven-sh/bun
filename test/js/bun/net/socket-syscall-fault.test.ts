@@ -28,11 +28,7 @@ test.skipIf(skip)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // `stderrTail` is only populated when the fixture did not exit cleanly, so
     // the abort/assertion message shows up in the failure diff.
     expect({

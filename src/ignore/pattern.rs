@@ -76,7 +76,15 @@ impl Pattern {
         if prefix > rel_to_base.len() || body[..prefix] != rel_to_base[..prefix] {
             return false;
         }
-        wildmatch(body, rel_to_base, WildmatchFlags::PATHNAME)
+        // dir.c advances BOTH sides past the literal prefix before calling
+        // wildmatch. This is observable: a `**` run that starts right after
+        // the prefix becomes component-anchored (`a**/b` matches `ab` and
+        // `ax/y/b`), which it would not be in the un-stripped pattern.
+        wildmatch(
+            &body[prefix..],
+            &rel_to_base[prefix..],
+            WildmatchFlags::PATHNAME,
+        )
     }
 }
 
@@ -300,6 +308,21 @@ mod tests {
         assert!(p.matches(&buf, b"doc/a.txt", b"a.txt", false));
         assert!(!p.matches(&buf, b"doc/sub/a.txt", b"a.txt", false));
         assert!(!p.matches(&buf, b"adoc/a.txt", b"a.txt", false));
+    }
+
+    // dir.c `match_pathname()` strips the literal prefix from both sides
+    // before calling wildmatch; a `**` starting right after it is therefore
+    // component-anchored.
+    #[test]
+    fn literal_prefix_is_stripped_before_wildmatch_like_dir_c() {
+        let (buf, p) = parse(b"a**/b").expect("pattern");
+        assert!(p.matches(&buf, b"ab", b"ab", false));
+        assert!(p.matches(&buf, b"a/x/b", b"b", false));
+        assert!(p.matches(&buf, b"ax/y/b", b"b", false));
+        assert!(!p.matches(&buf, b"axb", b"axb", false));
+        let (buf, p) = parse(b"x**/**").expect("pattern");
+        assert!(p.matches(&buf, b"x", b"x", false));
+        assert!(p.matches(&buf, b"xq/r", b"r", false));
     }
 
     #[test]

@@ -384,7 +384,13 @@ fn parse_entry(
     };
 
     if path_range.0 == path_range.1 {
-        return Err(GitError::Corrupt("index: empty path"));
+        // `gitformat-index.txt` ("Split index"): a replacement entry in the
+        // top-level index of a split index has an empty name (the real name
+        // lives in the shared index named by the `link` extension). git
+        // never writes an empty entry name otherwise, so report the feature,
+        // not corruption. The zero-replacement split index is caught by the
+        // `link` arm of `parse_extensions` instead.
+        return Err(GitError::Unsupported("split index (empty entry name)"));
     }
 
     Ok(IndexEntry {
@@ -1029,13 +1035,34 @@ mod tests {
         }
     }
 
+    /// `git update-index --split-index` produces a top-level index whose
+    /// replacement entries have an empty name and that carries a `link`
+    /// extension. Both shapes (with and without replacement entries) must
+    /// surface as `Unsupported`, never `Corrupt`.
     #[test]
-    fn empty_path_rejected() {
-        let data = encode(2, &[SpecEntry::new(b"", 1)]);
-        assert!(matches!(
-            Index::parse(&data),
-            Err(GitError::Corrupt("index: empty path"))
-        ));
+    fn split_index_is_unsupported_not_corrupt() {
+        let link_payload = [0u8; 20];
+        for version in [2u32, 3, 4] {
+            // With replacement entries: the empty name is hit first.
+            let data = encode_with_extensions(
+                version,
+                &[SpecEntry::new(b"", 1)],
+                &[(b"link", &link_payload)],
+            );
+            assert!(matches!(
+                Index::parse(&data),
+                Err(GitError::Unsupported("split index (empty entry name)"))
+            ));
+            // Empty path with no `link` extension is reported the same way.
+            let data = encode(version, &[SpecEntry::new(b"", 1)]);
+            assert!(matches!(Index::parse(&data), Err(GitError::Unsupported(_))));
+            // Without replacement entries: the `link` extension is hit.
+            let data = encode_with_extensions(version, &[], &[(b"link", &link_payload)]);
+            assert!(matches!(
+                Index::parse(&data),
+                Err(GitError::Unsupported("split index (link extension)"))
+            ));
+        }
     }
 
     #[test]

@@ -263,6 +263,35 @@ fn double_star_rules() {
     t2.assert_ignored(false, b"a/b", false);
 }
 
+// dir.c `match_pathname()` advances past the literal no-wildcard prefix and
+// hands wildmatch only the remainder, so a `**` run that begins right after
+// that prefix is component-anchored even though it is mid-component in the
+// written pattern. Verified against `git check-ignore` (git 2.50.1).
+#[test]
+fn double_star_right_after_the_literal_prefix_is_component_anchored() {
+    let t = Tree::new(vec![(b"".as_slice(), b"a**/b\nx**/**\n/y**/\n".as_slice())]);
+    // `a**/b` => prefix `a` + `**/b` (zero or more directories).
+    t.assert_ignored(true, b"ab", false);
+    t.assert_ignored(true, b"a/b", false);
+    t.assert_ignored(true, b"a/x/b", false);
+    t.assert_ignored(true, b"ax/y/b", false);
+    t.assert_ignored(false, b"zab", false);
+    t.assert_ignored(false, b"axb", false);
+    // `x**/**` => prefix `x` + a trailing `**`: matches `x` itself.
+    t.assert_ignored(true, b"x", false);
+    t.assert_ignored(true, b"xq/r", false);
+    // `/y**/` (dir-only) => prefix `y` + a trailing `**`.
+    t.assert_ignored(true, b"y", true);
+    t.assert_ignored(false, b"y", false);
+    t.assert_ignored(true, b"yy/zz", true);
+    // A `**` after a zero-length prefix keeps its in-pattern context: `[a]`
+    // precedes it, so it is NOT component-anchored and degrades to `*`.
+    let t2 = Tree::new(vec![(b"".as_slice(), b"[a]**/b\n".as_slice())]);
+    t2.assert_ignored(true, b"a/b", false);
+    t2.assert_ignored(true, b"aX/b", false);
+    t2.assert_ignored(false, b"a/x/b", false);
+}
+
 // gitignore(5) EXAMPLES: the `/*` + `!/foo` + `/foo/*` + `!/foo/bar` idiom.
 #[test]
 fn doc_example_exclude_everything_except_foo_bar() {

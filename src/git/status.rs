@@ -251,12 +251,17 @@ fn worktree_modified(
     // DATA_CHANGED: with no content filters, a size difference is a content
     // difference. The index stores `st_size` truncated to 32 bits
     // (`gitformat-index.txt`), so compare in that width like git does.
-    if e.stat.size != (w.size as u32) {
+    // `read-cache.c:ie_modified`: a cached size of 0 must NOT be trusted —
+    // it is either an entry whose stat data was never recorded or a
+    // racily-clean entry that `ce_smudge_racily_clean_entry` deliberately
+    // smudged to 0 — so fall through to the content comparison instead.
+    if e.stat.size != (w.size as u32) && e.stat.size != 0 {
         return Ok(true);
     }
     // Remaining cached stat fields, all stored 32-bit-truncated on disk.
     // Nanoseconds are intentionally not compared (default git build).
-    let stat_clean = e.stat.mtime_s == (w.mtime_s as u32)
+    let stat_clean = e.stat.size == (w.size as u32)
+        && e.stat.mtime_s == (w.mtime_s as u32)
         && e.stat.ctime_s == (w.ctime_s as u32)
         && e.stat.dev == (w.dev as u32)
         && e.stat.ino == (w.ino as u32)
@@ -566,6 +571,46 @@ mod tests {
         };
         assert_eq!(
             fx2.run_opts(&listing, StatusOptions::default(), Some(1)),
+            vec![(b"f".to_vec(), code(b' ', b'M'))]
+        );
+    }
+
+    /// `read-cache.c:ce_smudge_racily_clean_entry` writes a cached size of 0
+    /// for racily-clean entries so that later readers re-check the content.
+    /// A 0 cached size must therefore fall through to hashing
+    /// (`ie_modified`), never be reported as modified from the size alone.
+    #[test]
+    fn smudged_zero_size_entry_is_rehashed_not_reported_modified() {
+        let content = b"abcd".to_vec();
+        let oid = fake_hash(&content);
+        let mut smudged = clean_stat();
+        smudged.size = 0;
+        let mut e = SpecEntry::new(b"f", 0);
+        e.oid = oid;
+        e.stat = smudged;
+        let fx = Fixture {
+            index_data: encode(2, &[e]),
+            head: vec![tree_entry(b"f", oid, 0o100644)],
+            blobs: vec![(b"f".to_vec(), content.clone())],
+        };
+        // The real file is 4 bytes; everything else in the stat cache
+        // matches. Exactly one content read, reported clean.
+        let mut w = wt(b"f", &smudged);
+        w.size = content.len() as u64;
+        assert!(
+            fx.run_opts(&[w], StatusOptions::default(), Some(1))
+                .is_empty()
+        );
+        // Same shape but the on-disk content really is different: " M".
+        let fx2 = Fixture {
+            blobs: vec![(b"f".to_vec(), b"dcba!".to_vec())],
+            index_data: fx.index_data.clone(),
+            head: fx.head,
+        };
+        let mut w = wt(b"f", &smudged);
+        w.size = 5;
+        assert_eq!(
+            fx2.run_opts(&[w], StatusOptions::default(), Some(1)),
             vec![(b"f".to_vec(), code(b' ', b'M'))]
         );
     }

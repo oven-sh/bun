@@ -40,6 +40,7 @@ members = [
   "src/dns",
   "src/dotenv",
   "src/event_loop",
+  "src/file_index",
   "src/exe_format",
   "src/highway",
   "src/http_jsc",
@@ -363,6 +364,7 @@ bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
 bun_errno = { path = "src/errno" }
+bun_file_index = { path = "src/file_index" }
 bun_fuzzy = { path = "src/fuzzy" }
 bun_git = { path = "src/git" }
 bun_glob = { path = "src/glob" }

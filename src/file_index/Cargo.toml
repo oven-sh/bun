@@ -1,0 +1,22 @@
+[package]
+name = "bun_file_index"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true
+memchr.workspace = true
+bun_alloc.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_fuzzy.workspace = true
+bun_glob.workspace = true
+bun_ignore.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true

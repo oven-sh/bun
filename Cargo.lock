@@ -770,18 +770,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_file_index"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_collections",
+ "bun_core",
+ "bun_fuzzy",
+ "bun_glob",
+ "bun_ignore",
+ "bun_sys",
+ "bun_threading",
+ "libc",
+ "memchr",
+]
+
+[[package]]
 name = "bun_fuzzy"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "memchr",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -790,18 +798,10 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_collections",
- "bun_core",
  "bun_libdeflate_sys",
  "bun_sha_hmac",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "memchr",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -944,13 +944,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "memchr",
- "scopeguard",
- "strum",
 ]
 
 [[package]]

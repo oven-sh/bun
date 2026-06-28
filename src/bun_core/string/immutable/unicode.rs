@@ -719,7 +719,16 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 break 'output Vec::new();
             }
 
-            let mut out = vec![0u16; out_length];
+            let mut out: Vec<u16> = Vec::new();
+            out.try_reserve_exact(out_length)
+                .map_err(|_| ToUTF16Error::OutOfMemory)?;
+            // SAFETY: `out_length` u16s were just reserved and `write_bytes`
+            // zero-fills all of them before `set_len` exposes them. `write_bytes`
+            // is a memset; `Vec::resize`/`fill` are scalar loops in debug builds.
+            unsafe {
+                core::ptr::write_bytes(out.as_mut_ptr(), 0, out_length);
+                out.set_len(out_length);
+            }
 
             let res = simdutf::convert::utf8::to::utf16::with_errors::le(bytes, &mut out);
             if res.status == simdutf::Status::SUCCESS {
@@ -732,7 +741,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 return Ok(Some((out, [0; 3], 0)));
             }
 
-            // `out` was `vec![0u16; out_length]`; `first_non_ascii_idx <= out.len()`.
+            // `out.len() == out_length`; `first_non_ascii_idx <= out.len()`.
             out.truncate(first_non_ascii_idx);
             break 'output out;
         }

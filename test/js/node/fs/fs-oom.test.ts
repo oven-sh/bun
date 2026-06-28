@@ -1,7 +1,8 @@
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { closeSync, readFileSync, writeSync } from "fs";
-import { isLinux, isPosix } from "harness";
+import { closeSync, readFileSync, writeFileSync, writeSync } from "fs";
+import { bunEnv, bunExe, isASAN, isLinux, isPosix, tempDir } from "harness";
+import { join } from "path";
 setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
 
 // /dev/zero reports a size of 0. So we need a separate test for reDgular files that are huge.
@@ -46,3 +47,68 @@ if (isLinux) {
     });
   });
 }
+
+// The UTF-8 -> UTF-16 converters behind `fs.readFile*(.., "utf8")`,
+// `Buffer.prototype.toString("utf8")` and `TextDecoder.decode` size their
+// output buffer from a `simdutf` length query. That allocation must fail as a
+// catchable error, not abort the process, when it cannot be satisfied
+// (observed in the wild as a `capacity overflow` panic from an oversized
+// length). Reproduce the failure deterministically with ASAN's per-allocation
+// cap: the 32 MiB input fits under the 48 MiB limit, but the ~64 MiB UTF-16
+// output does not, so exactly that allocation returns null.
+describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catchable", () => {
+  test("readFileSync, readFile, Buffer.toString and TextDecoder recover", async () => {
+    const SIZE = 32 * 1024 * 1024;
+    using dir = tempDir("utf16-alloc-oom", {});
+    const file = join(String(dir), "big-utf8.txt");
+    // Valid UTF-8 whose first character is non-ASCII ('\u00e9' = C3 A9), so the
+    // decoder must build a (SIZE - 1)-code-unit UTF-16 buffer (~2x SIZE bytes).
+    const payload = Buffer.alloc(SIZE, "a");
+    payload[0] = 0xc3;
+    payload[1] = 0xa9;
+    writeFileSync(file, payload);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("fs");
+        const file = ${JSON.stringify(file)};
+        const results = [];
+        const report = e => ({ name: e.name, code: e.code });
+        try { fs.readFileSync(file, "utf8"); results.push("SYNC_UNEXPECTED_SUCCESS"); }
+        catch (e) { results.push(report(e)); }
+        await fs.promises.readFile(file, "utf8").then(
+          () => results.push("ASYNC_UNEXPECTED_SUCCESS"),
+          e => results.push(report(e)),
+        );
+        const big = Buffer.alloc(${SIZE}, "a"); big[0] = 0xc3; big[1] = 0xa9;
+        try { big.toString("utf8"); results.push("TOSTRING_UNEXPECTED_SUCCESS"); }
+        catch (e) { results.push(report(e)); }
+        try { new TextDecoder().decode(big); results.push("DECODE_UNEXPECTED_SUCCESS"); }
+        catch (e) { results.push(report(e)); }
+        console.log(JSON.stringify(results));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=48"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      // ASAN prints a benign "failed to allocate" WARNING line per recovered
+      // failure; drain it but do not assert on it.
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
+      { name: "Error", code: "ENOMEM" },
+      { name: "Error", code: "ENOMEM" },
+      { name: "Error", code: "ERR_STRING_TOO_LONG" },
+      { name: "RangeError", code: undefined },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});

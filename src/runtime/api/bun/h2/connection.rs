@@ -143,6 +143,14 @@ pub trait Sink {
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
     }
+    /// Transition shim companion to `is_local_stream`: the highest stream id the embedder's legacy
+    /// layer has ever allocated or processed. The engine never sees outbound HEADERS, so once a
+    /// locally-opened stream is evicted after full close `is_local_stream` forgets it; this
+    /// high-water mark is what still distinguishes it (closed, §5.1) from an id neither peer ever
+    /// used (idle — where any frame but HEADERS/PRIORITY is a connection PROTOCOL_ERROR).
+    fn last_local_stream_id(&self) -> u32 {
+        0
+    }
 }
 
 pub struct Connection {
@@ -660,6 +668,15 @@ impl Connection {
     ) -> bool {
         let increment =
             u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
+        // §5.1: WINDOW_UPDATE on an idle stream is a connection error of type PROTOCOL_ERROR.
+        if self.is_idle_stream(sink, hdr.stream_id) {
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"WINDOW_UPDATE on idle stream",
+            );
+            return true;
+        }
         // §6.9.1: a 0 increment is an error (connection error on stream 0).
         if increment == 0 {
             if hdr.stream_id == 0 {
@@ -704,6 +721,21 @@ impl Connection {
     }
 
     // ---- Stream-level inbound ------------------------------------------
+
+    /// RFC 9113 §5.1: is `stream_id` idle, i.e. never opened by either peer? The engine is blind
+    /// to locally-initiated streams (the legacy encoder sends them — transition shim), so a stream
+    /// it has never seen is idle only if the embedder did not open it either and it is above both
+    /// sides' high-water marks; ids at or below them existed and were evicted after full close,
+    /// which makes them closed (a stream error), not idle (a connection error).
+    fn is_idle_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        if stream_id == 0 || sink.is_local_stream(stream_id) {
+            return false;
+        }
+        match self.streams.get(&stream_id) {
+            Some(s) => s.state == State::Idle,
+            None => stream_id > self.last_stream_id && stream_id > sink.last_local_stream_id(),
+        }
+    }
 
     /// RFC 9113 §6.2 HEADERS: strip padding/priority, then begin (or complete) the header block.
     fn handle_headers(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
@@ -756,6 +788,13 @@ impl Connection {
                 ErrorCode::ProtocolError,
                 b"invalid stream id for HEADERS",
             );
+            return true;
+        }
+        // §5.1 / §8.4: a server only creates streams with PUSH_PROMISE (which reserves the
+        // promised id before its HEADERS arrive), so a HEADERS frame a client receives on a
+        // stream it never opened is on an idle stream: a connection error of PROTOCOL_ERROR.
+        if !self.is_server && self.is_idle_stream(sink, hdr.stream_id) {
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"HEADERS on idle stream");
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
@@ -1084,6 +1123,13 @@ impl Connection {
             return StreamedDataStart::Fatal;
         }
 
+        // §5.1: DATA on an idle stream — one neither peer ever opened — is a connection error of
+        // type PROTOCOL_ERROR. Only a closed/evicted stream gets the STREAM_CLOSED reset below.
+        if self.is_idle_stream(sink, hdr.stream_id) {
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA on idle stream");
+            return StreamedDataStart::Fatal;
+        }
+
         if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
             let recv_init = self.local_settings.initial_window_size;
@@ -1206,6 +1252,13 @@ impl Connection {
             }
         }
 
+        // §5.1: DATA on an idle stream — one neither peer ever opened — is a connection error of
+        // type PROTOCOL_ERROR. Only a closed/evicted stream gets the STREAM_CLOSED reset below.
+        if self.is_idle_stream(sink, hdr.stream_id) {
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA on idle stream");
+            return true;
+        }
+
         // Per-stream flow control + state check, decided under a scoped borrow so the self.* calls
         // below don't alias the streams map.
         enum DataDecision {
@@ -1225,7 +1278,7 @@ impl Connection {
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
         let decision = match self.streams.get_mut(&hdr.stream_id) {
-            // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
+            // §5.1: DATA for a closed or evicted stream is a STREAM_CLOSED stream error.
             None => DataDecision::Rst(ErrorCode::StreamClosed),
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
@@ -1309,17 +1362,16 @@ impl Connection {
     /// RFC 9113 §6.4 RST_STREAM.
     fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-        // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
-        let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
-            Some(s) if s.state != State::Idle => {
-                s.state = State::Closed;
-                false
-            }
-            _ => true,
-        };
-        // Transition shim: a stream the embedder opened locally (legacy outbound) is not idle even
-        // though this engine never saw its HEADERS go out.
-        if on_idle && sink.is_local_stream(hdr.stream_id) {
+        // §5.1: RST_STREAM on an idle stream is a connection PROTOCOL_ERROR.
+        if self.is_idle_stream(sink, hdr.stream_id) {
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
+            return true;
+        }
+        if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+            s.state = State::Closed;
+        } else if sink.is_local_stream(hdr.stream_id) {
+            // Transition shim: a stream the embedder opened locally (legacy outbound) is not idle
+            // even though this engine never saw its HEADERS go out.
             let send_init = self.remote_settings.initial_window_size;
             let recv_init = self.local_settings.initial_window_size;
             let s = self
@@ -1327,17 +1379,10 @@ impl Connection {
                 .entry(hdr.stream_id)
                 .or_insert_with(|| Stream::new(send_init, recv_init));
             s.state = State::Closed;
-            on_idle = false;
-        }
-        // §5.1: a stream evicted after full close (per-request memory release) is
-        // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
-        // below the highest stream id this connection has processed has existed.
-        if on_idle && hdr.stream_id <= self.last_stream_id {
+        } else {
+            // §5.1: a stream evicted after full close (per-request memory release) is closed,
+            // not idle — a late RST_STREAM on it MUST be tolerated.
             return false;
-        }
-        if on_idle {
-            self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
-            return true;
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
         false

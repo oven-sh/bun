@@ -306,6 +306,30 @@ describe("frame structure (checklist §2,§3)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
     c.destroy();
   });
+
+  // RFC 9113 §5.1: receiving any frame other than HEADERS or PRIORITY on a stream in the
+  // idle state MUST be treated as a connection error of type PROTOCOL_ERROR.
+  test("DATA on an idle stream is a PROTOCOL_ERROR (§5.1)", async () => {
+    const c = await RawH2.connect(port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    c.sendFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("x")); // stream 1 was never opened
+    const goaway = await c.waitForGoaway();
+    expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
+    c.destroy();
+  });
+
+  test("WINDOW_UPDATE on an idle stream is a PROTOCOL_ERROR (§5.1)", async () => {
+    const c = await RawH2.connect(port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    const inc = Buffer.alloc(4);
+    inc.writeUInt32BE(1, 0);
+    c.sendFrame(FrameType.WINDOW_UPDATE, 0, 1, inc); // stream 1 was never opened
+    const goaway = await c.waitForGoaway();
+    expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
+    c.destroy();
+  });
 });
 
 describe("stream-id rules (checklist §3)", () => {
@@ -543,6 +567,97 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
       await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
       expect(Buffer.concat(pushedData).length).toBe(0);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
+describe("frames on idle streams at the client (RFC 9113 §5.1)", () => {
+  // §5.1: receiving any frame other than HEADERS or PRIORITY on an idle stream MUST be treated
+  // as a connection error of type PROTOCOL_ERROR. A client's peer (a server) can only create
+  // streams with PUSH_PROMISE (§8.4), so for a client that has only opened stream 1:
+  //   - DATA/WINDOW_UPDATE on stream 5 (an odd id the client never allocated) is on an idle stream
+  //   - HEADERS on stream 2 (an even id that was never PUSH_PROMISEd) is on an idle stream
+  // The session must error and GOAWAY(PROTOCOL_ERROR) instead of staying "healthy" and letting
+  // later requests multiplex onto a connection whose peer is provably confused.
+  const windowUpdateInc = Buffer.alloc(4);
+  windowUpdateInc.writeUInt32BE(1, 0);
+  // A DATA frame header declaring a 4096-byte payload with only 10 bytes behind it: the
+  // client's incremental-DATA path (frame larger than the bytes available) must make the
+  // same idle-stream decision as a fully-buffered DATA frame.
+  const partialData = Buffer.alloc(9 + 10, 0x61);
+  partialData.writeUIntBE(4096, 0, 3);
+  partialData.writeUInt8(FrameType.DATA, 3);
+  partialData.writeUInt8(0, 4);
+  partialData.writeUInt32BE(5, 5);
+
+  const cases: [string, Buffer][] = [
+    ["DATA on an unopened client-numbered stream", encodeFrame(FrameType.DATA, 0x1, 5, Buffer.from("x"))],
+    ["a partially received DATA on an unopened stream", partialData],
+    // :status 200 (HPACK static table index 8), END_HEADERS | END_STREAM.
+    ["HEADERS on a never-promised even stream", encodeFrame(FrameType.HEADERS, 0x5, 2, Buffer.from([0x88]))],
+    ["WINDOW_UPDATE on an unopened stream", encodeFrame(FrameType.WINDOW_UPDATE, 0, 5, windowUpdateInc)],
+  ];
+
+  test.each(cases)("%s is a connection PROTOCOL_ERROR", async (_name, illegalFrame) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const sessionError = new Promise<NodeJS.ErrnoException>(resolve => client.once("error", resolve));
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
+      raw.socket!.write(illegalFrame);
+      // The client answers with a connection-level GOAWAY carrying PROTOCOL_ERROR...
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goaway.payload.readUInt32BE(4)).toBe(ErrorCode.PROTOCOL_ERROR);
+      // ...and surfaces it as a session error, tearing the session down.
+      const err = await sessionError;
+      expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+      expect(err.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+      expect(client.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // The converse: a stream the client opened and then aborted before any response arrived is
+  // closed, not idle, once it is evicted. A stale server frame for it must stay a stream-level
+  // error; promoting it to a connection error would kill the whole session for a routine race.
+  test("a late frame on a locally aborted, already evicted stream is not a connection error", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    let sessionError: Error | null = null;
+    client.on("error", e => (sessionError = e));
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      // Abort the request before the server ever responds, then let the stream fully close.
+      const closed = once(req, "close");
+      req.close();
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      await closed;
+      // One inbound round-trip so the client evicts the closed stream from its tables.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      // A stale server frame for the aborted stream lands in the next read.
+      raw.sendFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("late"));
+      const opaque = Buffer.from("idlechk!");
+      raw.sendFrame(FrameType.PING, 0, 0, opaque);
+      // The connection is still alive and serviceable: the second PING is ACKed, no GOAWAY
+      // went out, and the session never errored.
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(opaque));
+      expect(raw.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(sessionError).toBeNull();
+      expect(client.destroyed).toBe(false);
     } finally {
       client.destroy();
       raw.close();

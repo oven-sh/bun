@@ -5695,6 +5695,13 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
+    fn last_local_stream_id(&self) -> u32 {
+        // The legacy layer's high-water mark: bumped for every locally allocated stream
+        // (get_next_stream) and every stream registered through handle_received_stream_id,
+        // so it also remembers locally-opened streams evicted after full close.
+        self.last_stream_id.get()
+    }
+
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.

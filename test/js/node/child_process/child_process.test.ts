@@ -354,6 +354,20 @@ describe("spawnSync()", () => {
     const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
     expect(isValidSemver(stdout.trim())).toBe(true);
   });
+
+  it.if(isLinux)("detached: true starts the child in a new process group", () => {
+    // /proc/self/stat field 5 is pgrp; parse after the last ')' since comm may contain spaces.
+    const pgrp = (stat: string) => stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2];
+    const childPgid = (detached: boolean) =>
+      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" }).stdout);
+    const parentPgid = pgrp(fs.readFileSync("/proc/self/stat", "utf8"));
+
+    expect(parentPgid).toMatch(/^\d+$/);
+    expect(childPgid(false)).toBe(parentPgid);
+    const detachedPgid = childPgid(true);
+    expect(detachedPgid).toMatch(/^\d+$/);
+    expect(detachedPgid).not.toBe(parentPgid);
+  });
 });
 
 describe("execFileSync()", () => {

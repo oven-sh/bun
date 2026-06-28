@@ -15,7 +15,7 @@ use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::StartOptions as FileResponseStreamOptions;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 
-use crate::server::{AnyServer, FileResponseStream, RangeRequest, write_status};
+use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest, write_status};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
@@ -479,10 +479,6 @@ impl FileRoute {
                 break 'brk 206;
             }
 
-            if size == 0 && file_type == FileType::File && this.status_code == 200 {
-                break 'brk 204;
-            }
-
             this.status_code
         };
 
@@ -492,15 +488,12 @@ impl FileRoute {
         resp.write_mark();
         this.write_headers(resp);
 
-        // Bodiless statuses end here — before the range switch, so a 304 (which
-        // can win over a satisfiable Range per RFC 9110 §13.2.2) doesn't emit
-        // Content-Range.
-        match status_code {
-            204 | 205 | 304 | 307 | 308 => {
-                resp.end_without_body(resp.should_close_connection());
-                return;
-            }
-            _ => {}
+        // Bodiless statuses end before the range switch so a 304 emits no
+        // Content-Range. FileResponseStream ships via sendfile/write(), so a
+        // null-body status must never start it; 307/308 routes skip it too.
+        if HTTPStatusText::is_null_body(status_code) || matches!(status_code, 307 | 308) {
+            resp.end_without_body(resp.should_close_connection());
+            return;
         }
 
         let (body_offset, body_len): (u64, Option<u64>) = match range {

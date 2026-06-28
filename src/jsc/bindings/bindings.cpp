@@ -394,10 +394,11 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         case AsymmetricMatcherConstructorType::Object: {
-            if (otherProp.isObject()) {
+            // Jest: `typeof other === 'object'` (null matches, functions do not; no instanceof fallback)
+            if (otherProp.isNull() || (otherProp.isObject() && !otherProp.isCallable())) {
                 return AsymmetricMatcherResult::PASS;
             }
-            break;
+            return AsymmetricMatcherResult::FAIL;
         }
 
         case AsymmetricMatcherConstructorType::InstanceOf: {

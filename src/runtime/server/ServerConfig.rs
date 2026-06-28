@@ -329,6 +329,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
+    path_has_user_head_route: bool,
 ) where
     T: StaticRouteLike<SSL>,
 {
@@ -380,7 +381,12 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     }
 
     let user_data = entry.cast::<core::ffi::c_void>();
-    app.head(path, Some(head::<SSL, T>), user_data);
+    // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
+    // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
+    // handler route: uWS keeps the last registration for the same method and path.
+    if !path_has_user_head_route && serves_head(&method) {
+        app.head(path, Some(head::<SSL, T>), user_data);
+    }
     match method {
         http_method::Optional::Any => {
             app.any(path, Some(handler::<SSL, T>), user_data);
@@ -390,6 +396,16 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
             while let Some(method_) = iter.next() {
                 app.method(method_, path, Some(handler::<SSL, T>), user_data);
             }
+        }
+    }
+}
+
+/// Whether a static route registered for `method` should also answer HEAD.
+fn serves_head(method: &http_method::Optional) -> bool {
+    match method {
+        http_method::Optional::Any => true,
+        http_method::Optional::Method(set) => {
+            set.contains(Method::GET) || set.contains(Method::HEAD)
         }
     }
 }
@@ -408,6 +424,7 @@ pub(crate) fn apply_static_route_h3<T>(
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
+    path_has_user_head_route: bool,
 ) where
     T: StaticRouteLike<false>,
 {
@@ -443,7 +460,9 @@ pub(crate) fn apply_static_route_h3<T>(
         };
     }
 
-    app.head(path, entry, head::<T>);
+    if !path_has_user_head_route && serves_head(&method) {
+        app.head(path, entry, head::<T>);
+    }
     match method {
         http_method::Optional::Any => app.any(path, entry, handler::<T>),
         http_method::Optional::Method(m) => {
@@ -909,6 +928,10 @@ impl ServerConfig {
                         Method::TRACE,
                     ];
                     let mut found = false;
+                    // HEAD must behave like GET without a body (RFC 9110 section 9.3.2),
+                    // so a route object with a GET handler and no HEAD entry also answers HEAD.
+                    let mut derived_head_route: Option<UserRouteBuilder> = None;
+                    let mut has_head_route = false;
                     for method in METHODS {
                         let method_name = bun_core::String::static_(method.as_str());
                         if let Some(function) = value.get_own(global, &method_name)? {
@@ -918,16 +941,27 @@ impl ServerConfig {
                             found = true;
 
                             if function.is_callable() {
+                                let callback = function.with_async_context_if_needed(global);
                                 args.user_routes_to_build.push(UserRouteBuilder {
                                     route: RouteDeclaration {
                                         path: ZBox::from_bytes(&*path),
                                         method: RouteMethod::Specific(method),
                                     },
-                                    callback: Strong::create(
-                                        function.with_async_context_if_needed(global),
-                                        global,
-                                    ),
+                                    callback: Strong::create(callback, global),
                                 });
+                                match method {
+                                    Method::GET => {
+                                        derived_head_route = Some(UserRouteBuilder {
+                                            route: RouteDeclaration {
+                                                path: ZBox::from_bytes(&*path),
+                                                method: RouteMethod::Specific(Method::HEAD),
+                                            },
+                                            callback: Strong::create(callback, global),
+                                        });
+                                    }
+                                    Method::HEAD => has_head_route = true,
+                                    _ => {}
+                                }
                             } else if let Some(html_route) =
                                 AnyRoute::from_js(global, &path, function, &mut *init_ctx)?
                             {
@@ -939,7 +973,16 @@ impl ServerConfig {
                                     route: html_route,
                                     method: http_method::Optional::Method(method_set),
                                 });
+                                if method == Method::HEAD {
+                                    has_head_route = true;
+                                }
                             }
+                        }
+                    }
+
+                    if let Some(builder) = derived_head_route {
+                        if !has_head_route {
+                            args.user_routes_to_build.push(builder);
                         }
                     }
 

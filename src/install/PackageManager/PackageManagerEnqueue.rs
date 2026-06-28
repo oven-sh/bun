@@ -2010,11 +2010,9 @@ fn get_or_put_resolved_package_with_find_result(
             unsafe { &*(*this_ptr).lockfile }
                 .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         } else {
-            // `bun update <name>`: every dependency on `<name>` is an update
-            // target, whichever workspace or parent package it belongs to.
-            // Matching only the current workspace's direct entry leaves every
-            // other resolution of `<name>` pinned to the lockfile-loaded
-            // version via `get_package_id`'s satisfies fallback, forever.
+            // `bun update <name>`: every dependency on `<name>` is an update target,
+            // whichever workspace or parent package it belongs to. Otherwise other
+            // resolutions stay pinned via `get_package_id`'s satisfies fallback.
             UpdateRequest::contains_name_hash(&this.update_requests, dependency.name_hash)
         };
 

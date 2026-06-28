@@ -584,10 +584,8 @@ async function writePerNameBunfig() {
 }
 
 // `bun update <name>` must re-resolve every dependency on `<name>` in the
-// lockfile, each within its own version range. A workspace whose range
-// resolves to a different version than the current workspace's used to be
-// left pinned to the lockfile-loaded entry forever: `bun outdated -r` kept
-// reporting it, but `bun update <name>` could never apply it.
+// lockfile, each within its own version range, including a workspace whose
+// range resolves to a different version than the current workspace's.
 it("should update every resolution of a named package across workspaces", async () => {
   setHandler(
     await perNameRegistry(join(package_dir, ".tarballs"), {
@@ -625,9 +623,8 @@ it("should update every resolution of a named package across workspaces", async 
   expect(await lockedSharedResolutions()).toEqual(['"shared@1.1.0"', '"shared@2.0.0"']);
 });
 
-// Same bug one level deeper: a dependency on `<name>` owned by a preserved
-// parent package never re-entered the resolve queue, so `bun update <name>`
-// left it on the lockfile-loaded version.
+// The same invariant one level deeper: a dependency on `<name>` owned by a
+// preserved parent package must also re-enter the resolve queue.
 it("should update transitive resolutions of a named package", async () => {
   setHandler(
     await perNameRegistry(join(package_dir, ".tarballs"), {

@@ -9,7 +9,7 @@
  * captured from the in-tree TOML.parse at generation time.
  *
  * If no path is given, clones toml-lang/toml-test into a temp directory.
- * Only tests in the TOML v1.0.0 manifest (tests/files-toml-1.0.0) are used.
+ * Only tests in the TOML v1.1.0 manifest (tests/files-toml-1.1.0) are used.
  * --check regenerates to a temp file and exits 1 if it differs from the
  * committed suite.
  *
@@ -44,9 +44,9 @@ const commit = execSync("git rev-parse HEAD", { cwd: suiteDir }).toString().trim
 const testsDir = join(suiteDir, "tests");
 
 // ---------------------------------------------------------------------------
-// 2. Read the TOML v1.0.0 manifest
+// 2. Read the TOML v1.1.0 manifest
 // ---------------------------------------------------------------------------
-const manifest = readFileSync(join(testsDir, "files-toml-1.0.0"), "utf8")
+const manifest = readFileSync(join(testsDir, "files-toml-1.1.0"), "utf8")
   .split("\n")
   .filter(line => line.endsWith(".toml"))
   .sort();
@@ -226,7 +226,7 @@ const kindUnion = DATETIME_KINDS.map(k => JSON.stringify(k)).join(" | ");
 
 let output = `// Tests generated from the official toml-lang/toml-test conformance suite
 // Generated from toml-test commit: ${commit}
-// Scope: TOML v1.0.0 manifest (tests/files-toml-1.0.0): ${validCases.length} valid + ${outOfRangeCases.length} out-of-range-integer + ${invalidCases.length} invalid cases
+// Scope: TOML v1.1.0 manifest (tests/files-toml-1.1.0): ${validCases.length} valid + ${outOfRangeCases.length} out-of-range-integer + ${invalidCases.length} invalid cases
 // Regenerate with: bun bd test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test]
 //
 // TOML type encoding asserted by these tests:
@@ -234,7 +234,8 @@ let output = `// Tests generated from the official toml-lang/toml-test conforman
 //     requires lossless handling or an error — see the out-of-range block)
 //   - datetime, datetime-local, date-local, time-local: string (source text);
 //     compared after normalizing the date/time separator to "T", uppercasing
-//     "Z", and trimming trailing zeros from fractional seconds
+//     "Z", padding omitted seconds to ":00", and trimming trailing zeros from
+//     fractional seconds
 //   - invalid documents throw SyntaxError; the exact full message is asserted
 //     where the in-tree parser produced a SyntaxError at generation time
 //
@@ -258,6 +259,7 @@ function normalizeDateTime(s: string): string {
   return s
     .replace(/^(\\d{4}-\\d{2}-\\d{2})[ tT]/, "$1T")
     .replace(/[zZ]$/, "Z")
+    .replace(/(^|T)(\\d{2}:\\d{2})(?=[Z+-]|$)/, "$1$2:00")
     .replace(/\\.(\\d+)/, (_, frac: string) => {
       const trimmed = frac.replace(/0+$/, "");
       return trimmed === "" ? "" : "." + trimmed;

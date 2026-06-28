@@ -1,6 +1,6 @@
 // Tests generated from the official toml-lang/toml-test conformance suite
 // Generated from toml-test commit: 4d77658d0f903a13454ece4dbfeafeb7c7f31c9f
-// Scope: TOML v1.0.0 manifest (tests/files-toml-1.0.0): 208 valid + 1 out-of-range-integer + 488 invalid cases
+// Scope: TOML v1.1.0 manifest (tests/files-toml-1.1.0): 217 valid + 1 out-of-range-integer + 481 invalid cases
 // Regenerate with: bun bd test/js/bun/toml/generate_toml_test_suite.ts [path-to-toml-test]
 //
 // TOML type encoding asserted by these tests:
@@ -8,7 +8,8 @@
 //     requires lossless handling or an error — see the out-of-range block)
 //   - datetime, datetime-local, date-local, time-local: string (source text);
 //     compared after normalizing the date/time separator to "T", uppercasing
-//     "Z", and trimming trailing zeros from fractional seconds
+//     "Z", padding omitted seconds to ":00", and trimming trailing zeros from
+//     fractional seconds
 //   - invalid documents throw SyntaxError; the exact full message is asserted
 //     where the in-tree parser produced a SyntaxError at generation time
 //
@@ -40,6 +41,7 @@ function normalizeDateTime(s: string): string {
   return s
     .replace(/^(\d{4}-\d{2}-\d{2})[ tT]/, "$1T")
     .replace(/[zZ]$/, "Z")
+    .replace(/(^|T)(\d{2}:\d{2})(?=[Z+-]|$)/, "$1$2:00")
     .replace(/\.(\d+)/, (_, frac: string) => {
       const trimmed = frac.replace(/0+$/, "");
       return trimmed === "" ? "" : "." + trimmed;
@@ -399,6 +401,18 @@ describe("toml-test/valid", () => {
     expectTomlEqual(TOML.parse(input), expected);
   });
 
+  test("valid/datetime/no-seconds", () => {
+    const input: string =
+      "# Seconds are optional in date-time and time.\nwithout-seconds-1 = 13:37\nwithout-seconds-2 = 1979-05-27 07:32Z\nwithout-seconds-3 = 1979-05-27 07:32-07:00\nwithout-seconds-4 = 1979-05-27T07:32\n";
+    const expected: any = {
+      "without-seconds-1": dt("time-local", "13:37:00"),
+      "without-seconds-2": dt("datetime", "1979-05-27T07:32:00Z"),
+      "without-seconds-3": dt("datetime", "1979-05-27T07:32:00-07:00"),
+      "without-seconds-4": dt("datetime-local", "1979-05-27T07:32:00"),
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
   test("valid/datetime/timezone", () => {
     const input: string =
       "utc  = 1987-07-05T17:45:56Z\npdt  = 1987-07-05T17:45:56-05:00\nnzst = 1987-07-05T17:45:56+12:00\nnzdt = 1987-07-05T17:45:56+13:00  # DST\n";
@@ -713,6 +727,32 @@ describe("toml-test/valid", () => {
       tbl_arr_tbl: { arr_tbl: [{ one: 1 }] },
       tbl_tbl_empty: { tbl_0: {} },
       tbl_tbl_val: { tbl_1: { one: 1 } },
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/inline-table/newline-comment", () => {
+    const input: string =
+      '# Identical to newline.toml, but with comments that shouldn\'t affect the\n# results.\n\ntrailing-comma-1 = {#comment\n\t# comment\n\tc = 1,#comment\n\t#comment\n}#comment\ntrailing-comma-2 = { c = 1, }#comment\n\ntbl-1 = {#comment\n\thello = "world",#comment\n\t1     = 2,#comment\n\tarr   = [1,#comment\n\t         2,#comment\n\t         3,#comment\n\t        ],#comment\n\ttbl = {#comment\n\t\t k = 1,#comment\n\t}#comment\n}#comment\n\ntbl-2 = {#comment\n\tk = """\n\tHello\n\t"""#comment\n}#comment\n';
+    const expected: any = {
+      "tbl-1": { "1": 2, hello: "world", arr: [1, 2, 3], tbl: { k: 1 } },
+      "tbl-2": { k: "\tHello\n\t" },
+      "trailing-comma-1": { c: 1 },
+      "trailing-comma-2": { c: 1 },
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/inline-table/newline", () => {
+    const input: string =
+      '# TOML 1.1 supports newlines in inline tables and trailing commas.\n\ntrailing-comma-1 = {\n\tc = 1,\n}\ntrailing-comma-2 = { c = 1, }\n\ntbl-1 = {\n\thello = "world",\n\t1     = 2,\n\tarr   = [1,\n\t         2,\n\t         3,\n\t        ],\n\ttbl = {\n\t\t k = 1,\n\t}\n}\n\ntbl-2 = {\n\tk = """\n\tHello\n\t"""\n}\n\nno-newline-before-brace = {\na = 1,\nb = 2}\n\nno-newline-before-brace-with-comma = {\na = 1,\nb = 2,}\n';
+    const expected: any = {
+      "no-newline-before-brace": { a: 1, b: 2 },
+      "no-newline-before-brace-with-comma": { a: 1, b: 2 },
+      "tbl-1": { "1": 2, hello: "world", arr: [1, 2, 3], tbl: { k: 1 } },
+      "tbl-2": { k: "\tHello\n\t" },
+      "trailing-comma-1": { c: 1 },
+      "trailing-comma-2": { c: 1 },
     };
     expectTomlEqual(TOML.parse(input), expected);
   });
@@ -1076,7 +1116,246 @@ describe("toml-test/valid", () => {
     expectTomlEqual(TOML.parse(input), expected);
   });
 
-  test("valid/spec-1.0.0/array-0", () => {
+  test("valid/spec-1.1.0/common-0", () => {
+    const input: string =
+      '# This is a full-line comment\nkey = "value"  # This is a comment at the end of a line\nanother = "# This is not a comment"\n';
+    const expected: any = { another: "# This is not a comment", key: "value" };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-1", () => {
+    const input: string = 'key = "value"\n';
+    const expected: any = { key: "value" };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-10", () => {
+    const input: string =
+      '# RECOMMENDED\n\napple.type = "fruit"\napple.skin = "thin"\napple.color = "red"\n\norange.type = "fruit"\norange.skin = "thick"\norange.color = "orange"\n';
+    const expected: any = {
+      apple: { color: "red", skin: "thin", type: "fruit" },
+      orange: { color: "orange", skin: "thick", type: "fruit" },
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-11", () => {
+    const input: string = '3.14159 = "pi"\n';
+    const expected: any = { "3": { "14159": "pi" } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-12", () => {
+    const input: string = 'str = "I\'m a string. \\"You can quote me\\". Name\\tJos\\xE9\\nLocation\\tSF."\n';
+    const expected: any = { str: 'I\'m a string. "You can quote me". Name\tJosé\nLocation\tSF.' };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-13", () => {
+    const input: string = 'str1 = """\nRoses are red\nViolets are blue"""\n';
+    const expected: any = { str1: "Roses are red\nViolets are blue" };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-14", () => {
+    const input: string =
+      '# On a Unix system, the above multi-line string will most likely be the same as:\nstr2 = "Roses are red\\nViolets are blue"\n\n# On a Windows system, it will most likely be equivalent to:\nstr3 = "Roses are red\\r\\nViolets are blue"\n';
+    const expected: any = {
+      str2: "Roses are red\nViolets are blue",
+      str3: "Roses are red\r\nViolets are blue",
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-15", () => {
+    const input: string =
+      '# The following strings are byte-for-byte equivalent:\nstr1 = "The quick brown fox jumps over the lazy dog."\n\nstr2 = """\nThe quick brown \\\n\n\n  fox jumps over \\\n    the lazy dog."""\n\nstr3 = """\\\n       The quick brown \\\n       fox jumps over \\\n       the lazy dog.\\\n       """\n';
+    const expected: any = {
+      str1: "The quick brown fox jumps over the lazy dog.",
+      str2: "The quick brown fox jumps over the lazy dog.",
+      str3: "The quick brown fox jumps over the lazy dog.",
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-16", () => {
+    const input: string =
+      'str4 = """Here are two quotation marks: "". Simple enough."""\n# str5 = """Here are three quotation marks: """."""  # INVALID\nstr5 = """Here are three quotation marks: ""\\"."""\nstr6 = """Here are fifteen quotation marks: ""\\"""\\"""\\"""\\"""\\"."""\n\n# "This," she said, "is just a pointless statement."\nstr7 = """"This," she said, "is just a pointless statement.""""\n';
+    const expected: any = {
+      str4: 'Here are two quotation marks: "". Simple enough.',
+      str5: 'Here are three quotation marks: """.',
+      str6: 'Here are fifteen quotation marks: """"""""""""""".',
+      str7: '"This," she said, "is just a pointless statement."',
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-17", () => {
+    const input: string =
+      "# What you see is what you get.\nwinpath  = 'C:\\Users\\nodejs\\templates'\nwinpath2 = '\\\\ServerX\\admin$\\system32\\'\nquoted   = 'Tom \"Dubs\" Preston-Werner'\nregex    = '<\\i\\c*\\s*>'\n";
+    const expected: any = {
+      quoted: 'Tom "Dubs" Preston-Werner',
+      regex: "<\\i\\c*\\s*>",
+      winpath: "C:\\Users\\nodejs\\templates",
+      winpath2: "\\\\ServerX\\admin$\\system32\\",
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-18", () => {
+    const input: string =
+      "regex2 = '''I [dw]on't need \\d{2} apples'''\nlines  = '''\nThe first newline is\ntrimmed in literal strings.\n   All other whitespace\n   is preserved.\n'''\n";
+    const expected: any = {
+      lines: "The first newline is\ntrimmed in literal strings.\n   All other whitespace\n   is preserved.\n",
+      regex2: "I [dw]on't need \\d{2} apples",
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-19", () => {
+    const input: string =
+      "quot15 = '''Here are fifteen quotation marks: \"\"\"\"\"\"\"\"\"\"\"\"\"\"\"'''\n\n# apos15 = '''Here are fifteen apostrophes: ''''''''''''''''''  # INVALID\napos15 = \"Here are fifteen apostrophes: '''''''''''''''\"\n\n# 'That,' she said, 'is still pointless.'\nstr = ''''That,' she said, 'is still pointless.''''\n";
+    const expected: any = {
+      apos15: "Here are fifteen apostrophes: '''''''''''''''",
+      quot15: 'Here are fifteen quotation marks: """""""""""""""',
+      str: "'That,' she said, 'is still pointless.'",
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-20", () => {
+    const input: string = "int1 = +99\nint2 = 42\nint3 = 0\nint4 = -17\n";
+    const expected: any = { int1: 99, int2: 42, int3: 0, int4: -17 };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-21", () => {
+    const input: string =
+      "int5 = 1_000\nint6 = 5_349_221\nint7 = 53_49_221  # Indian number system grouping\nint8 = 1_2_3_4_5  # VALID but discouraged\n";
+    const expected: any = { int5: 1000, int6: 5349221, int7: 5349221, int8: 12345 };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-22", () => {
+    const input: string =
+      "# hexadecimal with prefix `0x`\nhex1 = 0xDEADBEEF\nhex2 = 0xdeadbeef\nhex3 = 0xdead_beef\n\n# octal with prefix `0o`\noct1 = 0o01234567\noct2 = 0o755 # useful for Unix file permissions\n\n# binary with prefix `0b`\nbin1 = 0b11010110\n";
+    const expected: any = {
+      bin1: 214,
+      hex1: 3735928559,
+      hex2: 3735928559,
+      hex3: 3735928559,
+      oct1: 342391,
+      oct2: 493,
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-23", () => {
+    const input: string =
+      "# fractional\nflt1 = +1.0\nflt2 = 3.1415\nflt3 = -0.01\n\n# exponent\nflt4 = 5e+22\nflt5 = 1e06\nflt6 = -2E-2\n\n# both\nflt7 = 6.626e-34\n";
+    const expected: any = {
+      flt1: 1,
+      flt2: 3.1415,
+      flt3: -0.01,
+      flt4: 5e22,
+      flt5: 1000000,
+      flt6: -0.02,
+      flt7: 6.626e-34,
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-24", () => {
+    const input: string = "flt8 = 224_617.445_991_228\n";
+    const expected: any = { flt8: 224617.445991228 };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-25", () => {
+    const input: string =
+      "# infinity\nsf1 = inf  # positive infinity\nsf2 = +inf # positive infinity\nsf3 = -inf # negative infinity\n\n# not a number\nsf4 = nan  # actual sNaN/qNaN encoding is implementation-specific\nsf5 = +nan # same as `nan`\nsf6 = -nan # valid, actual encoding is implementation-specific\n";
+    const expected: any = { sf1: Infinity, sf2: Infinity, sf3: -Infinity, sf4: NaN, sf5: NaN, sf6: NaN };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-26", () => {
+    const input: string = "bool1 = true\nbool2 = false\n";
+    const expected: any = { bool1: true, bool2: false };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-27", () => {
+    const input: string =
+      "odt1 = 1979-05-27T07:32:00Z\nodt2 = 1979-05-27T00:32:00-07:00\nodt3 = 1979-05-27T00:32:00.5-07:00\nodt4 = 1979-05-27T00:32:00.999-07:00\n";
+    const expected: any = {
+      odt1: dt("datetime", "1979-05-27T07:32:00Z"),
+      odt2: dt("datetime", "1979-05-27T00:32:00-07:00"),
+      odt3: dt("datetime", "1979-05-27T00:32:00.5-07:00"),
+      odt4: dt("datetime", "1979-05-27T00:32:00.999-07:00"),
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-28", () => {
+    const input: string = "odt4 = 1979-05-27 07:32:00Z\n";
+    const expected: any = { odt4: dt("datetime", "1979-05-27T07:32:00Z") };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-29", () => {
+    const input: string = "odt5 = 1979-05-27 07:32Z\nodt6 = 1979-05-27 07:32-07:00\n";
+    const expected: any = {
+      odt5: dt("datetime", "1979-05-27T07:32:00Z"),
+      odt6: dt("datetime", "1979-05-27T07:32:00-07:00"),
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-3", () => {
+    const input: string = 'key = "value"\nbare_key = "value"\nbare-key = "value"\n1234 = "value"\n';
+    const expected: any = { "1234": "value", "bare-key": "value", bare_key: "value", key: "value" };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-30", () => {
+    const input: string = "ldt1 = 1979-05-27T07:32:00\nldt2 = 1979-05-27T07:32:00.5\nldt3 = 1979-05-27T00:32:00.999\n";
+    const expected: any = {
+      ldt1: dt("datetime-local", "1979-05-27T07:32:00"),
+      ldt2: dt("datetime-local", "1979-05-27T07:32:00.5"),
+      ldt3: dt("datetime-local", "1979-05-27T00:32:00.999"),
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-31", () => {
+    const input: string = "ldt3 = 1979-05-27T07:32\n";
+    const expected: any = { ldt3: dt("datetime-local", "1979-05-27T07:32:00") };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-32", () => {
+    const input: string = "ld1 = 1979-05-27\n";
+    const expected: any = { ld1: dt("date-local", "1979-05-27") };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-33", () => {
+    const input: string = "lt1 = 07:32:00\nlt2 = 00:32:00.5\nlt3 = 00:32:00.999\n";
+    const expected: any = {
+      lt1: dt("time-local", "07:32:00"),
+      lt2: dt("time-local", "00:32:00.5"),
+      lt3: dt("time-local", "00:32:00.999"),
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-34", () => {
+    const input: string = "lt3 = 07:32\n";
+    const expected: any = { lt3: dt("time-local", "07:32:00") };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-35", () => {
     const input: string =
       'integers = [ 1, 2, 3 ]\ncolors = [ "red", "yellow", "green" ]\nnested_arrays_of_ints = [ [ 1, 2 ], [3, 4, 5] ]\nnested_mixed_array = [ [ 1, 2 ], ["a", "b", "c"] ]\nstring_array = [ "all", \'strings\', """are the same""", \'\'\'type\'\'\' ]\n\n# Mixed-type arrays are allowed\nnumbers = [ 0.1, 0.2, 0.5, 1, 2, 5 ]\ncontributors = [\n  "Foo Bar <foo@example.com>",\n  { name = "Baz Qux", email = "bazqux@example.com", url = "https://example.com/bazqux" }\n]\n';
     const expected: any = {
@@ -1104,22 +1383,157 @@ describe("toml-test/valid", () => {
     expectTomlEqual(TOML.parse(input), expected);
   });
 
-  test("valid/spec-1.0.0/array-1", () => {
+  test("valid/spec-1.1.0/common-36", () => {
     const input: string = "integers2 = [\n  1, 2, 3\n]\n\nintegers3 = [\n  1,\n  2, # this is ok\n]\n";
     const expected: any = { integers2: [1, 2, 3], integers3: [1, 2] };
     expectTomlEqual(TOML.parse(input), expected);
   });
 
-  test("valid/spec-1.0.0/array-of-tables-0", () => {
+  test("valid/spec-1.1.0/common-37", () => {
+    const input: string = "[table]\n";
+    const expected: any = { table: {} };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-38", () => {
     const input: string =
-      '[[products]]\nname = "Hammer"\nsku = 738594937\n\n[[products]]  # empty table within the array\n\n[[products]]\nname = "Nail"\nsku = 284758393\n\ncolor = "gray"\n';
+      '[table-1]\nkey1 = "some string"\nkey2 = 123\n\n[table-2]\nkey1 = "another string"\nkey2 = 456\n';
     const expected: any = {
-      products: [{ name: "Hammer", sku: 738594937 }, {}, { color: "gray", name: "Nail", sku: 284758393 }],
+      "table-1": { key1: "some string", key2: 123 },
+      "table-2": { key1: "another string", key2: 456 },
     };
     expectTomlEqual(TOML.parse(input), expected);
   });
 
-  test("valid/spec-1.0.0/array-of-tables-1", () => {
+  test("valid/spec-1.1.0/common-39", () => {
+    const input: string = '[dog."tater.man"]\ntype.name = "pug"\n';
+    const expected: any = { dog: { "tater.man": { type: { name: "pug" } } } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-4", () => {
+    const input: string =
+      '"127.0.0.1" = "value"\n"character encoding" = "value"\n"ʎǝʞ" = "value"\n\'key2\' = "value"\n\'quoted "value"\' = "value"\n';
+    const expected: any = {
+      "127.0.0.1": "value",
+      "character encoding": "value",
+      key2: "value",
+      'quoted "value"': "value",
+      "ʎǝʞ": "value",
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-40", () => {
+    const input: string =
+      "[a.b.c]            # this is best practice\n[ d.e.f ]          # same as [d.e.f]\n[ g .  h  . i ]    # same as [g.h.i]\n[ j . \"ʞ\" . 'l' ]  # same as [j.\"ʞ\".'l']\n";
+    const expected: any = {
+      a: { b: { c: {} } },
+      d: { e: { f: {} } },
+      g: { h: { i: {} } },
+      j: { "ʞ": { l: {} } },
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-41", () => {
+    const input: string =
+      "# [x] you\n# [x.y] don't\n# [x.y.z] need these\n[x.y.z.w] # for this to work\n\n[x] # defining a super-table afterward is ok\n";
+    const expected: any = { x: { y: { z: { w: {} } } } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-42", () => {
+    const input: string = "# VALID BUT DISCOURAGED\n[fruit.apple]\n[animal]\n[fruit.orange]\n";
+    const expected: any = { animal: {}, fruit: { apple: {}, orange: {} } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-43", () => {
+    const input: string = "# RECOMMENDED\n[fruit.apple]\n[fruit.orange]\n[animal]\n";
+    const expected: any = { animal: {}, fruit: { apple: {}, orange: {} } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-44", () => {
+    const input: string =
+      '# Top-level table begins.\nname = "Fido"\nbreed = "pug"\n\n# Top-level table ends.\n[owner]\nname = "Regina Dogman"\nmember_since = 1999-08-04\n';
+    const expected: any = {
+      breed: "pug",
+      name: "Fido",
+      owner: { member_since: dt("date-local", "1999-08-04"), name: "Regina Dogman" },
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-45", () => {
+    const input: string =
+      'fruit.apple.color = "red"\n# Defines a table named fruit\n# Defines a table named fruit.apple\n\nfruit.apple.taste.sweet = true\n# Defines a table named fruit.apple.taste\n# fruit and fruit.apple were already created\n';
+    const expected: any = { fruit: { apple: { color: "red", taste: { sweet: true } } } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-46", () => {
+    const input: string =
+      '[fruit]\napple.color = "red"\napple.taste.sweet = true\n\n# [fruit.apple]  # INVALID\n# [fruit.apple.taste]  # INVALID\n\n[fruit.apple.texture]  # you can add sub-tables\nsmooth = true\n';
+    const expected: any = {
+      fruit: { apple: { color: "red", taste: { sweet: true }, texture: { smooth: true } } },
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-47", () => {
+    const input: string =
+      'name = { first = "Tom", last = "Preston-Werner" }\npoint = {x=1, y=2}\nanimal = { type.name = "pug" }\ncontact = {\n    personal = {\n        name = "Donald Duck",\n        email = "donald@duckburg.com",\n    },\n    work = {\n        name = "Coin cleaner",\n        email = "donald@ScroogeCorp.com",\n    },\n}\n';
+    const expected: any = {
+      animal: { type: { name: "pug" } },
+      contact: {
+        personal: { email: "donald@duckburg.com", name: "Donald Duck" },
+        work: { email: "donald@ScroogeCorp.com", name: "Coin cleaner" },
+      },
+      name: { first: "Tom", last: "Preston-Werner" },
+      point: { x: 1, y: 2 },
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-48", () => {
+    const input: string =
+      '[name]\nfirst = "Tom"\nlast = "Preston-Werner"\n\n[point]\nx = 1\ny = 2\n\n[animal]\ntype.name = "pug"\n\n[contact.personal]\nname = "Donald Duck"\nemail = "donald@duckburg.com"\n\n[contact.work]\nname = "Coin cleaner"\nemail = "donald@ScroogeCorp.com"\n';
+    const expected: any = {
+      animal: { type: { name: "pug" } },
+      contact: {
+        personal: { email: "donald@duckburg.com", name: "Donald Duck" },
+        work: { email: "donald@ScroogeCorp.com", name: "Coin cleaner" },
+      },
+      name: { first: "Tom", last: "Preston-Werner" },
+      point: { x: 1, y: 2 },
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-49", () => {
+    const input: string = '[product]\ntype = { name = "Nail" }\n# type.edible = false  # INVALID\n';
+    const expected: any = { product: { type: { name: "Nail" } } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-50", () => {
+    const input: string = '[product]\ntype.name = "Nail"\n# type = { edible = false }  # INVALID\n';
+    const expected: any = { product: { type: { name: "Nail" } } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-51", () => {
+    const input: string =
+      '[[product]]\nname = "Hammer"\nsku = 738594937\n\n[[product]]  # empty table within the array\n\n[[product]]\nname = "Nail"\nsku = 284758393\n\ncolor = "gray"\n';
+    const expected: any = {
+      product: [{ name: "Hammer", sku: 738594937 }, {}, { color: "gray", name: "Nail", sku: 284758393 }],
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-52", () => {
     const input: string =
       '[[fruits]]\nname = "apple"\n\n[fruits.physical]  # subtable\ncolor = "red"\nshape = "round"\n\n[[fruits.varieties]]  # nested array of tables\nname = "red delicious"\n\n[[fruits.varieties]]\nname = "granny smith"\n\n\n[[fruits]]\nname = "banana"\n\n[[fruits.varieties]]\nname = "plantain"\n';
     const expected: any = {
@@ -1135,7 +1549,7 @@ describe("toml-test/valid", () => {
     expectTomlEqual(TOML.parse(input), expected);
   });
 
-  test("valid/spec-1.0.0/array-of-tables-2", () => {
+  test("valid/spec-1.1.0/common-53", () => {
     const input: string =
       "points = [ { x = 1, y = 2, z = 3 },\n           { x = 7, y = 8, z = 9 },\n           { x = 2, y = 4, z = 8 } ]\n";
     const expected: any = {
@@ -1148,134 +1562,7 @@ describe("toml-test/valid", () => {
     expectTomlEqual(TOML.parse(input), expected);
   });
 
-  test("valid/spec-1.0.0/boolean-0", () => {
-    const input: string = "bool1 = true\nbool2 = false\n";
-    const expected: any = { bool1: true, bool2: false };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/comment-0", () => {
-    const input: string =
-      '# This is a full-line comment\nkey = "value"  # This is a comment at the end of a line\nanother = "# This is not a comment"\n';
-    const expected: any = { another: "# This is not a comment", key: "value" };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/float-0", () => {
-    const input: string =
-      "# fractional\nflt1 = +1.0\nflt2 = 3.1415\nflt3 = -0.01\n\n# exponent\nflt4 = 5e+22\nflt5 = 1e06\nflt6 = -2E-2\n\n# both\nflt7 = 6.626e-34\n";
-    const expected: any = {
-      flt1: 1,
-      flt2: 3.1415,
-      flt3: -0.01,
-      flt4: 5e22,
-      flt5: 1000000,
-      flt6: -0.02,
-      flt7: 6.626e-34,
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/float-1", () => {
-    const input: string = "flt8 = 224_617.445_991_228\n";
-    const expected: any = { flt8: 224617.445991228 };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/float-2", () => {
-    const input: string =
-      "# infinity\nsf1 = inf  # positive infinity\nsf2 = +inf # positive infinity\nsf3 = -inf # negative infinity\n\n# not a number\nsf4 = nan  # actual sNaN/qNaN encoding is implementation-specific\nsf5 = +nan # same as `nan`\nsf6 = -nan # valid, actual encoding is implementation-specific\n";
-    const expected: any = { sf1: Infinity, sf2: Infinity, sf3: -Infinity, sf4: NaN, sf5: NaN, sf6: NaN };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/inline-table-0", () => {
-    const input: string =
-      'name = { first = "Tom", last = "Preston-Werner" }\npoint = { x = 1, y = 2 }\nanimal = { type.name = "pug" }\n';
-    const expected: any = {
-      animal: { type: { name: "pug" } },
-      name: { first: "Tom", last: "Preston-Werner" },
-      point: { x: 1, y: 2 },
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/inline-table-1", () => {
-    const input: string =
-      '[name]\nfirst = "Tom"\nlast = "Preston-Werner"\n\n[point]\nx = 1\ny = 2\n\n[animal]\ntype.name = "pug"\n';
-    const expected: any = {
-      animal: { type: { name: "pug" } },
-      name: { first: "Tom", last: "Preston-Werner" },
-      point: { x: 1, y: 2 },
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/inline-table-2", () => {
-    const input: string = '[product]\ntype = { name = "Nail" }\n# type.edible = false  # INVALID\n';
-    const expected: any = { product: { type: { name: "Nail" } } };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/inline-table-3", () => {
-    const input: string = '[product]\ntype.name = "Nail"\n# type = { edible = false }  # INVALID\n';
-    const expected: any = { product: { type: { name: "Nail" } } };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/integer-0", () => {
-    const input: string = "int1 = +99\nint2 = 42\nint3 = 0\nint4 = -17\n";
-    const expected: any = { int1: 99, int2: 42, int3: 0, int4: -17 };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/integer-1", () => {
-    const input: string =
-      "int5 = 1_000\nint6 = 5_349_221\nint7 = 53_49_221  # Indian number system grouping\nint8 = 1_2_3_4_5  # VALID but discouraged\n";
-    const expected: any = { int5: 1000, int6: 5349221, int7: 5349221, int8: 12345 };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/integer-2", () => {
-    const input: string =
-      "# hexadecimal with prefix `0x`\nhex1 = 0xDEADBEEF\nhex2 = 0xdeadbeef\nhex3 = 0xdead_beef\n\n# octal with prefix `0o`\noct1 = 0o01234567\noct2 = 0o755 # useful for Unix file permissions\n\n# binary with prefix `0b`\nbin1 = 0b11010110\n";
-    const expected: any = {
-      bin1: 214,
-      hex1: 3735928559,
-      hex2: 3735928559,
-      hex3: 3735928559,
-      oct1: 342391,
-      oct2: 493,
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/key-value-pair-0", () => {
-    const input: string = 'key = "value"\n';
-    const expected: any = { key: "value" };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/keys-0", () => {
-    const input: string = 'key = "value"\nbare_key = "value"\nbare-key = "value"\n1234 = "value"\n';
-    const expected: any = { "1234": "value", "bare-key": "value", bare_key: "value", key: "value" };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/keys-1", () => {
-    const input: string =
-      '"127.0.0.1" = "value"\n"character encoding" = "value"\n"ʎǝʞ" = "value"\n\'key2\' = "value"\n\'quoted "value"\' = "value"\n';
-    const expected: any = {
-      "127.0.0.1": "value",
-      "character encoding": "value",
-      key2: "value",
-      'quoted "value"': "value",
-      "ʎǝʞ": "value",
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/keys-3", () => {
+  test("valid/spec-1.1.0/common-6", () => {
     const input: string =
       'name = "Orange"\nphysical.color = "orange"\nphysical.shape = "round"\nsite."google.com" = true\n';
     const expected: any = {
@@ -1286,231 +1573,26 @@ describe("toml-test/valid", () => {
     expectTomlEqual(TOML.parse(input), expected);
   });
 
-  test("valid/spec-1.0.0/keys-4", () => {
+  test("valid/spec-1.1.0/common-7", () => {
     const input: string =
-      'fruit.name = "banana"     # this is best practice\nfruit. color = "yellow"    # same as fruit.color\nfruit . flavor = "banana"   # same as fruit.flavor\n';
+      'fruit.name = "banana"       # this is best practice\nfruit. color = "yellow"     # same as fruit.color\nfruit . flavor = "banana"   # same as fruit.flavor\n';
     const expected: any = { fruit: { color: "yellow", flavor: "banana", name: "banana" } };
     expectTomlEqual(TOML.parse(input), expected);
   });
 
-  test("valid/spec-1.0.0/keys-5", () => {
+  test("valid/spec-1.1.0/common-8", () => {
+    const input: string =
+      '# This makes the key "fruit" into a table.\nfruit.apple.smooth = true\n\n# So then you can add to the table "fruit" like so:\nfruit.orange = 2\n';
+    const expected: any = { fruit: { orange: 2, apple: { smooth: true } } };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/spec-1.1.0/common-9", () => {
     const input: string =
       '# VALID BUT DISCOURAGED\n\napple.type = "fruit"\norange.type = "fruit"\n\napple.skin = "thin"\norange.skin = "thick"\n\napple.color = "red"\norange.color = "orange"\n';
     const expected: any = {
       apple: { color: "red", skin: "thin", type: "fruit" },
       orange: { color: "orange", skin: "thick", type: "fruit" },
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/keys-6", () => {
-    const input: string =
-      '# RECOMMENDED\n\napple.type = "fruit"\napple.skin = "thin"\napple.color = "red"\n\norange.type = "fruit"\norange.skin = "thick"\norange.color = "orange"\n';
-    const expected: any = {
-      apple: { color: "red", skin: "thin", type: "fruit" },
-      orange: { color: "orange", skin: "thick", type: "fruit" },
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/keys-7", () => {
-    const input: string = '3.14159 = "pi"\n';
-    const expected: any = { "3": { "14159": "pi" } };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/local-date-0", () => {
-    const input: string = "ld1 = 1979-05-27\n";
-    const expected: any = { ld1: dt("date-local", "1979-05-27") };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/local-date-time-0", () => {
-    const input: string = "ldt1 = 1979-05-27T07:32:00\nldt2 = 1979-05-27T00:32:00.999\n";
-    const expected: any = {
-      ldt1: dt("datetime-local", "1979-05-27T07:32:00"),
-      ldt2: dt("datetime-local", "1979-05-27T00:32:00.999"),
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/local-time-0", () => {
-    const input: string = "lt1 = 07:32:00\nlt2 = 00:32:00.999\n";
-    const expected: any = { lt1: dt("time-local", "07:32:00"), lt2: dt("time-local", "00:32:00.999") };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/offset-date-time-0", () => {
-    const input: string =
-      "odt1 = 1979-05-27T07:32:00Z\nodt2 = 1979-05-27T00:32:00-07:00\nodt3 = 1979-05-27T00:32:00.999-07:00\n";
-    const expected: any = {
-      odt1: dt("datetime", "1979-05-27T07:32:00Z"),
-      odt2: dt("datetime", "1979-05-27T00:32:00-07:00"),
-      odt3: dt("datetime", "1979-05-27T00:32:00.999-07:00"),
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/offset-date-time-1", () => {
-    const input: string = "odt4 = 1979-05-27 07:32:00Z\n";
-    const expected: any = { odt4: dt("datetime", "1979-05-27T07:32:00Z") };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/string-0", () => {
-    const input: string = 'str = "I\'m a string. \\"You can quote me\\". Name\\tJos\\u00E9\\nLocation\\tSF."\n';
-    const expected: any = { str: 'I\'m a string. "You can quote me". Name\tJosé\nLocation\tSF.' };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/string-1", () => {
-    const input: string = 'str1 = """\nRoses are red\nViolets are blue"""\n';
-    const expected: any = { str1: "Roses are red\nViolets are blue" };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/string-2", () => {
-    const input: string =
-      '# On a Unix system, the above multi-line string will most likely be the same as:\nstr2 = "Roses are red\\nViolets are blue"\n\n# On a Windows system, it will most likely be equivalent to:\nstr3 = "Roses are red\\r\\nViolets are blue"\n';
-    const expected: any = {
-      str2: "Roses are red\nViolets are blue",
-      str3: "Roses are red\r\nViolets are blue",
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/string-3", () => {
-    const input: string =
-      '# The following strings are byte-for-byte equivalent:\nstr1 = "The quick brown fox jumps over the lazy dog."\n\nstr2 = """\nThe quick brown \\\n\n\n  fox jumps over \\\n    the lazy dog."""\n\nstr3 = """\\\n       The quick brown \\\n       fox jumps over \\\n       the lazy dog.\\\n       """\n';
-    const expected: any = {
-      str1: "The quick brown fox jumps over the lazy dog.",
-      str2: "The quick brown fox jumps over the lazy dog.",
-      str3: "The quick brown fox jumps over the lazy dog.",
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/string-4", () => {
-    const input: string =
-      'str4 = """Here are two quotation marks: "". Simple enough."""\n# str5 = """Here are three quotation marks: """."""  # INVALID\nstr5 = """Here are three quotation marks: ""\\"."""\nstr6 = """Here are fifteen quotation marks: ""\\"""\\"""\\"""\\"""\\"."""\n\n# "This," she said, "is just a pointless statement."\nstr7 = """"This," she said, "is just a pointless statement.""""\n';
-    const expected: any = {
-      str4: 'Here are two quotation marks: "". Simple enough.',
-      str5: 'Here are three quotation marks: """.',
-      str6: 'Here are fifteen quotation marks: """"""""""""""".',
-      str7: '"This," she said, "is just a pointless statement."',
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/string-5", () => {
-    const input: string =
-      "# What you see is what you get.\nwinpath  = 'C:\\Users\\nodejs\\templates'\nwinpath2 = '\\\\ServerX\\admin$\\system32\\'\nquoted   = 'Tom \"Dubs\" Preston-Werner'\nregex    = '<\\i\\c*\\s*>'\n";
-    const expected: any = {
-      quoted: 'Tom "Dubs" Preston-Werner',
-      regex: "<\\i\\c*\\s*>",
-      winpath: "C:\\Users\\nodejs\\templates",
-      winpath2: "\\\\ServerX\\admin$\\system32\\",
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/string-6", () => {
-    const input: string =
-      "regex2 = '''I [dw]on't need \\d{2} apples'''\nlines  = '''\nThe first newline is\ntrimmed in raw strings.\n   All other whitespace\n   is preserved.\n'''\n";
-    const expected: any = {
-      lines: "The first newline is\ntrimmed in raw strings.\n   All other whitespace\n   is preserved.\n",
-      regex2: "I [dw]on't need \\d{2} apples",
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/string-7", () => {
-    const input: string =
-      "quot15 = '''Here are fifteen quotation marks: \"\"\"\"\"\"\"\"\"\"\"\"\"\"\"'''\n\n# apos15 = '''Here are fifteen apostrophes: ''''''''''''''''''  # INVALID\napos15 = \"Here are fifteen apostrophes: '''''''''''''''\"\n\n# 'That,' she said, 'is still pointless.'\nstr = ''''That,' she said, 'is still pointless.''''\n";
-    const expected: any = {
-      apos15: "Here are fifteen apostrophes: '''''''''''''''",
-      quot15: 'Here are fifteen quotation marks: """""""""""""""',
-      str: "'That,' she said, 'is still pointless.'",
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-0", () => {
-    const input: string = "[table]\n";
-    const expected: any = { table: {} };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-1", () => {
-    const input: string =
-      '[table-1]\nkey1 = "some string"\nkey2 = 123\n\n[table-2]\nkey1 = "another string"\nkey2 = 456\n';
-    const expected: any = {
-      "table-1": { key1: "some string", key2: 123 },
-      "table-2": { key1: "another string", key2: 456 },
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-2", () => {
-    const input: string = '[dog."tater.man"]\ntype.name = "pug"\n';
-    const expected: any = { dog: { "tater.man": { type: { name: "pug" } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-3", () => {
-    const input: string =
-      "[a.b.c]            # this is best practice\n[ d.e.f ]          # same as [d.e.f]\n[ g .  h  . i ]    # same as [g.h.i]\n[ j . \"ʞ\" . 'l' ]  # same as [j.\"ʞ\".'l']\n";
-    const expected: any = {
-      a: { b: { c: {} } },
-      d: { e: { f: {} } },
-      g: { h: { i: {} } },
-      j: { "ʞ": { l: {} } },
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-4", () => {
-    const input: string =
-      "# [x] you\n# [x.y] don't\n# [x.y.z] need these\n[x.y.z.w] # for this to work\n\n[x] # defining a super-table afterward is ok\n";
-    const expected: any = { x: { y: { z: { w: {} } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-5", () => {
-    const input: string = "# VALID BUT DISCOURAGED\n[fruit.apple]\n[animal]\n[fruit.orange]\n";
-    const expected: any = { animal: {}, fruit: { apple: {}, orange: {} } };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-6", () => {
-    const input: string = "# RECOMMENDED\n[fruit.apple]\n[fruit.orange]\n[animal]\n";
-    const expected: any = { animal: {}, fruit: { apple: {}, orange: {} } };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-7", () => {
-    const input: string =
-      '# Top-level table begins.\nname = "Fido"\nbreed = "pug"\n\n# Top-level table ends.\n[owner]\nname = "Regina Dogman"\nmember_since = 1999-08-04\n';
-    const expected: any = {
-      breed: "pug",
-      name: "Fido",
-      owner: { member_since: dt("date-local", "1999-08-04"), name: "Regina Dogman" },
-    };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-8", () => {
-    const input: string =
-      'fruit.apple.color = "red"\n# Defines a table named fruit\n# Defines a table named fruit.apple\n\nfruit.apple.taste.sweet = true\n# Defines a table named fruit.apple.taste\n# fruit and fruit.apple were already created\n';
-    const expected: any = { fruit: { apple: { color: "red", taste: { sweet: true } } } };
-    expectTomlEqual(TOML.parse(input), expected);
-  });
-
-  test("valid/spec-1.0.0/table-9", () => {
-    const input: string =
-      '[fruit]\napple.color = "red"\napple.taste.sweet = true\n\n# [fruit.apple]  # INVALID\n# [fruit.apple.taste]  # INVALID\n\n[fruit.apple.texture]  # you can add sub-tables\nsmooth = true\n';
-    const expected: any = {
-      fruit: { apple: { color: "red", taste: { sweet: true }, texture: { smooth: true } } },
     };
     expectTomlEqual(TOML.parse(input), expected);
   });
@@ -1599,6 +1681,12 @@ describe("toml-test/valid", () => {
     expectTomlEqual(TOML.parse(input), expected);
   });
 
+  test("valid/string/escape-esc", () => {
+    const input: string = 'esc = "\\e There is no escape! \\e"\n';
+    const expected: any = { esc: "\u001b There is no escape! \u001b" };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
   test("valid/string/escape-tricky", () => {
     const input: string =
       'end_esc = "String does not end here\\" but ends here\\\\"\nlit_end_esc = \'String ends here\\\'\n\nmultiline_unicode = """\n\\u00a0"""\n\nmultiline_not_unicode = """\n\\\\u0041"""\n\nmultiline_end_esc = """When will it end? \\"""...""\\" should be here\\""""\n\nlit_multiline_not_unicode = \'\'\'\n\\u007f\'\'\'\n\nlit_multiline_end = \'\'\'There is no escape\\\'\'\'\n';
@@ -1637,6 +1725,22 @@ describe("toml-test/valid", () => {
       quote: '|".',
       tab: "|\t.",
       unitseparator: "|\u001f.",
+    };
+    expectTomlEqual(TOML.parse(input), expected);
+  });
+
+  test("valid/string/hex-escape", () => {
+    const input: string =
+      '# \\x for the first 255 codepoints\n\nwhitespace      = "\\x20 \\x09 \\x1b \\x0d\\x0a"\nbs              = "\\x7f"\nnul             = "\\x00"\nhello           = "\\x68\\x65\\x6c\\x6c\\x6f\\x0a"\nhigher-than-127 = "S\\xf8rmirb\\xe6ren"\n\nmultiline = """\n\\x20 \\x09 \\x1b \\x0d\\x0a\n\\x7f\n\\x00\n\\x68\\x65\\x6c\\x6c\\x6f\\x0a\n\\x53\\xF8\\x72\\x6D\\x69\\x72\\x62\\xE6\\x72\\x65\\x6E\n"""\n\n# Not inside literals.\nliteral = \'\\x20 \\x09 \\x0d\\x0a\'\nmultiline-literal = \'\'\'\n\\x20 \\x09 \\x0d\\x0a\n\'\'\'\n';
+    const expected: any = {
+      bs: "\u007f",
+      hello: "hello\n",
+      "higher-than-127": "Sørmirbæren",
+      literal: "\\x20 \\x09 \\x0d\\x0a",
+      multiline: "  \t \u001b \r\n\n\u007f\n\u0000\nhello\n\nSørmirbæren\n",
+      "multiline-literal": "\\x20 \\x09 \\x0d\\x0a\n",
+      nul: "\u0000",
+      whitespace: "  \t \u001b \r\n",
     };
     expectTomlEqual(TOML.parse(input), expected);
   });
@@ -2678,6 +2782,17 @@ describe("toml-test/invalid", () => {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
+  test("invalid/control/multi-cr", () => {
+    const input: string = 'multi-cr   = """null\r"""\n';
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+  });
+
   test("invalid/control/multi-del", () => {
     const input: string = 'multi-del  = """null\u007f"""\n';
     let err: unknown;
@@ -2749,6 +2864,17 @@ describe("toml-test/invalid", () => {
 
   test("invalid/control/only-vt", () => {
     const input: string = "\u000b";
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+  });
+
+  test("invalid/control/rawmulti-cr", () => {
+    const input: string = "rawmulti-cr   = '''null\r'''\n";
     let err: unknown;
     try {
       TOML.parse(input);
@@ -3093,17 +3219,6 @@ describe("toml-test/invalid", () => {
   test("invalid/datetime/no-leads", () => {
     const input: string =
       '# Month "7" instead of "07"; the leading zero is required.\nno-leads = 1987-7-05T17:45:00Z\n';
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/datetime/no-secs", () => {
-    const input: string = "# No seconds in time.\nno-secs = 1987-07-05T17:45Z\n";
     let err: unknown;
     try {
       TOML.parse(input);
@@ -4039,51 +4154,6 @@ describe("toml-test/invalid", () => {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  test("invalid/inline-table/linebreak-01", () => {
-    const input: string =
-      "# No newlines are allowed between the curly braces unless they are valid within\n# a value.\nsimple = { a = 1 \n}\n";
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/inline-table/linebreak-02", () => {
-    const input: string = "t = {a=1,\nb=2}\n";
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/inline-table/linebreak-03", () => {
-    const input: string = "t = {a=1\n,b=2}\n";
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/inline-table/linebreak-04", () => {
-    const input: string = 'json_like = {\n          first = "Tom",\n          last = "Preston-Werner"\n}\n';
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
   test("invalid/inline-table/no-close-01", () => {
     const input: string = "a={\n";
     let err: unknown;
@@ -4231,18 +4301,6 @@ describe("toml-test/invalid", () => {
   test("invalid/inline-table/overwrite-10", () => {
     const input: string =
       '# Set implicit "b", overwrite "b" (illegal!) and then set another implicit.\n#\n# Caused panic: https://github.com/BurntSushi/toml/issues/403\na = {b.a = 1, b = 2, b.c = 3}\n';
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/inline-table/trailing-comma", () => {
-    const input: string =
-      "# A terminating comma (also called trailing comma) is not permitted after the\n# last key/value pair in an inline table\nabc = { abc = 123, }\n";
     let err: unknown;
     try {
       TOML.parse(input);
@@ -5665,17 +5723,6 @@ describe("toml-test/invalid", () => {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  test("invalid/local-datetime/no-secs", () => {
-    const input: string = "# No seconds in time.\nno-secs = 1987-07-05T17:45\n";
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
   test("invalid/local-datetime/no-t", () => {
     const input: string = '# No "t" or "T" between the date and time.\nno-t = 1987-07-0517:45:00\n';
     let err: unknown;
@@ -5743,17 +5790,6 @@ describe("toml-test/invalid", () => {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  test("invalid/local-time/no-secs", () => {
-    const input: string = "# No seconds in time.\nno-secs = 17:45\n";
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
   test("invalid/local-time/second-over", () => {
     const input: string =
       "# time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second\n#                           ; rules\nd = 00:00:61\n";
@@ -5810,52 +5846,7 @@ describe("toml-test/invalid", () => {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  test("invalid/spec-1.0.0/inline-table-2-0", () => {
-    const input: string = '[product]\ntype = { name = "Nail" }\ntype.edible = false  # INVALID\n';
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/spec-1.0.0/inline-table-3-0", () => {
-    const input: string = '[product]\ntype.name = "Nail"\ntype = { edible = false }  # INVALID\n';
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/spec-1.0.0/key-value-pair-1", () => {
-    const input: string = "key = # INVALID\n";
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/spec-1.0.0/keys-2", () => {
-    const input: string =
-      '= "no key name"  # INVALID\n"" = "blank"     # VALID but discouraged\n\'\' = \'blank\'     # VALID but discouraged\n';
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/spec-1.0.0/string-4-0", () => {
+  test("invalid/spec-1.1.0/common-16-0", () => {
     const input: string =
       'str4 = """Here are two quotation marks: "". Simple enough."""\nstr5 = """Here are three quotation marks: """."""  # INVALID\nstr5 = """Here are three quotation marks: ""\\"."""\nstr6 = """Here are fifteen quotation marks: ""\\"""\\"""\\"""\\"""\\"."""\n\n# "This," she said, "is just a pointless statement."\nstr7 = """"This," she said, "is just a pointless statement.""""\n';
     let err: unknown;
@@ -5867,7 +5858,7 @@ describe("toml-test/invalid", () => {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  test("invalid/spec-1.0.0/string-7-0", () => {
+  test("invalid/spec-1.1.0/common-19-0", () => {
     const input: string =
       "quot15 = '''Here are fifteen quotation marks: \"\"\"\"\"\"\"\"\"\"\"\"\"\"\"'''\n\napos15 = '''Here are fifteen apostrophes: ''''''''''''''''''  # INVALID\napos15 = \"Here are fifteen apostrophes: '''''''''''''''\"\n\n# 'That,' she said, 'is still pointless.'\nstr = ''''That,' she said, 'is still pointless.''''\n";
     let err: unknown;
@@ -5879,7 +5870,18 @@ describe("toml-test/invalid", () => {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  test("invalid/spec-1.0.0/table-9-0", () => {
+  test("invalid/spec-1.1.0/common-2", () => {
+    const input: string = "key = # INVALID\n";
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+  });
+
+  test("invalid/spec-1.1.0/common-46-0", () => {
     const input: string =
       '[fruit]\napple.color = "red"\napple.taste.sweet = true\n\n[fruit.apple]  # INVALID\n# [fruit.apple.taste]  # INVALID\n\n[fruit.apple.texture]  # you can add sub-tables\nsmooth = true\n';
     let err: unknown;
@@ -5891,9 +5893,43 @@ describe("toml-test/invalid", () => {
     expect(err).toBeInstanceOf(SyntaxError);
   });
 
-  test("invalid/spec-1.0.0/table-9-1", () => {
+  test("invalid/spec-1.1.0/common-46-1", () => {
     const input: string =
       '[fruit]\napple.color = "red"\napple.taste.sweet = true\n\n# [fruit.apple]  # INVALID\n[fruit.apple.taste]  # INVALID\n\n[fruit.apple.texture]  # you can add sub-tables\nsmooth = true\n';
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+  });
+
+  test("invalid/spec-1.1.0/common-49-0", () => {
+    const input: string = '[product]\ntype = { name = "Nail" }\ntype.edible = false  # INVALID\n';
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+  });
+
+  test("invalid/spec-1.1.0/common-5", () => {
+    const input: string =
+      '= "no key name"           # INVALID\n"""key""" = "not allowed" # INVALID\n"" = "blank"              # VALID but discouraged\n\'\' = \'blank\'              # VALID but discouraged\n';
+    let err: unknown;
+    try {
+      TOML.parse(input);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SyntaxError);
+  });
+
+  test("invalid/spec-1.1.0/common-50-0", () => {
+    const input: string = '[product]\ntype.name = "Nail"\ntype = { edible = false }  # INVALID\n';
     let err: unknown;
     try {
       TOML.parse(input);
@@ -6202,17 +6238,6 @@ describe("toml-test/invalid", () => {
 
   test("invalid/string/bad-uni-esc-ml-07", () => {
     const input: string = 'bad-uni-esc-ml-07 = """\\uabag"""\n';
-    let err: unknown;
-    try {
-      TOML.parse(input);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(SyntaxError);
-  });
-
-  test("invalid/string/basic-byte-escapes", () => {
-    const input: string = 'answer = "\\x33"\n';
     let err: unknown;
     try {
       TOML.parse(input);

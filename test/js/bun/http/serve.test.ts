@@ -2889,9 +2889,13 @@ describe("Connection: close request header", () => {
     const seen: string[] = [];
     using server = serve({
       port: 0,
-      fetch(req) {
-        seen.push(req.method + " " + new URL(req.url).pathname);
-        return new Response("saw " + new URL(req.url).pathname);
+      async fetch(req) {
+        const pathname = new URL(req.url).pathname;
+        seen.push(req.method + " " + pathname);
+        // Read the body so the test asserts it was consumed, not discarded
+        // along with the pipelined bytes that follow it.
+        seen.push(await req.text());
+        return new Response("saw " + pathname);
       },
     });
     const { raw, serverClosed } = await exchange(
@@ -2900,7 +2904,7 @@ describe("Connection: close request header", () => {
       r => r.includes("saw /b"),
     );
     expect({ seen, closeHeader: hasCloseHeader(raw), serverClosed }).toEqual({
-      seen: ["POST /a"],
+      seen: ["POST /a", "hello"],
       closeHeader: true,
       serverClosed: true,
     });

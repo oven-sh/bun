@@ -8,13 +8,9 @@ const napiHeaderDir = join(import.meta.dir, "..", "..", "src", "runtime", "napi"
 // A plain C compiler is enough: the addon below only needs the N-API C ABI.
 const cc = Bun.which("cc") ?? Bun.which("clang") ?? Bun.which("gcc");
 
-// The canonical two-line module Init that every N-API tutorial and the
-// node-addon-api template emit. Each napi_* call opens a JSC exception scope;
-// the scope opened by napi_create_function must not require the addon's C code
-// (which cannot participate in JSC's exception-check discipline) to have
-// "checked" it before napi_set_named_property opens the next one. Under
-// BUN_JSC_validateExceptionChecks=1 on an assert-enabled build, getting this
-// wrong aborts the process at module load with "ERROR: Unchecked JS exception".
+// The canonical two-call Init that every N-API template emits. Addon C code cannot
+// satisfy JSC's exception-check discipline between the two napi_* calls; on an
+// assert-enabled build with the validator on, getting that wrong aborts at module load.
 const addonSource = /* c */ `
 #include <node_api.h>
 

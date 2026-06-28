@@ -80,12 +80,9 @@
 using namespace JSC;
 using namespace Zig;
 
-// Exception scope for the N-API C ABI boundary. The caller is addon C code, so it
-// cannot satisfy JSC's exception-check discipline: a ThrowScope's simulated throw
-// would make the next napi_* call's scope abort under validateExceptionChecks.
-// Instead this scope reads vm.exception() on entry (acknowledging a sibling napi_*
-// call's simulated throw) and on exit (acknowledging inner scopes'), and never
-// simulates a throw of its own. Real exceptions still surface as napi_pending_exception.
+// Exception scope for the N-API C ABI boundary: addon C callers can't satisfy JSC's
+// exception-check discipline, so acknowledge pending checks on entry and exit instead
+// of simulating a throw. A real exception still surfaces as napi_pending_exception.
 class NapiBoundaryScope : public JSC::ExceptionScope {
 public:
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)

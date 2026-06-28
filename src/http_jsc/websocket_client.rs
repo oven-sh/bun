@@ -443,8 +443,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // we avoid trim since we wanna keep the utf8 validation intact
                 let utf16_bytes = match strings::to_utf16_alloc(data, true, false) {
                     Ok(v) => v,
-                    Err(_) => {
+                    Err(strings::ToUTF16Error::InvalidByteSequence) => {
                         self.terminate(ErrorCode::InvalidUtf8);
+                        return;
+                    }
+                    Err(strings::ToUTF16Error::OutOfMemory) => {
+                        self.terminate(ErrorCode::FailedToAllocateMemory);
                         return;
                     }
                 };

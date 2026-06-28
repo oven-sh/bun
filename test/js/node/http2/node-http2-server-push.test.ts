@@ -6,21 +6,27 @@ import http2utils from "./helpers";
 // Client-side handling of server push: refusing a pushed stream with
 // close(NGHTTP2_REFUSED_STREAM) and the frames that race the refusal.
 
+// Per-test barriers: any connection-level failure rejects every pending one so the test fails
+// at its cause instead of the timeout.
+function makeBarriers() {
+  const barriers: PromiseWithResolvers<any>[] = [];
+  const barrier = () => {
+    const pending = Promise.withResolvers<any>();
+    barriers.push(pending);
+    return pending;
+  };
+  const failTest = (err: unknown) => {
+    for (const pending of barriers) pending.reject(err);
+  };
+  return { barrier, failTest };
+}
+
 test("http2 client refusing a pushed stream with close(NGHTTP2_REFUSED_STREAM) resets only that stream", async () => {
   // Declining a server push (pushedStream.close(NGHTTP2_REFUSED_STREAM)) is the documented way
   // to reject it: node sends exactly one RST_STREAM(REFUSED_STREAM) for the pushed id, the
   // pushed stream errors with ERR_HTTP2_STREAM_ERROR, and the session (and the request that
   // carried the PUSH_PROMISE) keeps working.
-  // Any connection-level failure rejects every pending barrier so the test fails at its cause.
-  const barriers = [];
-  const barrier = () => {
-    const pending = Promise.withResolvers();
-    barriers.push(pending);
-    return pending;
-  };
-  const failTest = err => {
-    for (const pending of barriers) pending.reject(err);
-  };
+  const { barrier, failTest } = makeBarriers();
   const server = http2.createServer();
   const serverPushClosed = barrier();
   server.on("stream", (stream, headers) => {
@@ -171,16 +177,7 @@ test("http2 client ignores the pushed response that races a push refusal", async
     pushPromisePayload,
   ]);
 
-  // Any connection-level failure rejects every pending barrier so the test fails at its cause.
-  const barriers = [];
-  const barrier = () => {
-    const pending = Promise.withResolvers();
-    barriers.push(pending);
-    return pending;
-  };
-  const failTest = err => {
-    for (const pending of barriers) pending.reject(err);
-  };
+  const { barrier, failTest } = makeBarriers();
   const clientFrames = [];
   const gotRequest = barrier();
   const gotPushRst = barrier();

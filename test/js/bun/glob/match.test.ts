@@ -393,6 +393,15 @@ describe("Glob.match", () => {
     expect(glob.match("{,}")).toBeTrue();
     expect(glob.match(",")).toBeFalse();
 
+    // An unclosed `[` is a literal `[`, not the start of a bracket class, so
+    // it does not hide the group's `}`: the group still has a top-level comma
+    // and still expands (bash, picomatch, and minimatch agree).
+    glob = new Glob("{a,[}");
+    expect(glob.match("a")).toBeTrue();
+
+    glob = new Glob("{foo,[bar}");
+    expect(glob.match("foo")).toBeTrue();
+
     // Outer group has no top-level comma (literal), inner group does (expands).
     glob = new Glob("{a{b,c}}");
     expect(glob.match("{ab}")).toBeTrue();

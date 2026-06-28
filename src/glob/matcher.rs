@@ -108,6 +108,23 @@ struct Wildcard {
     brace_depth: u8,
 }
 
+/// Whether the `[` at `glob[open]` has an unescaped `]` later in the pattern.
+/// An unclosed `[` is a literal byte, not the start of a bracket class, so it
+/// must not hide a following `}` or `,` from `escape_literal_braces`'s scan:
+/// bash, picomatch, and minimatch all expand `{a,[}` to `a` and `[`.
+fn bracket_has_closing(glob: &[u8], open: usize) -> bool {
+    let mut j = open + 1;
+    while j < glob.len() {
+        match glob[j] {
+            b']' => return true,
+            b'\\' => j += 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    false
+}
+
 /// Brace groups only expand when they contain at least one unescaped top-level
 /// comma; `{a}`, `{}`, and unclosed `{...` are taken literally, matching bash,
 /// picomatch, and minimatch. Returns a rewritten pattern with each such `{`/`}`
@@ -141,7 +158,7 @@ pub fn escape_literal_braces(glob: &[u8]) -> Option<Vec<u8>> {
                     top.1 = true;
                 }
             }
-            b'[' if !in_brackets => in_brackets = true,
+            b'[' if !in_brackets && bracket_has_closing(glob, i) => in_brackets = true,
             b']' => in_brackets = false,
             b'\\' => i += 1,
             _ => {}

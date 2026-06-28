@@ -52,9 +52,12 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-// V8 wire format version we emit. Node 26 emits 15; the deserializer accepts
-// any version with the tags we support.
+// V8 wire format version we emit. Node 26 emits 15.
 static constexpr uint32_t kLatestV8Version = 15;
+// Oldest wire version this decoder parses correctly. Every tag arm below
+// implements the v13+ grammar; earlier versions encoded strings and arrays
+// differently, so decoding them with these rules would produce garbage.
+static constexpr uint32_t kMinimumV8Version = 13;
 
 enum class V8Tag : uint8_t {
     kVersion = 0xFF,
@@ -792,7 +795,14 @@ public:
         auto version = readVarint();
         if (!version) return false;
         m_version = *version;
-        return true;
+        // Deliberately NOT V8's `version > kLatestVersion` check. V8 can
+        // reject newer-than-self because its writer and reader move in
+        // lockstep; this is a follower, so hard-capping at 15 would fail
+        // every Bun<->Node frame the day Node ships a v16 V8, instead of
+        // only frames that use a genuinely new tag (which the unknown-tag
+        // path already rejects). Versions below kMinimumV8Version ARE
+        // rejected: those grammars differ and would silently mis-parse.
+        return m_version >= kMinimumV8Version;
     }
 
     JSValue readValue()

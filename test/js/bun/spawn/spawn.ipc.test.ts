@@ -259,6 +259,21 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
+  rawInjection("the V8 wire version is floored at 13 and open-ended above", async () => {
+    // The decoder speaks the v13+ grammar, so a lower version would silently
+    // mis-parse and must be rejected. A HIGHER version is accepted on purpose
+    // (deliberate divergence from V8's own `> kLatestVersion` check): as a
+    // follower implementation, rejecting the header the day Node bumps its
+    // wire version would fail every frame, instead of only the frames that
+    // use a genuinely new tag. Payloads are {a: 1}; only the version differs.
+    const v15 = "ff0f6f22016149027b01";
+    const v16 = "ff106f22016149027b01";
+    const v12 = "ff0c6f22016149027b01";
+    const { messages, exitCode } = await injectFrames(v15, v16, v12);
+    expect(messages).toEqual([{ a: 1 }, { a: 1 }]);
+    expect(exitCode).toBe(0);
+  });
+
   // A raw `new v8.Serializer()` emits views as kArrayBuffer + kArrayBufferView
   // (with a trailing flags varint), not as host objects. Payload is that
   // serializer's v15 output for `{ view: new Uint8Array([10, 20, 30]) }`.

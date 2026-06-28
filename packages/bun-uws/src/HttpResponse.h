@@ -147,7 +147,7 @@ public:
                 Super::write("0\r\n\r\n", 5);
             } else {
                 Super::write("0\r\n", 3);
-                Super::write(trailer.data(), trailer.length());
+                Super::write(trailer.data(), (int) trailer.length());
                 Super::write("\r\n", 2);
             }
             httpResponseData->markDone(this);

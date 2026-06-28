@@ -41,7 +41,7 @@ impl Default for NameOfSymbol {
 
 pub struct Array {
     pub items: ExprNodeList,
-    pub comma_after_spread: Option<crate::Loc>,
+    pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -51,7 +51,7 @@ impl Default for Array {
     fn default() -> Self {
         Self {
             items: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: None,
+            comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -63,7 +63,7 @@ impl Default for Array {
 impl Array {
     pub const EMPTY: Array = Array {
         items: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: None,
+        comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
@@ -372,7 +372,11 @@ pub struct Arrow {
     pub has_rest_arg: bool,
     /// Use shorthand if true and "Body" is a single return statement
     pub prefer_expr: bool,
+    /// See `flags::Function::HasReactHooksSuppression`.
+    pub has_react_hooks_suppression: bool,
 }
+// The fourth bool fits in existing trailing padding.
+const _: () = assert!(core::mem::size_of::<Arrow>() == 32);
 impl Arrow {
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
@@ -383,6 +387,7 @@ impl Arrow {
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
+        has_react_hooks_suppression: false,
     };
 }
 impl Default for Arrow {
@@ -396,6 +401,7 @@ impl Default for Arrow {
             is_async: false,
             has_rest_arg: false,
             prefer_expr: false,
+            has_react_hooks_suppression: false,
         }
     }
 }
@@ -688,9 +694,35 @@ impl JSXSpecialProp {
     }
 }
 
+/// `packed(4)` lowers the alignment to 4 so `expr::Data` (and therefore `Expr`)
+/// drop to align 4 and pack into 16 bytes; the `f64` stays a single scalar so
+/// `.value()` is one `movsd`/`ldr`. The field is private because comparisons on
+/// a packed `f64` field would require `&self.value` (an unaligned reference);
+/// callers go through `value()` / `new()` which copy by value.
 #[derive(Clone, Copy)]
+#[repr(C, packed(4))]
 pub struct Number {
-    pub value: f64,
+    value: f64,
+}
+
+const _: () = assert!(core::mem::size_of::<Number>() == 8);
+const _: () = assert!(core::mem::align_of::<Number>() == 4);
+
+impl Number {
+    #[inline(always)]
+    pub const fn new(value: f64) -> Self {
+        Number { value }
+    }
+    #[inline(always)]
+    pub const fn value(self) -> f64 {
+        self.value
+    }
+}
+impl From<f64> for Number {
+    #[inline]
+    fn from(v: f64) -> Self {
+        Number::new(v)
+    }
 }
 
 const DOUBLE_DIGIT: [&[u8]; 101] = [
@@ -722,7 +754,7 @@ impl Number {
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
     pub fn to_string(self, bump: &Bump) -> Option<Str> {
-        Self::to_string_from_f64(self.value, bump)
+        Self::to_string_from_f64(self.value(), bump)
     }
 
     pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
@@ -794,7 +826,7 @@ impl Number {
     }
 
     pub fn to<T: NumberCast>(self) -> T {
-        let clamped = self.value.trunc().max(0.0).min(T::MAX_AS_F64);
+        let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
     }
 
@@ -832,7 +864,7 @@ impl BigInt {
 
 pub struct Object {
     pub properties: G::PropertyList,
-    pub comma_after_spread: Option<crate::Loc>,
+    pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -843,7 +875,7 @@ impl Default for Object {
     fn default() -> Self {
         Self {
             properties: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: None,
+            comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -922,7 +954,7 @@ pub struct RopeQuery<'a> {
 impl Object {
     pub const EMPTY: Object = Object {
         properties: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: None,
+        comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
@@ -1329,6 +1361,14 @@ pub struct Spread {
 }
 
 /// JavaScript string literal type
+// repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
+// `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
+// offset, and a `static EString = EString::from_static(b"...")` then emits an
+// `ARM64_RELOC_UNSIGNED` at that offset which arm64 ld rejects. `repr(C)` pins
+// `data` (the only field needing a static relocation) at offset 0; `align(8)`
+// keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
+// in `Expr`), so this does not affect `Expr` size.
+#[repr(C, align(8))]
 pub struct EString {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
     // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
@@ -1336,7 +1376,6 @@ pub struct EString {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
     // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub data: Str,
-    pub prefer_template: bool,
 
     // A very simple rope implementation
     // We only use this for string folding, so this is kind of overkill
@@ -1344,6 +1383,7 @@ pub struct EString {
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
     pub rope_len: u32,
+    pub prefer_template: bool,
     pub is_utf16: bool,
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
@@ -1585,12 +1625,7 @@ impl EString {
 // Ordering / equality / const-literal / rope-mutation helpers.
 // `string_z`/`to_zig_string` remain gated on `bun_core::ZStr` arena constructors.
 impl EString {
-    pub const CLASS: EString = EString::from_static(b"class");
     pub const EMPTY: EString = EString::from_static(b"");
-    pub const TRUE: EString = EString::from_static(b"true");
-    pub const FALSE: EString = EString::from_static(b"false");
-    pub const NULL: EString = EString::from_static(b"null");
-    pub const UNDEFINED: EString = EString::from_static(b"undefined");
 
     pub fn is_identifier(&mut self, bump: &Bump) -> bool {
         if !self.is_utf8() {

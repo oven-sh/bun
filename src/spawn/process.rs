@@ -206,10 +206,6 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 }
 
 // ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
-// Un-gated: `super::bun_spawn::posix_spawn` (Actions/Attr/wait4) and the
-// `bun_io::FilePoll` method surface are stable. `EventLoopHandle` →
-// `EventLoopCtx` bridging is local (`event_loop_handle_to_ctx`) until a
-// JS-side ctx vtable lands.
 impl Process {
     #[cfg(windows)]
     /// SAFETY: `this` must be the live heap-allocated `Process` (the same

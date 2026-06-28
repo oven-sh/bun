@@ -278,10 +278,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         'err: {
             match &lockfile_version_expr.data {
                 ExprData::ENumber(num) => {
-                    if num.value < 0.0 {
+                    if num.value() < 0.0 {
                         break 'err;
                     }
-                    break 'lockfile_version num.value;
+                    break 'lockfile_version num.value();
                 }
                 ExprData::EString(version_str) => {
                     let str = version_str.data.slice();

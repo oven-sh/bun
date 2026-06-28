@@ -35,10 +35,8 @@ pub(crate) use bun_ast::ExprData as DefineValue;
 pub struct Globals;
 impl Globals {
     pub const UNDEFINED: bun_ast::E::Undefined = bun_ast::E::Undefined;
-    pub const NAN: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
-    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number {
-        value: f64::INFINITY,
-    };
+    pub const NAN: bun_ast::E::Number = bun_ast::E::Number::new(f64::NAN);
+    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number::new(f64::INFINITY);
 
     #[inline]
     pub fn undefined_data() -> ExprData {

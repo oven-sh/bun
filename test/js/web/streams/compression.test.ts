@@ -330,7 +330,10 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     } catch (e: any) {
       expect(e).toBeInstanceOf(TypeError);
       expect(Object.hasOwn(e, "code")).toBe(true);
-      expect(e.code).toStartWith("ERR_BROTLI_DECODER_ERROR_");
+      // Node builds these as "ERR_" + BrotliDecoderErrorString(), and brotli
+      // returns the macro PREFIX+NAME ("_ERROR_FORMAT_" + "PADDING_2"), so the
+      // double underscore is what node:zlib emits.
+      expect(e.code).toBe("ERR__ERROR_FORMAT_PADDING_2");
       expect(e.cause.code).toBe(e.code);
     }
   });

@@ -669,11 +669,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
         unsafe { Self::dispatch_abrupt_close(this.as_ptr(), code) };
 
-        if SSL {
-            tcp.close(uws::CloseCode::Normal);
-        } else {
-            tcp.close(uws::CloseCode::Failure);
-        }
+        // A failed upgrade (bad status line, mismatched subprotocol, invalid
+        // headers, ...) is an application-level rejection of a healthy TCP
+        // connection — close it gracefully (FIN) like Node's ws client does.
+        // A Failure close arms SO_LINGER{1,0} and sends an RST, which the
+        // server observes as ECONNRESET on a connection it served correctly.
+        tcp.close(uws::CloseCode::Normal);
     }
 
     /// # Safety

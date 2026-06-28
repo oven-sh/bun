@@ -690,7 +690,7 @@ impl<T: VersionInt> VersionType<T> {
             return None;
         }
 
-        if cfg!(debug_assertions) {
+        if bun_core::env::IS_DEBUG {
             return match T::parse_ascii(&bytes[0..byte_i as usize]) {
                 Some(v) => Some(v),
                 None => {

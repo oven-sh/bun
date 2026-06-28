@@ -1649,9 +1649,6 @@ impl BlobExt for Blob {
 
         assignment_result.ensure_still_alive();
 
-        // assert that it was updated
-        debug_assert!(!signal.get().is_dead());
-
         if let Some(err) = assignment_result.to_error() {
             // SAFETY: release our +1 ref on the sink.
             unsafe { webcore::FileSink::deref(file_sink) };
@@ -1924,10 +1921,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            // #53265: `FileSink::to_js` takes its own per-wrapper +1. Release
-            // init's +1 here — otherwise the
-            // sink starts at rc=2 and the writer-close path's net deref balance
-            // is off by one against `~JSFileSink`'s `finalize`.
+            // `FileSink::to_js` takes its own per-wrapper +1; release init's +1.
             let js = sink_mut.to_js(global_this);
             // SAFETY: `to_js` took a +1; this releases init's +1 (rc ≥ 1 after).
             unsafe { webcore::FileSink::deref(sink) };
@@ -1988,7 +1982,6 @@ impl BlobExt for Blob {
 
             // SAFETY: sink is live; `to_js` takes its own per-wrapper +1.
             let js = unsafe { (*sink).to_js(global_this) };
-            // #53265: release init's +1 (see Windows arm above for rationale).
             // SAFETY: `to_js` took a +1; rc ≥ 1 after this deref.
             unsafe { webcore::FileSink::deref(sink) };
             Ok(js)

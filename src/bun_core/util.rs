@@ -4733,8 +4733,9 @@ impl SpawnStatus {
 //
 // This is the single source of truth for the request layout; `spawn_sys`
 // re-exports these types rather than re-declaring them. The #[repr(C)] data
-// mirrors are target-agnostic so the module is ungated; only the extern decl
-// is `cfg(unix)` (Windows spawns go through libuv and never link this symbol).
+// mirrors are target-agnostic so the module compiles on all platforms; only
+// the extern decl is `cfg(unix)` (Windows spawns go through libuv and never
+// link this symbol).
 pub mod spawn_ffi {
     use core::ffi::{c_char, c_int};
 

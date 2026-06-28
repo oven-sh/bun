@@ -194,7 +194,9 @@ fn get_argv0(
     let actual_argv0: ZBox = if path_to_use.is_empty() {
         ZBox::from_bytes(argv0_to_use)
     } else {
-        let Some(resolved) = bun_which::which(&mut path_buf, path_to_use, cwd, argv0_to_use) else {
+        let Some(resolved) =
+            bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
+        else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
         ZBox::from_bytes(resolved.as_bytes())
@@ -390,6 +392,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
+    #[cfg(not(windows))]
+    let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
@@ -1060,7 +1064,21 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),
         },
-        extra_fds: core::mem::take(&mut extra_fds).into_boxed_slice(),
+        extra_fds: {
+            // Record which extra-stdio slots are 'socket-fd' so we can
+            // downgrade them from OwnedFd to UnownedFd after all fallible
+            // init below succeeds. spawn_process_posix pushes OwnedFd for
+            // SocketFd so every error path's finalize_streams still closes
+            // the bun-created fd; the caller-owns-it contract only begins
+            // once the Subprocess is returned and .stdio[i] is readable.
+            #[cfg(not(windows))]
+            for (j, e) in extra_fds.iter().enumerate() {
+                if matches!(e, SpawnOptionsStdio::SocketFd) {
+                    socket_fd_indices.push(j);
+                }
+            }
+            core::mem::take(&mut extra_fds).into_boxed_slice()
+        },
         argv0,
         can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
         // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
@@ -1659,6 +1677,29 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     **should_close_memfd = false;
 
+    // Every `return Err` above is past; the Subprocess will be returned to
+    // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
+    // finalize_streams (on later GC) skips them and the caller is the sole
+    // owner via .stdio[i]. Placed here (not earlier) because the
+    // Writable::init error arm, the has_exception catch-all, the IPC
+    // open-socket failure, and the stdout/stderr Readable::Pipe .start()
+    // error paths all throw after populating stdio_pipes; on those paths
+    // the caller never receives the Subprocess, so the OwnedFd slot must
+    // remain for the GC'd wrapper's finalize_streams to close.
+    #[cfg(not(windows))]
+    if !socket_fd_indices.is_empty() {
+        subprocess.stdio_pipes.with_mut(|pipes| {
+            for j in &socket_fd_indices {
+                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
+                    let ExtraPipe::OwnedFd(fd) = *slot else {
+                        unreachable!()
+                    };
+                    *slot = ExtraPipe::UnownedFd(fd);
+                }
+            }
+        });
+    }
+
     // Once everything is set up, we can add the abort listener
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
@@ -2021,11 +2062,24 @@ pub(crate) fn append_envp_from_js(
             ZBox::from_vec(buf)
         };
 
-        if key.eql_comptime(b"PATH") {
+        // Windows environment variable names are case-insensitive: an env
+        // object carrying `Path` (the usual casing there) must still drive
+        // the executable lookup, like libuv's spawn does.
+        let line_bytes = line.as_bytes();
+        let key_end = line_bytes
+            .iter()
+            .position(|&b| b == b'=')
+            .unwrap_or(line_bytes.len());
+        let is_path_key = if cfg!(windows) {
+            strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
+        } else {
+            &line_bytes[..key_end] == b"PATH"
+        };
+        if is_path_key && key_end < line_bytes.len() {
             // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
             // outlives every read of `*path`), and `ZBox` is heap-backed so the
             // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(&line.as_bytes()[b"PATH=".len()..]) };
+            *path = unsafe { bun_ptr::detach_lifetime(&line_bytes[key_end + 1..]) };
         }
 
         envp.push(line.as_ptr());

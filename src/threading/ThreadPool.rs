@@ -1444,9 +1444,21 @@ impl Event {
         // Release barrier to ensure any operations before this are this to happen before the wait() in the other threads.
         let state = self.state.swap(release_with, Ordering::Release);
 
-        // Only wake threads sleeping in futex if the state is WAITING.
-        // Avoids unnecessary wake ups.
-        if state == Self::WAITING {
+        // Normally we only wake futex sleepers when the prior state was WAITING,
+        // which avoids a syscall when there is definitely nobody parked.
+        //
+        // That optimization is unsound for the one-shot "wake everyone" paths
+        // (`shutdown`, `wake_for_idle_events`, both `wake_threads == u32::MAX`).
+        // A worker can be genuinely parked in `Futex::wait(WAITING)` while
+        // `state` is transiently EMPTY or NOTIFIED: a concurrent consumer that
+        // took a notification without ever parking clears `state` back to EMPTY
+        // via the `acquire_with == EMPTY` path (see `wait`). For a normal
+        // single `notify()` that is fine, because a later `notify()` re-arms and
+        // wakes the sleeper. A teardown wake happens once, so a skipped wake
+        // here strands the parked worker until its 10s idle timeout, which shows
+        // up as a ~10s stall joining the pool. Always wake in that case; the
+        // extra syscall is negligible because these paths run once at teardown.
+        if state == Self::WAITING || wake_threads == u32::MAX {
             Futex::wake(&self.state, wake_threads);
         }
     }

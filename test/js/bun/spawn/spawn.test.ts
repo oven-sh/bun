@@ -14,7 +14,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -972,6 +972,55 @@ describe("close handling", () => {
         ).toThrow(msg);
       });
     }
+
+    it("'socket-fd' at index < 3 throws", () => {
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          // @ts-expect-error — intentionally invalid at index 0
+          stdio: ["socket-fd", "pipe", "pipe"],
+        }),
+      ).toThrow("'socket-fd' is only supported at indices >= 3");
+    });
+
+    it("'socket-fd' with spawnSync throws", () => {
+      // SyncSubprocess has no .stdio, so the caller could never receive
+      // the fd to close; reject rather than leak it.
+      expect(() =>
+        spawnSync({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        }),
+      ).toThrow("'socket-fd' cannot be used with spawnSync");
+    });
+
+    it.skipIf(isWindows)(
+      "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
+      async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        });
+        const fd = proc.stdio[3];
+        expect(typeof fd).toBe("number");
+        try {
+          await proc.exited;
+          // fd is UnownedFd: still open and readable here (process exit does
+          // not touch stdio_pipes), and finalize_streams on later GC will skip
+          // this slot. The caller owns the close.
+          const buf = Buffer.alloc(64);
+          const n = readSync(fd as number, buf);
+          expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
+        } finally {
+          // Caller is responsible for closing it.
+          closeSync(fd as number);
+        }
+        expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      },
+    );
   });
 });
 

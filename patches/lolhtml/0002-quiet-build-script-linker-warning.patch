@@ -1,0 +1,12 @@
+The lol_html_c_api build script is linked by rustc with link args meant for
+target artifacts (e.g. -no-pie from the static relocation model); clang warns
+"argument unused during compilation" and rustc's linker_messages lint turns
+that linker stderr into a warning on every build-rust CI job. Allow the lint
+in the build script — real linker errors still fail the link.
+--- a/c-api/build.rs
++++ b/c-api/build.rs
+@@ -1,2 +1,4 @@
++#![allow(unknown_lints)]
++#![allow(linker_messages)]
+ // Required for the links attribute
+ fn main() {}

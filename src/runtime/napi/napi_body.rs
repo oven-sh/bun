@@ -25,27 +25,14 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 /// Local extension shims for `JSValue` methods not yet surfaced on the
 /// `bun_jsc::JSValue` type.
 trait JSValueNapiExt {
-    fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool>;
     fn is_async_context_frame(self) -> bool;
 }
 
 unsafe extern "C" {
-    fn JSC__JSValue__isStrictEqual(
-        this: JSValue,
-        other: JSValue,
-        global: *mut JSGlobalObject,
-    ) -> bool;
     fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
 }
 
 impl JSValueNapiExt for JSValue {
-    fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool> {
-        // SAFETY: FFI; may run JS (getters on Proxy etc.); `call_check_slow!` opens the
-        // exception scope before the call and propagates any pending exception.
-        bun_jsc::call_check_slow!(global, || unsafe {
-            JSC__JSValue__isStrictEqual(self, other, global.as_mut_ptr())
-        })
-    }
     #[inline]
     fn is_async_context_frame(self) -> bool {
         // SAFETY: trivial FFI.
@@ -1366,7 +1353,13 @@ pub(super) extern "C" fn napi_is_arraybuffer(
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
-    *result = !value.is_number() && value.js_type_loose() == jsc::JSType::ArrayBuffer;
+    // A SharedArrayBuffer shares the `ArrayBuffer` cell type with a plain
+    // ArrayBuffer in JSC, so `js_type` alone can't tell them apart. Node's
+    // `napi_is_arraybuffer` maps to V8's `IsArrayBuffer()`, which is false for
+    // SharedArrayBuffer, so exclude shared buffers here too.
+    *result = value
+        .as_array_buffer(env.to_js())
+        .is_some_and(|ab| ab.typed_array_type == jsc::JSType::ArrayBuffer && !ab.shared);
     env.ok()
 }
 
@@ -1651,7 +1644,9 @@ pub(super) extern "C" fn napi_create_date(
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
-    let mut args = [JSValue::js_number(time).as_object_ref()];
+    // The addon controls every bit of `time`. Purify before boxing: the Date
+    // constructor receives this JSValue before any timeClip runs.
+    let mut args = [JSValue::js_number(JSValue::purify_nan(time)).as_object_ref()];
     result.set(
         env,
         // SAFETY: `args` is a stack array of one valid JSValueRef; FFI constructs a Date.

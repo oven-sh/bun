@@ -386,7 +386,7 @@ impl MinifyRenamer {
         if let Some(i) = symbol.nested_scope_slot() {
             let slot = &mut self.slots[ns][i as usize];
             slot.count += count;
-            if symbol.must_start_with_capital_letter_for_jsx {
+            if symbol.must_start_with_capital_letter_for_jsx() {
                 slot.needs_capital_for_jsx = true;
             }
             return Ok(());
@@ -408,7 +408,7 @@ impl MinifyRenamer {
             let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
             // Reshaped for borrowck — capture symbol fields before mut-borrowing slots
             let ns = symbol.slot_namespace();
-            let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx;
+            let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx();
             let slots = &mut self.slots[ns];
 
             let gpe = self.top_level_symbol_to_slot.get_or_put(stable.ref_)?;
@@ -1165,7 +1165,7 @@ pub fn compute_reserved_names_for_scope(
 ) {
     for member in scope.members.values() {
         let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
-        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
+        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)
@@ -1175,7 +1175,7 @@ pub fn compute_reserved_names_for_scope(
 
     for ref_ in scope.generated.slice() {
         let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
-        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
+        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)

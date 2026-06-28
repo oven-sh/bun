@@ -454,7 +454,7 @@ fn expr_to_js_with_check(
     match expr.data {
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
-        ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
+        ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
         ExprData::EString(str) => estring_to_js(str.get(), global),
         ExprData::EArray(arr) => {
             JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {

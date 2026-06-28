@@ -2774,7 +2774,12 @@ declare module "bun" {
      */
     emitDCEAnnotations?: boolean;
 
-    // treeshaking?: boolean;
+    /**
+     * Whether to enable tree-shaking (removal of unreferenced top-level
+     * declarations and unused exports). Defaults to `true`. Set to `false` to
+     * keep dead code in the output for debugging or test fixtures.
+     */
+    treeShaking?: boolean;
 
     // jsx?:
     //   | "automatic"
@@ -2900,6 +2905,27 @@ declare module "bun" {
      * @default false
      */
     reactFastRefresh?: boolean;
+
+    /**
+     * Run the React Compiler over `.jsx`/`.tsx` source files, automatically
+     * memoizing components and hooks.
+     *
+     * @default false
+     * @experimental
+     */
+    reactCompiler?: boolean;
+
+    /**
+     * Output mode for the React Compiler. `"ssr"` skips memoization (the
+     * `useMemoCache` runtime) for server-rendered output.
+     *
+     * Only applies when {@link reactCompiler} is `true`.
+     *
+     * @default `"client"` when {@link target} is `"browser"`; `"ssr"` when
+     * {@link target} is `"bun"` or `"node"`.
+     * @experimental
+     */
+    reactCompilerOutputMode?: "client" | "ssr";
 
     /**
      * A map of file paths to their contents for in-memory bundling.
@@ -4123,6 +4149,22 @@ declare module "bun" {
   const embeddedFiles: ReadonlyArray<Blob>;
 
   /**
+   * `true` when the current process is a standalone executable produced by
+   * `bun build --compile`, `false` otherwise.
+   *
+   * Unlike checking `Bun.embeddedFiles.length > 0`, reading this property does
+   * not materialize embedded files as `Blob` objects.
+   *
+   * @example
+   * ```ts
+   * if (Bun.isStandaloneExecutable) {
+   *   console.log("Running from a compiled binary");
+   * }
+   * ```
+   */
+  const isStandaloneExecutable: boolean;
+
+  /**
    * `Blob` that leverages the fastest system calls available to operate on files.
    *
    * This Blob is lazy. It won't do any work until you read from it. Errors propagate as promise rejections.
@@ -4401,8 +4443,10 @@ declare module "bun" {
 
     /**
      * Closes the WebSocket connection
-     * @param code A numeric value indicating the status code
-     * @param reason A human-readable string explaining why the connection is closing
+     * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
+     * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
+     * @param reason A human-readable string explaining why the connection is closing. Throws a
+     * `SyntaxError` if longer than 123 bytes of UTF-8
      */
     close(code?: number, reason?: string): void;
 
@@ -6776,10 +6820,17 @@ declare module "bun" {
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
+       * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
+       * creates a socketpair like `"pipe"`, but the parent-end fd exposed
+       * via {@link Subprocess.stdio} is owned by the caller and is never
+       * closed by the subprocess. Use this when you wrap the fd in
+       * something that will close it itself (e.g. `net.connect({fd})`).
+       * On Windows it behaves the same as `"pipe"`.
+       *
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */
-      stdio?: [In, Out, Err, ...Readable[]];
+      stdio?: [In, Out, Err, ...(Readable | "socket-fd")[]];
 
       /**
        * The file descriptor for the standard input. It may be:
@@ -7209,10 +7260,12 @@ declare module "bun" {
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.
      *
-     * Entries beyond index 2 are `number` for `"pipe"` slots and, on POSIX, for slots
-     * where a raw file descriptor was supplied (the same fd is returned; it remains
-     * owned by the caller and is never closed by the subprocess). Other slots —
-     * including raw fds on Windows — are `null`.
+     * Entries beyond index 2 are `number` for `"pipe"` and `"socket-fd"` slots and,
+     * on POSIX, for slots where a raw file descriptor was supplied (the same fd is
+     * returned). For `"pipe"`, the subprocess owns and closes the fd. For
+     * `"socket-fd"` and raw-fd slots, the fd remains owned by the caller and is
+     * never closed by the subprocess. Other slots — including raw fds on Windows —
+     * are `null`.
      */
     readonly stdio: [null, null, null, ...(number | null)[]];
 

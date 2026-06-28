@@ -171,9 +171,19 @@ pub enum RefTag {
 /// into the user-bit lane, so for every `Ref` constructed via `new`/`init`
 /// the masking is a no-op and hashing is bit-identical to the pre-shrink
 /// layout — preserving output sha-identity.
-#[repr(transparent)]
+///
+/// `packed(4)` lowers the alignment to 4 without changing the single-scalar
+/// representation, so `Ref` is still passed/returned in one register and
+/// `self.0` is still one `mov`. The align-4 part is what lets the inline
+/// identifier payloads — and therefore `expr::Data` and `Expr` — pack into 16
+/// bytes. All accessors take `self` by value (`Copy`), so the packed-field
+/// reference restriction never applies.
+#[repr(C, packed(4))]
 #[derive(Clone, Copy)]
 pub struct Ref(u64);
+
+const _: () = assert!(core::mem::size_of::<Ref>() == 8);
+const _: () = assert!(core::mem::align_of::<Ref>() == 4);
 
 /// We mask to 31 bits for `source_index`, 28 for `inner_index`.
 pub type RefInt = u32;
@@ -348,12 +358,18 @@ impl Ref {
     #[inline]
     pub const fn eql(self, other: Ref) -> bool {
         // User-bit lane is not part of identity — see type-level doc.
-        (self.0 & !Self::USER_BITS_MASK) == (other.0 & !Self::USER_BITS_MASK)
+        self.as_u64() == other.as_u64()
     }
     /// deprecated alias
     #[inline]
     pub const fn is_null(self) -> bool {
         self.is_empty()
+    }
+    /// `Ref::NONE` → `None`, otherwise `Some(self)`. For sites that previously
+    /// stored `Option<Ref>` and want option combinators on the sentinel form.
+    #[inline]
+    pub fn to_nullable(self) -> Option<Ref> {
+        if self.is_empty() { None } else { Some(self) }
     }
 }
 
@@ -3047,6 +3063,9 @@ impl Source {
         state.to_error_position(scan_line_end(contents, offset))
     }
 
+    /// Byte offset of 1-based (`line`, `col`) in `source_contents`, resuming the
+    /// scan from (`start_line`, `start_col`). Columns count UTF-16 code units,
+    /// the convention of JSC stack traces and source-map mappings.
     pub fn line_col_to_byte_offset(
         source_contents: &[u8],
         start_line: u64,
@@ -3086,7 +3105,7 @@ impl Source {
                     column_number = 1;
                 }
                 _ => {
-                    column_number += 1;
+                    column_number += if c > 0xFFFF { 2 } else { 1 };
                 }
             }
 
@@ -3283,6 +3302,10 @@ pub mod flags {
 
         /// Only applicable to function statements.
         IsExport,
+
+        /// A `// eslint-disable… react-hooks/…` comment was scanned at or before
+        /// this function's body close. The React Compiler skips such functions.
+        HasReactHooksSuppression,
     }
     pub type FunctionSet = EnumSet<Function>;
     pub const FUNCTION_NONE: FunctionSet = EnumSet::empty();

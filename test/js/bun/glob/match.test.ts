@@ -105,7 +105,7 @@ describe("Glob.match", () => {
     expect(new Glob("**/*/c.js").match("a/b/c.js")).toBeTrue();
   });
 
-  test("braces", async () => {
+  test("braces", () => {
     let glob: Glob;
 
     glob = new Glob("index.{ts,tsx,js,jsx}");
@@ -131,66 +131,56 @@ describe("Glob.match", () => {
 
     glob = new Glob("{**/a,**/b}");
     expect(glob.match("b")).toBeTrue();
+  });
 
-    const fixtures = [
-      {
-        pattern: "{src,extensions}/**/test/**/{fixtures,browser,common}/**/*.{ts,js}",
-        expectedMatches: "matched-0.txt",
-      },
-      { pattern: "{extensions,src}/**/{media,images,icons}/**/*.{svg,png,gif,jpg}", expectedMatches: "matched-1.txt" },
-      {
-        pattern: "{.github,build,test}/**/{workflows,azure-pipelines,integration,smoke}/**/*.{yml,yaml,json}",
-        expectedMatches: "matched-2.txt",
-      },
-      {
-        pattern: "src/vs/{base,editor,platform,workbench}/test/{browser,common,node}/**/[a-z]*[tT]est.ts",
-        expectedMatches: "matched-3.txt",
-      },
-      {
-        pattern: "src/vs/workbench/{contrib,services}/**/*{Editor,Workspace,Terminal}*.ts",
-        expectedMatches: "matched-4.txt",
-      },
-      {
-        pattern: "{extensions,src}/**/{markdown,json,javascript,typescript}/**/*.{ts,json}",
-        expectedMatches: "matched-5.txt",
-      },
-      {
-        pattern: "**/{electron-sandbox,electron-main,browser,node}/**/{*[sS]ervice*,*[cC]ontroller*}.ts",
-        expectedMatches: "matched-6.txt",
-      },
-      {
-        pattern: "{src,extensions}/**/{common,browser,electron-sandbox}/**/*{[cC]ontribution,[sS]ervice}.ts",
-        expectedMatches: "matched-7.txt",
-      },
-      {
-        pattern: "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts",
-        expectedMatches: "matched-8.txt",
-      },
-      {
-        pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts",
-        expectedMatches: "matched-9.txt",
-      },
-    ];
+  // One test per pattern: the full matrix is ~79k match() calls against the
+  // 7894-entry vscode file list, which sits right at the 5s per-test budget
+  // under a debug+ASAN build when run as a single test.
+  test.each([
+    {
+      pattern: "{src,extensions}/**/test/**/{fixtures,browser,common}/**/*.{ts,js}",
+      expectedMatches: "matched-0.txt",
+    },
+    { pattern: "{extensions,src}/**/{media,images,icons}/**/*.{svg,png,gif,jpg}", expectedMatches: "matched-1.txt" },
+    {
+      pattern: "{.github,build,test}/**/{workflows,azure-pipelines,integration,smoke}/**/*.{yml,yaml,json}",
+      expectedMatches: "matched-2.txt",
+    },
+    {
+      pattern: "src/vs/{base,editor,platform,workbench}/test/{browser,common,node}/**/[a-z]*[tT]est.ts",
+      expectedMatches: "matched-3.txt",
+    },
+    {
+      pattern: "src/vs/workbench/{contrib,services}/**/*{Editor,Workspace,Terminal}*.ts",
+      expectedMatches: "matched-4.txt",
+    },
+    {
+      pattern: "{extensions,src}/**/{markdown,json,javascript,typescript}/**/*.{ts,json}",
+      expectedMatches: "matched-5.txt",
+    },
+    {
+      pattern: "**/{electron-sandbox,electron-main,browser,node}/**/{*[sS]ervice*,*[cC]ontroller*}.ts",
+      expectedMatches: "matched-6.txt",
+    },
+    {
+      pattern: "{src,extensions}/**/{common,browser,electron-sandbox}/**/*{[cC]ontribution,[sS]ervice}.ts",
+      expectedMatches: "matched-7.txt",
+    },
+    {
+      pattern: "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts",
+      expectedMatches: "matched-8.txt",
+    },
+    {
+      pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts",
+      expectedMatches: "matched-9.txt",
+    },
+  ])("braces match the vscode filelist: $pattern", async ({ pattern, expectedMatches }) => {
+    const fixtureDir = join(import.meta.dir, "..", "..", "..", "fixtures", "glob");
+    const allFilePaths = (await Bun.file(join(fixtureDir, "filelist.txt")).text()).split("\n");
+    const shouldMatch = (await Bun.file(join(fixtureDir, expectedMatches)).text()).split("\n");
 
-    const allFilePaths = (
-      await Bun.file(join(import.meta.dir, "..", "..", "..", "fixtures", "glob", "filelist.txt")).text()
-    ).split("\n");
-
-    for (const { pattern, expectedMatches } of fixtures) {
-      const shouldMatch = (
-        await Bun.file(join(import.meta.dir, "..", "..", "..", "fixtures", "glob", `${expectedMatches}`)).text()
-      ).split("\n");
-
-      glob = new Glob(pattern);
-      let matched: string[] = [];
-      for (const filepath of allFilePaths) {
-        if (glob.match(filepath)) {
-          matched.push(filepath);
-        }
-      }
-
-      expect(matched).toEqual(shouldMatch);
-    }
+    const glob = new Glob(pattern);
+    expect(allFilePaths.filter(filepath => glob.match(filepath))).toEqual(shouldMatch);
   });
 
   test("nested braces", () => {
@@ -482,6 +472,16 @@ describe("Glob.match", () => {
     // Same shape inside a wildcard backtrack.
     glob = new Glob("*{a," + opens + "x" + closes + "}");
     expect(glob.match("za")).toBeTrue();
+
+    // >32767 nested comma-bearing groups: match_brace's forward pre-scan
+    // counter must be wider than i16. The unclosed variant below no longer
+    // reaches match_brace, so this one carries a comma at every level.
+    const deepOpens = Buffer.alloc(120_000, "{a,").toString(); // 40_000 x "{a,"
+    const deepCloses = Buffer.alloc(40_000, "}").toString();
+    glob = new Glob("{" + deepOpens + "x" + deepCloses + ",z}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("z")).toBeTrue();
+    expect(glob.match("b")).toBeFalse();
 
     // >32767 consecutive `{` with no closing brace: every `{` is literal.
     glob = new Glob(Buffer.alloc(40_000, "{").toString());

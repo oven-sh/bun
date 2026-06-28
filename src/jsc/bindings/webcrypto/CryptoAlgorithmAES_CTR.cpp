@@ -198,7 +198,7 @@ void CryptoAlgorithmAES_CTR::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& 
     callback(format, WTF::move(result));
 }
 
-ExceptionOr<size_t> CryptoAlgorithmAES_CTR::getKeyLength(const CryptoAlgorithmParameters& parameters)
+ExceptionOr<std::optional<size_t>> CryptoAlgorithmAES_CTR::getKeyLength(const CryptoAlgorithmParameters& parameters)
 {
     return CryptoKeyAES::getKeyLength(parameters);
 }

@@ -5629,7 +5629,11 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err),
+            // `err.syscall` must be node's operation name, not `futimens(2)`.
+            Err(mut err) => {
+                err.syscall = sys::Tag::futime;
+                Err(err)
+            }
             Ok(_) => Ok(()),
         }
     }
@@ -8121,7 +8125,8 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err.with_path(args.path.slice())),
+            // `err.syscall` must be node's operation name, not `utimensat(2)`.
+            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), sys::Tag::utime)),
             Ok(_) => Ok(()),
         }
     }
@@ -8143,7 +8148,7 @@ impl NodeFS {
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error {
                     errno,
-                    syscall: sys::Tag::utime,
+                    syscall: sys::Tag::lutime,
                     path: args.path.slice().into(),
                     ..Default::default()
                 })
@@ -8157,7 +8162,8 @@ impl NodeFS {
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
         ) {
-            Err(err) => Err(err.with_path(args.path.slice())),
+            // `err.syscall` must be node's operation name, not `utimensat(2)`.
+            Err(err) => Err(err.with_path_and_syscall(args.path.slice(), sys::Tag::lutime)),
             Ok(_) => Ok(()),
         }
     }

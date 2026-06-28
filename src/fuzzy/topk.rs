@@ -1,9 +1,10 @@
 //! Fixed-capacity top-K selection.
 //!
 //! A binary min-heap on "goodness" (score descending, then a caller-supplied
-//! tiebreak ascending). The root is the *worst* retained item, so selecting
-//! the best K of N candidates is O(N log K) with no sort and no allocation
-//! beyond the K slots.
+//! tiebreak ascending). The root is the *worst* retained item, so the push
+//! phase selects the best K of N candidates in O(N log K) without sorting or
+//! allocating per candidate; only the final `into_sorted_vec()` sorts the at
+//! most K retained entries.
 
 /// Number of slots preallocated up front. `k` is caller-controlled, so the
 /// heap grows lazily past this instead of allocating a huge buffer for a `k`

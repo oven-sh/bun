@@ -11,12 +11,19 @@
 //! For needle length `m` and haystack length `n`, with 1-based `i in 1..=m`
 //! (needle) and `j in 1..=n` (haystack):
 //!
-//! - `D[i][j]`: best score of an alignment of `needle[..i]` whose last needle
+//! - `D[i][j]`: score of an alignment of `needle[..i]` whose last needle
 //!   byte is matched exactly at `haystack[j-1]`. `INVALID` if impossible.
-//! - `E[i][j]`: best score of an alignment of `needle[..i]` that ends with at
+//! - `E[i][j]`: score of an alignment of `needle[..i]` that ends with at
 //!   least one *skipped* haystack byte at `j-1` (an open gap), affine-penalized.
-//! - `H[i][j] = max(D[i][j], E[i][j])`: best score of `needle[..i]` within
+//! - `H[i][j] = max(D[i][j], E[i][j])`: score of `needle[..i]` within
 //!   `haystack[..j]`.
+//!
+//! Like fzf, each cell carries a single `(score, run_len, run_start_bonus)`
+//! triple, so the consecutive-run bonus of the *retained* predecessor is the
+//! one that propagates. That is fzf's greedy run-carry, not a true global
+//! optimum over every alignment; a lower-scoring predecessor with a larger
+//! carried run bonus can occasionally be the one that would have extended
+//! best. Matching fzf's ranking exactly is the goal, so this is deliberate.
 //!
 //! Leading and trailing skipped haystack bytes are free (`H[0][*] = 0`, and the
 //! final score is `max_j D[m][j]`), which makes this a "fitting" alignment: the

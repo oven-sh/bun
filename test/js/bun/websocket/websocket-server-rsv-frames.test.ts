@@ -147,9 +147,8 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
     };
   }
 
-  // https://github.com/oven-sh/bun: an RSV1 ping must fail the connection
-  // (RFC 7692 6.1). It used to be answered with a pong and silently arm the
-  // "next message is compressed" flag.
+  // An RSV1 ping must fail the connection (RFC 7692 6.1). It used to be
+  // answered with a pong and silently arm the "next message is compressed" flag.
   it("a ping with RSV1 set fails the connection and is not answered", async () => {
     using raw = await connectDeflated();
     raw.socket.write(frame(0x9, pmdDeflate(Buffer.from("pingy")), { rsv1: true }));

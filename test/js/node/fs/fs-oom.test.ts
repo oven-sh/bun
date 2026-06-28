@@ -58,8 +58,15 @@ if (isLinux) {
 // per-codepoint replacement slow path (a flood of 0x80 continuation bytes,
 // for which the simdutf length query predicts ~0 code units).
 describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catchable", () => {
+  const SIZE = 32 * 1024 * 1024;
+  const env = {
+    ...bunEnv,
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=48"]
+      .filter(Boolean)
+      .join(":"),
+  };
+
   test("readFileSync, readFile, Buffer.toString and TextDecoder recover", async () => {
-    const SIZE = 32 * 1024 * 1024;
     using dir = tempDir("utf16-alloc-oom", {});
     const file = join(String(dir), "big-utf8.txt");
     // Valid UTF-8 whose first character is non-ASCII ('\u00e9' = C3 A9), so the
@@ -100,12 +107,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
         console.log(JSON.stringify(results));
         `,
       ],
-      env: {
-        ...bunEnv,
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=48"]
-          .filter(Boolean)
-          .join(":"),
-      },
+      env,
       stdout: "pipe",
       // ASAN prints a benign "failed to allocate" WARNING line per recovered
       // failure; drain it but do not assert on it.
@@ -119,6 +121,46 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
       { name: "RangeError", code: undefined },
       { name: "Error", code: "ERR_STRING_TOO_LONG" },
       { name: "RangeError", code: undefined },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Three more callers of `to_utf16_alloc(.., fail_if_invalid = false, ..)`
+  // were written as if that call could never error (before the fix it could
+  // only abort), so they collapsed `Err` into their all-ASCII fallback. Once
+  // the allocation is fallible, `Response.text()` on an `Internal` blob must
+  // throw rather than return an empty string, and a store-backed
+  // `Blob.json()` must throw rather than reinterpret the UTF-8 bytes as
+  // Latin-1. `Blob.text()` is the sibling that was already correct.
+  test("Response.text, Blob.text and Blob.json recover", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const results = [];
+        const buf = Buffer.alloc(${SIZE}, "a"); buf[0] = 0xc3; buf[1] = 0xa9;
+        // '"' + '\\u00e9' + 'a'.repeat(${SIZE} - 4) + '"': a valid JSON string literal.
+        const json = Buffer.alloc(${SIZE}, "a");
+        json[0] = 0x22; json[1] = 0xc3; json[2] = 0xa9; json[${SIZE} - 1] = 0x22;
+        for (const run of [() => new Response(buf).text(), () => new Blob([buf]).text(), () => new Blob([json]).json()]) {
+          await run().then(
+            v => results.push("UNEXPECTED_SUCCESS length=" + JSON.stringify(v).length),
+            e => results.push({ name: e.name, message: e.message }),
+          );
+        }
+        console.log(JSON.stringify(results));
+        `,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
+      { name: "RangeError", message: "Out of memory" },
+      { name: "RangeError", message: "Out of memory" },
+      { name: "RangeError", message: "Out of memory" },
     ]);
     expect(exitCode).toBe(0);
   });

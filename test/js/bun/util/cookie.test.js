@@ -264,6 +264,73 @@ test("validation errors", () => {
   expect(mycookie.name).toBe("a");
 });
 
+describe("Bun.Cookie domain validation", () => {
+  const maxLabel = Buffer.alloc(63, "a").toString();
+
+  // https://datatracker.ietf.org/doc/html/rfc6265#section-5.2.3
+  test("uppercase ASCII is accepted and normalized to lowercase", () => {
+    const cookie = new Bun.Cookie("name", "value", { domain: "Example.COM" });
+    expect(cookie.domain).toBe("example.com");
+    expect(cookie.toString()).toBe("name=value; Domain=example.com; Path=/; SameSite=Lax");
+  });
+
+  test("the domain setter normalizes to lowercase", () => {
+    const cookie = new Bun.Cookie("name", "value");
+    cookie.domain = "SUB.Example.COM";
+    expect(cookie.domain).toBe("sub.example.com");
+    expect(cookie.toString()).toBe("name=value; Domain=sub.example.com; Path=/; SameSite=Lax");
+  });
+
+  test("Cookie.parse normalizes the Domain attribute to lowercase", () => {
+    expect(Bun.Cookie.parse("name=value; Domain=Example.COM").domain).toBe("example.com");
+  });
+
+  test("CookieMap.delete normalizes the domain", () => {
+    const map = new Bun.CookieMap();
+    map.delete({ name: "name", domain: "Example.COM", path: "/foo" });
+    expect(map.toSetCookieHeaders()).toEqual([
+      "name=; Domain=example.com; Path=/foo; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+    ]);
+  });
+
+  test("an empty domain is allowed and omitted from the serialized cookie", () => {
+    const cookie = new Bun.Cookie("name", "value", { domain: "" });
+    expect(cookie.domain).toBe("");
+    expect(cookie.toString()).toBe("name=value; Path=/; SameSite=Lax");
+  });
+
+  test.each([
+    "example.com",
+    ".example.com",
+    "localhost",
+    "xn--fsqu00a.com",
+    "1.2.3.4",
+    "a.b-c.co.uk",
+    `${maxLabel}.com`,
+  ])("accepts %s", domain => {
+    expect(new Bun.Cookie("name", "value", { domain }).domain).toBe(domain);
+  });
+
+  test.each([
+    "..a..b--",
+    ".",
+    "..",
+    "a..b",
+    "-example.com",
+    "example-.com",
+    ".-a.com",
+    "example.com.",
+    `${maxLabel}a.com`,
+  ])("rejects %s", domain => {
+    expect(() => new Bun.Cookie("name", "value", { domain })).toThrow(
+      /Invalid cookie domain: contains invalid characters/,
+    );
+    expect(() => Bun.Cookie.parse(`name=value; Domain=${domain}`)).toThrow(
+      /Invalid cookie domain: contains invalid characters/,
+    );
+  });
+});
+
 const cookie = {
   parse: str => {
     return Object.fromEntries(new Bun.CookieMap(str).entries());
@@ -462,7 +529,7 @@ describe("cookie.serialize(name, value, options)", function () {
       ["example.com\n"],
       ["sub.example.com\u0000"],
       ["my site.org"],
-      // ["domain..com"], // TODO
+      ["domain..com"],
       ["example.com; Path=/"],
       ["example.com /* inject a comment */"],
     ])("should throw for invalid domain: %s", domain => {

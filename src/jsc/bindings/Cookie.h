@@ -72,7 +72,8 @@ public:
         if (!isValidCookieDomain(domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
-        m_domain = domain;
+        // RFC 6265 section 5.2.3: the Domain attribute is case-insensitive, so store it lowercased.
+        m_domain = domain.convertToASCIILowercase();
         return {};
     }
 

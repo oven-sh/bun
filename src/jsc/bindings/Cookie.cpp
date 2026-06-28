@@ -47,7 +47,8 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     if (!isValidCookieDomain(domain)) {
         return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
     }
-    return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
+    // RFC 6265 section 5.2.3: the Domain attribute is case-insensitive, so store it lowercased.
+    return adoptRef(*new Cookie(name, value, domain.convertToASCIILowercase(), path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
 String Cookie::serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies)
@@ -124,7 +125,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
 
             if (attributeName == "domain"_s) {
                 if (!attributeValue.isEmpty()) {
-                    domain = attributeValue.convertToASCIILowercase();
+                    domain = attributeValue;
                 }
             } else if (attributeName == "path"_s) {
                 if (!attributeValue.isEmpty() && attributeValue.startsWith('/'))
@@ -222,24 +223,40 @@ bool Cookie::isValidCookiePath(const String& path)
     return true;
 }
 
-static inline bool isValidCharacterInCookieDomain(char16_t c)
+// Matches /^([.]?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i:
+// an optional leading dot, then dot-separated labels of 1-63 characters that start and end
+// with an ASCII alphanumeric and may contain '-' in between (RFC 1034 section 3.5, RFC 1123).
+template<typename CharacterType>
+static bool matchesCookieDomainGrammar(std::span<const CharacterType> characters)
 {
-    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-';
+    size_t length = characters.size();
+    size_t i = length && characters[0] == '.' ? 1 : 0;
+    while (true) {
+        size_t labelStart = i;
+        while (i < length && characters[i] != '.')
+            i++;
+        size_t labelLength = i - labelStart;
+        if (!labelLength || labelLength > 63)
+            return false;
+        if (!isASCIIAlphanumeric(characters[labelStart]) || !isASCIIAlphanumeric(characters[i - 1]))
+            return false;
+        for (size_t j = labelStart + 1; j + 1 < i; j++) {
+            if (!isASCIIAlphanumeric(characters[j]) && characters[j] != '-')
+                return false;
+        }
+        if (i == length)
+            return true;
+        i++;
+    }
 }
 bool Cookie::isValidCookieDomain(const String& domain)
 {
-    // TODO: /^([.]?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/i
-    // for now, require all characters to be [a-z0-9.-]
-    if (domain.is8Bit()) {
-        for (auto c : domain.span8()) {
-            if (!isValidCharacterInCookieDomain(c)) return false;
-        }
-    } else {
-        for (auto c : domain.span16()) {
-            if (!isValidCharacterInCookieDomain(c)) return false;
-        }
-    }
-    return true;
+    // An empty domain means the Domain attribute is absent.
+    if (domain.isEmpty())
+        return true;
+    if (domain.is8Bit())
+        return matchesCookieDomainGrammar(domain.span8());
+    return matchesCookieDomainGrammar(domain.span16());
 }
 
 void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const

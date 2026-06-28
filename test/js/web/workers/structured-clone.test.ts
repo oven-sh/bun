@@ -555,8 +555,6 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
   for (const [label, expr] of [
     ["ArrayBuffer", "new ArrayBuffer(2 ** 31)"],
     ["resizable ArrayBuffer", "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
-    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)"],
-    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
     ["Uint8Array", "new Uint8Array(2 ** 31)"],
   ] as const) {
     test(label, async () => {
@@ -583,6 +581,40 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(["DataCloneError", "SKIP"]).toContain(stdout.trim());
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // SharedArrayBuffers never enter the serialization buffer: structuredClone re-shares
+  // the existing Data Block. A >=2GiB SAB therefore clones without copying or aborting.
+  for (const [label, expr] of [
+    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)"],
+    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
+  ] as const) {
+    test(`${label} clones by sharing without copying`, async () => {
+      const script = `
+        let buf;
+        try {
+          buf = ${expr};
+        } catch {
+          console.log("SKIP");
+          process.exit(0);
+        }
+        const clone = structuredClone(buf);
+        new Uint8Array(buf)[0] = 42;
+        const shared = clone instanceof SharedArrayBuffer
+          && clone.byteLength === buf.byteLength
+          && new Uint8Array(clone)[0] === 42;
+        console.log(shared ? "SHARED" : "NOT_SHARED");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(["SHARED", "SKIP"]).toContain(stdout.trim());
       expect(exitCode).toBe(0);
     });
   }
@@ -757,7 +789,7 @@ describe("deserializing a version 13 payload", () => {
   // serialize([new Date(5), { tag: "first" }, { tag: "second" }, <ref first>, <ref second>])
   // written by Bun 1.4.0. Pooling the Date unconditionally would shift the two
   // back-references onto the Date and `first`.
-  test("back-references after a Date are not shifted by the version 14 behavior", () => {
+  test("back-references after a Date are not shifted by the pooled-terminal behavior", () => {
     const cloned = version13(
       "DQAAAAEFAAAAAAAAAAsAAAAAAAAUQAEAAAACAwAAgHRhZxAFAACAZmlyc3T/////AgAAAAL+////ABAGAACAc2Vjb25k/////wMAAAATAQQAAAATAv////8=",
     );
@@ -976,5 +1008,131 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
   test("valid Set and Map payloads still round-trip", () => {
     expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+/** Returns the `.name` of the error `fn` throws, or `undefined` if it does not throw. */
+function thrownName(fn: () => unknown): string | undefined {
+  try {
+    fn();
+    return undefined;
+  } catch (e) {
+    return (e as Error).name;
+  }
+}
+
+// https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+// StructuredSerializeInternal of a SharedArrayBuffer re-shares the Data Block; it never
+// copies it. That Data Block only exists in this process, so paths that reduce the clone
+// to bytes for another process or for storage must reject it instead.
+describe("structuredClone of a SharedArrayBuffer", () => {
+  test("shares the backing Data Block", () => {
+    const sab = new SharedArrayBuffer(8);
+    const clone = structuredClone(sab);
+    expect(clone).toBeInstanceOf(SharedArrayBuffer);
+    expect(clone).not.toBe(sab);
+    expect(clone.byteLength).toBe(8);
+    // Writes through either object are visible through the other.
+    new Uint8Array(sab)[0] = 42;
+    new Uint8Array(clone)[1] = 7;
+    expect(Array.from(new Uint8Array(clone))).toEqual([42, 7, 0, 0, 0, 0, 0, 0]);
+    expect(Array.from(new Uint8Array(sab))).toEqual([42, 7, 0, 0, 0, 0, 0, 0]);
+  });
+
+  test("preserves growability and propagates growth", () => {
+    const sab = new SharedArrayBuffer(1, { maxByteLength: 16 });
+    const clone = structuredClone(sab);
+    expect(clone).toBeInstanceOf(SharedArrayBuffer);
+    expect(clone.growable).toBe(true);
+    expect(clone.maxByteLength).toBe(16);
+    sab.grow(4);
+    expect(clone.byteLength).toBe(4);
+  });
+
+  test("preserves identity within one payload", () => {
+    const sab = new SharedArrayBuffer(4);
+    const [a, b] = structuredClone([sab, sab]);
+    expect(a).toBeInstanceOf(SharedArrayBuffer);
+    expect(a).toBe(b);
+  });
+
+  test("a view over a SharedArrayBuffer clones to a view over the shared block", () => {
+    const sab = new SharedArrayBuffer(8);
+    const clone = structuredClone(new Uint8Array(sab));
+    expect(clone).toBeInstanceOf(Uint8Array);
+    expect(clone.buffer).toBeInstanceOf(SharedArrayBuffer);
+    new Uint8Array(sab)[0] = 9;
+    expect(clone[0]).toBe(9);
+  });
+
+  // bun:jsc serialize (which node:v8 serialize wraps) produces bytes meant to be
+  // stored or deserialized elsewhere; a Data Block cannot travel that way. Node's
+  // v8.serialize throws for a directly referenced SharedArrayBuffer but byte-copies
+  // the backing store of a view over one. Match both halves.
+  test("serialize() to bytes rejects a directly referenced SharedArrayBuffer", () => {
+    expect(thrownName(() => serialize(new SharedArrayBuffer(8)))).toBe("DataCloneError");
+    expect(thrownName(() => serialize({ nested: new SharedArrayBuffer(8) }))).toBe("DataCloneError");
+  });
+
+  test("serialize() to bytes copies a view over a SharedArrayBuffer", () => {
+    const sab = new SharedArrayBuffer(8);
+    new Uint8Array(sab)[0] = 5;
+    const roundTripped = deserialize(serialize(new Uint8Array(sab)));
+    expect(roundTripped).toBeInstanceOf(Uint8Array);
+    expect(roundTripped.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(roundTripped[0]).toBe(5);
+    // A direct reference to the same buffer anywhere in the payload still rejects,
+    // even after a view over it was already byte-copied.
+    expect(thrownName(() => serialize([new Uint8Array(sab), sab]))).toBe("DataCloneError");
+  });
+
+  // IPC crosses a process boundary, so the Data Block cannot be re-shared either.
+  // Node's advanced serialization makes the same direct-reference vs. view split.
+  test("subprocess.send() rejects a SharedArrayBuffer but copies a view over one", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.on('message', () => {});"],
+      env: bunEnv,
+      ipc() {},
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(thrownName(() => proc.send(new SharedArrayBuffer(8)))).toBe("DataCloneError");
+    expect(thrownName(() => proc.send(new Uint8Array(new SharedArrayBuffer(8))))).toBeUndefined();
+    // A plain ArrayBuffer over the same channel is fine; only the direct SAB is rejected.
+    expect(thrownName(() => proc.send(new ArrayBuffer(8)))).toBeUndefined();
+  });
+});
+
+// https://webassembly.github.io/spec/web-api/index.html#serialization
+// A cloned WebAssembly.Module re-shares the compiled module, and a cloned shared
+// WebAssembly.Memory re-shares the memory. Both are in-process only.
+describe("structuredClone of WebAssembly objects", () => {
+  // The 8-byte empty module: `(module)`.
+  const emptyModuleBytes = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+
+  test("WebAssembly.Module clones to an instantiable Module", () => {
+    const mod = new WebAssembly.Module(emptyModuleBytes);
+    const clone = structuredClone(mod);
+    expect(clone).toBeInstanceOf(WebAssembly.Module);
+    expect(new WebAssembly.Instance(clone)).toBeInstanceOf(WebAssembly.Instance);
+  });
+
+  test("shared WebAssembly.Memory clones to a Memory sharing the same buffer", () => {
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    const clone = structuredClone(mem);
+    expect(clone).toBeInstanceOf(WebAssembly.Memory);
+    new Uint8Array(mem.buffer)[0] = 99;
+    expect(new Uint8Array(clone.buffer)[0]).toBe(99);
+  });
+
+  test("non-shared WebAssembly.Memory still rejects", () => {
+    expect(thrownName(() => structuredClone(new WebAssembly.Memory({ initial: 1 })))).toBe("DataCloneError");
+  });
+
+  test("serialize() to bytes rejects WebAssembly.Module and shared Memory", () => {
+    expect(thrownName(() => serialize(new WebAssembly.Module(emptyModuleBytes)))).toBe("DataCloneError");
+    expect(thrownName(() => serialize(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })))).toBe(
+      "DataCloneError",
+    );
   });
 });

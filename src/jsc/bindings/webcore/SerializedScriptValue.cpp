@@ -570,13 +570,17 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 11. added support for Blob's memory cost.
  * Version 12. added support for agent cluster ID.
  * Version 13. added support for ErrorInstance objects.
- * Version 14. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
+ * Versions 14 and 15 are RESERVED. Upstream WebKit uses 14 (boolean values are
+ * encoded as uint8_t instead of int32_t) and 15 (changed the terminator of the
+ * indexed property section in arrays). Bun has adopted neither, but skips those
+ * numbers so a future sync never has to disambiguate the same version number.
+ * Version 16. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
  * and Bun cloneable types are recorded in the object reference pool on both sides.
  */
-[[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
-// Deserializers must not pool the version 14 terminal types for older payloads,
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 16;
+// Deserializers must not pool the version 16 terminal types for older payloads,
 // whose writers never counted them, or the pool indices stop matching the writer's.
-[[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 14;
+[[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 16;
 [[maybe_unused]] static constexpr unsigned TerminatorTag = 0xFFFFFFFF;
 [[maybe_unused]] static constexpr unsigned StringPoolTag = 0xFFFFFFFE;
 [[maybe_unused]] static constexpr unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
@@ -1399,7 +1403,48 @@ private:
             return true;
         }
 
+        // A view over a SharedArrayBuffer in a payload reduced to bytes (forStorage,
+        // cross-process IPC) carries a byte copy of the backing store, matching Node.js.
+        // Only a directly referenced SharedArrayBuffer is rejected (in dumpIfTerminal).
+        if (arrayBuffer->isShared()
+            && (m_forStorage == SerializationForStorage::Yes
+                || m_forTransfer == SerializationForCrossProcessTransfer::Yes)) {
+            JSValue bufferValue = toJSArrayBuffer(*arrayBuffer);
+            if (!startObjectInternal(asObject(bufferValue))) // handle duplicates
+                return true;
+            return writeArrayBufferAsCopy(*arrayBuffer, code);
+        }
+
         return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
+    }
+
+    // Writes a byte copy of the buffer: ResizableArrayBufferTag when it is resizable or
+    // growable so an auto-length view over it still deserializes, ArrayBufferTag otherwise.
+    // The caller must have registered the buffer's wrapper via startObjectInternal so the
+    // deserializer's object pool stays in sync (it appends one entry per buffer it reads).
+    bool writeArrayBufferAsCopy(ArrayBuffer& arrayBuffer, SerializationReturnCode& code)
+    {
+        uint64_t byteLength = arrayBuffer.byteLength();
+        if (arrayBuffer.isResizableOrGrowableShared()) {
+            if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength)) [[unlikely]] {
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
+            write(ResizableArrayBufferTag);
+            write(byteLength);
+            uint64_t maxByteLength = arrayBuffer.maxByteLength().value_or(0);
+            write(maxByteLength);
+            write(static_cast<const uint8_t*>(arrayBuffer.data()), byteLength);
+            return true;
+        }
+        if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) + byteLength)) [[unlikely]] {
+            code = SerializationReturnCode::DataCloneError;
+            return true;
+        }
+        write(ArrayBufferTag);
+        write(byteLength);
+        write(static_cast<const uint8_t*>(arrayBuffer.data()), byteLength);
+        return true;
     }
 
     // void dumpDOMPoint(const DOMPointReadOnly& point)
@@ -1838,6 +1883,17 @@ private:
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
+                // A SharedArrayBuffer's Data Block only exists in this process. Payloads
+                // reduced to bytes (forStorage, cross-process IPC) cannot carry it, so a
+                // directly referenced SharedArrayBuffer is rejected, matching Node.js. A
+                // view over one is byte-copied instead (see dumpArrayBufferView). Checked
+                // before the duplicate lookup so a buffer a view already copied still errors.
+                if (arrayBuffer->isShared()
+                    && (m_forStorage == SerializationForStorage::Yes
+                        || m_forTransfer == SerializationForCrossProcessTransfer::Yes)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 auto index = m_transferredArrayBuffers.find(obj);
                 if (index != m_transferredArrayBuffers.end()) {
                     write(ArrayBufferTransferTag);
@@ -1847,45 +1903,26 @@ private:
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
 
-                if (arrayBuffer->isShared() && m_context == SerializationContext::WorkerPostMessage) {
+                if (arrayBuffer->isShared()) {
                     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+                    // StructuredSerializeInternal re-shares the Data Block; it never copies it.
                     if (!JSC::Options::useSharedArrayBuffer()) {
                         code = SerializationReturnCode::DataCloneError;
                         return true;
                     }
                     uint32_t index = m_sharedBuffers.size();
                     ArrayBufferContents contents;
-                    if (arrayBuffer->shareWith(contents)) {
-                        write(SharedArrayBufferTag);
-                        m_sharedBuffers.append(WTF::move(contents));
-                        write(index);
-                        return true;
-                    }
-                }
-
-                if (arrayBuffer->isResizableOrGrowableShared()) {
-                    uint64_t byteLength = arrayBuffer->byteLength();
-                    if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) * 2 + byteLength)) [[unlikely]] {
+                    if (!arrayBuffer->shareWith(contents)) {
                         code = SerializationReturnCode::DataCloneError;
                         return true;
                     }
-                    write(ResizableArrayBufferTag);
-                    write(byteLength);
-                    uint64_t maxByteLength = arrayBuffer->maxByteLength().value_or(0);
-                    write(maxByteLength);
-                    write(static_cast<const uint8_t*>(arrayBuffer->data()), byteLength);
+                    write(SharedArrayBufferTag);
+                    m_sharedBuffers.append(WTF::move(contents));
+                    write(index);
                     return true;
                 }
 
-                uint64_t byteLength = arrayBuffer->byteLength();
-                if (!m_buffer.tryReserveCapacity(static_cast<uint64_t>(m_buffer.size()) + sizeof(uint8_t) + sizeof(uint64_t) + byteLength)) [[unlikely]] {
-                    code = SerializationReturnCode::DataCloneError;
-                    return true;
-                }
-                write(ArrayBufferTag);
-                write(byteLength);
-                write(static_cast<const uint8_t*>(arrayBuffer->data()), byteLength);
-                return true;
+                return writeArrayBufferAsCopy(*arrayBuffer, code);
             }
             if (obj->inherits<JSArrayBufferView>()) {
                 if (checkForDuplicate(obj))
@@ -1983,8 +2020,14 @@ private:
 #endif
 #if ENABLE(WEBASSEMBLY)
             if (JSWebAssemblyModule* module = dynamicDowncast<JSWebAssemblyModule>(obj)) {
-                if (m_context != SerializationContext::WorkerPostMessage && m_context != SerializationContext::WindowPostMessage)
-                    return false;
+                // https://webassembly.github.io/spec/web-api/index.html#serialization
+                // A cloned Module re-shares the in-process JSC::Wasm::Module; payloads
+                // reduced to bytes (forStorage, cross-process IPC) cannot carry it.
+                if (m_forStorage == SerializationForStorage::Yes
+                    || m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
 
                 uint32_t index = m_wasmModules.size();
                 m_wasmModules.append(&module->module());
@@ -1998,7 +2041,8 @@ private:
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
-                if (m_context != SerializationContext::WorkerPostMessage) {
+                if (m_forStorage == SerializationForStorage::Yes
+                    || m_forTransfer == SerializationForCrossProcessTransfer::Yes) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
@@ -6575,9 +6619,9 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     // #endif
     //             ));
     scope.releaseAssertNoException();
-    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
+    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), WTF::move(sharedBuffers)
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        ,
+                                                                                                                            ,
         WTF::move(detachedCanvases)
 #endif
 #if ENABLE(WEB_RTC)
@@ -6586,10 +6630,10 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
 #if ENABLE(WEBASSEMBLY)
             ,
-        makeUnique<WasmModuleArray>(wasmModules), context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr
+        makeUnique<WasmModuleArray>(wasmModules), makeUnique<WasmMemoryHandleArray>(WTF::move(wasmMemoryHandles))
 #endif
 #if ENABLE(WEB_CODECS)
-        ,
+                                                      ,
         WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrameData)
 #endif
             ));

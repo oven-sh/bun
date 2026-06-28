@@ -90,22 +90,34 @@ describe("ipc mode advanced", () => {
   rawInjection("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
     // A peer-controlled length near u32::MAX must not wrap the bounds check
     // and slice an enormous range into the deserializer; the decoder compares
-    // against the *remaining* bytes. Run in a subprocess so a crash is a failure.
+    // against the *remaining* bytes. The injector sends one valid {a:1} frame
+    // (proving the write landed and the decoder is running), then the raw
+    // header [ff ff ff fc], then exits. EOF is only observed after every
+    // preceding byte was consumed, so by the time `onDisconnect` fires the
+    // overflow guard has provably parsed 0xFFFFFFFC and survived it. The
+    // decoder runs in a nested bun process so a native crash shows up as a
+    // nonzero exit code instead of taking the test runner with it.
     // prettier-ignore
     const parent = `
+      const messages = [];
+      const disconnected = Promise.withResolvers();
       const child = Bun.spawn({
         cmd: [
           process.execPath, "-e",
-          // length = 0xFFFFFFFC (big-endian); header_length (4) + 0xFFFFFFFC
-          // wraps to 0 in u32.
-          'require("fs").writeSync(3, Buffer.from([0xff, 0xff, 0xff, 0xfc]))',
+          // One well-formed frame ({a: 1}), then a bare 4-byte header whose
+          // length (0xFFFFFFFC) + header_length (4) wraps to 0 in u32.
+          'const a = Buffer.from("ff0f6f22016149027b01", "hex");' +
+          'const be = Buffer.alloc(4); be.writeUInt32BE(a.length);' +
+          'require("fs").writeSync(3, Buffer.concat([be, a, Buffer.from([0xff, 0xff, 0xff, 0xfc])]))',
         ],
         stdio: ["ignore", "inherit", "inherit"],
         serialization: "advanced",
-        ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
+        ipc(msg) { messages.push(msg); },
+        onDisconnect: disconnected.resolve,
       });
+      await disconnected.promise;
+      console.log(JSON.stringify(messages));
       await child.exited;
-      console.log("PARENT_OK");
     `;
 
     await using proc = Bun.spawn({
@@ -117,9 +129,11 @@ describe("ipc mode advanced", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("PARENT_OK");
-    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
+      stdout: JSON.stringify([{ a: 1 }]),
+      exitCode: 0,
+      stderr: "",
+    });
   });
 
   rawInjection("a payload that is not V8-serialized closes the channel instead of hanging", async () => {
@@ -266,10 +280,12 @@ describe("ipc mode advanced", () => {
     // follower implementation, rejecting the header the day Node bumps its
     // wire version would fail every frame, instead of only the frames that
     // use a genuinely new tag. Payloads are {a: 1}; only the version differs.
+    // A trailing valid frame after v12 proves v12 CLOSED the channel rather
+    // than being silently skipped: if it were skipped the sentinel would land.
     const v15 = "ff0f6f22016149027b01";
     const v16 = "ff106f22016149027b01";
     const v12 = "ff0c6f22016149027b01";
-    const { messages, exitCode } = await injectFrames(v15, v16, v12);
+    const { messages, exitCode } = await injectFrames(v15, v16, v12, v15);
     expect(messages).toEqual([{ a: 1 }, { a: 1 }]);
     expect(exitCode).toBe(0);
   });
@@ -315,6 +331,22 @@ describe("ipc mode advanced", () => {
     got.view.buffer.resize(8);
     expect(got.view.length).toBe(8);
     expect(exitCode).toBe(0);
+  });
+
+  // V8's ValidateJSArrayBufferViewFlags requires the view's "backed by a
+  // resizable buffer" bit to agree with the buffer that preceded it, in both
+  // directions. Both frames were confirmed rejected by `v8.deserialize()`.
+  rawInjection("a view whose resizable-buffer flag disagrees with its buffer is rejected", async () => {
+    const valid = "ff0f6f22016149027b01"; // {a: 1}
+    // kArrayBuffer(4 bytes) + View(Uint8, off 0, len 4, flags 0b10 = rab set)
+    const rabFlagOnFixedBuffer = "ff0f4204010203045642000402";
+    // kResizableArrayBuffer(len 4, max 8) + View(Uint8, off 0, len 4, flags 0)
+    const noRabFlagOnResizableBuffer = "ff0f7e0408010203045642000400";
+    for (const corrupt of [rabFlagOnFixedBuffer, noRabFlagOnResizableBuffer]) {
+      const { messages, exitCode } = await injectFrames(valid, corrupt);
+      expect(messages).toEqual([{ a: 1 }]);
+      expect(exitCode).toBe(0);
+    }
   });
 });
 

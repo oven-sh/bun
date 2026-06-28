@@ -1337,6 +1337,13 @@ private:
         if (!subtag || !byteOffset || !byteLength) return {};
         RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
         bool bufferIsResizable = buffer->isResizableOrGrowableShared();
+        // V8's ValidateJSArrayBufferViewFlags: bit 1 ("backed by a resizable
+        // buffer") must agree with the buffer that preceded this view, in BOTH
+        // directions. Unknown high bits are intentionally NOT rejected: V8
+        // accepts them today and only has a TODO to tighten on a version bump,
+        // so rejecting them here would diverge from Node.
+        bool isBackedByResizable = flags & 2;
+        if (isBackedByResizable != bufferIsResizable) return {};
         // V8 writes byteLength 0 for a length-tracking view; the view's real
         // extent is the whole tail of the (resizable) buffer past byteOffset.
         // Accepting the flag over a fixed buffer would be a malformed frame.

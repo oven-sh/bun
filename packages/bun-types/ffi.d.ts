@@ -491,6 +491,7 @@ declare module "bun:ffi" {
     ["callback"]: FFIType.function;
     ["fn"]: FFIType.function;
     ["usize"]: FFIType.uint64_t;
+    ["size_t"]: FFIType.uint64_t;
     ["isize"]: FFIType.int64_t;
     ["c_int"]: FFIType.int32_t;
     ["c_uint"]: FFIType.uint32_t;

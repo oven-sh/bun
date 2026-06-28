@@ -206,6 +206,7 @@ describe.skipIf(isFFIUnavailable)("cc applies the same conversions as dlopen", (
     /* c */ `
       const char* greet() { return "hello"; }
       unsigned int identity_u32(unsigned int value) { return value; }
+      unsigned long long identity_size_t(unsigned long long value) { return value; }
       void* identity_ptr(void* value) { return value; }
       int invoke(int (*callback)(int), int value) { return callback(value); }
       long long napi_echo(void* env, long long value) { return value; }
@@ -218,6 +219,10 @@ describe.skipIf(isFFIUnavailable)("cc applies the same conversions as dlopen", (
       identity_u32: {
         args: ["u32"],
         returns: "u32",
+      },
+      identity_size_t: {
+        args: ["size_t"],
+        returns: "size_t",
       },
       identity_ptr: {
         args: ["ptr"],
@@ -245,6 +250,11 @@ describe.skipIf(isFFIUnavailable)("cc applies the same conversions as dlopen", (
   it("converts large uint32_t arguments correctly", () => {
     expect(holder.library.symbols.identity_u32(0xffffffff)).toBe(0xffffffff);
     expect(holder.library.symbols.identity_u32(0)).toBe(0);
+  });
+
+  it("accepts size_t, which only the native type table spelled out", () => {
+    expect(holder.library.symbols.identity_size_t(42n)).toBe(42n);
+    expect(holder.library.symbols.identity_size_t(7)).toBe(7n);
   });
 
   it("converts ArrayBuffer pointer arguments", () => {

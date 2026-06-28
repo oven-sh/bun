@@ -212,7 +212,7 @@ compiled.symbols.mul(1, 2, 3);
 const spelled = dlopen(path, {
   setCallback: { args: ["function"], returns: "void" },
   aliases: {
-    args: ["c_int", "c_uint", "isize", "char*", "void*", "fn", "i64_fast", "u64_fast"],
+    args: ["c_int", "c_uint", "isize", "size_t", "char*", "void*", "fn", "i64_fast", "u64_fast"],
     returns: "callback",
   },
 });

@@ -67,6 +67,7 @@ unsafe extern "C" {
         arg2: &mut u8,
     ) -> JSValue;
     safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
+    safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
 /// Abort-callback monomorphization for `listen`. Implement on your context type.
@@ -250,6 +251,13 @@ impl AbortReason {
             AbortReason::Common(reason) => reason.to_js(global),
             AbortReason::Js(value) => value,
         }
+    }
+
+    /// Node.js APIs reject with an `AbortError` (`Error` subclass,
+    /// `code === "ABORT_ERR"`) whose `.cause` is `signal.reason`, not with
+    /// the Web `DOMException` held in `signal.reason` itself.
+    pub fn to_node_abort_error(self, global: &JSGlobalObject) -> JSValue {
+        Bun__wrapAbortError(global, self.to_js(global))
     }
 }
 

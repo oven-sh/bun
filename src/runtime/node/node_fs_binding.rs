@@ -106,7 +106,7 @@ fn run_async<A: FsArgument>(
                 let promise =
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global,
-                        reason.to_js(global),
+                        reason.to_node_abort_error(global),
                     );
                 args.unprotect();
                 drop(args);

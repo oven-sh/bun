@@ -1359,7 +1359,8 @@ mod _async_tasks {
             if Self::HAVE_ABORT_SIGNAL {
                 if let Some(signal) = self.args.signal() {
                     if let Some(reason) = signal.reason_if_aborted(global_object) {
-                        return promise.reject(global_object, Ok(reason.to_js(global_object)));
+                        return promise
+                            .reject(global_object, Ok(reason.to_node_abort_error(global_object)));
                     }
                 }
             }

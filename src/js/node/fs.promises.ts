@@ -1409,7 +1409,7 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
   try {
     for await (let chunk of iterable) {
       if (signal?.aborted) {
-        throw signal.reason;
+        throw $makeAbortError(undefined, { cause: signal.reason });
       }
 
       if (mustRencode && typeof chunk === "string") {
@@ -1442,7 +1442,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {
-      throw signal.reason;
+      throw $makeAbortError(undefined, { cause: signal.reason });
     }
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
@@ -1463,7 +1463,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   if (signal?.aborted) {
     if (mustClose) await fs.close(fdOrPath);
-    throw signal.reason;
+    throw $makeAbortError(undefined, { cause: signal.reason });
   }
 
   let totalBytesWritten = 0;
@@ -1489,7 +1489,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   // Abort signal shadows other errors
   if (signal?.aborted) {
-    error = signal.reason;
+    error = $makeAbortError(undefined, { cause: signal.reason });
   }
 
   if (error) {

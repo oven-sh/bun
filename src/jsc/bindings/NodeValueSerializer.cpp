@@ -236,6 +236,10 @@ private:
         auto result = m_objectIds.add(JSValue::encode(obj), m_nextObjectId);
         if (!result.isNewEntry)
             return result.iterator->value;
+        // Root the object: m_objectIds only records its address, and a later
+        // getter can sever the last reference mid-walk. Without a root the GC
+        // could reclaim it and alias a freshly allocated object onto this id.
+        m_gcBuffer.appendWithCrashOnOverflow(obj);
         m_nextObjectId++;
         return std::nullopt;
     }
@@ -731,6 +735,8 @@ private:
     bool m_forIPC;
     Vector<uint8_t> m_buffer;
     HashMap<EncodedJSValue, uint32_t> m_objectIds;
+    // GC roots for the keys of m_objectIds; see trackObject.
+    MarkedArgumentBuffer m_gcBuffer;
     uint32_t m_nextObjectId { 0 };
 };
 

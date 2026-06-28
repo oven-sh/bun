@@ -1896,13 +1896,12 @@ it("realpath async", async () => {
 
 it("promises.realpath uses the native binding (Node syscall tag)", async () => {
   // https://github.com/oven-sh/bun/issues/32963
-  const dir = tmpdirSync();
-  const file = join(dir, "f");
-  writeFileSync(file, "x");
+  using dir = tempDir("realpath-native", { f: "x" });
+  const file = join(String(dir), "f");
 
   // Node routes fsPromises.realpath to native realpath(3), so a missing path
   // rejects with syscall "realpath", not the JS-walking variant's "lstat".
-  const enoent = await promises.realpath(join(dir, "nope")).then(
+  const enoent = await promises.realpath(join(String(dir), "nope")).then(
     () => null,
     e => ({ code: e.code, syscall: e.syscall }),
   );

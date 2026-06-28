@@ -1892,6 +1892,25 @@ describe("open/mkdir mode string validation matches node", () => {
       TypeError,
       "ERR_INVALID_ARG_TYPE",
     );
+    // chmodSync has no options-bag form, so the wrapper reaches parseFileMode
+    // directly and must be rejected the same way.
+    const d = join(String(dir), "c");
+    mkdirSync(d);
+    expect(() => fs.chmodSync(d, new String("755") as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+  });
+
+  it("mkdirSync treats a String wrapper as an options bag, like node", () => {
+    // Node branches on `typeof options === 'object'`, and `typeof new String`
+    // is "object", so the wrapper is an options bag (its `.mode` is undefined
+    // and the default mode applies). It must NOT be parsed as the mode "700"
+    // and it must not throw. Compare against an options-less mkdirSync in the
+    // same process so the assertion is independent of the umask.
+    using dir = tempDir("fs-mode-mkdir-string-object", {});
+    const wrapped = join(String(dir), "wrapped");
+    const plain = join(String(dir), "plain");
+    mkdirSync(wrapped, new String("700") as any);
+    mkdirSync(plain);
+    expect(statSync(wrapped).mode).toBe(statSync(plain).mode);
   });
 });
 

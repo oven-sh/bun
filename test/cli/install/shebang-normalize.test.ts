@@ -200,8 +200,6 @@ test.skipIf(!isWindows)("Windows `.bunx` shim encodes `env -S` launcher without 
   const bytes = readFileSync(bunxPath);
   const launcher = decodeBunxLauncher(bytes);
 
-  // Before the fix this was "-S bun --no-env-file"; after the fix the `-S`
-  // is stripped and the real interpreter leads.
   expect(launcher.startsWith("-S")).toBe(false);
   expect(launcher).toBe("bun --no-env-file");
 });

@@ -2452,6 +2452,14 @@ declare module "bun" {
     macro?: MacroMap;
 
     autoImportJSX?: boolean;
+    /**
+     * Inject React Fast Refresh transforms (`$RefreshReg$` / `$RefreshSig$`) for JSX/TSX.
+     * The consumer must provide the refresh runtime globals (e.g. `react-refresh/runtime`).
+     * No-op on non-JSX loaders.
+     *
+     * @default false
+     */
+    reactFastRefresh?: boolean;
     allowBunRuntime?: boolean;
     exports?: {
       eliminate?: string[];

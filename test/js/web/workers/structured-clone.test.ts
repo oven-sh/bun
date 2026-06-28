@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
 import { join } from "path";
@@ -623,6 +623,12 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
   // buffer to its reserved capacity; the subsequent terminator write then triggers vector
   // growth. The default 1.5x growth exceeds the 2GiB cap and would crash. These cases must
   // succeed and round-trip correctly since the total serialized size still fits under 2GiB.
+  //
+  // Skipped under ASAN: each case is a 1.5 GiB allocation plus ~3 GiB of serialize +
+  // deserialize memcpy, which sits right on the 5000ms test budget once ASAN's shadow
+  // memory and per-byte poisoning are added (observed: "resizable ArrayBuffer in
+  // object" at 5000.3-5000.5ms, over and under the limit across runs). The 2GiB
+  // Vector-cap property is independent of ASAN and stays covered by every other lane.
   for (const [label, expr, check] of [
     ["ArrayBuffer in object", "{ h: new ArrayBuffer(size) }", "r.h.byteLength === size"],
     ["ArrayBuffer in array", "[new ArrayBuffer(size)]", "r[0].byteLength === size"],
@@ -634,7 +640,7 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
       "r.h.byteLength === size",
     ],
   ] as const) {
-    test(`${label} under 2GiB clones without crashing`, async () => {
+    test.skipIf(isASAN)(`${label} under 2GiB clones without crashing`, async () => {
       const script = `
         const size = 1600000000;
         let v;

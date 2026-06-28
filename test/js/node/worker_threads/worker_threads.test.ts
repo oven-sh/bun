@@ -99,6 +99,49 @@ test("'online' precedes a message posted before a module evaluation error", asyn
   });
 });
 
+test("'online' is emitted for a worker that fails before posting any message", async () => {
+  // Node emits 'online' before the entry point even loads, so it precedes
+  // 'error' and 'exit' for every failure mode, including ones where no user
+  // code ran. In a subprocess so the worker's uncaught-exception path is the
+  // runtime one, not the bun:test variant.
+  const src = /* js */ `
+    const { Worker } = require("node:worker_threads");
+    function run(arg, opts) {
+      return new Promise(resolve => {
+        const ev = [];
+        const w = new Worker(arg, opts);
+        w.on("online", () => ev.push("online"));
+        w.on("message", m => ev.push("msg:" + m));
+        w.on("error", () => ev.push("error"));
+        w.on("exit", c => { ev.push("exit:" + c); resolve(ev); });
+      });
+    }
+    Promise.all([
+      run('throw new Error("boom")', { eval: true }),
+      run("/nonexistent/worker-online-32908.js"),
+      run("process.exit(0)", { eval: true }),
+      run("process.exit(3)", { eval: true }),
+    ]).then(r => console.log(JSON.stringify(r)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify([
+      ["online", "error", "exit:1"], // entry point throws
+      ["online", "error", "exit:1"], // entry point fails to resolve
+      ["online", "exit:0"], // process.exit(0) during module evaluation
+      ["online", "exit:3"], // process.exit(3) during module evaluation
+    ]),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+}, 30_000);
+
 test("a 'message' handler attached from a microtask queued by 'online' sees the first message", async () => {
   // 'online' and the first message can share one parent task; Node still
   // runs a microtask checkpoint between the two deliveries.

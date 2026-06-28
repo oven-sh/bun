@@ -778,13 +778,15 @@ describe("Bun.file in serve routes", () => {
   // RFC 9110: without a client Range header the response is a 200 whose
   // entity is the body the handler returned. A Bun.file().slice() body must
   // not leak its internal offset as a 206 + Content-Range, and HEAD (§9.3.2)
-  // must report the same status and Content-Length that GET would.
+  // must report the same status and Content-Length that GET would. An empty
+  // slice is a valid 0-byte entity: 200 with Content-Length: 0.
   describe.concurrent("Bun.file().slice() via fetch handler is the entity", () => {
     it.each([
       ["/slice-handler", "56789"],
       ["/slice-zero-offset-handler", "0123"],
       ["/slice-open-handler", "56789ABCDEF"],
       ["/slice-past-eof-handler", "CDEF"],
+      ["/slice-empty-handler", ""],
     ])("GET and HEAD agree on %s", async (path, body) => {
       const expected = {
         status: 200,
@@ -808,19 +810,6 @@ describe("Bun.file in serve routes", () => {
         contentLength: head.headers.get("content-length"),
         contentRange: head.headers.get("content-range"),
       }).toEqual(expected);
-    });
-
-    it("empty slice: GET is a 204 with no Content-Range", async () => {
-      const res = await fetch(new URL("/slice-empty-handler", server.url));
-      expect(await res.text()).toBe("");
-      expect(res.headers.get("content-range")).toBeNull();
-      expect(res.status).toBe(204);
-    });
-
-    it("empty slice: HEAD reports Content-Length 0", async () => {
-      const res = await fetch(new URL("/slice-empty-handler", server.url), { method: "HEAD" });
-      expect(res.headers.get("content-length")).toBe("0");
-      expect(res.headers.get("content-range")).toBeNull();
     });
   });
 });

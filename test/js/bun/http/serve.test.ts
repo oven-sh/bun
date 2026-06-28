@@ -1518,8 +1518,8 @@ describe("should serve Bun.file().slice() as the entity", () => {
     [full.byteLength + 100, -full.byteLength],
   ];
 
-  // Every slice here normalizes to zero bytes; a 0-byte body with the
-  // default 200 status is promoted to 204, never a 0-byte 206.
+  // Every slice here normalizes to zero bytes. A 0-byte slice is a valid
+  // 0-byte entity: a plain 200 with Content-Length: 0, never a 0-byte 206.
   for (const [kind, ranges] of [
     ["empty", emptyRanges],
     ["bad", badRanges],
@@ -1530,8 +1530,9 @@ describe("should serve Bun.file().slice() as the entity", () => {
           const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`);
           const out = await response.arrayBuffer();
           expect(out).toEqual(new ArrayBuffer(0));
+          expect(response.headers.get("Content-Length")).toBe("0");
           expect(response.headers.get("Content-Range")).toBeNull();
-          expect(response.status).toBe(204);
+          expect(response.status).toBe(200);
         });
       });
     }

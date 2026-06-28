@@ -1173,7 +1173,10 @@ impl Tag {
                     }
                 }
                 b'-' => {
-                    if state != State::Pre {
+                    // '-' only begins a prerelease before the '+'. Inside prerelease or
+                    // build metadata it is an ordinary identifier character (semver 2.0
+                    // items 9 and 10), so "1.0.0+sha-abc" is a release with build "sha-abc".
+                    if state == State::None {
                         state = State::Pre;
                         start = i + 1;
                     }
@@ -1193,12 +1196,6 @@ impl Tag {
                         }
                         State::Build => {
                             result.tag.build = sliced_string.sub(&input[start..i]).external();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(!strings::contains_char(
-                                    result.tag.build.slice(sliced_string.buf),
-                                    b'-'
-                                ));
-                            }
                             state = State::None;
                         }
                     }

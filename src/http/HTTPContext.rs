@@ -1327,10 +1327,13 @@ impl<const SSL: bool> Handler<SSL> {
     }
 
     pub fn on_connect_error(ptr: *mut c_void, socket: HTTPSocket<SSL>, _: c_int) {
+        // Read before the socket is marked dead: uSockets keeps the
+        // connecting socket alive for the whole dispatch.
+        let dns_error = socket.dns_error();
         let tagged = HTTPContext::<SSL>::get_tagged(ptr);
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);
         if let Some(client) = tagged.client_mut() {
-            client.on_connect_error();
+            client.on_connect_error(dns_error);
         } else {
             // Same backstop as `on_close`: a SEMI_SOCKET/connecting socket
             // whose ext is no longer a client never dispatches `on_close`,

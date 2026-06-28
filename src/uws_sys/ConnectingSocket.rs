@@ -47,6 +47,13 @@ impl ConnectingSocket {
         us_connecting_socket_get_error(self)
     }
 
+    /// Raw `getaddrinfo(3)` return code when the name lookup itself failed;
+    /// 0 for a connect failure past name resolution. A different namespace
+    /// from [`Self::get_error`] (errno).
+    pub fn get_dns_error(&mut self) -> i32 {
+        us_connecting_socket_get_dns_error(self)
+    }
+
     pub fn get_native_handle(&mut self) -> *mut c_void {
         us_connecting_socket_get_native_handle(self)
     }
@@ -87,6 +94,7 @@ unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_kind(s: &mut ConnectingSocket) -> u8;
     pub(crate) safe fn us_connecting_socket_ext(s: &mut ConnectingSocket) -> *mut c_void;
     pub(crate) safe fn us_connecting_socket_get_error(s: &mut ConnectingSocket) -> i32;
+    pub(crate) safe fn us_connecting_socket_get_dns_error(s: &mut ConnectingSocket) -> i32;
     pub(crate) safe fn us_connecting_socket_get_native_handle(
         s: &mut ConnectingSocket,
     ) -> *mut c_void;

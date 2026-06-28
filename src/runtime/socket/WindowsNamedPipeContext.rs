@@ -226,7 +226,7 @@ impl WindowsNamedPipeContext {
         } else {
             // SAFETY: see `on_open`.
             match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-                _ = NewSocket::handle_connect_error(s, err.errno as i32)
+                _ = NewSocket::handle_connect_error(s, err.errno as i32, 0)
             });
         }
     }
@@ -409,7 +409,7 @@ impl WindowsNamedPipeContext {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
             match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-                _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32)
+                _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32, 0)
             });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.
@@ -439,7 +439,7 @@ impl WindowsNamedPipeContext {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
             match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| unsafe {
-                _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32)
+                _ = NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32, 0)
             });
             // SAFETY: `this` was just returned from `create()` (refcount==1);
             // release the only ref on the errdefer path.

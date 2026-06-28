@@ -245,7 +245,9 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
 
     if (c->addrinfo_req) {
-        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED);
+        /* Invalidate the cache entry for a refused connect (addresses may be
+         * stale) and for a resolver failure (never cache a negative result). */
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED || c->dns_error != 0);
         c->addrinfo_req = 0;
     }
     us_dispatch_connecting_error(c, c->error);
@@ -630,6 +632,10 @@ void us_connecting_socket_shutdown(struct us_connecting_socket_t *c) {
 
 int us_connecting_socket_get_error(struct us_connecting_socket_t *c) {
     return c->error;
+}
+
+int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) {
+    return c->dns_error;
 }
 
 struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length) {

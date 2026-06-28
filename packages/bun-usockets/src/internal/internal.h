@@ -318,6 +318,10 @@ struct us_connecting_socket_t {
     unsigned char kind;
     uint16_t port;
     int error;
+    /* Raw getaddrinfo(3) return code when the name lookup for this connect
+     * failed; 0 otherwise. Kept out of `error`: the EAI_* and errno
+     * constant sets are different namespaces and overlap numerically. */
+    int dns_error;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;

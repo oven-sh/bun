@@ -583,20 +583,21 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     struct addrinfo_request *ai_req;
     if (Bun__addrinfo_get(loop, host, (uint16_t)port, &ai_req) == 0) {
         struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
-        if (result->error) {
-            errno = result->error;
-            Bun__addrinfo_freeRequest(ai_req, 1);
-            return NULL;
-        }
-
-        struct addrinfo_result_entry *entries = result->entries;
-        if (entries && entries->info.ai_next == NULL) {
-            struct sockaddr_storage a;
-            init_addr_with_port(&entries->info, port, &a);
-            *has_dns_resolved = 1;
-            struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
-            Bun__addrinfo_freeRequest(ai_req, s == NULL);
-            return s;
+        /* A cached resolver failure falls through to the connecting-socket path
+         * below (same as a multi-address result) so it is reported through the
+         * same connect-error callback, with dns_error set, as an uncached one.
+         * Bun__addrinfo_set on an already-resolved request defers to the loop's
+         * dns_ready_head, never re-enters. */
+        if (!result->error) {
+            struct addrinfo_result_entry *entries = result->entries;
+            if (entries && entries->info.ai_next == NULL) {
+                struct sockaddr_storage a;
+                init_addr_with_port(&entries->info, port, &a);
+                *has_dns_resolved = 1;
+                struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
+                Bun__addrinfo_freeRequest(ai_req, s == NULL);
+                return s;
+            }
         }
     }
 
@@ -718,6 +719,10 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 #endif
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
+        /* Preserve the getaddrinfo failure so the connect-error callback can
+         * report the resolver error (ENOTFOUND, ...) instead of the fabricated
+         * ECONNABORTED that us_connecting_socket_close fills into c->error. */
+        c->dns_error = result->error;
         us_connecting_socket_close(c);
         return;
     }

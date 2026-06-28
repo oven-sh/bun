@@ -2,6 +2,7 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
+use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{Error as BunError, err};
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
 use bun_event_loop::{
@@ -1298,6 +1299,24 @@ impl FetchTasklet {
         } else {
             BunString::EMPTY
         };
+
+        // The hostname never resolved: report the resolver error (`ENOTFOUND`,
+        // ...) with `syscall`/`hostname`, the same shape `node:dns` produces,
+        // rather than a generic connect-failure message. `dns_error` is the
+        // raw getaddrinfo(3) code and is nonzero on this path, so `init_eai`
+        // is always `Some`.
+        if fail == err!("DNSResolveFailed") {
+            if let Some(dns_err) = c_ares::Error::init_eai(self.result.dns_error) {
+                let hostname: &[u8] = self.http.as_ref().map_or(b"", |h| h.url.hostname);
+                let mut err = crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
+                    dns_err,
+                    b"getaddrinfo",
+                    hostname,
+                );
+                err.path = path;
+                return BodyValueError::SystemError(err);
+            }
+        }
 
         let code = if fail == err!("ConnectionClosed") {
             BunString::static_("ECONNRESET")

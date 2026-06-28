@@ -775,14 +775,18 @@ pub(crate) fn error_to_js_with_syscall(
     Ok(instance)
 }
 
-pub(crate) fn error_to_js_with_syscall_and_hostname(
+/// `SystemError` fields for a resolver failure, in the shape `node:dns`
+/// reports them: `code`/`errno` derived from the DNS error, message
+/// `"<syscall> <CODE> <hostname>"`, plus `syscall` and `hostname`.
+/// `fetch()`/`Bun.connect` reuse this so a failed name lookup surfaces the
+/// same error the resolver APIs do.
+pub(crate) fn system_error_with_syscall_and_hostname(
     this: c_ares::Error,
-    global_this: &JSGlobalObject,
     syscall: &'static [u8],
     hostname: &[u8],
-) -> JsResult<JSValue> {
+) -> SystemError {
     let code = this.code();
-    let instance = SystemError {
+    SystemError {
         errno: this as i32,
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
@@ -795,7 +799,16 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
         hostname: bstr::String::clone_utf8(hostname),
         ..Default::default()
     }
-    .to_error_instance(global_this);
+}
+
+pub(crate) fn error_to_js_with_syscall_and_hostname(
+    this: c_ares::Error,
+    global_this: &JSGlobalObject,
+    syscall: &'static [u8],
+    hostname: &[u8],
+) -> JsResult<JSValue> {
+    let instance = system_error_with_syscall_and_hostname(this, syscall, hostname)
+        .to_error_instance(global_this);
     instance.put(
         global_this,
         b"name",

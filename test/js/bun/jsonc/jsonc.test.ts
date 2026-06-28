@@ -153,9 +153,9 @@ test("Bun.JSONC.parse handles pathological inputs in linear time", async () => {
       bunExe(),
       "-e",
       `
-        // A number in object-key position desyncs the parser, after which the
-        // object-property recovery loop walks the remaining ~250 KB logging
-        // errors as it goes.
+        // A number in object-key position is a parse error; this input used to
+        // send the old parser into a quadratic recovery walk over the
+        // remaining ~250 KB.
         {
           const input = "[{" + "-1" + Buffer.alloc(5 * 50_000, '"":[{').toString();
           let threw;
@@ -164,7 +164,11 @@ test("Bun.JSONC.parse handles pathological inputs in linear time", async () => {
           } catch (e) {
             threw = e;
           }
-          if (threw?.name !== "AggregateError") throw new Error("expected AggregateError, got " + threw);
+          // The parser reports the first error and stops (it no longer walks the
+          // remaining 250 KB logging an error per property), so this is a single
+          // SyntaxError-like BuildMessage; with multiple log messages it is an
+          // AggregateError. Either way it must throw and must do so in linear time.
+          if (!threw) throw new Error("expected Bun.JSONC.parse to throw");
           console.log("OK malformed flood");
         }
         // Duplicate-key warnings compute a position per warning the same way;
@@ -193,3 +197,144 @@ test("Bun.JSONC.parse handles pathological inputs in linear time", async () => {
   expect(stdout).toContain("DONE");
   expect(exitCode).toBe(0);
 }, 90_000);
+
+// ── Differential: Bun.JSONC.parse must agree with JSON.parse on valid JSON ──
+//
+// `Bun.JSONC.parse` is the JS-visible entry point of Bun's own JSON parser
+// (src/parsers/json.rs — the same engine that parses package.json, registry
+// manifests and tsconfig), so this differentially tests that engine against
+// JavaScriptCore's JSON.parse using deterministic pseudo-random documents.
+
+// Deterministic xorshift so failures reproduce.
+function makeRng(seed: number) {
+  let s0 = BigInt(seed) | 1n;
+  return () => {
+    s0 ^= (s0 << 13n) & 0xffffffffffffffffn;
+    s0 ^= s0 >> 7n;
+    s0 ^= (s0 << 17n) & 0xffffffffffffffffn;
+    return Number(s0 & 0xffffffn) / 0x1000000;
+  };
+}
+
+function generateJSON(rand: () => number, depth: number): string {
+  const r = rand();
+  if (depth > 3 || r < 0.12) return "null";
+  if (r < 0.22) return rand() < 0.5 ? "true" : "false";
+  if (r < 0.4) {
+    const n = rand();
+    if (n < 0.25) return String(Math.floor(rand() * 2 ** 31) * (rand() < 0.5 ? -1 : 1));
+    if (n < 0.5) return (rand() * 1e9).toFixed(3);
+    if (n < 0.75) return `${Math.floor(rand() * 1e6)}e${Math.floor(rand() * 40) - 20}`;
+    return String(rand() * Number.MAX_SAFE_INTEGER);
+  }
+  if (r < 0.62) {
+    let out = "";
+    const len = Math.floor(rand() * 60);
+    for (let i = 0; i < len; i++) {
+      const c = rand();
+      if (c < 0.06) out += '\\"';
+      else if (c < 0.12) out += "\\\\";
+      else if (c < 0.18) out += "\\n";
+      else if (c < 0.24) out += "\\u00e9";
+      else if (c < 0.3) out += "é";
+      else if (c < 0.34) out += "🚀";
+      else if (c < 0.38) out += "\\ud83d\\ude00";
+      else if (c < 0.42) out += "\\t";
+      else out += String.fromCharCode(97 + Math.floor(rand() * 26));
+    }
+    return `"${out}"`;
+  }
+  if (r < 0.8) {
+    const n = Math.floor(rand() * 6);
+    const items: string[] = [];
+    for (let i = 0; i < n; i++) items.push(generateJSON(rand, depth + 1));
+    return `[${items.join(",")}]`;
+  }
+  const n = Math.floor(rand() * 8);
+  const props: string[] = [];
+  for (let i = 0; i < n; i++) {
+    props.push(`"k${i}_${Math.floor(rand() * 1000)}"${rand() < 0.2 ? " " : ""}:${generateJSON(rand, depth + 1)}`);
+  }
+  // Mix in pretty-printed shapes so the whitespace paths are covered too.
+  return rand() < 0.3 ? `{\n  ${props.join(",\n  ")}\n}` : `{${props.join(",")}}`;
+}
+
+test("Bun.JSONC.parse matches JSON.parse on generated documents", () => {
+  const rand = makeRng(0xc0ffee);
+  for (let i = 0; i < 750; i++) {
+    const doc = generateJSON(rand, 0);
+    let expected: unknown;
+    try {
+      expected = JSON.parse(doc);
+    } catch {
+      // The generator only produces valid JSON; if JSON.parse rejects it the
+      // generator is broken, not the parser.
+      throw new Error(`generator produced invalid JSON: ${doc}`);
+    }
+    expect(Bun.JSONC.parse(doc)).toEqual(expected as any);
+  }
+});
+
+test("Bun.JSONC.parse matches JSON.parse across 64-byte block boundaries", () => {
+  // Strings/escapes straddling the SIMD block size and the buffer end.
+  for (let pad = 40; pad <= 96; pad++) {
+    const a = "a".repeat(pad);
+    for (const doc of [
+      `{"${a}": "x", "k": "${a}\\n"}`,
+      `["${a}\\\\"]`,
+      `[${" ".repeat(pad)}1]`,
+      `{"k":"${a}"}`,
+      `"${a}\\u00e9"`,
+    ]) {
+      expect(Bun.JSONC.parse(doc)).toEqual(JSON.parse(doc));
+    }
+  }
+});
+
+test("Bun.JSONC.parse matches JSON.parse on escape-heavy strings", () => {
+  for (const doc of [
+    String.raw`"\\\\\""`,
+    String.raw`["\b\f\n\r\t\/\\"]`,
+    '{"😀":"😀"}',
+    '"' + "\\\\".repeat(63) + '"',
+    '"' + "\\\\".repeat(64) + '"',
+    '"' + "\\\\".repeat(65) + '"',
+  ]) {
+    expect(Bun.JSONC.parse(doc)).toEqual(JSON.parse(doc));
+  }
+});
+
+test("Bun.JSONC.parse accepts a BOM and exotic whitespace between tokens", () => {
+  expect(Bun.JSONC.parse('﻿{"a": 1}')).toEqual({ a: 1 });
+  expect(Bun.JSONC.parse('{ "a" : 1 }')).toEqual({ a: 1 });
+  expect(Bun.JSONC.parse('{"a": 1 }')).toEqual({ a: 1 });
+});
+
+test("Bun.JSONC.parse rejects raw control characters and unterminated strings", () => {
+  expect(() => Bun.JSONC.parse('{"a": "line1\nline2"}')).toThrow();
+  expect(() => Bun.JSONC.parse('"ab\tcd"')).toThrow();
+  expect(() => Bun.JSONC.parse('"abc')).toThrow();
+  expect(() => Bun.JSONC.parse('{"a": 1')).toThrow();
+  expect(() => Bun.JSONC.parse("[1, 2")).toThrow();
+});
+
+test("Bun.JSONC.parse accepts single-quoted strings like the previous parser", () => {
+  expect(Bun.JSONC.parse(`{'a': 'b"c'}`)).toEqual({ a: 'b"c' });
+});
+
+test("Bun.JSONC.parse handles huge documents with every value type", () => {
+  // Large enough to exercise many 64-byte blocks and the index growth path.
+  const big: Record<string, unknown> = {};
+  for (let i = 0; i < 5000; i++) {
+    big["key_" + i] =
+      i % 5 === 0
+        ? { nested: [i, String(i), null, i % 2 === 0], deeper: { x: "é🚀" + i } }
+        : i % 3 === 0
+          ? 'value with "escapes" and \\ backslashes ' + i
+          : i * 1.5;
+  }
+  const minified = JSON.stringify(big);
+  const pretty = JSON.stringify(big, null, 2);
+  expect(Bun.JSONC.parse(minified)).toEqual(big as any);
+  expect(Bun.JSONC.parse(pretty)).toEqual(big as any);
+});

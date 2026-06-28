@@ -530,9 +530,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let cursor = self.cursor;
             let p = self.pos_at(cursor);
             if p >= self.contents.len() {
+                // Unterminated array: hard error, like the old parser.
                 self.token_start = self.contents.len();
                 self.expected(cursor, "\"]\"");
-                break Ok(());
+                break Err(bun_core::err!("ParserError"));
             }
             if b == b']' {
                 if self.newline_before(p) {
@@ -613,9 +614,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let cursor = self.cursor;
             let p = self.pos_at(cursor);
             if p >= self.contents.len() {
+                // Unterminated object: hard error, like the old parser.
                 self.token_start = self.contents.len();
                 self.expected(cursor, "\"}\"");
-                break Ok(());
+                break Err(bun_core::err!("ParserError"));
             }
             if b == b'}' {
                 if self.newline_before(p) {

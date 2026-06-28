@@ -1983,8 +1983,7 @@ pub(crate) fn install_isolated_packages(
         // pre-install pass; the full install that follows performs it.
         if !is_new_bun_modules && packages_to_install.is_none() && !lockfile_ro.packages.is_empty()
         {
-            let root_entry_deps =
-                entry_dependencies[store::entry::Id::ROOT.get() as usize].slice();
+            let root_entry_deps = entry_dependencies[store::entry::Id::ROOT.get() as usize].slice();
             let root_pkg_deps = pkgs.items_dependencies()[0];
             let deps = lockfile_ro.buffers.dependencies.as_slice();
             let mut expected = bun_collections::StringHashMap::<()>::with_capacity(

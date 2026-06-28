@@ -9332,10 +9332,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       await runBunInstall(env, packageDir);
       expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
 
-      await write(
-        packageJson,
-        JSON.stringify({ name: "foo", dependencies: { "one-dep": "1.0.0" } }),
-      );
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "one-dep": "1.0.0" } }));
       await runBunInstall(env, packageDir, { savesLockfile: false });
 
       // `a-dep` left the graph entirely: gone on both linkers.
@@ -9365,9 +9362,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       await runBunInstall(env, packageDir);
       const binEntries = async () => {
         try {
-          return (await readdirSorted(join(packageDir, "node_modules", ".bin"))).filter(e =>
-            e.startsWith("what-bin"),
-          );
+          return (await readdirSorted(join(packageDir, "node_modules", ".bin"))).filter(e => e.startsWith("what-bin"));
         } catch {
           return [];
         }

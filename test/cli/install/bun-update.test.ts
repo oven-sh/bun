@@ -671,8 +671,7 @@ it("should update a resolution reachable only through a transitive dependency", 
     await perNameRegistry(tgzDir, { ...depX, shared: { versions: { "1.0.0": {}, "1.1.0": {} }, latest: "1.1.0" } }),
   );
 
-  // Both the new root entry and dep-x's `^1.0.0` must land on 1.1.0. Before
-  // the fix the root entry resolved to 1.1.0 while dep-x's stayed on 1.0.0.
+  // Both the new root entry and dep-x's `^1.0.0` must land on 1.1.0.
   await runInPackageDir("update", "shared");
   expect(await file(join(package_dir, "package.json")).json()).toMatchObject({
     dependencies: { "dep-x": "^1.0.0", shared: "^1.1.0" },

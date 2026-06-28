@@ -389,10 +389,14 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
         if (property.getter) {
             auto name = makeString("get "_s, propertyName.isSymbol() ? String() : propertyName.string());
             descriptor.setGetter(NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr));
+            // Each NapiClass::create opens and closes a throw scope; the check between
+            // them is required for JSC's exception-check discipline.
+            RETURN_IF_EXCEPTION(scope, napi_pending_exception);
         }
         if (property.setter) {
             auto name = makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string());
             descriptor.setSetter(NapiClass::create(vm, env, name, property.setter, dataPtr, 0, nullptr));
+            RETURN_IF_EXCEPTION(scope, napi_pending_exception);
         }
     } else if (property.method != nullptr) {
         WTF::String name;

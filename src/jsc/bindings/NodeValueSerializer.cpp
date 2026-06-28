@@ -651,9 +651,12 @@ private:
                 return false;
             RETURN_IF_EXCEPTION(scope, false);
         }
-        JSValue causeValue = err->getIfPropertyExists(m_globalObject, m_vm.propertyNames->cause);
+        // V8 gates kCause on HasOwnProperty, so an inherited
+        // Error.prototype.cause is never emitted (but an own
+        // `cause: undefined` is serialized as kCause kUndefined).
+        JSValue causeValue = getOwnProperty(err, m_vm.propertyNames->cause);
         RETURN_IF_EXCEPTION(scope, false);
-        if (causeValue && !causeValue.isEmpty()) {
+        if (causeValue) {
             writeByte(static_cast<uint8_t>(V8ErrorTag::kCause));
             bool ok = writeValue(causeValue);
             RETURN_IF_EXCEPTION(scope, false);

@@ -64,7 +64,7 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 });
 
 describe("ipc mode advanced", () => {
-  it("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
+  rawInjection("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
     // The advanced IPC framing is [u32-be length][payload]. Checking
     // `data.len < header_length + message_len` in u32 arithmetic would let a
     // peer-controlled length near u32::MAX wrap the sum past the guard and
@@ -477,15 +477,17 @@ describe("ipc mode advanced structured clone", () => {
 
   // The serializer must enumerate only an array's own keys. Probing every
   // index through the prototype chain would both turn a large holey array
-  // into an O(length) event-loop stall and serialize an inherited
-  // Array.prototype index as an own element of every array. V8 enumerates
-  // own-only, so the node child is the reference for the hole surviving.
+  // into an O(length) event-loop stall and serialize an inherited index as an
+  // own element. V8 enumerates own-only, so the node child is the reference
+  // for the hole surviving. The inherited index is injected by swapping just
+  // this array's prototype: assigning Array.prototype[1] globally would also
+  // make bun's own internal holey arrays (the process.nextTick FixedQueue)
+  // observe it, which is a different bug entirely.
   it.skipIf(!nodeExe())("an inherited array index is not serialized as an own element", async () => {
     using dir = tempDir("ipc-adv-inherited-index", {
       "echo.cjs": ECHO_CHILD,
       // prettier-ignore
       "parent.cjs": /* js */ `
-        Array.prototype[1] = 99;
         const { fork } = require("child_process");
         const child = fork(require("path").join(__dirname, "echo.cjs"), [], {
           execPath: process.argv[2], execArgv: [], serialization: "advanced", stdio: "ignore",
@@ -493,16 +495,18 @@ describe("ipc mode advanced structured clone", () => {
         child.on("exit", () => { console.log("FAIL child exited before echoing"); process.exit(1); });
         child.on("message", got => {
           child.removeAllListeners("exit");
-          // "1 in got" would find the polluted Array.prototype[1] in this
-          // process, so only an own-property check proves the hole survived
-          // the round trip through node's V8 serializer.
           const own = [Object.hasOwn(got, 0), Object.hasOwn(got, 1), Object.hasOwn(got, 2)].join();
-          const vals = [got[0], got[2], got.length].join();
-          console.log(own === "true,false,true" && vals === "0,2,3" ? "OK" : "FAIL own=" + own + " vals=" + vals);
+          const vals = [got[0], got[1], got[2], got.length].join();
+          console.log(own === "true,false,true" && vals === "0,,2,3" ? "OK" : "FAIL own=" + own + " vals=" + vals);
           child.kill();
           process.exit(0);
         });
-        child.send([0, , 2]);
+        // arr[1] is a hole, but "1 in arr" is true via the swapped-in
+        // prototype. A serializer that probes indices through the prototype
+        // chain emits 99 as an own element at index 1.
+        const arr = [0, , 2];
+        Object.setPrototypeOf(arr, { __proto__: Array.prototype, 1: 99 });
+        child.send(arr);
       `,
     });
     await using proc = Bun.spawn({
@@ -532,6 +536,32 @@ describe("ipc mode advanced structured clone", () => {
     // A second reference to the Error must resolve to the Error, not to its cause.
     expect(got.pair[0]).toBe(got.e);
     expect(got.pair[1]).toBe(got.e);
+  });
+
+  // V8 gates kCause on HasOwnProperty: an inherited cause is never serialized,
+  // but an own `cause: undefined` is (kCause kUndefined). A prototype-walking
+  // read would stamp the inherited value onto every Error as an own property
+  // on the other end. The node child re-serializes the echo with real V8, so
+  // the node leg can't mask a wrong answer on the bun leg. The inherited cause
+  // is injected per-object via a prototype swap rather than by assigning
+  // Error.prototype.cause in the test runner process.
+  it.skipIf(!nodeExe())("an inherited Error cause is not serialized but an own undefined one is", async () => {
+    using dir = tempDir("ipc-adv-err-own-cause", { "echo.cjs": ECHO_CHILD });
+    const noOwn = new TypeError("no own cause");
+    Object.setPrototypeOf(noOwn, { __proto__: TypeError.prototype, cause: { inherited: true } });
+    const ownUndef = new TypeError("own undefined cause");
+    ownUndef.cause = undefined;
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), nodeExe()!, { noOwn, ownUndef, done: true });
+
+    expect(got.noOwn).toBeInstanceOf(TypeError);
+    expect({ hasOwnCause: Object.hasOwn(got.noOwn, "cause"), cause: got.noOwn.cause }).toEqual({
+      hasOwnCause: false,
+      cause: undefined,
+    });
+    expect({ hasOwnCause: Object.hasOwn(got.ownUndef, "cause"), cause: got.ownUndef.cause }).toEqual({
+      hasOwnCause: true,
+      cause: undefined,
+    });
   });
 
   // Both ends must assign the Error its object id BEFORE the cause's objects

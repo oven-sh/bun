@@ -24,7 +24,7 @@
  *     when the in-tree parser produced a SyntaxError at generation time
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,11 +42,14 @@ let suiteDir = process.argv.slice(2).find(a => a !== "--check");
 if (!suiteDir) {
   const tmp = mkdtempSync(join(tmpdir(), "toml-test-"));
   console.log(`Cloning toml-lang/toml-test into ${tmp} ...`);
-  execSync(`git clone https://github.com/toml-lang/toml-test.git ${tmp}`, { stdio: "inherit" });
-  execSync(`git -c advice.detachedHead=false checkout ${PINNED_COMMIT}`, { cwd: tmp, stdio: "inherit" });
+  execFileSync("git", ["clone", "https://github.com/toml-lang/toml-test.git", tmp], { stdio: "inherit" });
+  execFileSync("git", ["-c", "advice.detachedHead=false", "checkout", PINNED_COMMIT], {
+    cwd: tmp,
+    stdio: "inherit",
+  });
   suiteDir = tmp;
 }
-const commit = execSync("git rev-parse HEAD", { cwd: suiteDir }).toString().trim();
+const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: suiteDir }).toString().trim();
 const testsDir = join(suiteDir, "tests");
 
 // ---------------------------------------------------------------------------
@@ -386,13 +389,9 @@ writeFileSync(outPath, output);
 // Same prettier invocation as the repo's `bun run prettier` script, pinned to
 // the repo config so output is byte-stable wherever it is written.
 const repoRoot = join(import.meta.dir, "../../../..");
-execSync(
-  [
-    JSON.stringify(join(repoRoot, "node_modules/.bin/prettier")),
-    "--plugin=prettier-plugin-organize-imports",
-    `--config ${JSON.stringify(join(repoRoot, ".prettierrc"))}`,
-    `--write ${JSON.stringify(outPath)}`,
-  ].join(" "),
+execFileSync(
+  join(repoRoot, "node_modules/.bin/prettier"),
+  ["--plugin=prettier-plugin-organize-imports", "--config", join(repoRoot, ".prettierrc"), "--write", outPath],
   { stdio: "inherit", cwd: repoRoot },
 );
 if (checkMode) {

@@ -170,7 +170,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     fn err_char(&mut self, pos: usize, what: &'static str) -> PErr {
         match self.src.get(pos).copied() {
             None => self.err_fmt(pos, format_args!("{} end of file", what)),
-            Some(_) if self.redact => self.err_fmt(pos, format_args!("{}", what)),
+            Some(_) if self.redact => self.err_fmt(pos, format_args!("{} (redacted)", what)),
             Some(c) if c.is_ascii_graphic() => {
                 self.err_fmt(pos, format_args!("{} '{}'", what, c as char))
             }
@@ -1625,17 +1625,8 @@ impl<'a, 'log> Parser<'a, 'log> {
                 b'\r' => {
                     if multiline && self.peek_at(self.pos + 1) == b'\n' {
                         // CRLF normalizes to LF: switch to a copy if borrowing.
-                        if buf.is_none() {
-                            let mut b: ArenaVec<'a, u8> =
-                                ArenaVec::with_capacity_in(self.pos - start, self.bump);
-                            for &byte in &self.src[start..self.pos] {
-                                b.push(byte);
-                            }
-                            buf = Some(b);
-                        }
-                        if let Some(b) = &mut buf {
-                            b.push(b'\n');
-                        }
+                        Self::materialize(self.bump, self.src, start, self.pos, &mut buf)
+                            .push(b'\n');
                         self.pos += 2;
                     } else {
                         return Err(self.err(self.pos, BARE_CR));

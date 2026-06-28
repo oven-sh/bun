@@ -915,7 +915,7 @@ impl Rope {
 
     /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
     /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `get_or_put_object` walker
+    /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
     /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
     #[inline]
     pub fn next_ref<'a>(&self) -> Option<&'a Rope> {

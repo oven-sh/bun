@@ -394,13 +394,15 @@ describe("robustness", () => {
   const OVERFLOW_DEPTH = 2_000_000;
 
   test("deeply nested arrays throw instead of crashing", () => {
-    expect(() => TOML.parse("a = " + "[".repeat(OVERFLOW_DEPTH) + "]".repeat(OVERFLOW_DEPTH))).toThrow(RangeError);
+    const open = Buffer.alloc(OVERFLOW_DEPTH, "[").toString();
+    const close = Buffer.alloc(OVERFLOW_DEPTH, "]").toString();
+    expect(() => TOML.parse("a = " + open + close)).toThrow(RangeError);
   });
 
   test("deeply nested inline tables throw instead of crashing", () => {
-    expect(() => TOML.parse("a = " + "{ b = ".repeat(OVERFLOW_DEPTH) + "1" + " }".repeat(OVERFLOW_DEPTH))).toThrow(
-      RangeError,
-    );
+    const open = Buffer.alloc(OVERFLOW_DEPTH * 6, "{ b = ").toString();
+    const close = Buffer.alloc(OVERFLOW_DEPTH * 2, " }").toString();
+    expect(() => TOML.parse("a = " + open + "1" + close)).toThrow(RangeError);
   });
 
   test("deep dotted keys parse beyond the old 512-segment cap", () => {

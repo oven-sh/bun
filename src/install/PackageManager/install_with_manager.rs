@@ -36,8 +36,8 @@ use bun_install_types::NodeLinker::NodeLinker;
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre, save_lockfile,
-    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
 use super::security_scanner;
@@ -523,6 +523,38 @@ pub fn install_with_manager(
                                 false,
                             ) {
                                 add_dependency_error(manager, &dep, err);
+                            }
+                        }
+                    }
+
+                    // `bun update <name>` must re-resolve every dependency on
+                    // `<name>`, not only the current workspace's direct entry.
+                    // `Diff::generate` only invalidates root-level slots (and
+                    // workspaces whose own diff changed), so a `<name>` owned
+                    // by a preserved parent package never re-enters the queue
+                    // and its resolution stays pinned to the lockfile-loaded
+                    // version. Drop and re-enqueue every matching slot, like
+                    // the `overrides_changed` pass above.
+                    if manager.to_update && !manager.update_requests.is_empty() {
+                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
+                        for dependency_i in 0..dependencies_len {
+                            let dependency =
+                                manager.lockfile.buffers.dependencies[dependency_i].clone();
+                            if UpdateRequest::contains_name_hash(
+                                &manager.update_requests,
+                                dependency.name_hash,
+                            ) {
+                                manager.lockfile.buffers.resolutions[dependency_i] =
+                                    invalid_package_id;
+                                if let Err(err) = enqueue_dependency_with_main(
+                                    manager,
+                                    dependency_i as u32,
+                                    &dependency,
+                                    invalid_package_id,
+                                    false,
+                                ) {
+                                    add_dependency_error(manager, &dependency, err);
+                                }
                             }
                         }
                     }

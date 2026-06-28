@@ -1400,14 +1400,7 @@ impl Diff {
             ) {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()
-                        || 'brk: {
-                            for request in updates {
-                                if from_dep.name_hash == request.name_hash {
-                                    break 'brk true;
-                                }
-                            }
-                            false
-                        }
+                        || UpdateRequest::contains_name_hash(updates, from_dep.name_hash)
                     {
                         // Listed as to be updated
                         summary.update += 1;
@@ -1541,7 +1534,7 @@ impl Diff {
             // above.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
                 if updates.is_empty()
-                    || updates.iter().any(|r| r.name_hash == from_dep.name_hash));
+                    || UpdateRequest::contains_name_hash(updates, from_dep.name_hash));
             if !is_explicit_update_target {
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let from_res_id = from_resolutions[i];

@@ -1,8 +1,8 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { access, mkdir, readFile, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, toBeValidBin, toHaveBins } from "harness";
-import { join } from "path";
+import { bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
+import { basename, join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -526,4 +526,129 @@ it("should print UTF-8 arrows correctly with colors enabled", async () => {
   // double-encoded UTF-8 (each byte of the arrow re-encoded as Latin-1)
   expect(out).not.toContain("â");
   expect(await exited2).toBe(0);
+});
+
+// Unlike `dummyRegistry`, this serves a distinct manifest per package name,
+// packing a real tarball for each version into `tgzDir`.
+async function perNameRegistry(
+  tgzDir: string,
+  manifests: Record<string, { versions: Record<string, { dependencies?: Record<string, string> }>; latest: string }>,
+) {
+  for (const [name, { versions }] of Object.entries(manifests)) {
+    for (const [version, extra] of Object.entries(versions)) {
+      const staging = join(tgzDir, ".staging", `${name}-${version}`);
+      await mkdir(staging, { recursive: true });
+      await writeFile(join(staging, "package.json"), JSON.stringify({ name, version, ...extra }));
+      await pack(staging, env, "--destination", tgzDir);
+    }
+  }
+  return (request: Request) => {
+    const url = request.url;
+    if (url.endsWith(".tgz")) return new Response(file(join(tgzDir, basename(url))));
+    const name = url.slice(url.indexOf("/", root_url.length) + 1);
+    const entry = manifests[name];
+    if (!entry) return new Response("not found", { status: 404 });
+    const versions: Record<string, object> = {};
+    for (const [version, extra] of Object.entries(entry.versions)) {
+      versions[version] = { name, version, dist: { tarball: `${url}-${version}.tgz` }, ...extra };
+    }
+    return new Response(JSON.stringify({ name, versions, "dist-tags": { latest: entry.latest } }));
+  };
+}
+
+async function runInPackageDir(...args: string[]) {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), ...args],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  return out;
+}
+
+// The set of `shared@<version>` resolutions in the text lockfile.
+async function lockedSharedResolutions() {
+  const lock = await file(join(package_dir, "bun.lock")).text();
+  return [...new Set(lock.match(/"shared@[\d.]+"/g))].sort();
+}
+
+async function writePerNameBunfig() {
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `[install]\ncache = false\nregistry = "${root_url}/"\nsaveTextLockfile = true\nlinker = "hoisted"\n`,
+  );
+}
+
+// `bun update <name>` must re-resolve every dependency on `<name>` in the
+// lockfile, each within its own version range. A workspace whose range
+// resolves to a different version than the current workspace's used to be
+// left pinned to the lockfile-loaded entry forever: `bun outdated -r` kept
+// reporting it, but `bun update <name>` could never apply it.
+it("should update every resolution of a named package across workspaces", async () => {
+  setHandler(
+    await perNameRegistry(join(package_dir, ".tarballs"), {
+      shared: { versions: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {} }, latest: "2.0.0" },
+    }),
+  );
+  await writePerNameBunfig();
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { shared: "^2.0.0" } }),
+  );
+  const pkgOneJson = join(package_dir, "packages", "pkg-one", "package.json");
+  await mkdir(join(package_dir, "packages", "pkg-one"), { recursive: true });
+  await writeFile(pkgOneJson, JSON.stringify({ name: "pkg-one", version: "1.0.0", dependencies: { shared: "1.0.0" } }));
+  await runInPackageDir("install");
+
+  // Widen pkg-one's range. A plain install keeps its stale 1.0.0 because the
+  // previously resolved package still satisfies the new range.
+  await writeFile(
+    pkgOneJson,
+    JSON.stringify({ name: "pkg-one", version: "1.0.0", dependencies: { shared: "^1.0.0" } }),
+  );
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@2.0.0"']);
+
+  // root's ^2.0.0 is already at 2.0.0; pkg-one's ^1.0.0 must move to 1.1.0.
+  await runInPackageDir("update", "shared");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.1.0"', '"shared@2.0.0"']);
+  expect(
+    await file(join(package_dir, "packages", "pkg-one", "node_modules", "shared", "package.json")).json(),
+  ).toMatchObject({ version: "1.1.0" });
+
+  // The update reached a fixpoint: running it again is a no-op.
+  await runInPackageDir("update", "shared");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.1.0"', '"shared@2.0.0"']);
+});
+
+// Same bug one level deeper: a dependency on `<name>` owned by a preserved
+// parent package never re-entered the resolve queue, so `bun update <name>`
+// left it on the lockfile-loaded version.
+it("should update transitive resolutions of a named package", async () => {
+  setHandler(
+    await perNameRegistry(join(package_dir, ".tarballs"), {
+      shared: { versions: { "1.0.0": {}, "1.1.0": {} }, latest: "1.1.0" },
+      "dep-x": { versions: { "1.0.0": { dependencies: { shared: "^1.0.0" } } }, latest: "1.0.0" },
+    }),
+  );
+  await writePerNameBunfig();
+  // dep-x@1.0.0 depends on shared@^1.0.0, which dedupes onto the root's
+  // exact shared@1.0.0 at install time.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { shared: "1.0.0", "dep-x": "^1.0.0" } }),
+  );
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+
+  // The root's exact `1.0.0` cannot move; dep-x's `^1.0.0` must move to 1.1.0.
+  await runInPackageDir("update", "shared");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
+  expect(
+    await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
+  ).toMatchObject({ version: "1.1.0" });
 });

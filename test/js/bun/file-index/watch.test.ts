@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { renameSync, writeFileSync } from "node:fs";
 import { readFile, readdir, rename, rm } from "node:fs/promises";
 import { join } from "path";
 
@@ -86,6 +87,41 @@ describe.skipIf(!watchSupported)("Bun.FileIndex watch", () => {
     expect(index.has("b.txt")).toBe(false);
     // The pre-existing entry was never disturbed.
     expect(index.has("a.txt")).toBe(true);
+  });
+
+  // Atomic replacement of an indexed DIRECTORY by a file: the watcher
+  // re-lstats "dir" once (both fs ops land in one debounce window) and sees
+  // a file where the index has a directory. Every indexed descendant must
+  // be dropped, with delete events — otherwise they survive as permanent
+  // ghosts (no further event will ever name them).
+  test("a directory atomically replaced by a file drops its indexed descendants", async () => {
+    using dir = tempDir("fi-watch-dir-replaced", {
+      "root/dir/child.txt": "1",
+      "root/dir/sub/grand.txt": "2",
+      "root/keep.txt": "k",
+    });
+    const root = join(String(dir), "root");
+    using index = new Bun.FileIndex(root, { watch: true });
+    await index.ready;
+    expect(index.has("dir/sub/grand.txt")).toBe(true);
+    const c = collect(index);
+    // Back-to-back synchronous ops: the rename out of the root and the file
+    // taking the directory's name coalesce into one re-lstat of "dir".
+    renameSync(join(root, "dir"), join(String(dir), "away"));
+    writeFileSync(join(root, "dir"), "now a file");
+    const events = await c.until(has("delete", "dir/sub/grand.txt"));
+    // No ghosts: neither membership, nor glob, nor stat may still see them.
+    expect(index.has("dir/child.txt")).toBe(false);
+    expect(index.has("dir/sub")).toBe(false);
+    expect(index.has("dir/sub/grand.txt")).toBe(false);
+    expect(index.glob("**/*", { onlyFiles: false }).sort()).toEqual(["dir", "keep.txt"]);
+    expect(index.stat("dir")?.kind).toBe("file");
+    // One delete per descendant, and the replaced path itself is reported.
+    const kinds = new Map(events.map(e => [e.path, e.kind]));
+    expect(kinds.get("dir/child.txt")).toBe("delete");
+    expect(kinds.get("dir/sub")).toBe("delete");
+    expect(kinds.get("dir/sub/grand.txt")).toBe("delete");
+    expect(["create", "modify"]).toContain(kinds.get("dir"));
   });
 
   test("events inside an ignored directory never fire and cost no event", async () => {
@@ -530,10 +566,12 @@ describe.skipIf(!isLinux)("Bun.FileIndex watch (linux specifics)", () => {
       }
       return watched;
     };
-    // 200 directories under an ignored tree must not consume inotify watches.
-    for (let i = 0; i < 200; i++) {
-      await Bun.write(join(String(dir), "node_modules", `pkg${i}`, "index.js"), "x");
-    }
+    // Directories under an ignored tree must not consume inotify watches.
+    // 40 is plenty (the assertion below is exact either way) and keeps the
+    // setup inside the test budget on a loaded debug+ASAN runner.
+    await Promise.all(
+      Array.from({ length: 40 }, (_, i) => Bun.write(join(String(dir), "node_modules", `pkg${i}`, "index.js"), "x")),
+    );
     // Other inotify instances exist in the test process; measure the delta
     // this index contributes.
     const before = await fdInfo(process.pid);
@@ -543,7 +581,7 @@ describe.skipIf(!isLinux)("Bun.FileIndex watch (linux specifics)", () => {
     await Bun.write(join(String(dir), "src", "probe.ts"), "p");
     await c.until(has("create", "src/probe.ts"));
     const added = (await fdInfo(process.pid)) - before;
-    // Exactly the root + `src`; none of the 201 ignored directories.
+    // Exactly the root + `src`; none of the ignored directories.
     expect(added).toBe(2);
   });
 });

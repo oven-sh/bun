@@ -28,6 +28,11 @@ impl Oid {
 
     /// Parse exactly 40 lowercase/uppercase hex digits. Any other length or a
     /// non-hex byte returns `None`.
+    ///
+    /// Decoded with the case-insensitive scalar fold rather than
+    /// `bun_core::strings::decode_hex_to_bytes`: at 20 byte pairs that helper
+    /// always takes its SIMD path, an FFI kernel a standalone
+    /// `cargo test -p bun_git` binary does not link.
     pub fn from_hex(b: &[u8]) -> Option<Oid> {
         if b.len() != OID_HEX_LEN {
             return None;
@@ -41,16 +46,14 @@ impl Oid {
 
     /// Lowercase hexadecimal form.
     pub fn to_hex(&self) -> [u8; OID_HEX_LEN] {
-        const DIGITS: &[u8; 16] = b"0123456789abcdef";
         let mut out = [0u8; OID_HEX_LEN];
-        for (i, byte) in self.0.iter().enumerate() {
-            out[i * 2] = DIGITS[(byte >> 4) as usize];
-            out[i * 2 + 1] = DIGITS[(byte & 0x0f) as usize];
-        }
+        bun_core::fmt::bytes_to_hex_lower(&self.0, &mut out);
         out
     }
 
-    pub fn is_zero(&self) -> bool {
+    /// Test-only: production callers compare against [`Oid::ZERO`] directly.
+    #[cfg(test)]
+    pub(crate) fn is_zero(&self) -> bool {
         self.0 == [0; OID_RAW_LEN]
     }
 }

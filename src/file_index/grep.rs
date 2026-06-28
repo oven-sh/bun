@@ -8,10 +8,16 @@
 
 use crate::store::EntryKind;
 
-/// Binary sniff window: a NUL byte in the first 8 KiB marks the file binary
-/// (the same heuristic git's `buffer_is_binary` uses over an 8000-byte
-/// window).
-const BINARY_SNIFF_BYTES: usize = 8 * 1024;
+/// Binary sniff window for [`is_binary_prefix`]: only the first 8 KiB of a
+/// file decide whether it is searched/diffed as text.
+pub const BINARY_SNIFF_BYTES: usize = 8 * 1024;
+
+/// The one binary classifier every reader in the index uses: a NUL byte in
+/// the first [`BINARY_SNIFF_BYTES`] of `bytes` marks the content binary.
+#[inline]
+pub fn is_binary_prefix(bytes: &[u8]) -> bool {
+    memchr::memchr(0, &bytes[..bytes.len().min(BINARY_SNIFF_BYTES)]).is_some()
+}
 
 /// A compiled literal query, reusable across files (and threads, by value).
 #[derive(Clone, Debug)]
@@ -74,14 +80,16 @@ impl GrepQuery {
 }
 
 /// One match. `line` and `column` are 1-based; `column` is a BYTE offset
-/// within the line — this layer never decodes. The runtime converts the
-/// emitted hits to UTF-16 code units (what `FileIndex.grep()` documents),
-/// using `line_text`, which excludes the trailing `\n` (and `\r`).
+/// within the line (a `usize`, exactly `byte_offset - line_start + 1`, so
+/// callers can recover `line_start` for any offset) — this layer never
+/// decodes. The runtime converts the emitted hits to UTF-16 code units
+/// (what `FileIndex.grep()` documents), using `line_text`, which excludes
+/// the trailing `\n` (and `\r`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GrepHit<'a> {
     pub byte_offset: usize,
     pub line: u32,
-    pub column: u32,
+    pub column: usize,
     pub line_text: &'a [u8],
 }
 
@@ -109,8 +117,7 @@ pub fn grep_file<'h>(
     if haystack.len() > query.max_file_size {
         return GrepOutcome::SkippedTooLarge;
     }
-    let sniff = haystack.len().min(BINARY_SNIFF_BYTES);
-    if memchr::memchr(0, &haystack[..sniff]).is_some() {
+    if is_binary_prefix(haystack) {
         return GrepOutcome::SkippedBinary;
     }
 
@@ -137,7 +144,7 @@ pub fn grep_file<'h>(
         let hit = GrepHit {
             byte_offset: at,
             line,
-            column: (at - line_start + 1) as u32,
+            column: at - line_start + 1,
             line_text,
         };
         if !sink(path, hit) {
@@ -411,6 +418,41 @@ mod tests {
         assert!(GrepQuery::admits(EntryKind::File));
         assert!(!GrepQuery::admits(EntryKind::Dir));
         assert!(!GrepQuery::admits(EntryKind::Symlink));
+    }
+
+    // `column` is a byte offset, so it must be a `usize`: a hit more than
+    // 4 GiB into one line must reconstruct its exact `line_start`
+    // (`byte_offset - (column - 1)`, the arithmetic the runtime's context
+    // capture performs). No 4 GiB allocation: only the field math is under
+    // test. With a truncating `u32` column this does not even type-check.
+    #[test]
+    fn column_round_trips_line_start_past_u32() {
+        let line_start = 7usize;
+        for at in [line_start, (1usize << 32) + 123, usize::MAX - 1] {
+            let hit = GrepHit {
+                byte_offset: at,
+                line: 1,
+                column: at - line_start + 1,
+                line_text: b"",
+            };
+            assert_eq!(hit.byte_offset - (hit.column - 1), line_start);
+        }
+    }
+
+    #[test]
+    fn is_binary_prefix_matches_the_sniff_window() {
+        assert!(!is_binary_prefix(b""));
+        assert!(!is_binary_prefix(b"plain text"));
+        assert!(is_binary_prefix(b"\0"));
+        assert!(is_binary_prefix(&[b'a', 0, b'b']));
+        // Exactly at the window boundary: a NUL at index
+        // `BINARY_SNIFF_BYTES - 1` is seen, one at `BINARY_SNIFF_BYTES` is
+        // not.
+        let mut buf = vec![b'a'; BINARY_SNIFF_BYTES + 1];
+        buf[BINARY_SNIFF_BYTES] = 0;
+        assert!(!is_binary_prefix(&buf));
+        buf[BINARY_SNIFF_BYTES - 1] = 0;
+        assert!(is_binary_prefix(&buf));
     }
 
     #[test]

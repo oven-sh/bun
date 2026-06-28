@@ -287,8 +287,9 @@ impl Store {
     }
 
     /// Tombstones currently retained (cleared by [`Store::compact`]).
-    #[inline]
-    pub fn tombstones(&self) -> usize {
+    /// Test-only: compaction is triggered internally off the `dead` counter.
+    #[cfg(test)]
+    pub(crate) fn tombstones(&self) -> usize {
         self.dead as usize
     }
 

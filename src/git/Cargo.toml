@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 bstr.workspace = true
 bitflags.workspace = true
+bun_core.workspace = true
 memchr.workspace = true
 bun_libdeflate_sys.workspace = true
 bun_sha_hmac.workspace = true

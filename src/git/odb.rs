@@ -174,10 +174,6 @@ impl Odb {
         Ok(Odb { objects_dir, packs })
     }
 
-    pub fn pack_count(&self) -> usize {
-        self.packs.len()
-    }
-
     /// Read and fully materialize an object into `out` (replacing its
     /// contents). Returns the object's kind.
     pub fn read(&self, oid: Oid, out: &mut Vec<u8>) -> Result<ObjectKind, GitError> {

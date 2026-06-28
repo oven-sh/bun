@@ -24,7 +24,9 @@ use std::sync::Arc;
 
 use bun_core::handle_oom;
 use bun_event_loop::TaskTag;
-use bun_file_index::{FileReadOutcome, GrepHit, GrepQuery, grep_file, read_regular_at};
+use bun_file_index::{
+    FileReadOutcome, GrepHit, GrepQuery, grep_file, is_binary_prefix, read_regular_at,
+};
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated};
 use bun_sys::{Dir, Fd, O};
@@ -41,10 +43,6 @@ const GREP_MIN_CHUNK: usize = 32;
 /// descriptors a grep can hold open at once: one shared root fd + at most
 /// one file fd per subtask).
 const GREP_MAX_CHUNKS: usize = 16;
-/// A NUL byte in the first 8 KiB classifies a candidate as binary
-/// (`bun_file_index::grep_file` and git's `buffer_is_binary` use the same
-/// window).
-const BINARY_SNIFF_LEN: usize = 8 * 1024;
 
 /// One `grep()` call: the owning task. Its `run()` only merges what the
 /// chunk subtasks accumulated in [`GrepShared`]; all file I/O happens in
@@ -85,11 +83,12 @@ struct GrepShared {
 }
 
 /// One match, fully owned (the file's bytes do not outlive the read).
-/// `column` is already in 1-based UTF-16 code units into `line_text`.
+/// `column` is already in 1-based UTF-16 code units into `line_text`; it is
+/// only narrowed (to an f64) when the hit object is built for JS.
 struct OwnedHit {
     path: Box<[u8]>,
     line: u32,
-    column: u32,
+    column: usize,
     line_text: Box<[u8]>,
     before: Vec<Box<[u8]>>,
     after: Vec<Box<[u8]>>,
@@ -198,8 +197,11 @@ fn grep_dir(index: &FileIndex, args: &GrepArgs) -> Vec<u8> {
 
 /// `FileIndex.__grepCandidates(options)`: the RegExp path's snapshot. Same
 /// (cwd-relative) candidate set as the literal fast path, plus the `cwd`
-/// prefix `__grepRead` needs to locate each candidate from the root, and the
-/// effective `maxFileSize` the JS shim must hand back to it for parity.
+/// prefix `__grepRead` needs to locate each candidate from the root, and
+/// the VALIDATED `maxFileSize`, `limit` and `context` the JS shim must use.
+/// The shim never re-reads the user's options object: this is the one
+/// parse, so the literal and RegExp engines agree on every option (and a
+/// getter on the options object observably runs once).
 pub(crate) fn candidates_js(
     index: &FileIndex,
     global: &JSGlobalObject,
@@ -207,7 +209,7 @@ pub(crate) fn candidates_js(
 ) -> JsResult<JSValue> {
     let args = parse_grep_options(index, global, options_arg)?;
     let paths = candidate_paths(index, &args);
-    let obj = JSValue::create_empty_object(global, 3);
+    let obj = JSValue::create_empty_object(global, 5);
     let paths =
         JSValue::create_array_from_iter(global, paths.into_iter(), |p| utf8_js(global, &p))?;
     obj.put(global, "paths", paths);
@@ -216,6 +218,16 @@ pub(crate) fn candidates_js(
         global,
         "maxFileSize",
         JSValue::js_number_from_uint64(args.max_file_size as u64),
+    );
+    obj.put(
+        global,
+        "limit",
+        JSValue::js_number_from_uint64(args.limit as u64),
+    );
+    obj.put(
+        global,
+        "context",
+        JSValue::js_number_from_uint64(args.context as u64),
     );
     Ok(obj)
 }
@@ -448,7 +460,7 @@ impl ConcurrentPromiseTaskContext for GrepReadJob<'_> {
     fn run(&mut self) {
         if let Ok(FileReadOutcome::Contents(bytes)) =
             read_regular_at(Fd::cwd(), &self.abs, self.max_file_size as u64)
-            && memchr::memchr(0, &bytes[..bytes.len().min(BINARY_SNIFF_LEN)]).is_none()
+            && !is_binary_prefix(&bytes)
         {
             self.text = Some(bytes);
         }
@@ -470,7 +482,9 @@ impl ConcurrentPromiseTaskContext for GrepReadJob<'_> {
 
 impl OwnedHit {
     fn capture(haystack: &[u8], path: &[u8], hit: &GrepHit<'_>, context: usize) -> OwnedHit {
-        let column_byte = hit.column as usize - 1;
+        // `column` is the exact (1-based) byte column, so this recovers the
+        // exact line start even for a hit deep into one enormous line.
+        let column_byte = hit.column - 1;
         let line_start = hit.byte_offset - column_byte;
         let (before, after) = if context == 0 {
             (Vec::new(), Vec::new())
@@ -487,7 +501,7 @@ impl OwnedHit {
         OwnedHit {
             path: Box::from(path),
             line: hit.line,
-            column: (utf16_units(prefix) + 1) as u32,
+            column: utf16_units(prefix) + 1,
             line_text: Box::from(hit.line_text),
             before,
             after,
@@ -502,10 +516,11 @@ impl OwnedHit {
             "line",
             JSValue::js_number_from_uint64(u64::from(self.line)),
         );
+        // The one (saturating) narrowing of `column`: JS numbers are f64.
         obj.put(
             global,
             "column",
-            JSValue::js_number_from_uint64(u64::from(self.column)),
+            JSValue::js_number_from_uint64(self.column as u64),
         );
         obj.put(global, "lineText", utf8_js(global, &self.line_text)?);
         if with_context {

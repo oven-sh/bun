@@ -146,15 +146,19 @@ impl PackedRefs {
         Some(self.refs[idx].1)
     }
 
-    pub fn len(&self) -> usize {
+    /// Test-only: production lookups go through [`PackedRefs::get`].
+    #[cfg(test)]
+    fn len(&self) -> usize {
         self.refs.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
         self.refs.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&[u8], Oid)> {
+    #[cfg(test)]
+    fn iter(&self) -> impl Iterator<Item = (&[u8], Oid)> {
         self.refs.iter().map(|(n, o)| (n.as_slice(), *o))
     }
 }

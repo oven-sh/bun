@@ -784,7 +784,16 @@ impl FileIndex {
             // A path that now names a socket/fifo/device (or is gone) is
             // not indexable.
             Some(meta) => {
-                let existed = store.get(&path).is_some();
+                let existing = store.get(&path);
+                let existed = existing.is_some();
+                // An indexed DIRECTORY atomically replaced by a non-directory
+                // (`mv dir away && create a file named dir`) takes its indexed
+                // descendants with it, exactly as if it had vanished first.
+                if meta.kind != EntryKind::Dir
+                    && existing.is_some_and(|id| store.kind(id) == EntryKind::Dir)
+                {
+                    remove_descendants(store, &path, events);
+                }
                 // A budget failure leaves the entry unindexed; `truncated`
                 // already reports that state.
                 let _ = store.upsert(&path, meta);
@@ -823,16 +832,7 @@ impl FileIndex {
     ) {
         let Some(id) = store.get(path) else { return };
         if store.kind(id) == EntryKind::Dir {
-            let mut prefix = path.to_vec();
-            prefix.push(b'/');
-            let descendants: Vec<Vec<u8>> = store
-                .range_with_prefix(&prefix)
-                .map(|id| store.path(id).to_vec())
-                .collect();
-            for descendant in descendants {
-                store.remove(&descendant);
-                events.push((WatchEventKind::Delete, descendant));
-            }
+            remove_descendants(store, path, events);
         }
         store.remove(path);
         events.push((WatchEventKind::Delete, path.to_vec()));
@@ -916,6 +916,22 @@ impl FileIndex {
         {
             global.vm().report_extra_memory(grown);
         }
+    }
+}
+
+/// Remove every indexed descendant of the directory `path` (which vanished
+/// or was atomically replaced by a non-directory), emitting one delete event
+/// per descendant. `path` itself is left to the caller.
+fn remove_descendants(store: &mut Store, path: &[u8], events: &mut Vec<(WatchEventKind, Vec<u8>)>) {
+    let mut prefix = path.to_vec();
+    prefix.push(b'/');
+    let descendants: Vec<Vec<u8>> = store
+        .range_with_prefix(&prefix)
+        .map(|id| store.path(id).to_vec())
+        .collect();
+    for descendant in descendants {
+        store.remove(&descendant);
+        events.push((WatchEventKind::Delete, descendant));
     }
 }
 
@@ -1536,34 +1552,58 @@ fn git_config_value(data: &[u8], section: &[u8], key: &[u8]) -> Option<Vec<u8>> 
     found
 }
 
+/// Walk `bytes` as the JS string `clone_utf8(bytes)` decodes it, calling
+/// `f(byte_width, utf16_units)` once per produced scalar. Invalid sequences
+/// follow the WHATWG "maximal subpart" rule — each becomes ONE U+FFFD —
+/// which is what both WTF's UTF-8 decoder and `std::str::from_utf8`'s
+/// `Utf8Error::{valid_up_to, error_len}` implement, so byte→UTF-16 offset
+/// maps derived here agree with the string JS actually sees.
+fn for_each_utf16_scalar(bytes: &[u8], mut f: impl FnMut(usize, usize)) {
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let (valid, bad) = match core::str::from_utf8(rest) {
+            Ok(_) => (rest.len(), 0),
+            Err(e) => {
+                // `error_len() == None`: the slice ends with an incomplete
+                // sequence; like the streaming decoders, it is one U+FFFD.
+                let valid = e.valid_up_to();
+                (valid, e.error_len().unwrap_or(rest.len() - valid))
+            }
+        };
+        // `valid_up_to` bytes are valid UTF-8 by `from_utf8`'s contract.
+        for ch in core::str::from_utf8(&rest[..valid])
+            .unwrap_or_default()
+            .chars()
+        {
+            f(ch.len_utf8(), ch.len_utf16());
+        }
+        if bad == 0 {
+            return;
+        }
+        f(bad, 1);
+        rest = &rest[valid + bad..];
+    }
+}
+
 /// Number of UTF-16 code units `clone_utf8(bytes)` produces, so byte
 /// offsets into a line can be reported as offsets into the JS string. An
-/// astral scalar (4 UTF-8 bytes) is a surrogate pair; every invalid byte
-/// becomes one U+FFFD, matching `clone_utf8`'s per-byte replacement.
+/// astral scalar (4 UTF-8 bytes) is a surrogate pair; each invalid
+/// (maximal-subpart) sequence becomes one U+FFFD.
 pub(crate) fn utf16_units(bytes: &[u8]) -> usize {
     if bun_core::strings::first_non_ascii(bytes).is_none() {
         return bytes.len();
     }
     let mut units = 0usize;
-    let mut at = 0usize;
-    while at < bytes.len() {
-        let (width, n) = match bytes[at] {
-            0x00..=0x7F | 0x80..=0xBF | 0xC0..=0xC1 | 0xF5..=0xFF => (1, 1),
-            0xC2..=0xDF => (2, 1),
-            0xE0..=0xEF => (3, 1),
-            0xF0..=0xF4 => (4, 2),
-        };
-        at += width;
-        units += n;
-    }
+    for_each_utf16_scalar(bytes, |_, n| units += n);
     units
 }
 
 /// `complete()` scores UTF-8 path bytes, but `path` reaches JS as a UTF-16
 /// string: remap each ascending byte offset in `positions` to the index of
 /// the JS string character that byte belongs to. Every byte of a multi-byte
-/// scalar maps to the same index, so the result is deduplicated; an empty
-/// no-op for the (common) all-ASCII path.
+/// scalar (or of one replaced invalid sequence) maps to the same index, so
+/// the result is deduplicated; an empty no-op for the (common) all-ASCII
+/// path.
 fn byte_positions_to_utf16(path: &[u8], positions: &mut Vec<u32>) {
     if positions.is_empty() || bun_core::strings::first_non_ascii(path).is_none() {
         return;
@@ -1571,24 +1611,15 @@ fn byte_positions_to_utf16(path: &[u8], positions: &mut Vec<u32>) {
     let mut byte = 0usize;
     let mut unit: u32 = 0;
     let mut i = 0;
-    while i < positions.len() && byte < path.len() {
-        // UTF-8 scalar width from the lead byte; an astral scalar (4 bytes)
-        // is a surrogate pair (2 UTF-16 code units). Invalid bytes count as
-        // one unit each, matching `clone_utf8`'s per-byte U+FFFD replacement.
-        let (width, units) = match path[byte] {
-            0x00..=0x7F | 0x80..=0xBF | 0xC0..=0xC1 | 0xF5..=0xFF => (1, 1),
-            0xC2..=0xDF => (2, 1),
-            0xE0..=0xEF => (3, 1),
-            0xF0..=0xF4 => (4, 2),
-        };
+    for_each_utf16_scalar(path, |width, units| {
         let end = byte + width;
         while i < positions.len() && (positions[i] as usize) < end {
             positions[i] = unit;
             i += 1;
         }
         byte = end;
-        unit += units;
-    }
+        unit += units as u32;
+    });
     while i < positions.len() {
         positions[i] = unit;
         i += 1;

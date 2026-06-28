@@ -131,8 +131,9 @@ impl CompleteCache {
             && needle.starts_with(&self.needle)
     }
 
-    /// The number of cached survivors (diagnostics / tests).
-    pub fn survivor_count(&self) -> usize {
+    /// The number of cached survivors. Test-only.
+    #[cfg(test)]
+    pub(crate) fn survivor_count(&self) -> usize {
         self.survivors.len()
     }
 }

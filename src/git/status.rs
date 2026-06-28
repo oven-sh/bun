@@ -75,8 +75,8 @@ impl Default for StatusOptions {
 
 /// Compute porcelain-v1 status codes.
 ///
-/// * `head_tree` — HEAD's flattened tree ([`crate::Repository::head_tree`]),
-///   sorted by path.
+/// * `head_tree` — HEAD's flattened tree
+///   ([`crate::Repository::tree_at`] of HEAD's commit), sorted by path.
 /// * `worktree` — the caller's gitignore-filtered worktree listing, sorted
 ///   by path. Directories must not be listed (submodule work trees are
 ///   skipped entirely).

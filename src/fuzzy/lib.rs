@@ -13,7 +13,7 @@
 //! 2. [`Scorer::score`] runs the O(needle x haystack) DP on the survivors,
 //!    using `O(needle)` memory and zero heap allocation after
 //!    [`Scorer::set_needle`].
-//! 3. [`TopK`] selects the best K results in O(N log K).
+//! 3. [`TopKBy`] selects the best K results in O(N log K).
 //!
 //! [`Scorer::score_with_positions`] additionally recovers the matched byte
 //! indices for highlighting (exact within documented bounds, greedy past
@@ -32,4 +32,4 @@ mod tests;
 
 pub use scorer::{CaseMode, MAX_BACKTRACK_CELLS, MAX_BACKTRACK_HAYSTACK, Scorer, ScorerOptions};
 pub use subsequence::is_subsequence;
-pub use topk::{TopK, TopKBy};
+pub use topk::TopKBy;

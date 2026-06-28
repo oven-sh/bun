@@ -41,9 +41,6 @@ use super::{FileIndex, join_abs, schedule, utf8_js};
 /// `gitDiff()` does not read either side of the diff past this many bytes;
 /// an over-limit file is reported exactly like a binary one.
 const MAX_DIFF_FILE_SIZE: u64 = 64 * 1024 * 1024;
-/// A NUL byte in the first 8 KiB classifies a file as binary
-/// (git's `buffer_is_binary` uses the same window).
-const BINARY_SNIFF_LEN: usize = 8 * 1024;
 /// Lines of context around each `gitDiff()` hunk (git's default).
 const DIFF_CONTEXT_LINES: u32 = 3;
 /// Symlink targets longer than this are corrupt input, not paths.
@@ -644,10 +641,10 @@ fn compute_diff(
     }))
 }
 
+/// An absent side of the diff is not binary; a present one is classified by
+/// the index's shared sniff ([`bun_file_index::is_binary_prefix`]).
 fn is_binary(text: Option<&[u8]>) -> bool {
-    text.is_some_and(|bytes| {
-        memchr::memchr(0, &bytes[..bytes.len().min(BINARY_SNIFF_LEN)]).is_some()
-    })
+    text.is_some_and(bun_file_index::is_binary_prefix)
 }
 
 /// `diff_lines` line ranges index `old`/`new`; copy them out (without the

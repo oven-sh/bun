@@ -122,35 +122,41 @@ impl<T, F: Fn(&T, &T) -> core::cmp::Ordering> TopKBy<T, F> {
     }
 }
 
-/// Tiebreak for [`TopK`]: the caller-supplied `u32` (ascending).
+/// Tiebreak for the test-only [`TopK`]: the caller-supplied `u32`
+/// (ascending).
+#[cfg(test)]
 fn tie_by_index<T>(a: &(u32, T), b: &(u32, T)) -> core::cmp::Ordering {
     a.0.cmp(&b.0)
 }
 
 /// Comparator type of [`tie_by_index`], so [`TopK`] stays non-generic over a
 /// closure type.
+#[cfg(test)]
 type IndexTie<T> = fn(&(u32, T), &(u32, T)) -> core::cmp::Ordering;
 
-/// Fixed-capacity top-K min-heap keyed by (score desc, then a `u32` tiebreak
-/// asc): [`TopKBy`] specialized to an explicit per-candidate index.
-pub struct TopK<T> {
+/// Test-only [`TopKBy`] specialization keyed by (score desc, then an
+/// explicit `u32` tiebreak asc) — the shape every production caller builds
+/// itself. The heap tests keep it as the simplest way to pin that ordering.
+#[cfg(test)]
+pub(crate) struct TopK<T> {
     inner: TopKBy<(u32, T), IndexTie<T>>,
 }
 
+#[cfg(test)]
 impl<T> TopK<T> {
-    pub fn new(k: usize) -> TopK<T> {
+    pub(crate) fn new(k: usize) -> TopK<T> {
         TopK {
             inner: TopKBy::new(k, tie_by_index::<T> as IndexTie<T>),
         }
     }
 
     /// See [`TopKBy::push`].
-    pub fn push(&mut self, score: i32, tiebreak: u32, value: T) {
+    pub(crate) fn push(&mut self, score: i32, tiebreak: u32, value: T) {
         self.inner.push(score, (tiebreak, value));
     }
 
     /// Drains, best first (score desc, then tiebreak asc).
-    pub fn into_sorted_vec(self) -> Vec<(i32, T)> {
+    pub(crate) fn into_sorted_vec(self) -> Vec<(i32, T)> {
         self.inner
             .into_sorted_vec()
             .into_iter()
@@ -158,16 +164,12 @@ impl<T> TopK<T> {
             .collect()
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.inner.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
     /// See [`TopKBy::threshold`].
-    pub fn threshold(&self) -> Option<i32> {
+    pub(crate) fn threshold(&self) -> Option<i32> {
         self.inner.threshold()
     }
 }

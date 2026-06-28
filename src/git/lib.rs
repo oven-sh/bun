@@ -30,7 +30,7 @@ mod util;
 pub use diff::{DiffLine, DiffOrigin, Hunk, diff_lines};
 pub use error::GitError;
 pub use hash::hash_blob;
-pub use index::{EntryFlags, Index, IndexEntry, StatCache, TreeCacheEntry};
+pub use index::{EntryFlags, Index, IndexEntry, StatCache};
 pub use odb::{MAX_OBJECT_SIZE, ObjectKind, Odb};
 pub use oid::{OID_HEX_LEN, OID_RAW_LEN, Oid};
 pub use refs::{Head, PackedRefs};

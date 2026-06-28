@@ -4,8 +4,11 @@ interface FileIndex {
    * Native candidate snapshot for RegExp grep (see FileIndex.classes.ts).
    * `paths` are relative to the `cwd` option; `prefix` is that cwd ("" or
    * "dir/"), which `$read` needs to locate a candidate from the root.
+   * `maxFileSize`, `limit` and `context` are the VALIDATED options — the
+   * shim never reads the user's options object itself, so both engines see
+   * one parse (and option getters run exactly once).
    */
-  $paths(options): { paths: string[]; prefix: string; maxFileSize: number };
+  $paths(options): { paths: string[]; prefix: string; maxFileSize: number; limit: number; context: number };
   /**
    * Guarded native read of one candidate, off the JS thread: the same
    * `open(O_NOFOLLOW|O_NONBLOCK)` + `fstat(fd)` the literal worker uses, so
@@ -23,15 +26,20 @@ export function grep(this: FileIndex, pattern, options) {
   // Validate (and snapshot the candidate set) synchronously so bad arguments
   // and a closed index throw from `grep()` itself, not from the first `next()`.
   if ($isRegExpObject(pattern)) {
-    const { paths, prefix, maxFileSize } = index.$paths(options);
-    // `$paths` already range-validated both; `??` only normalizes absence.
-    const limit: number = options?.limit ?? Infinity;
-    const context: number = options?.context ?? 0;
+    const { paths, prefix, maxFileSize, limit, context } = index.$paths(options);
     // A fresh global, non-sticky copy: caller `lastIndex` state can neither
-    // corrupt the search nor be mutated by it.
-    let flags: string = pattern.flags.replaceAll("y", "");
-    if (!flags.includes("g")) flags += "g";
-    const re = new RegExp(pattern.source, flags);
+    // corrupt the search nor be mutated by it. The flags are rebuilt from
+    // the per-flag native getters and `new RegExp(re, flags)` reads `re`'s
+    // [[OriginalSource]] internal slot, so neither the (user-overridable)
+    // `flags` nor `source` accessor is ever invoked.
+    let flags = "g";
+    if (pattern.hasIndices) flags += "d";
+    if (pattern.ignoreCase) flags += "i";
+    if (pattern.multiline) flags += "m";
+    if (pattern.dotAll) flags += "s";
+    if (pattern.unicode) flags += "u";
+    if (pattern.unicodeSets) flags += "v";
+    const re = new RegExp(pattern, flags);
 
     /** Files read concurrently per batch. */
     const READ_CONCURRENCY = 16;
@@ -45,12 +53,32 @@ export function grep(this: FileIndex, pattern, options) {
       // to the grep's `cwd`; `$read` wants it relative to the root.
       return this.$read(prefix + relPath, maxFileSize);
     }
-    function stripCR(line: string): string {
-      return line.endsWith("\r") ? line.slice(0, -1) : line;
+    // `\n`-split `text` into lines with any trailing `\r` removed, dropping
+    // the empty slot after a trailing newline. `$charCodeAt`/`$substr` are
+    // JSC's private-name aliases of the original String.prototype methods,
+    // so a tampered `String.prototype.split`/`slice` cannot affect this.
+    function splitLines(text: string): string[] {
+      const lines: string[] = [];
+      const n: number = text.length;
+      let start = 0;
+      for (let i = 0; i < n; i++) {
+        if (text.$charCodeAt(i) === 0x0a) {
+          let end = i;
+          if (end > start && text.$charCodeAt(end - 1) === 0x0d) end--;
+          $arrayPush(lines, text.$substr(start, end - start));
+          start = i + 1;
+        }
+      }
+      if (start < n) {
+        let end = n;
+        if (end > start && text.$charCodeAt(end - 1) === 0x0d) end--;
+        $arrayPush(lines, text.$substr(start, end - start));
+      }
+      return lines;
     }
     function contextLines(lines: string[], from: number, to: number): string[] {
       const out: string[] = [];
-      for (let i = from < 0 ? 0 : from; i < to && i < lines.length; i++) out.push(stripCR(lines[i]));
+      for (let i = from < 0 ? 0 : from; i < to && i < lines.length; i++) $arrayPush(out, lines[i]);
       return out;
     }
 
@@ -61,17 +89,19 @@ export function grep(this: FileIndex, pattern, options) {
       let emitted = 0;
       for (let i = 0; i < paths.length && emitted < limit; i += READ_CONCURRENCY) {
         if (index.$closeRequested()) return;
-        const batch = paths.slice(i, i + READ_CONCURRENCY);
-        const texts: (string | null)[] = await Promise.all(batch.map(readCandidate, index));
-        for (let j = 0; j < batch.length && emitted < limit; j++) {
-          const text = texts[j];
+        const batchEnd = $min(i + READ_CONCURRENCY, paths.length);
+        // Start every read in the batch, then consume them in order: the
+        // reads overlap without `Promise.all` (whose `then`/iteration
+        // protocol is user-observable).
+        const texts: Promise<string | null>[] = [];
+        for (let j = i; j < batchEnd; j++) $arrayPush(texts, readCandidate.$call(index, paths[j]));
+        for (let j = i; j < batchEnd && emitted < limit; j++) {
+          const text = await texts[j - i];
           if (text === null) continue;
-          const path = batch[j];
-          const lines = text.split("\n");
-          // The element after a trailing newline is not a line.
-          if (lines.length !== 0 && lines[lines.length - 1] === "") lines.pop();
+          const path = paths[j];
+          const lines = splitLines(text);
           for (let k = 0; k < lines.length && emitted < limit; k++) {
-            const lineText = stripCR(lines[k]);
+            const lineText = lines[k];
             re.lastIndex = 0;
             let m: RegExpExecArray | null;
             while ((m = re.exec(lineText)) !== null) {

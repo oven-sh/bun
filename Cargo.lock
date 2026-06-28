@@ -798,6 +798,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_core",
  "bun_libdeflate_sys",
  "bun_sha_hmac",
  "bun_sys",

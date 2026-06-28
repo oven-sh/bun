@@ -156,20 +156,16 @@ pub(crate) fn checked_usize(v: u64, what: &'static str) -> Result<usize, GitErro
 }
 
 /// Render `value` as ASCII decimal into `buf` (20 bytes fit `u64::MAX`).
-pub(crate) fn format_decimal(mut value: u64, buf: &mut [u8; 20]) -> &[u8] {
-    let mut pos = buf.len();
-    loop {
-        pos -= 1;
-        buf[pos] = b'0' + (value % 10) as u8;
-        value /= 10;
-        if value == 0 {
-            return &buf[pos..];
-        }
-    }
+pub(crate) fn format_decimal(value: u64, buf: &mut [u8; 20]) -> &[u8] {
+    bun_core::fmt::buf_print_infallible(buf, format_args!("{value}"))
 }
 
 /// Bounded ASCII decimal parser for sizes embedded in object headers.
 /// Rejects empty input, non-digits, more than 20 digits, and overflow.
+///
+/// Deliberately not `bun_core::fmt::parse_unsigned`: that parser also
+/// accepts embedded `_` digit separators, which a git object header must
+/// reject as corrupt.
 pub(crate) fn parse_decimal(s: &[u8]) -> Option<u64> {
     if s.is_empty() || s.len() > 20 {
         return None;

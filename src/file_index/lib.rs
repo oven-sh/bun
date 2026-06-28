@@ -45,6 +45,6 @@ pub use complete::{
 pub use crawl::{CrawlEntry, CrawlOptions, CrawlResult, crawl, crawl_batched};
 pub use exempt::{EntryVerdict, ExemptSet, classify_entry, classify_path};
 pub use glob::glob;
-pub use grep::{GrepHit, GrepOutcome, GrepQuery, grep_file};
+pub use grep::{BINARY_SNIFF_BYTES, GrepHit, GrepOutcome, GrepQuery, grep_file, is_binary_prefix};
 pub use read::{FileReadOutcome, read_regular_at};
 pub use store::{EntryKind, FileId, Meta, Store};

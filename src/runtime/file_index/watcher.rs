@@ -276,6 +276,50 @@ impl WatchDelivery {
         index.apply_watch_batches(vm.global(), batches);
         Ok(())
     }
+
+    /// Take a pending [`WatchHandle::sync`] request, rebuild the
+    /// per-directory ignore chains for it (one `.gitignore` read per
+    /// directory, with the state lock RELEASED — the JS thread contends on
+    /// it), swap the result in, let the backend (re)register its OS watches
+    /// (`register`), and post the out-of-band `synced` acknowledgement.
+    /// Returns `false` when nothing was pending or the watcher is shutting
+    /// down. Watcher thread (Linux) / debounce thread (macOS, Windows).
+    fn apply_pending_sync(
+        self: &Arc<Self>,
+        root_abs: &[u8],
+        register: impl FnOnce(&[Vec<u8>]),
+    ) -> bool {
+        let pending = {
+            let mut state = self.state.lock();
+            if state.shutdown {
+                return false;
+            }
+            state.sync.take().map(|dirs| {
+                (
+                    dirs,
+                    state.base_chain.clone(),
+                    state.gitignore,
+                    Arc::clone(&state.exempt),
+                )
+            })
+        };
+        let Some((dirs, base, gitignore, exempt)) = pending else {
+            return false;
+        };
+        let (base, chains) = build_chains(root_abs, &base, gitignore, &exempt, &dirs);
+        {
+            let mut state = self.state.lock();
+            state.base_chain = base;
+            state.chains = chains;
+        }
+        register(&dirs);
+        self.post(Batch {
+            paths: Vec::new(),
+            recrawl: false,
+            synced: true,
+        });
+        true
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -478,6 +522,29 @@ fn append_gitignore(
     }
 }
 
+/// The ignore state of the directory `rel` given its `parent`'s: the same
+/// shared verdict the crawl applied when it admitted the directory, and (for
+/// a non-ignored one) the parent chain with `<rel>/.gitignore` appended. An
+/// ignored directory is registered (it contains tracked files) but git never
+/// consults a `.gitignore` inside an excluded directory, so its chain is its
+/// parent's. Reads at most one `.gitignore`: never call it holding
+/// [`WatchDelivery::state`]'s lock.
+fn derive_dir_chain(
+    root_abs: &[u8],
+    parent: &DirChain,
+    rel: &[u8],
+    gitignore: bool,
+    exempt: &ExemptSet,
+) -> DirChain {
+    let ignored = classify_entry(&parent.chain, parent.ignored, exempt, rel, true).is_ignored();
+    let chain = if ignored {
+        parent.chain.clone()
+    } else {
+        append_gitignore(root_abs, &parent.chain, rel, gitignore)
+    };
+    DirChain { chain, ignored }
+}
+
 /// Build the per-directory ignore state for `dirs` (sorted ascending, so
 /// every parent precedes its children) plus the root chain with its
 /// `.gitignore` folded in. This reads one `.gitignore` per directory: it
@@ -512,17 +579,8 @@ fn build_chains(
         let Some(parent) = parent.cloned() else {
             continue;
         };
-        // The same shared verdict the crawl applied when it admitted this
-        // directory. An ignored directory is registered (it contains
-        // tracked files) but git never consults a `.gitignore` inside an
-        // excluded directory, so its chain is its parent's.
-        let ignored = classify_entry(&parent.chain, parent.ignored, exempt, dir, true).is_ignored();
-        let chain = if ignored {
-            parent.chain
-        } else {
-            append_gitignore(root_abs, &parent.chain, dir, gitignore)
-        };
-        handle_oom(chains.put(dir, DirChain { chain, ignored }));
+        let entry = derive_dir_chain(root_abs, &parent, dir, gitignore, exempt);
+        handle_oom(chains.put(dir, entry));
     }
     (base, chains)
 }
@@ -561,35 +619,10 @@ fn admit_recursive_event(state: &mut State, rel: &[u8], is_dir_hint: bool) -> bo
 fn debounce_thread(shared: Arc<WatchDelivery>, root_abs: Vec<u8>) {
     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("FileIndexWatch"));
     loop {
-        // A pending sync rebuilds the per-directory ignore chains, which
-        // reads `.gitignore` files: snapshot the inputs, do the I/O with the
-        // lock RELEASED (the JS thread contends on it), swap the result in.
-        let sync = {
-            let mut state = shared.state.lock();
-            if state.shutdown {
-                return;
-            }
-            state.sync.take().map(|dirs| {
-                (
-                    dirs,
-                    state.base_chain.clone(),
-                    state.gitignore,
-                    Arc::clone(&state.exempt),
-                )
-            })
-        };
-        if let Some((dirs, base, gitignore, exempt)) = sync {
-            let (base, chains) = build_chains(&root_abs, &base, gitignore, &exempt, &dirs);
-            {
-                let mut state = shared.state.lock();
-                state.base_chain = base;
-                state.chains = chains;
-            }
-            shared.post(Batch {
-                paths: Vec::new(),
-                recrawl: false,
-                synced: true,
-            });
+        // A pending sync rebuilds the per-directory ignore chains; these
+        // backends register no per-directory OS watches (the stream is
+        // recursive), so there is nothing to (re)register.
+        if shared.apply_pending_sync(&root_abs, |_| {}) {
             continue;
         }
         let due = {
@@ -811,47 +844,25 @@ mod linux_impl {
             self.wake_rx.close();
         }
 
-        /// Apply a pending re-registration request from the JS thread.
+        /// Apply a pending re-registration request from the JS thread: the
+        /// shared snapshot/rebuild/swap/acknowledge sequence
+        /// ([`WatchDelivery::apply_pending_sync`]) plus this backend's watch
+        /// re-registration, which replaces every existing descriptor with
+        /// one per directory of the new crawl.
         fn handle_sync(&mut self) {
-            let (dirs, base, gitignore, exempt) = {
-                let mut state = self.shared.state.lock();
-                if state.shutdown {
-                    return;
-                }
-                match state.sync.take() {
-                    Some(dirs) => (
-                        dirs,
-                        state.base_chain.clone(),
-                        state.gitignore,
-                        Arc::clone(&state.exempt),
-                    ),
-                    None => return,
-                }
-            };
-            self.unregister_all();
+            let shared = Arc::clone(&self.shared);
             let root = self.root.clone();
-            // The chain rebuild reads one `.gitignore` per directory: all of
-            // that I/O happens with the state lock RELEASED (the JS thread
-            // contends on it), then the result is swapped in under it.
-            let (base, chains) = build_chains(&root, &base, gitignore, &exempt, &dirs);
-            {
-                let mut state = self.shared.state.lock();
-                state.base_chain = base;
-                state.chains = chains;
-            }
-            self.add_watch(&root, b"");
-            for dir in &dirs {
-                let mut abs = root.clone();
-                abs.push(b'/');
-                abs.extend_from_slice(dir);
-                self.add_watch(&abs, dir);
-            }
-            self.shared.post(Batch {
-                paths: Vec::new(),
-                recrawl: false,
-                synced: true,
+            let applied = shared.apply_pending_sync(&root, |dirs| {
+                self.unregister_all();
+                self.add_watch(&root, b"");
+                for dir in dirs {
+                    let mut abs = root.clone();
+                    abs.push(b'/');
+                    abs.extend_from_slice(dir);
+                    self.add_watch(&abs, dir);
+                }
             });
-            if self.add_errors > 0 {
+            if applied && self.add_errors > 0 {
                 bun_core::scoped_log!(
                     file_index_watch,
                     "inotify_add_watch failed for {} directories (fs.inotify.max_user_watches?)",
@@ -1002,6 +1013,10 @@ mod linux_impl {
         /// discovered entry dirty (entries created before each watch attached
         /// would otherwise be missed). Iterative: the work list bounds the
         /// stack on adversarially deep trees.
+        ///
+        /// TODO: this walk `lstat`s every entry; the crawl's `d_type`-based
+        /// walk (`bun_file_index::crawl`) avoids that syscall per entry and
+        /// this should eventually share it.
         fn register_tree(&mut self, first: Vec<u8>) {
             let mut work = vec![first];
             while let Some(rel) = work.pop() {
@@ -1017,25 +1032,12 @@ mod linux_impl {
                     )
                 };
                 let Some(parent) = parent else { continue };
-                // The same shared verdict the crawl uses to admit (and to
-                // refuse to prune) a directory; git never consults a
-                // `.gitignore` inside an excluded directory, so an ignored
-                // one keeps its parent's chain. The `.gitignore` I/O
-                // happens outside the state lock.
-                let ignored =
-                    classify_entry(&parent.chain, parent.ignored, &exempt, &rel, true).is_ignored();
-                let chain = if ignored {
-                    parent.chain
-                } else {
-                    append_gitignore(&self.root, &parent.chain, &rel, gitignore)
-                };
-                handle_oom(self.shared.state.lock().chains.put(
-                    &rel,
-                    DirChain {
-                        chain: chain.clone(),
-                        ignored,
-                    },
-                ));
+                // The same per-directory derivation the post-crawl sync
+                // applies (`build_chains`); the `.gitignore` I/O happens
+                // outside the state lock.
+                let entry = derive_dir_chain(&self.root, &parent, &rel, gitignore, &exempt);
+                handle_oom(self.shared.state.lock().chains.put(&rel, entry.clone()));
+                let DirChain { chain, ignored } = entry;
 
                 let mut abs = self.root.clone();
                 abs.push(b'/');

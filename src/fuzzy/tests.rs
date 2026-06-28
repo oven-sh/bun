@@ -9,7 +9,8 @@ use crate::score::{
     BONUS_CONSECUTIVE, BONUS_FIRST_CHAR_MULTIPLIER, BONUS_NON_WORD, SCORE_GAP_EXTENSION,
     SCORE_GAP_START, SCORE_MATCH,
 };
-use crate::{CaseMode, MAX_BACKTRACK_HAYSTACK, Scorer, ScorerOptions, TopK, is_subsequence};
+use crate::topk::TopK;
+use crate::{CaseMode, MAX_BACKTRACK_HAYSTACK, Scorer, ScorerOptions, is_subsequence};
 
 fn scorer_with(opts: ScorerOptions, needle: &[u8]) -> Scorer {
     let mut s = Scorer::new(opts);

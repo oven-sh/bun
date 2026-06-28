@@ -355,8 +355,10 @@ impl Scorer {
 
     /// Heap bytes currently held by the internal scratch buffers. Bounded:
     /// `O(needle)` for the rolling state plus at most
-    /// `MAX_BACKTRACK_CELLS * 17` for the backtrack matrices.
-    pub fn scratch_capacity_bytes(&self) -> usize {
+    /// `MAX_BACKTRACK_CELLS * 17` for the backtrack matrices. Test-only:
+    /// the allocation-bound tests are its only consumers.
+    #[cfg(test)]
+    pub(crate) fn scratch_capacity_bytes(&self) -> usize {
         const I64: usize = size_of::<i64>();
         const U32: usize = size_of::<u32>();
         self.needle.capacity()

@@ -113,27 +113,11 @@ pub struct IndexEntry {
     pub flags: EntryFlags,
 }
 
-/// One entry of the cache-tree (`TREE`) extension.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TreeCacheEntry {
-    /// Path component relative to the parent tree-cache entry (root = `""`).
-    pub component: Vec<u8>,
-    /// Number of index entries covered, or `-1` if the node is invalidated.
-    pub entry_count: i32,
-    /// Number of subtree nodes that follow this one.
-    pub subtree_count: u32,
-    /// Present only when `entry_count >= 0`.
-    pub oid: Option<Oid>,
-}
-
 /// A parsed `.git/index` file. Entries are sorted by `(path, stage)` and the
 /// sort order is enforced at parse time.
 pub struct Index {
-    version: u32,
     entries: Vec<IndexEntry>,
     paths: Vec<u8>,
-    tree_cache: Vec<TreeCacheEntry>,
-    checksum: Oid,
     /// mtime of the index file itself, used for the racily-clean check
     /// (`read-cache.c:is_racy_timestamp`). Not part of the file format;
     /// supplied by the caller that `stat`ed the file.
@@ -144,11 +128,8 @@ impl Index {
     /// An index with no entries (an unborn repository has no index file).
     pub fn empty() -> Index {
         Index {
-            version: 2,
             entries: Vec::new(),
             paths: Vec::new(),
-            tree_cache: Vec::new(),
-            checksum: Oid::ZERO,
             timestamp: None,
         }
     }
@@ -161,9 +142,10 @@ impl Index {
         if data.len() < INDEX_HEADER_LEN + INDEX_TRAILER_LEN {
             return Err(GitError::Corrupt("index: file too short"));
         }
+        // The trailing SHA-1 is not retained: callers verify it
+        // cryptographically over the raw bytes before parsing
+        // (`verify_trailing_sha1` in `Repository::read_index`).
         let body = &data[..data.len() - INDEX_TRAILER_LEN];
-        let mut checksum = [0u8; OID_RAW_LEN];
-        checksum.copy_from_slice(&data[data.len() - INDEX_TRAILER_LEN..]);
 
         let mut r = Reader::new(body, "index header");
         if r.read_bytes(4)? != INDEX_SIGNATURE {
@@ -207,33 +189,17 @@ impl Index {
             entries.push(entry);
         }
 
-        let tree_cache = parse_extensions(&mut r)?;
+        parse_extensions(&mut r)?;
 
         Ok(Index {
-            version,
             entries,
             paths,
-            tree_cache,
-            checksum: Oid(checksum),
             timestamp: None,
         })
     }
 
-    pub fn version(&self) -> u32 {
-        self.version
-    }
-
     pub fn entries(&self) -> &[IndexEntry] {
         &self.entries
-    }
-
-    /// The trailing SHA-1 recorded in the file.
-    pub fn checksum(&self) -> Oid {
-        self.checksum
-    }
-
-    pub fn tree_cache(&self) -> &[TreeCacheEntry] {
-        &self.tree_cache
     }
 
     /// Resolve an entry's path bytes ('/'-separated, relative to the work
@@ -436,8 +402,7 @@ fn parse_entry(
     })
 }
 
-fn parse_extensions(r: &mut Reader<'_>) -> Result<Vec<TreeCacheEntry>, GitError> {
-    let mut tree_cache = Vec::new();
+fn parse_extensions(r: &mut Reader<'_>) -> Result<(), GitError> {
     while !r.is_empty() {
         if r.remaining() < 8 {
             return Err(GitError::Corrupt("index: truncated extension header"));
@@ -448,80 +413,20 @@ fn parse_extensions(r: &mut Reader<'_>) -> Result<Vec<TreeCacheEntry>, GitError>
         if size > r.remaining() {
             return Err(GitError::Corrupt("index: extension size exceeds file"));
         }
-        let payload = r.read_bytes(size)?;
         match &sig {
-            b"TREE" => tree_cache = parse_tree_cache(payload)?,
             // `gitformat-index.txt`: extensions whose first signature byte is
-            // 'A'..'Z' are optional and may be ignored. A lowercase first
-            // byte means the index cannot be understood without it.
+            // 'A'..'Z' are optional and may be ignored; nothing downstream
+            // consumes any of them (`TREE`, `REUC`, ...), so they are all
+            // skipped. A lowercase first byte means the index cannot be
+            // understood without it.
             _ if sig[0].is_ascii_uppercase() => {}
             b"link" => return Err(GitError::Unsupported("split index (link extension)")),
             b"sdir" => return Err(GitError::Unsupported("sparse index (sdir extension)")),
             _ => return Err(GitError::Unsupported("mandatory index extension")),
         }
+        r.skip(size)?;
     }
-    Ok(tree_cache)
-}
-
-/// `gitformat-index.txt`, "Cache tree" extension: a series of
-/// `<component>NUL<entry_count>SP<subtree_count>LF[<oid>]` records in
-/// depth-first order. Parsed flat; the hierarchy is not reconstructed.
-fn parse_tree_cache(data: &[u8]) -> Result<Vec<TreeCacheEntry>, GitError> {
-    let mut r = Reader::new(data, "index TREE extension");
-    let mut out = Vec::new();
-    while !r.is_empty() {
-        let component = r.read_cstr()?.to_vec();
-        let count_tok = read_token(&mut r, b' ')?;
-        let entry_count = parse_ascii_i32(count_tok)
-            .ok_or(GitError::Corrupt("index: TREE entry count not numeric"))?;
-        let sub_tok = read_token(&mut r, b'\n')?;
-        let subtree_count = parse_ascii_i32(sub_tok)
-            .and_then(|v| u32::try_from(v).ok())
-            .ok_or(GitError::Corrupt("index: TREE subtree count not numeric"))?;
-        let oid = if entry_count >= 0 {
-            Some(r.read_oid()?)
-        } else {
-            None
-        };
-        out.push(TreeCacheEntry {
-            component,
-            entry_count,
-            subtree_count,
-            oid,
-        });
-    }
-    Ok(out)
-}
-
-fn read_token<'a>(r: &mut Reader<'a>, delim: u8) -> Result<&'a [u8], GitError> {
-    let rest = r.rest();
-    let end =
-        memchr::memchr(delim, rest).ok_or(GitError::Corrupt("index: TREE missing delimiter"))?;
-    let tok = &rest[..end];
-    r.skip(end + 1)?;
-    Ok(tok)
-}
-
-/// Bounded ASCII decimal parser accepting an optional leading `-`.
-fn parse_ascii_i32(s: &[u8]) -> Option<i32> {
-    let (neg, digits) = match s.split_first() {
-        Some((b'-', rest)) => (true, rest),
-        _ => (false, s),
-    };
-    if digits.is_empty() || digits.len() > 10 {
-        return None;
-    }
-    let mut value: i64 = 0;
-    for &c in digits {
-        if !c.is_ascii_digit() {
-            return None;
-        }
-        value = value * 10 + i64::from(c - b'0');
-    }
-    if neg {
-        value = -value;
-    }
-    i32::try_from(value).ok()
+    Ok(())
 }
 
 #[cfg(test)]
@@ -648,27 +553,11 @@ pub(crate) mod test_encode {
     fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
         a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
     }
-
-    pub(crate) fn encode_tree_cache(entries: &[TreeCacheEntry]) -> Vec<u8> {
-        let mut out = Vec::new();
-        for e in entries {
-            out.extend_from_slice(&e.component);
-            out.push(0);
-            out.extend_from_slice(e.entry_count.to_string().as_bytes());
-            out.push(b' ');
-            out.extend_from_slice(e.subtree_count.to_string().as_bytes());
-            out.push(b'\n');
-            if let Some(oid) = e.oid {
-                out.extend_from_slice(&oid.0);
-            }
-        }
-        out
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_encode::{SpecEntry, encode, encode_tree_cache, encode_with_extensions};
+    use super::test_encode::{SpecEntry, encode, encode_with_extensions};
     use super::*;
 
     fn entry_paths(index: &Index) -> Vec<Vec<u8>> {
@@ -684,9 +573,7 @@ mod tests {
         for v in 2..=4 {
             let data = encode(v, &[]);
             let index = Index::parse(&data).unwrap();
-            assert_eq!(index.version(), v);
             assert!(index.entries().is_empty());
-            assert_eq!(index.checksum(), Oid([0xcc; 20]));
         }
     }
 
@@ -791,7 +678,6 @@ mod tests {
         b.assume_valid = true;
         let data = encode(2, &[a.clone(), b.clone()]);
         let index = Index::parse(&data).unwrap();
-        assert_eq!(index.version(), 2);
         assert_eq!(
             entry_paths(&index),
             vec![b"a.txt".to_vec(), b"dir/nested/file".to_vec()]
@@ -1111,42 +997,33 @@ mod tests {
         ));
     }
 
+    /// Nothing consumes the cache-tree (`TREE`) extension, so it is skipped
+    /// like every other optional extension.
     #[test]
-    fn tree_extension_parsed() {
-        let cache = vec![
-            TreeCacheEntry {
-                component: b"".to_vec(),
-                entry_count: 3,
-                subtree_count: 1,
-                oid: Some(Oid([0xaa; 20])),
-            },
-            TreeCacheEntry {
-                component: b"sub".to_vec(),
-                entry_count: -1,
-                subtree_count: 0,
-                oid: None,
-            },
-        ];
-        let payload = encode_tree_cache(&cache);
-        let data = encode_with_extensions(2, &[SpecEntry::new(b"a", 1)], &[(b"TREE", &payload)]);
+    fn tree_extension_skipped() {
+        let payload = b"\x003 1\n\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaasub\x00-1 0\n";
+        let data = encode_with_extensions(2, &[SpecEntry::new(b"a", 1)], &[(b"TREE", payload)]);
         let index = Index::parse(&data).unwrap();
-        assert_eq!(index.tree_cache(), &cache[..]);
+        assert_eq!(index.entries().len(), 1);
+        assert_eq!(index.path(&index.entries()[0]), b"a");
     }
 
+    /// A malformed optional (uppercase-signature) extension payload is not
+    /// even looked at; only its declared length matters.
     #[test]
-    fn tree_extension_malformed() {
+    fn tree_extension_malformed_payload_is_skipped() {
         let bad: &[&[u8]] = &[
             b"name-without-nul",
             b"a\x00",
             b"a\x00notanumber 0\n",
             b"a\x001 x\n",
-            // entry_count >= 0 but missing oid
             b"a\x002 0\n",
             b"a\x00999999999999999999 0\n",
         ];
         for payload in bad {
             let data = encode_with_extensions(2, &[SpecEntry::new(b"a", 1)], &[(b"TREE", payload)]);
-            assert!(Index::parse(&data).is_err(), "{payload:?}");
+            let index = Index::parse(&data).unwrap();
+            assert_eq!(index.entries().len(), 1, "{payload:?}");
         }
     }
 

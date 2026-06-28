@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 
@@ -278,6 +278,24 @@ describe("Bun.FileIndex", () => {
       const dirs = index.complete("", { directories: true });
       expect(dirs.map(r => r.path).sort()).toEqual(["docs", "src", "src/server"]);
       expect(() => (index as any).complete(1)).toThrow("expects a string");
+    });
+
+    // The crawl stores raw path BYTES; `path` reaches JS decoded with the
+    // WHATWG replacement (a lone invalid byte becomes ONE U+FFFD), and
+    // `positions` must index that JS string, not the byte string.
+    test.skipIf(!isLinux)("positions index the JS string for a path with invalid UTF-8 bytes", async () => {
+      using dir = tempDir("file-index-complete-invalid-utf8", {});
+      // "f\xE9ab.txt": a lone 0xE9 lead byte (only Linux allows non-UTF-8
+      // filename bytes). The JS path string is "f�ab.txt".
+      const name = Buffer.concat([Buffer.from(`${dir}/`, "utf8"), Buffer.from([0x66, 0xe9]), Buffer.from("ab.txt")]);
+      fs.writeFileSync(name, "x");
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      const results = index.complete("ab");
+      expect(results.map(r => ({ path: r.path, positions: r.positions }))).toEqual([
+        { path: "f�ab.txt", positions: [2, 3] },
+      ]);
+      expect(results[0].positions.map(p => results[0].path[p]).join("")).toBe("ab");
     });
 
     // The per-keystroke narrowing cache must be semantically invisible: an
@@ -646,6 +664,24 @@ describe("Bun.FileIndex", () => {
       expect(hits).toHaveLength(5);
     });
 
+    // `column` is in UTF-16 code units of `lineText` (the JS string), whose
+    // decoder replaces an invalid UTF-8 sequence with ONE U+FFFD. A lone
+    // 0xE9 lead byte before the match must therefore shift the column by
+    // exactly one unit, never swallow the bytes after it.
+    test("column counts an invalid UTF-8 byte before the match as one unit", async () => {
+      using dir = tempDir("file-index-grep-invalid-utf8", {});
+      // Line bytes: x \xE9 a b NEEDLE rest -> JS "x�abNEEDLE rest".
+      fs.writeFileSync(
+        join(String(dir), "inv.txt"),
+        Buffer.concat([Buffer.from([0x78, 0xe9, 0x61, 0x62]), Buffer.from("NEEDLE rest\n")]),
+      );
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      const hits = await collect(index.grep("NEEDLE"));
+      expect(hits).toEqual([{ path: "inv.txt", line: 1, column: 5, lineText: "x�abNEEDLE rest" }]);
+      expect(hits[0].lineText[hits[0].column - 1]).toBe("N");
+    });
+
     test("binary (NUL) and oversized files are skipped; glob/cwd/limit/case options", async () => {
       using dir = tempDir("file-index-grep-opts", {
         "bin.dat": "needle before \0 a NUL",
@@ -924,6 +960,95 @@ describe("Bun.FileIndex", () => {
       const sticky = /beta/iy;
       sticky.lastIndex = 3;
       expect(await collect(index.grep(sticky))).toHaveLength(6);
+    });
+
+    // `limit` and `context` are validated (and truncated) ONCE by the native
+    // option parser; the RegExp shim consumes those validated values and
+    // never re-reads the user's options object.
+    test("non-integer limit/context behave identically on the literal and RegExp engines", async () => {
+      using dir = tempDir("file-index-grep-validated-options", {
+        "ctx.txt": "one\ntwo\nthree match\nfour\nfive\n",
+        "more.txt": "match a\nmatch b\nmatch c\n",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      const opts = [{ limit: 1.5 }, { context: 2.5, glob: "ctx.txt" }, { limit: 2.5, context: 1.5 }] as const;
+      for (const o of opts) {
+        const literal = await collect(index.grep("match", o));
+        const regexp = await collect(index.grep(/match/, o));
+        expect(regexp, JSON.stringify(o)).toEqual(literal);
+        expect(literal.length, JSON.stringify(o)).toBeGreaterThan(0);
+      }
+      // Truncation, not rounding, on both engines.
+      expect(await collect(index.grep(/match/, { limit: 1.5 }))).toHaveLength(1);
+      expect(await collect(index.grep("match", { limit: 1.5 }))).toHaveLength(1);
+    });
+
+    test("an option getter is read exactly once per grep() call on both engines", async () => {
+      using dir = tempDir("file-index-grep-option-getter", {
+        "ctx.txt": "one\ntwo\nthree match\nfour\nfive match\n",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      for (const pattern of ["match", /match/] as const) {
+        let reads = 0;
+        const options = {
+          glob: "ctx.txt",
+          // A second read would observe 0 and yield no hits.
+          get limit() {
+            return ++reads === 1 ? 1 : 0;
+          },
+        };
+        const hits = await collect(index.grep(pattern as string, options));
+        expect({ reads, hits: hits.length }, String(pattern)).toEqual({ reads: 1, hits: 1 });
+      }
+    });
+
+    // The grep builtin must not consult any user-overridable prototype
+    // method or accessor: a child process tampers with the ones it would be
+    // tempting to use and the search must be unaffected.
+    test("tampered String/Array prototypes and a throwing RegExp flags getter cannot affect grep", async () => {
+      using dir = tempDir("file-index-grep-tamper", {
+        "tree/a.txt": "alpha xebra\nxx and xx\n",
+        "tree/b.txt": "no hits here\n",
+        "main.js": `
+          const index = new Bun.FileIndex(process.argv[2]);
+          await index.ready;
+          String.prototype.split = () => ["TAMPERED"];
+          Array.prototype.slice = () => [];
+          Array.prototype.map = () => [];
+          Object.defineProperty(RegExp.prototype, "flags", {
+            get() {
+              throw new Error("tampered flags getter");
+            },
+          });
+          const hits = [];
+          for await (const h of index.grep(/x/i, { context: 1 })) {
+            hits.push(h.path + ":" + h.line + ":" + h.column + ":" + h.lineText + ":" + h.after.length);
+          }
+          index.close();
+          console.log(JSON.stringify(hits));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js", join(String(dir), "tree")],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode, stderr: stderr.includes("tampered flags getter") }).toEqual({
+        stdout: JSON.stringify([
+          "a.txt:1:7:alpha xebra:1",
+          "a.txt:2:1:xx and xx:0",
+          "a.txt:2:2:xx and xx:0",
+          "a.txt:2:8:xx and xx:0",
+          "a.txt:2:9:xx and xx:0",
+        ]),
+        exitCode: 0,
+        stderr: false,
+      });
     });
   });
 

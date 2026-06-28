@@ -203,20 +203,10 @@ impl Repository {
         Odb::open(&self.common_dir)
     }
 
-    /// HEAD's tree flattened to a path-sorted `(path, oid, mode)` list.
-    /// An unborn HEAD yields an empty list. Annotated tags are peeled.
-    pub fn head_tree(&self, odb: &Odb) -> Result<Vec<TreeEntry>, GitError> {
-        match self.head()?.oid() {
-            None => Ok(Vec::new()),
-            Some(oid) => self.tree_at(odb, oid),
-        }
-    }
-
     /// The tree of `oid` (a commit, an annotated tag chain ending in a
     /// commit, or a tree) flattened to a path-sorted `(path, oid, mode)`
-    /// list. [`Repository::head_tree`] is `tree_at(head().oid())`; callers
-    /// that already resolved (and may have cached) a commit use this
-    /// directly.
+    /// list. Callers resolve (and may cache) `HEAD`'s commit themselves and
+    /// pass it here.
     pub fn tree_at(&self, odb: &Odb, mut oid: Oid) -> Result<Vec<TreeEntry>, GitError> {
         let mut body = Vec::new();
         let mut kind = odb.read(oid, &mut body)?;
@@ -296,6 +286,11 @@ fn strip_trailing_slashes(path: &[u8]) -> &[u8] {
 }
 
 /// Parent directory of a '/'-separated path, or `None` at a root.
+///
+/// Deliberately not `bun_paths::dirname`: `discover()` walks the
+/// `/`-normalized roots the runtime hands it, and on Windows that helper
+/// also splits on `\` and on drive/UNC designators, which would change
+/// which ancestors the walk visits.
 fn parent_dir(path: &[u8]) -> Option<&[u8]> {
     let path = strip_trailing_slashes(path);
     let idx = memchr::memrchr(b'/', path)?;

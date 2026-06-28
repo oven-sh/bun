@@ -2,10 +2,8 @@ import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { chmodSync, readFileSync } from "fs";
 import { mkdir, readFile, stat, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isPosix, isWindows, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv as env, bunExe, isPosix, isWindows, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
-
-const env = bunEnv;
 
 test.skipIf(isWindows)("bin linking normalizes CRLF in shebang", async () => {
   const testDir = tmpdirSync();
@@ -72,14 +70,8 @@ test.skipIf(isWindows)("bin linking normalizes CRLF in shebang", async () => {
 });
 
 // https://github.com/oven-sh/bun/issues/31387
-//
-// `bun install` of a package whose bin uses `#!/usr/bin/env -S <prog> <args>`
-// (e.g. `ocx@2.0.11`: `#!/usr/bin/env -S bun --no-env-file`) used to produce a
-// broken Windows shim — `BinLinkingShim::parse` treated `-S` as the
-// interpreter program, so the generated `.bunx` file launched
-// `-S bun --no-env-file <target>` and `bun_shim_impl.exe` failed with
-// `interpreter executable "-S" not found in %PATH%`. On POSIX the kernel (via
-// `env`) splits `-S` natively and the bin just runs.
+// Windows shim must skip `env -S` to find the real interpreter; on POSIX the
+// kernel (via `env`) splits `-S` natively so the bin just runs.
 
 function makeEnvDashSFixture() {
   return tempDirWithFiles("shebang-env-s", {
@@ -117,7 +109,7 @@ test("bun install handles `#!/usr/bin/env -S bun ...` shebangs in bin scripts", 
   await using install = spawn({
     cmd: [bunExe(), "install"],
     cwd: consumer,
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -136,7 +128,7 @@ test("bun install handles `#!/usr/bin/env -S bun ...` shebangs in bin scripts", 
   await using run = spawn({
     cmd: [bunExe(), "run", "env-dash-s-pkg"],
     cwd: consumer,
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -178,7 +170,7 @@ test.skipIf(!isWindows)("Windows `.bunx` shim encodes `env -S` launcher without 
   await using install = spawn({
     cmd: [bunExe(), "install"],
     cwd: consumer,
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -743,13 +743,10 @@ nativeTests.test_reference_unref_in_finalizer_experimental = async gc => {
 
 // https://github.com/oven-sh/bun/issues/15055
 //
-// Non-cell primitives (numbers, booleans, null, undefined) created by Zig-side
-// napi functions like napi_create_int64 were being appended to the handle
-// scope's storage vector even though they cannot be garbage collected. Native
-// modules that return large arrays of numbers (e.g. rrule-rust's between()
-// which returns ~500k packed datetimes) would grow the handle scope by several
-// MB per call. The GC does not know about that extra memory, so handle scopes
-// would accumulate until a full sweep ran.
+// Non-cell primitives (numbers, booleans, null, undefined) created by napi
+// functions like napi_create_int64 must not be retained by the handle scope:
+// they cannot be garbage collected, so tracking them only bloats the scope's
+// storage vector (~8 bytes per value) for the lifetime of the native call.
 //
 // Prints "PASS" if RSS growth across the hot loop stays under the budget.
 // Exit code is 0 in both cases so the test harness compares stdout instead of

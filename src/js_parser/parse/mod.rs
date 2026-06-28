@@ -1530,7 +1530,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // heuristic, so it must not be emitted as a directive.
                                     skip = true;
                                     p.module_scope_directive_loc = stmt.loc;
-                                } else {
+                                } else if p.current_scope().kind
+                                    == js_ast::scope::Kind::FunctionBody
+                                {
                                     // Keep the directive inside function bodies: JSC treats
                                     // CommonJS output as a sloppy Program, so a function that
                                     // is only strict because of its own "use strict" would
@@ -1543,6 +1545,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         },
                                         stmt.loc,
                                     );
+                                } else {
+                                    // Only function bodies and the script/module body have a
+                                    // Directive Prologue (ECMA-262). In a plain block, `try`/
+                                    // `catch`, `switch`, or class static block, `"use strict"`
+                                    // is an ordinary no-op string statement, not a directive, so
+                                    // drop it — emitting it could let a minify pass hoist the
+                                    // bare directive out of an unwrapped single-statement block.
+                                    skip = true;
                                 }
                             } else if Self::directive_raw_eq(p.source, stmt.loc, b"use asm") {
                                 skip = true;

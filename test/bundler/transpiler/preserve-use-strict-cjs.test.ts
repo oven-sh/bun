@@ -24,7 +24,7 @@ test(`function-level "use strict" survives require() of a CJS module`, async () 
 // SyntaxError (matches Node). https://github.com/oven-sh/bun/issues/18333
 const source = `function test(a = 5) { "use strict"; console.log(a); }\ntest(2);\n`;
 for (const ext of ["cjs", "js", "mjs"]) {
-  test(`"use strict" with a non-simple parameter list is a SyntaxError (.${ext})`, async () => {
+  test.concurrent(`"use strict" with a non-simple parameter list is a SyntaxError (.${ext})`, async () => {
     using dir = tempDir(`issue-18333-${ext}`, { [`index.${ext}`]: source });
 
     await using proc = Bun.spawn({
@@ -48,7 +48,7 @@ for (const ext of ["cjs", "js", "mjs"]) {
 // form like "use\x20strict" or "\u0075se strict" is an ordinary string literal,
 // not a directive, so it must NOT enable strict mode and must NOT trip the
 // non-simple-parameter early error (matches Node).
-test(`escaped "use strict" is not a directive (runs sloppy, no early error)`, async () => {
+test.concurrent(`escaped "use strict" is not a directive (runs sloppy, no early error)`, async () => {
   using dir = tempDir("issue-31806-escaped", {
     "index.cjs": String.raw`
       // Escaped space — cooks to "use strict" but is not a directive.
@@ -94,7 +94,7 @@ test(`escaped "use strict" is not a directive (runs sloppy, no early error)`, as
 // parenthesized string ends the prologue, so a following "use strict" is an
 // ordinary statement — it must not enable strict mode or trip the
 // non-simple-parameter early error (matches Node).
-test(`a parenthesized string ends the directive prologue`, async () => {
+test.concurrent(`a parenthesized string ends the directive prologue`, async () => {
   using dir = tempDir("issue-31806-paren", {
     "index.cjs": String.raw`
       function withDefault(a = 1) {
@@ -115,6 +115,49 @@ test(`a parenthesized string ends the directive prologue`, async () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("sloppy");
+  expect(exitCode).toBe(0);
+});
+
+// A brace block has no Directive Prologue (ECMA-262), so `{ "use strict"; }` at
+// the top of a function body is an ordinary no-op string statement, not a
+// directive. It must be dropped at parse time so `minify` cannot hoist a bare
+// "use strict" out of the unwrapped single-statement block and make the engine
+// treat the body as strict (or reject a non-simple parameter list). Matches Node.
+test.concurrent(`a block-scope "use strict" is not a directive, even when minified`, async () => {
+  using dir = tempDir("issue-31806-block", {
+    "entry.cjs": String.raw`
+      function f() {
+        { "use strict"; }
+        return this === undefined ? "strict" : "sloppy";
+      }
+      console.log(f.call(globalThis));
+    `,
+  });
+
+  // The regression only manifested under minify (single-statement block unwrap),
+  // so bundle with minify and run the output.
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--minify-syntax", "--target=bun", "entry.cjs", "--outfile=out.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+  expect(buildStderr).toBe("");
+  expect(buildExit).toBe(0);
+
+  await using run = Bun.spawn({
+    cmd: [bunExe(), "out.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("sloppy");

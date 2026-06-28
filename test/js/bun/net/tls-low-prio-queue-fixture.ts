@@ -36,9 +36,19 @@ const ROUNDS = 2;
 // it. TLS 1.2 keeps the server waiting for the client's second flight after
 // it sends its own, so SSL_in_init() stays true for the whole window.
 async function captureClientHello(): Promise<Buffer> {
-  const { promise, resolve } = Promise.withResolvers<Buffer>();
-  const srv = net.createServer(sock => sock.once("data", d => (sock.destroy(), resolve(d))));
-  await new Promise<void>(r => srv.listen(0, "127.0.0.1", r));
+  const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+  const srv = net.createServer(sock => {
+    sock.on("error", reject);
+    sock.once("data", d => {
+      sock.destroy();
+      resolve(d);
+    });
+  });
+  srv.on("error", reject);
+  await new Promise<void>((r, rej) => {
+    srv.once("error", rej);
+    srv.listen(0, "127.0.0.1", r);
+  });
   const port = (srv.address() as net.AddressInfo).port;
   const c = tls.connect({
     port,
@@ -47,7 +57,12 @@ async function captureClientHello(): Promise<Buffer> {
     minVersion: "TLSv1.2",
     rejectUnauthorized: false,
   });
-  c.on("error", () => {});
+  // The raw server never replies, so the client errors or closes once the
+  // ClientHello has been captured and `sock` is destroyed; by then `promise`
+  // is settled and these rejections are no-ops. Before that point they turn a
+  // setup failure into a real error instead of a hang.
+  c.on("error", reject);
+  c.on("close", () => reject(new Error("tls.connect closed before the ClientHello was captured")));
   const hello = await promise;
   c.destroy();
   await new Promise<void>(r => srv.close(() => r()));

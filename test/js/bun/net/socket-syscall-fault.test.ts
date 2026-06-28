@@ -16,9 +16,11 @@ const skip = !fault.available() || isWindows;
 // (heap-use-after-free in us_internal_socket_group_unlink_socket /
 // us_internal_handle_low_priority_sockets).
 //
-// The fixture is deliberately heavy (a server whose every `send` is faulted
-// to 0 busy-retries its handshake flights), so give it a generous timeout
-// for ASAN builds.
+// The explicit timeout is required: a bare `bun bd test <file>` applies Bun's
+// 5000ms default, and this fixture spawns two Bun processes and has to hold
+// 32 concurrent TLS handshakes across several event-loop ticks, which takes
+// ~25s on a debug+ASAN build. 180s keeps comfortable headroom over the
+// CI runner's ASAN per-test budget instead of capping below it.
 test.skipIf(skip)(
   "TLS low-prio queue: a parked socket whose readable poll is re-enabled is not parked twice",
   async () => {
@@ -38,5 +40,5 @@ test.skipIf(skip)(
       stderrTail: exitCode === 0 ? "" : stderr.slice(-2000),
     }).toEqual({ stdout: "OK", signalCode: null, exitCode: 0, stderrTail: "" });
   },
-  90_000,
+  180_000,
 );

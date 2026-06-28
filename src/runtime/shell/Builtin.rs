@@ -180,7 +180,7 @@ shell_builtins! {
     inline: {
         Pwd      => (pwd::Pwd,          "pwd",      b""),
         Exit     => (exit::Exit,        "exit",     b"usage: exit [n]\n"),
-        Basename => (basename::Basename,"basename", b"usage: basename string\n"),
+        Basename => (basename::Basename,"basename", b"usage: basename string [suffix]\n"),
         Dirname  => (dirname::Dirname,  "dirname",  b"usage: dirname string\n"),
         Cd       => (cd::Cd,            "cd",       b""),
         Echo     => (echo::Echo,        "echo",     b""),

@@ -7,10 +7,27 @@ describe("toThrow compares Error cause", () => {
     throw err;
   };
 
+  // Runs `fn`, asserts that it threw, and checks the failure message for each
+  // `snippet` so an unrelated exception cannot satisfy a negative case.
+  const expectAssertionFailure = (fn: () => void, ...snippets: string[]) => {
+    let caught: Error | undefined;
+    try {
+      fn();
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    for (const snippet of snippets) {
+      expect(caught!.message).toContain(snippet);
+    }
+  };
+
   test("same message, different primitive cause fails", () => {
-    expect(() => {
-      expect(thrower(new Error("m", { cause: "a" }))).toThrow(new Error("m", { cause: "b" }));
-    }).toThrow();
+    expectAssertionFailure(
+      () => expect(thrower(new Error("m", { cause: "a" }))).toThrow(new Error("m", { cause: "b" })),
+      "Expected cause:",
+      "Received cause:",
+    );
   });
 
   test("same message, same primitive cause passes", () => {
@@ -18,9 +35,12 @@ describe("toThrow compares Error cause", () => {
   });
 
   test("same message, different Error cause fails", () => {
-    expect(() => {
-      expect(thrower(new Error("m", { cause: new Error("a") }))).toThrow(new Error("m", { cause: new Error("b") }));
-    }).toThrow();
+    expectAssertionFailure(
+      () =>
+        expect(thrower(new Error("m", { cause: new Error("a") }))).toThrow(new Error("m", { cause: new Error("b") })),
+      "Expected cause:",
+      "Received cause:",
+    );
   });
 
   test("same message, same Error cause passes", () => {
@@ -28,18 +48,24 @@ describe("toThrow compares Error cause", () => {
   });
 
   test("received has truthy cause but expected has none fails", () => {
-    expect(() => {
-      expect(thrower(new Error("m", { cause: new Error("a") }))).toThrow(new Error("m"));
-    }).toThrow();
-    expect(() => {
-      expect(thrower(new Error("m", { cause: "x" }))).toThrow(new Error("m"));
-    }).toThrow();
+    expectAssertionFailure(
+      () => expect(thrower(new Error("m", { cause: new Error("a") }))).toThrow(new Error("m")),
+      "Expected cause:",
+      "Received cause:",
+    );
+    expectAssertionFailure(
+      () => expect(thrower(new Error("m", { cause: "x" }))).toThrow(new Error("m")),
+      "Expected cause:",
+      "Received cause:",
+    );
   });
 
   test("received has no cause but expected has truthy cause fails", () => {
-    expect(() => {
-      expect(thrower(new Error("m"))).toThrow(new Error("m", { cause: new Error("a") }));
-    }).toThrow();
+    expectAssertionFailure(
+      () => expect(thrower(new Error("m"))).toThrow(new Error("m", { cause: new Error("a") })),
+      "Expected cause:",
+      "Received cause:",
+    );
   });
 
   // Jest gates `cause` comparison on truthiness, so these are all no-cause.
@@ -49,11 +75,14 @@ describe("toThrow compares Error cause", () => {
   });
 
   test("nested causes differing at depth 2 fail", () => {
-    expect(() => {
-      expect(thrower(new Error("m", { cause: new Error("a", { cause: new Error("x") }) }))).toThrow(
-        new Error("m", { cause: new Error("a", { cause: new Error("y") }) }),
-      );
-    }).toThrow();
+    expectAssertionFailure(
+      () =>
+        expect(thrower(new Error("m", { cause: new Error("a", { cause: new Error("x") }) }))).toThrow(
+          new Error("m", { cause: new Error("a", { cause: new Error("y") }) }),
+        ),
+      "Expected cause:",
+      "Received cause:",
+    );
   });
 
   test("nested causes matching at all depths pass", () => {
@@ -70,9 +99,11 @@ describe("toThrow compares Error cause", () => {
 
   test("object causes compare structurally", () => {
     expect(thrower(new Error("m", { cause: { x: 1 } }))).toThrow(new Error("m", { cause: { x: 1 } }));
-    expect(() => {
-      expect(thrower(new Error("m", { cause: { x: 1 } }))).toThrow(new Error("m", { cause: { x: 2 } }));
-    }).toThrow();
+    expectAssertionFailure(
+      () => expect(thrower(new Error("m", { cause: { x: 1 } }))).toThrow(new Error("m", { cause: { x: 2 } })),
+      "Expected cause:",
+      "Received cause:",
+    );
   });
 
   // A plain object with a `message` is not an Error instance, so it is compared
@@ -81,25 +112,34 @@ describe("toThrow compares Error cause", () => {
     expect(thrower(new Error("m", { cause: { message: "x", code: 1 } }))).toThrow(
       new Error("m", { cause: { message: "x", code: 1 } }),
     );
-    expect(() => {
-      expect(thrower(new Error("m", { cause: { message: "x", code: 1 } }))).toThrow(
-        new Error("m", { cause: { message: "x", code: 2 } }),
-      );
-    }).toThrow();
+    expectAssertionFailure(
+      () =>
+        expect(thrower(new Error("m", { cause: { message: "x", code: 1 } }))).toThrow(
+          new Error("m", { cause: { message: "x", code: 2 } }),
+        ),
+      "Expected cause:",
+      "Received cause:",
+    );
   });
 
   test(".not inverts the cause check", () => {
     expect(thrower(new Error("m", { cause: "a" }))).not.toThrow(new Error("m", { cause: "b" }));
-    expect(() => {
-      expect(thrower(new Error("m", { cause: "a" }))).not.toThrow(new Error("m", { cause: "a" }));
-    }).toThrow();
+    expectAssertionFailure(
+      () => expect(thrower(new Error("m", { cause: "a" }))).not.toThrow(new Error("m", { cause: "a" })),
+      "Expected message: not",
+      "Expected cause: not",
+    );
     expect(thrower(new Error("m", { cause: new Error("a") }))).not.toThrow(new Error("m"));
   });
 
   test("a different message still fails regardless of cause", () => {
-    expect(() => {
-      expect(thrower(new Error("m1", { cause: "a" }))).toThrow(new Error("m2", { cause: "a" }));
-    }).toThrow();
+    expectAssertionFailure(
+      () => expect(thrower(new Error("m1", { cause: "a" }))).toThrow(new Error("m2", { cause: "a" })),
+      "Expected message:",
+      "Received message:",
+      "m2",
+      "m1",
+    );
   });
 
   test("no cause on either side still matches by message only", () => {
@@ -108,19 +148,13 @@ describe("toThrow compares Error cause", () => {
   });
 
   test("cause mismatch reports both causes", () => {
-    let caught: Error | undefined;
-    try {
-      expect(() => {
-        throw new Error("m", { cause: "received-cause" });
-      }).toThrow(new Error("m", { cause: "expected-cause" }));
-    } catch (e) {
-      caught = e as Error;
-    }
-    expect(caught).toBeDefined();
-    expect(caught!.message).toContain("Expected cause:");
-    expect(caught!.message).toContain("Received cause:");
-    expect(caught!.message).toContain("expected-cause");
-    expect(caught!.message).toContain("received-cause");
+    expectAssertionFailure(
+      () => expect(thrower(new Error("m", { cause: "received-cause" }))).toThrow(new Error("m", { cause: "expected-cause" })),
+      "Expected cause:",
+      "Received cause:",
+      "expected-cause",
+      "received-cause",
+    );
   });
 
   test("circular causes do not hang", () => {
@@ -134,13 +168,15 @@ describe("toThrow compares Error cause", () => {
   });
 
   test("rejects.toThrow compares cause", async () => {
-    let caught: unknown;
+    let caught: Error | undefined;
     try {
       await expect(Promise.reject(new Error("m", { cause: "a" }))).rejects.toThrow(new Error("m", { cause: "b" }));
     } catch (e) {
-      caught = e;
+      caught = e as Error;
     }
     expect(caught).toBeDefined();
+    expect(caught!.message).toContain("Expected cause:");
+    expect(caught!.message).toContain("Received cause:");
     await expect(Promise.reject(new Error("m", { cause: "a" }))).rejects.toThrow(new Error("m", { cause: "a" }));
   });
 });

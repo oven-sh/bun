@@ -11,11 +11,12 @@ use super::expect_any_js;
 use super::get_signature;
 
 // Jest treats falsy causes (`undefined`, `null`, `0`, `false`, `""`) as absent.
+// `Error` installs `cause` as an own data property; inherited values are not consulted.
 fn get_truthy_cause(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
     if !value.is_object() {
         return Ok(None);
     }
-    Ok(value.get(global, "cause")?.filter(|v| v.to_boolean()))
+    Ok(value.get_own_truthy(global, "cause")?.filter(|v| v.to_boolean()))
 }
 
 // Jest 30 compares `cause` in addition to `message` for `toThrow(errorInstance)`.

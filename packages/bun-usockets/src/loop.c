@@ -369,16 +369,25 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
-/* Re-entrancy guard for the shared per-loop recv_buf. Set while a POSIX socket
- * on_data dispatch still holds unconsumed bytes in recv_buf: a handler can drain
- * microtasks (e.g. Bun's HTTP/WS request path), and an IPC eager-drain
- * (us_socket_ipc_recv_pending) scheduled as a microtask would then recv into the
- * same recv_buf and clobber the outer frame's bytes. Bun runs one uws loop per
- * thread, so thread-local tracks per-loop state. */
+/* Set while a socket/UDP on_data dispatch still holds bytes in the shared
+ * per-loop recv_buf, so a re-entrant IPC drain does not clobber them. One uws
+ * loop per thread, so thread-local tracks per-loop state. */
 static __thread int us_internal_recv_buf_in_use = 0;
 
 int us_internal_recv_buf_is_busy(void) {
     return us_internal_recv_buf_in_use;
+}
+
+/* Bracket an on_data dispatch that reads into recv_buf; save/restore to stay
+ * correct under nesting. */
+static inline int us_internal_recv_buf_guard_enter(void) {
+    int prev = us_internal_recv_buf_in_use;
+    us_internal_recv_buf_in_use = 1;
+    return prev;
+}
+
+static inline void us_internal_recv_buf_guard_leave(int prev) {
+    us_internal_recv_buf_in_use = prev;
 }
 
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
@@ -634,15 +643,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     if (length > 0) {
-                        /* recv_buf holds this frame's bytes across the handler,
-                         * which may drain microtasks; block a re-entrant
-                         * recv into recv_buf until we return. Save/restore to
-                         * stay correct under any nesting. */
-                        int prev_recv_buf_in_use = us_internal_recv_buf_in_use;
-                        us_internal_recv_buf_in_use = 1;
+                        int prev_recv_buf_in_use = us_internal_recv_buf_guard_enter();
                         s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
                                    : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
-                        us_internal_recv_buf_in_use = prev_recv_buf_in_use;
+                        us_internal_recv_buf_guard_leave(prev_recv_buf_in_use);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         if(s && s->flags.adopted && s->prev) {
                             s = s->prev;
@@ -810,12 +814,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
                     if (npackets > 0) {
-                        /* recvbuf aliases the shared recv_buf; guard it against a
-                         * re-entrant recv while on_data may drain microtasks. */
-                        int prev_recv_buf_in_use = us_internal_recv_buf_in_use;
-                        us_internal_recv_buf_in_use = 1;
+                        int prev_recv_buf_in_use = us_internal_recv_buf_guard_enter();
                         u->on_data(u, &recvbuf, npackets);
-                        us_internal_recv_buf_in_use = prev_recv_buf_in_use;
+                        us_internal_recv_buf_guard_leave(prev_recv_buf_in_use);
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             if (!bsd_would_block()) {

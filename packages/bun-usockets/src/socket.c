@@ -453,14 +453,9 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
 #endif
 }
 
-/* Eagerly dispatch any bytes already sitting in the socket's receive buffer by
- * running the readable handler now, instead of waiting for the next epoll
- * iteration. The POLL_TYPE_SOCKET handler reads with MSG_DONTWAIT and tolerates
- * EWOULDBLOCK, so this is a no-op when nothing is buffered.
- *
- * Used for inherited IPC channels on child startup: a message the parent queued
- * before the child attached its listener is delivered on the first tick rather
- * than one event-loop iteration later, matching Node. */
+/* Dispatch a readable event now for bytes already buffered, so an inherited IPC
+ * channel delivers a pre-startup message on the first tick. No-op when nothing
+ * is buffered (the read uses MSG_DONTWAIT). */
 void us_socket_ipc_recv_pending(struct us_socket_t *s) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     (void) s;
@@ -468,10 +463,8 @@ void us_socket_ipc_recv_pending(struct us_socket_t *s) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return;
     }
-    /* This recv would reuse the shared recv_buf. If another socket's on_data is
-     * still on the stack (it drained microtasks, which ran us here), recv'ing now
-     * would clobber the bytes that frame has not consumed yet. Leave them for the
-     * next poll in that case; delivery is just deferred, not lost. */
+    /* Skip if a socket on_data is still on the stack (it drained microtasks into
+     * us): recv'ing would clobber recv_buf. The bytes wait for the next poll. */
     if (us_internal_recv_buf_is_busy()) {
         return;
     }

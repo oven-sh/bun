@@ -3244,12 +3244,9 @@ impl VirtualMachine {
                 .map(|i| map.map.swap_remove_at(i).1)
                 .and_then(|v| crate::ipc::Mode::from_string(&v.value))
                 .unwrap_or(crate::ipc::Mode::Json);
-            // `node:cluster` workers inherit `NODE_UNIQUE_ID`. Capture it here:
-            // the cluster module deletes the variable during its own setup, and
-            // its internal handshake must not be disturbed by the startup drain.
-            // Match the module's own truthiness check (`if (NODE_UNIQUE_ID)`): an
-            // empty value does not start the worker handshake, so do not treat it
-            // as a cluster worker.
+            // `node:cluster` workers inherit `NODE_UNIQUE_ID` (captured here; the
+            // module deletes it during setup). Match its truthy check so an empty
+            // value is not treated as a worker (see the drain skip below).
             let cluster_worker = map.get(b"NODE_UNIQUE_ID").is_some_and(|v| !v.is_empty());
             // Accept only
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
@@ -6564,16 +6561,9 @@ impl VirtualMachine {
         // SAFETY: `instance` is the live boxed IPCInstance.
         unsafe { (*instance).data.write_version_packet(self.global()) };
 
-        // A message the parent queued before this child attached its listener
-        // is already sitting in the socket's receive buffer. Drain it on the
-        // first microtask checkpoint (before the event loop's first poll, hence
-        // before `setImmediate`) so it is observed on the child's startup turn
-        // like Node, instead of one event-loop iteration later. Deferred rather
-        // than read inline so the `message` handler never fires synchronously
-        // from inside `process.on(...)` / `process.send(...)`.
-        //
-        // Skip cluster workers: their internal handshake runs on its own message
-        // protocol during bootstrap and must not be reordered by an early drain.
+        // Deliver a pre-startup message on the first microtask checkpoint (before
+        // `setImmediate`) like Node; deferred so `message` never fires inline from
+        // process.on/send. Cluster workers skip it (their handshake must not reorder).
         #[cfg(not(windows))]
         if !cluster_worker {
             self.global()
@@ -6594,22 +6584,17 @@ impl VirtualMachine {
     }
 }
 
-/// Microtask thunk for [`VirtualMachine::get_ipc_instance`]: drain any IPC
-/// bytes the parent buffered before this child attached, delivering them on the
-/// startup turn. `ctx` is the `*mut IPCInstance` stored in `vm.ipc`; it is owned
-/// by the VM and must not be freed here.
+/// Microtask thunk for [`VirtualMachine::get_ipc_instance`]: drain IPC bytes the
+/// parent buffered before this child attached. `ctx` is the VM-owned
+/// `*mut IPCInstance` from `vm.ipc`; do not free it here.
 #[cfg(not(windows))]
 unsafe extern "C" fn ipc_drain_pending_microtask(ctx: *mut core::ffi::c_void) {
     let instance = ctx.cast::<IPCInstance>();
-    // SAFETY: scheduled during the same synchronous turn that created
-    // `instance`; the microtask checkpoint runs at the end of that turn, before
-    // the event loop could close the channel and free the instance.
-    // Reading a message with no `message` listener attached would decode and
-    // then drop it (`Process__emitMessageEvent` no-ops without a listener). The
-    // channel is also adopted lazily from `process.send()`, so a child that
-    // sends first and attaches its listener after an async gap would have the
-    // buffered message consumed here before the listener exists. Only drain
-    // when a listener is present; otherwise leave the bytes for the normal poll.
+    // Only drain with a `message` listener present: otherwise the decoded message
+    // is dropped (emit no-ops), and on the lazy `process.send()` adopt path we
+    // would consume it before a listener attaches. Leave it for the poll instead.
+    // SAFETY: scheduled in the turn that created `instance`; the microtask runs
+    // before the loop can close the channel and free it.
     if !Process__hasMessageListeners(JSGlobalObject::opaque_ref(unsafe {
         (*instance).global_this
     })) {

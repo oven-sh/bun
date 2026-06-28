@@ -12,16 +12,13 @@ function stripAsanWarning(s: string): string {
     .join("\n");
 }
 
-// IOWriter.onError iterates the pending writers and drives each callback via the
+// IOWriter::on_error iterates the pending writers and drives each callback via the
 // Yield trampoline. A callback can start the next shell state (e.g. the right-hand
 // side of `||`, or the next statement after `;`) which may enqueue on the SAME
-// IOWriter. Previously:
-//   - onError captured writers.slice() and iterated it; a re-entrant append could
-//     promote SmolList inlined→heap or realloc the heap backing, leaving the captured
-//     slice dangling.
-//   - Re-entrant enqueues appended to this.writers and registered a poll, but
-//     PosixBufferedWriter._onError closes the poll handle immediately after onError
-//     returns — the new writer was stranded and the shell hung.
+// IOWriter. Previously that re-entrant enqueue appended a writer and registered a
+// poll, but PosixBufferedWriter::_on_error closes the poll handle right after
+// on_error returns, so the new writer was stranded (the shell hung), and on_error's
+// trailing writers.clear() then dropped its bookkeeping entirely.
 //
 // These tests require a write error that is *not* EPIPE (EPIPE sets flags.broken_pipe
 // which already short-circuits re-entrant enqueues), so they use Linux-specific
@@ -35,8 +32,8 @@ describe.skipIf(!isLinux)("IOWriter.onError with re-entrant enqueue", () => {
     //   (cd /neA || cd /neB) | cd /ne2
     //
     // Both `cd /neA` and `cd /ne2` enqueue error messages on the shared stderr
-    // IOWriter before the first write is attempted (2 pending writers, SmolList
-    // inlined at capacity). The first pwritev2 on the RST'd socket fails with
+    // IOWriter before the first write is attempted (2 pending writers). The
+    // first pwritev2 on the RST'd socket fails with
     // ECONNRESET → onError iterates [cdA, cd2]. cdA's callback runs the `||` branch
     // and starts `cd /neB`, which enqueues on the same IOWriter while onError is
     // mid-iteration.
@@ -59,10 +56,11 @@ describe.skipIf(!isLinux)("IOWriter.onError with re-entrant enqueue", () => {
 
   test("non-pollable stdout (/dev/full, ENOSPC): callback chain does not recurse", async () => {
     // With stdout = /dev/full every write fails with ENOSPC. Each echo's
-    // onIOWriterChunk error callback drives the next statement, which enqueues
-    // on the same IOWriter. Previously each enqueue re-entered doFileWrite →
-    // onError → .run(), one nested Yield.run per echo; the stored error now
-    // short-circuits the re-entrant enqueue so the chain stays flat.
+    // on_io_writer_chunk error callback drives the next statement, which
+    // enqueues on the same IOWriter. Previously each enqueue re-entered
+    // do_file_write → on_error → Yield::run, one nested level per echo; the
+    // stored error now short-circuits the re-entrant enqueue so the chain
+    // stays flat.
     const full = Bun.file("/dev/full");
     await using proc = Bun.spawn({
       cmd: [

@@ -88,9 +88,8 @@ try {
         const { $ } = require("bun");
         $.throws(false);
         // (cd /neA || cd /neB) | cd /ne2
-        //   - cdA and cd2 both enqueue on the shared stderr IOWriter (2 pending,
-        //     SmolList inlined at capacity).
-        //   - stderr write fails ECONNRESET -> onError iterates [cdA, cd2].
+        //   - cdA and cd2 both enqueue on the shared stderr IOWriter (2 pending).
+        //   - stderr write fails ECONNRESET -> on_error iterates [cdA, cd2].
         //   - cdA's callback runs Binary(||).childDone -> starts cdB -> enqueue on
         //     the same IOWriter mid-iteration.
         const result = await $\`(cd /neA || cd /neB) | cd /ne2\`;

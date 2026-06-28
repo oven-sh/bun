@@ -23,11 +23,15 @@ function pmdDeflate(payload: Buffer): Buffer {
 describe.concurrent("permessage-deflate RSV1 frames", () => {
   function frame(opcode: number, payload: Buffer, opts: { fin?: boolean; rsv1?: boolean } = {}): Buffer {
     const { fin = true, rsv1 = false } = opts;
-    if (payload.length > 125) throw new Error("these tests only build short frames");
+    if (payload.length > 0xffff) throw new Error("these tests only build short and medium frames");
     const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
     const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
     const flags = (fin ? 0x80 : 0x00) | (rsv1 ? 0x40 : 0x00) | opcode;
-    return Buffer.concat([Buffer.from([flags, 0x80 | payload.length]), mask, masked]);
+    const head =
+      payload.length < 126
+        ? Buffer.from([flags, 0x80 | payload.length])
+        : Buffer.from([flags, 0x80 | 126, payload.length >> 8, payload.length & 0xff]);
+    return Buffer.concat([head, mask, masked]);
   }
 
   // Raw TCP WebSocket client that negotiates permessage-deflate against a
@@ -211,6 +215,26 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
     raw.socket.write(frame(0x2, pmdDeflate(original), { rsv1: true }));
     expect(await Promise.race([raw.firstMessage, raw.closed])).toBe(`message:${original.toString("hex")}`);
     expect(raw.received).toEqual([original.toString("hex")]);
+  });
+
+  // A compressed frame needing the 16-bit extended length has an 8 byte header,
+  // but the parser validates a header once 6 bytes arrive and spills the rest.
+  // Re-validating the same header after the spill must not trip the RSV1 check
+  // (arming the compressed flag used to be one-shot, so the second pass failed).
+  it("a compressed frame whose extended-length header is split is still delivered", async () => {
+    using raw = await connectDeflated();
+    // 256 distinct bytes do not compress, forcing a payload longer than 125.
+    const original = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+    const compressed = pmdDeflate(original);
+    expect(compressed.length).toBeGreaterThan(125);
+    const big = frame(0x2, compressed, { rsv1: true });
+    // End the first write 7 bytes into big's header; the ping in front of it is
+    // answered in the same parse pass, so its pong proves the server consumed
+    // (and spilled) those 7 bytes before the rest is sent.
+    raw.socket.write(Buffer.concat([frame(0x9, Buffer.from("sync")), big.subarray(0, 7)]));
+    expect(await Promise.race([raw.waitForFrameBytes(6), raw.closed])).toBe("server-sent-a-frame");
+    raw.socket.write(big.subarray(7));
+    expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${original.toString("hex")}`);
   });
 
   // Control: a well-formed ping on the same connection is still answered.

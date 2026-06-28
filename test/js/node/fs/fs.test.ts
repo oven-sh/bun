@@ -1515,6 +1515,9 @@ describe("writeSync", () => {
       // Node writes UTF-8 for the "buffer" encoding name; it must not fall
       // into the latin1-narrowing path.
       [["\u00e9", 0, "buffer"], Buffer.from([0xc3, 0xa9])],
+      // Same for a 16-bit string, which would otherwise hit a separate
+      // low-byte-narrowing encoder (U+4E2D -> 0x2d).
+      [["a\u00e9\u4e2d", 0, "buffer"], Buffer.from([0x61, 0xc3, 0xa9, 0xe4, 0xb8, 0xad])],
       // A lone string in the position slot is not an encoding.
       [["ab", "utf16le"], Buffer.from("ab")],
       [["abc", 0], Buffer.from("abc")],

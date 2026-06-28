@@ -483,13 +483,22 @@ describe("WebSocket server rejects a new data frame mid-fragment (RFC 6455 5.4)"
     sock.on("data", chunk => {
       if (handshakeDone) return;
       buf = Buffer.concat([buf, chunk]);
-      if (buf.includes("\r\n\r\n")) {
-        handshakeDone = true;
-        sock.write(Buffer.concat(frames));
+      const headerEnd = buf.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      // The test only means anything if the upgrade succeeded; otherwise a
+      // closed non-websocket connection would masquerade as { outcome: "closed" }.
+      const response = buf.subarray(0, headerEnd).toString("utf8");
+      if (!response.startsWith("HTTP/1.1 101 ")) {
+        sock.destroy();
+        reject(new Error(`websocket upgrade failed:\n${response}`));
+        return;
       }
+      handshakeDone = true;
+      sock.write(Buffer.concat(frames));
     });
     sock.on("close", () => {
       if (handshakeDone) resolve({ outcome: "closed" });
+      else reject(new Error("socket closed before the websocket upgrade completed"));
     });
 
     sock.write(

@@ -47,6 +47,11 @@ pub struct InternalState<'a> {
     /// 0 otherwise. The JS side turns it into the resolver error
     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
     pub dns_error: i32,
+    /// Owned copy of the hostname the failed lookup was for
+    /// (`connected_url.hostname`: the proxy's when one is configured, else
+    /// the post-redirect target). Captured on the HTTP thread at the failure
+    /// so the JS side never dereferences the client's borrowed URL buffers.
+    pub dns_hostname: Option<Box<[u8]>>,
     pub request_stage: HTTPStage,
     pub response_stage: HTTPStage,
     pub certificate_info: Option<CertificateInfo>,
@@ -133,6 +138,7 @@ impl Default for InternalState<'_> {
             request_sent_len: 0,
             fail: None,
             dns_error: 0,
+            dns_hostname: None,
             request_stage: HTTPStage::Pending,
             response_stage: HTTPStage::Pending,
             certificate_info: None,

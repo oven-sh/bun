@@ -402,15 +402,19 @@ test("post FormData with File", async () => {
 
 test("unresolvable hostname rejects with the resolver error", async () => {
   // A DNS label longer than 63 bytes is illegal (RFC 1035 section 2.3.4), so
-  // getaddrinfo rejects it locally without touching the network. Three fetches
-  // in a row: the second hits the in-process DNS cache, which used to take a
-  // different path and report a different (also wrong) error. The fourth uses
-  // an explicit unresolvable proxy: with a proxy configured it is the proxy
-  // hostname that getaddrinfo resolves, so the error must name the proxy, not
-  // the origin. Runs in a subprocess with the proxy env cleared so the first
-  // three fetches actually resolve the origin.
+  // getaddrinfo rejects it locally without touching the network. The cases,
+  // each of which must name the hostname getaddrinfo actually failed on:
+  //   1-3. Direct fetches: the second hits the in-process DNS cache, which
+  //        used to take a different path and report a different wrong error.
+  //   4.   An explicit unresolvable proxy: the error must name the proxy,
+  //        not the origin, since the proxy is what gets resolved.
+  //   5.   A redirect to an unresolvable host: the error must name the
+  //        redirect target, not the original (resolvable) origin.
+  // Runs in a subprocess with the proxy env cleared so the direct fetches
+  // actually resolve their hostnames.
   const host = Buffer.alloc(64, "a").toString() + ".com";
   const proxyHost = Buffer.alloc(64, "b").toString() + ".com";
+  const redirectHost = Buffer.alloc(64, "c").toString() + ".com";
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -424,6 +428,11 @@ test("unresolvable hostname rejects with the resolver error", async () => {
          out.push(await report(fetch("http://" + ${JSON.stringify(host)} + "/")));
        }
        out.push(await report(fetch("http://origin.invalid/", { proxy: "http://" + ${JSON.stringify(proxyHost)} + ":3128" })));
+       using server = Bun.serve({
+         port: 0,
+         fetch: () => Response.redirect("http://" + ${JSON.stringify(redirectHost)} + "/", 302),
+       });
+       out.push(await report(fetch(server.url)));
        console.log(JSON.stringify(out));`,
     ],
     env: {
@@ -452,7 +461,7 @@ test("unresolvable hostname rejects with the resolver error", async () => {
     out = JSON.parse(stdout);
   } catch {}
   expect({ out, stderr, exitCode }).toEqual({
-    out: [notFound(host), notFound(host), notFound(host), notFound(proxyHost)],
+    out: [notFound(host), notFound(host), notFound(host), notFound(proxyHost), notFound(redirectHost)],
     stderr: "",
     exitCode: 0,
   });

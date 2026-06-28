@@ -210,6 +210,7 @@ describe("fs.watch", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/23306
   // inotify gives no name for events on the watched object itself; node (libuv)
   // substitutes the watched path's basename. Linux-only: the macOS FSEvents
   // backend deliberately drops the watched directory's own removal, and the

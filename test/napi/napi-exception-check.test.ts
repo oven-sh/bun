@@ -63,7 +63,7 @@ NAPI_MODULE_INIT() {
 async function loadAddonWithValidator(name: string, addonSource: string, loadJs: string, expectedStdout: string) {
   using dir = tempDir(name, { "addon.c": addonSource, "load.js": loadJs });
 
-  const compile = Bun.spawnSync({
+  await using compile = Bun.spawn({
     cmd: [
       cc!,
       "-shared",
@@ -79,11 +79,12 @@ async function loadAddonWithValidator(name: string, addonSource: string, loadJs:
     ],
     cwd: String(dir),
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
+  const [compileStderr, compileExitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
   // Don't require an empty stderr: ld64 may warn about dynamic_lookup.
-  expect({ exitCode: compile.exitCode, stderr: compile.stderr.toString() }).toMatchObject({ exitCode: 0 });
+  expect({ exitCode: compileExitCode, stderr: compileStderr }).toMatchObject({ exitCode: 0 });
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "load.js"],

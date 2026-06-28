@@ -202,6 +202,21 @@ test("interleaved next() and return() calls resolve in order", async () => {
   ]);
 });
 
+test("next() and return() reject when called on the wrong receiver", async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue("a");
+      controller.close();
+    },
+  });
+
+  const iterator = stream.values();
+  await expect(iterator.next.call({})).rejects.toThrow(TypeError);
+  await expect((iterator.return as Function).call({}, "x")).rejects.toThrow(TypeError);
+  // The detached calls did not consume or cancel the stream.
+  expect(await iterator.next()).toEqual({ value: "a", done: false });
+});
+
 test("full iteration releases the lock and does not call cancel", async () => {
   let cancelCalls = 0;
   const stream = new ReadableStream({

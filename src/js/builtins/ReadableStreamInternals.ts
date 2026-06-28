@@ -2631,16 +2631,19 @@ export function readableStreamAsyncIterator(stream, preventCancel) {
 
   // Inherits from %AsyncIteratorPrototype% so the iterator is itself async
   // iterable. next()/return() calls are serialized through ongoingPromise.
-  return {
+  const iterator = {
     __proto__: $getPrototypeOf($getPrototypeOf(async function* () {}).prototype),
     next() {
+      if (this !== iterator) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
       return (ongoingPromise = ongoingPromise ? ongoingPromise.$then(nextSteps, nextSteps) : nextSteps());
     },
     return(value) {
+      if (this !== iterator) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
       const chainedReturnSteps = () => returnSteps(value);
       return (ongoingPromise = ongoingPromise
         ? ongoingPromise.$then(chainedReturnSteps, chainedReturnSteps)
         : chainedReturnSteps());
     },
   };
+  return iterator;
 }

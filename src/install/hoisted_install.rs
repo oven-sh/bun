@@ -215,6 +215,17 @@ pub(crate) fn install_hoisted_packages(
         }
     };
 
+    // Remove entries the cleaned lockfile no longer reaches, so a dependency
+    // dropped from `package.json` is also removed from disk by `bun install`.
+    // Skipped for the security scanner's narrowed pre-install pass; the full
+    // install that follows performs it.
+    if !new_node_modules && packages_to_install.is_none() {
+        package_install::prune_extraneous_node_modules(
+            &this.lockfile,
+            node_modules_folder.fd(),
+        );
+    }
+
     let mut skip_delete = new_node_modules;
     let mut skip_verify_installed_version_number = new_node_modules;
 

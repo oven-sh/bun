@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use bun_collections::{ArrayHashMap, DynamicBitSet};
+use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
@@ -2559,6 +2559,132 @@ impl<'a> PackageInstall<'a> {
 
         // TODO: linux io_uring
         self.install_with_copyfile(destination_dir)
+    }
+}
+
+/// Remove top-level entries from an already-open root `node_modules`
+/// directory that are not reachable from `lockfile`. Scoped packages are
+/// handled by descending one level into `@scope/` and removing the empty
+/// scope directory if nothing remains. Dot-prefixed entries (`.bin`, `.bun`,
+/// `.cache`, …) are never touched.
+///
+/// Called by both the hoisted and isolated install paths after
+/// `Lockfile::clean_with_logger` has rebuilt the lockfile, so a dependency
+/// removed from `package.json` is also removed from disk on the next
+/// `bun install` instead of remaining importable until the user deletes
+/// `node_modules` by hand.
+///
+/// The kept set is every dependency alias in the lockfile (the alias is the
+/// `node_modules/<name>` folder both installers write), not the subset this
+/// particular invocation places at the root. That keeps the prune keyed to
+/// the lockfile graph rather than to install flags, so `--production`,
+/// `--omit`, `--filter`, and `--cpu`/`--os` overrides never turn a reinstall
+/// into a delete of packages the lockfile still contains.
+pub(crate) fn prune_extraneous_node_modules(lockfile: &Lockfile, node_modules: Fd) {
+    // A valid project always has at least the root package after `clean`, so
+    // zero packages means this lockfile never resolved; refuse to prune
+    // against it. A root with zero dependencies is a legitimate state (the
+    // last dependency was just removed) and must still prune.
+    if lockfile.packages.is_empty() {
+        return;
+    }
+
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let mut expected = StringHashMap::<()>::with_capacity(deps.len());
+    for dep in deps {
+        let alias = dep.name.slice(string_buf);
+        if !alias.is_empty() {
+            let _ = expected.put(alias, ());
+        }
+    }
+    let expected = &expected;
+
+    let dir = Dir::borrow(&node_modules);
+
+    // Snapshot the listing before deleting anything. `delete_tree` mutates
+    // the directory, and on some filesystems a readdir refill after a delete
+    // can re-surface entries; iterating an owned list sidesteps that.
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let mut iter = sys::iterate_dir(node_modules);
+    loop {
+        let entry = match iter.next() {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => return,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() || name[0] == b'.' {
+            continue;
+        }
+        names.push(name.to_vec());
+    }
+
+    for name in &names {
+        if name[0] == b'@' {
+            prune_extraneous_scope(node_modules, name, expected);
+            continue;
+        }
+        if expected.contains_key(name.as_slice()) {
+            continue;
+        }
+        let _ = dir.delete_tree(name);
+    }
+}
+
+fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>) {
+    let scope_fd = match sys::open_dir_for_iteration(parent, scope) {
+        Ok(fd) => fd,
+        Err(_) => return,
+    };
+    let scope_dir = Dir::from_fd(scope_fd);
+
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let mut has_remaining = false;
+    let mut iter = sys::iterate_dir(scope_dir.fd());
+    loop {
+        let entry = match iter.next() {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => return,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() {
+            continue;
+        }
+        if name[0] == b'.' {
+            has_remaining = true;
+            continue;
+        }
+        names.push(name.to_vec());
+    }
+
+    for name in &names {
+        let mut full = Vec::with_capacity(scope.len() + 1 + name.len());
+        full.extend_from_slice(scope);
+        full.push(b'/');
+        full.extend_from_slice(name);
+
+        if expected.contains_key(full.as_slice()) {
+            has_remaining = true;
+            continue;
+        }
+
+        if scope_dir.delete_tree(name).is_err() {
+            has_remaining = true;
+        }
+    }
+
+    // `scope_dir` owns the fd and must be dropped before removing the
+    // directory it points at (Windows cannot remove a dir with open handles).
+    drop(scope_dir);
+
+    if !has_remaining {
+        let mut buf = Vec::with_capacity(scope.len() + 1);
+        buf.extend_from_slice(scope);
+        buf.push(0);
+        let z = ZStr::from_buf(&buf, scope.len());
+        let _ = sys::rmdirat(parent, z);
     }
 }
 

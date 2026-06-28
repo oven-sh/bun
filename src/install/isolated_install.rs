@@ -1971,6 +1971,18 @@ pub(crate) fn install_isolated_packages(
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
 
+        // Remove root `node_modules` entries the cleaned lockfile no longer
+        // reaches, so a dependency dropped from `package.json` is also removed
+        // from disk by `bun install`. Skipped for the security scanner's
+        // narrowed pre-install pass; the full install that follows performs it.
+        if !is_new_bun_modules && packages_to_install.is_none() {
+            if let Ok(fd) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") {
+                crate::package_install::prune_extraneous_node_modules(lockfile_ro, fd);
+                use bun_sys::FdExt as _;
+                fd.close();
+            }
+        }
+
         let mut seen_entry_ids: HashMap<store::entry::Id, ()> = HashMap::default();
         seen_entry_ids.reserve(store.entries.len());
 

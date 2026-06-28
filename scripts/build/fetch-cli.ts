@@ -243,15 +243,9 @@ function normalizeLf(s: string): string {
  * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
  * authored against upstream which may have different trailing whitespace.
  *
- * GIT_CEILING_DIRECTORIES: `dest` is a subdirectory of this repository, and
- * `git apply` run from a repo subdirectory only prefixes a patch's paths with
- * that subdirectory for traditional unified diffs. A git-format patch (one
- * with a `diff --git a/X b/X` header) is treated as toplevel-relative instead,
- * falls outside the prefix, and is silently "Skipped" with exit 0, after which
- * this fetch would stamp an unpatched tree as done. The ceiling hides the
- * enclosing repo so every path resolves against `dest` regardless of patch
- * format; the "Skipped patch" check is the fail-loud backstop (-v plus
- * LC_ALL=C make the message appear and keep it stable).
+ * GIT_CEILING_DIRECTORIES hides the enclosing repo: run from a repo subdir,
+ * `git apply` treats a git-format (`diff --git`) patch as toplevel-relative and
+ * silently skips it with exit 0. -v + LC_ALL=C make that skip detectable below.
  */
 function applyPatch(dest: string, patchPath: string, patchBody: string): void {
   const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-v", "-"], {

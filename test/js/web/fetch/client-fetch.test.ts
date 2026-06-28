@@ -404,22 +404,26 @@ test("unresolvable hostname rejects with the resolver error", async () => {
   // A DNS label longer than 63 bytes is illegal (RFC 1035 section 2.3.4), so
   // getaddrinfo rejects it locally without touching the network. Three fetches
   // in a row: the second hits the in-process DNS cache, which used to take a
-  // different path and report a different (also wrong) error. Runs in a
-  // subprocess with the proxy env cleared so fetch actually resolves the name.
+  // different path and report a different (also wrong) error. The fourth uses
+  // an explicit unresolvable proxy: with a proxy configured it is the proxy
+  // hostname that getaddrinfo resolves, so the error must name the proxy, not
+  // the origin. Runs in a subprocess with the proxy env cleared so the first
+  // three fetches actually resolve the origin.
   const host = Buffer.alloc(64, "a").toString() + ".com";
+  const proxyHost = Buffer.alloc(64, "b").toString() + ".com";
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `const out = [];
+       const report = p => p.then(
+         () => "resolved",
+         ({ name, code, syscall, hostname, message }) => ({ name, code, syscall, hostname, message }),
+       );
        for (let i = 0; i < 3; i++) {
-         try {
-           await fetch("http://" + ${JSON.stringify(host)} + "/");
-           out.push("resolved");
-         } catch ({ name, code, syscall, hostname, message }) {
-           out.push({ name, code, syscall, hostname, message });
-         }
+         out.push(await report(fetch("http://" + ${JSON.stringify(host)} + "/")));
        }
+       out.push(await report(fetch("http://origin.invalid/", { proxy: "http://" + ${JSON.stringify(proxyHost)} + ":3128" })));
        console.log(JSON.stringify(out));`,
     ],
     env: {
@@ -428,18 +432,30 @@ test("unresolvable hostname rejects with the resolver error", async () => {
       HTTPS_PROXY: undefined,
       http_proxy: undefined,
       https_proxy: undefined,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
     },
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const expected = {
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const notFound = (hostname: string) => ({
     name: "Error",
     code: "ENOTFOUND",
     syscall: "getaddrinfo",
-    hostname: host,
-    message: `getaddrinfo ENOTFOUND ${host}`,
-  };
-  expect({ out: JSON.parse(stdout), exitCode }).toEqual({ out: [expected, expected, expected], exitCode: 0 });
+    hostname,
+    message: `getaddrinfo ENOTFOUND ${hostname}`,
+  });
+  // `out` is the raw stdout if it is not JSON (the subprocess crashed), so the
+  // failure diff shows what the child actually printed alongside stderr.
+  let out: unknown = stdout;
+  try {
+    out = JSON.parse(stdout);
+  } catch {}
+  expect({ out, stderr, exitCode }).toEqual({
+    out: [notFound(host), notFound(host), notFound(host), notFound(proxyHost)],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("do not decode redirect body", async () => {

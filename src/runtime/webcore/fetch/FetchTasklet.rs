@@ -1307,7 +1307,12 @@ impl FetchTasklet {
         // is always `Some`.
         if fail == err!("DNSResolveFailed") {
             if let Some(dns_err) = c_ares::Error::init_eai(self.result.dns_error) {
-                let hostname: &[u8] = self.http.as_ref().map_or(b"", |h| h.url.hostname);
+                // With a proxy configured, the HTTP thread resolves the proxy
+                // hostname, not the origin's; report the one getaddrinfo
+                // actually failed on.
+                let hostname: &[u8] = self.http.as_ref().map_or(b"", |h| {
+                    h.http_proxy.as_ref().map_or(h.url.hostname, |p| p.hostname)
+                });
                 let mut err = crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
                     dns_err,
                     b"getaddrinfo",

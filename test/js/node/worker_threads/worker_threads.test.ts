@@ -365,17 +365,32 @@ describe("execArgv option", async () => {
     expect(await proc.stdout.text()).toBe(expected);
   }
 
-  it("inherits the parent's execArgv when falsy or unspecified", async () => {
-    await run("null", '["--smol"]\n');
-    await run("0", '["--smol"]\n');
-  });
-  it("provides empty execArgv when passed an empty array", async () => {
-    // empty array should result in empty execArgv, not inherited from parent thread
-    await run("[]", "[]\n");
-  });
-  it("can specify an array of strings", async () => {
-    await run('["--no-warnings"]', '["--no-warnings"]\n');
-  });
+  // Each run() spawns a bun process that itself spawns a worker VM: ~100ms
+  // released, ~3s under a debug ASAN build. Two in sequence overrun the 5s
+  // default; the workload is the point of the test, so budget it instead.
+  it(
+    "inherits the parent's execArgv when falsy or unspecified",
+    async () => {
+      await run("null", '["--smol"]\n');
+      await run("0", '["--smol"]\n');
+    },
+    30_000,
+  );
+  it(
+    "provides empty execArgv when passed an empty array",
+    async () => {
+      // empty array should result in empty execArgv, not inherited from parent thread
+      await run("[]", "[]\n");
+    },
+    30_000,
+  );
+  it(
+    "can specify an array of strings",
+    async () => {
+      await run('["--no-warnings"]', '["--no-warnings"]\n');
+    },
+    30_000,
+  );
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 

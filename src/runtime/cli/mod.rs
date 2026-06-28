@@ -1857,18 +1857,11 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
-            // Forward everything after the template name to the create script,
-            // but:
-            //   1. drop a single leading `--` — the npm/yarn convention is that
-            //      the first bare `--` is an argument separator (so `bun create
-            //      foo -- -t v3` is equivalent to `bun create foo -t v3`). Any
-            //      subsequent `--` is a literal argument and must be preserved.
-            //   2. consume `--bun` that appears before the separator — the
-            //      positional-scanning loop may have exited before seeing it, so
-            //      we consume it here into `dash_dash_bun` (which re-inserts it
-            //      as a real bunx arg below). A `--bun` after the separator is a
-            //      literal argument intended for the create script and must be
-            //      preserved.
+            // Forward the args after the template name to the create script.
+            // The first bare `--` is a separator and is dropped (npm/yarn
+            // convention); a later `--` is literal. A `--bun` before the
+            // separator is consumed by the wrapper and re-inserted as a bunx
+            // arg; after it, it's a literal arg for the create script.
             let forwarded = &args[template_name_start..];
 
             let mut forwarded_count: usize = 0;

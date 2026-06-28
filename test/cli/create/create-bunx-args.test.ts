@@ -1,14 +1,7 @@
 // https://github.com/oven-sh/bun/issues/29087
 //
-// `bun create <template> -- <args>` should strip a single leading `--` before
-// forwarding to the create script (npm/yarn convention), and must not leak
-// flags the `bun create` wrapper itself consumed (`--bun`).
-//
-// Before the fix:
-//   $ bun create foo -- -t v3
-//   process.argv.slice(2) === ["--", "-t", "v3"]
-// After:
-//   process.argv.slice(2) === ["-t", "v3"]
+// `bun create <template> -- <args>` must strip a single leading `--` before
+// forwarding to the create script, and must not leak the wrapper's own `--bun`.
 
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -143,6 +136,7 @@ describe.concurrent("issue #29087", () => {
     if (!match) {
       throw new Error(`Could not find ARGV line in stdout (exit ${exitCode}).\nstdout:\n${stdout}\nstderr:\n${stderr}`);
     }
+    expect(exitCode).toBe(0);
     return { argv: JSON.parse(match[1]!), stdout, stderr };
   }
 

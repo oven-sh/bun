@@ -14,8 +14,8 @@ const {
   validateBoolean,
   validateInteger,
   validateFunction,
-  isUint8Array,
 } = require("internal/validators");
+const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
@@ -173,9 +173,9 @@ function strictContentLength(response) {
 // (unterminated) headers are already corked, so the client gets a partial message.
 function checkStrictContentLength(strictCL, handle, chunk, encoding, fromEnd) {
   if (strictCL === undefined) return;
-  // Measure only the chunk types Node's write_() accepts; anything else keeps
-  // its existing chunk-type error from the native write/end path.
-  if (chunk && typeof chunk !== "string" && !isUint8Array(chunk)) return;
+  // Measure only the chunk types the native write/end accepts as body bytes
+  // (string or any ArrayBuffer-like); anything else keeps its native chunk-type error.
+  if (chunk && typeof chunk !== "string" && !isArrayBufferView(chunk) && !isAnyArrayBuffer(chunk)) return;
   const len = chunk ? (typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength) : 0;
   // The http2 allowHTTP1 fallback installs a JS shim handle without getBytesWritten.
   const written = (handle.getBytesWritten?.() ?? 0) + len;

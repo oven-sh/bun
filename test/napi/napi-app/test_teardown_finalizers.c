@@ -3,7 +3,9 @@
 // finalizer already run by GC must not run again at teardown. A finalizer
 // registered *by* a teardown finalizer must be drained in the same teardown,
 // not left as a dangling entry in the env's finalizer list. Each finalizer
-// prints "finalize: <name>" to stderr exactly once.
+// prints "finalize: <name>" to stdout exactly once. stdout, not stderr: on
+// the ASAN CI lane a spawned child's stderr arrives empty, and the existing
+// test_wrap_cleanup_order fixture writes to stdout for the same reason.
 
 #include <node_api.h>
 #include <stdio.h>
@@ -15,8 +17,8 @@ static int finalize_count = 0;
 static void finalize(napi_env env, void* data, void* hint) {
     (void)env;
     (void)data;
-    fprintf(stderr, "finalize: %s\n", (const char*)hint);
-    fflush(stderr);
+    printf("finalize: %s\n", (const char*)hint);
+    fflush(stdout);
     free(hint);
     finalize_count++;
 }
@@ -83,8 +85,8 @@ typedef struct {
 static void nesting_finalize(napi_env env, void* data, void* hint) {
     (void)hint;
     NestingContext* ctx = (NestingContext*)data;
-    fprintf(stderr, "finalize: %s\n", ctx->outer_name);
-    fflush(stderr);
+    printf("finalize: %s\n", ctx->outer_name);
+    fflush(stdout);
     finalize_count++;
     napi_value external;
     napi_create_external(env, NULL, finalize, ctx->nested_external_name, &external);

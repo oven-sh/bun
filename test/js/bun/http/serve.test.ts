@@ -3020,8 +3020,10 @@ describe("Connection: close request header", () => {
       port: 0,
       fetch: () => new Response("saw /a", { headers: { "Connection": "close" } }),
     });
-    const { raw, serverClosed } = await exchange(server.port, `${A}Connection: close\r\n\r\n${B}`, r =>
-      (r.match(/HTTP\/1\.1 /g)?.length ?? 0) > 1,
+    const { raw, serverClosed } = await exchange(
+      server.port,
+      `${A}Connection: close\r\n\r\n${B}`,
+      r => (r.match(/HTTP\/1\.1 /g)?.length ?? 0) > 1,
     );
     expect({
       connectionHeaderLines: (raw.match(/\r\nconnection:/gi) ?? []).length,

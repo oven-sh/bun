@@ -584,3 +584,73 @@ describe("X25519 JWK import", () => {
     }).toEqual({ extFalse: "DataError", extTrue: "imported" });
   });
 });
+
+describe("exception scope discipline", () => {
+  // Every SubtleCrypto method must RETURN_IF_EXCEPTION right after the throw-scoped
+  // normalizeCryptoAlgorithmParameters call. On a debug build with
+  // BUN_JSC_validateExceptionChecks=1, JSC aborts the process on the first unchecked
+  // scope, so the fixture (every operation, success and failure) only produces the full
+  // transcript when every call site in SubtleCrypto.cpp is disciplined. wrapKey's
+  // throwing-getter case also trips a release-invisible ASSERT without the option set.
+  it("every subtle.* path survives BUN_JSC_validateExceptionChecks", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), import.meta.resolveSync("./exception-scope-fixture.ts")],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `exitCode` and the transcript length are what fail when a scope goes unchecked;
+    // `uncheckedScopes` just surfaces the offending pair from the validator's stderr
+    // report so the diff names the call site instead of only showing a truncated log.
+    const uncheckedScopes = stderr
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+    expect({ transcript: stdout.trimEnd().split("\n"), uncheckedScopes, exitCode }).toEqual({
+      transcript: [
+        "encrypt ok = RESOLVED",
+        "encrypt bogus = REJECTED NotSupportedError: The operation is not supported.",
+        "encrypt thrower = REJECTED Error: boom",
+        "decrypt ok = RESOLVED",
+        "decrypt bogus = REJECTED NotSupportedError: The operation is not supported.",
+        "sign ok = RESOLVED",
+        "sign bogus = REJECTED NotSupportedError: The operation is not supported.",
+        "verify ok = RESOLVED",
+        "verify bogus = REJECTED NotSupportedError: The operation is not supported.",
+        "digest ok = RESOLVED",
+        "digest bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
+        "digest thrower = REJECTED Error: boom",
+        "generateKey ok = RESOLVED",
+        "generateKey bogus = REJECTED NotSupportedError: The operation is not supported.",
+        "generateKey nested bogus hash = REJECTED NotSupportedError: The operation is not supported.",
+        "generateKey thrower = REJECTED Error: boom",
+        "deriveKey ok = RESOLVED",
+        "deriveKey bogus algorithm = REJECTED NotSupportedError: The operation is not supported.",
+        "deriveKey bogus derived type = REJECTED NotSupportedError: The operation is not supported.",
+        "deriveKey importable but no key length = REJECTED NotSupportedError: The operation is not supported.",
+        "deriveBits ok = RESOLVED",
+        "deriveBits bogus = REJECTED NotSupportedError: The operation is not supported.",
+        "importKey ok = RESOLVED",
+        "importKey bogus = REJECTED NotSupportedError: The operation is not supported.",
+        "importKey nested bogus hash = REJECTED NotSupportedError: The operation is not supported.",
+        "importKey thrower = REJECTED Error: boom",
+        "exportKey raw = RESOLVED",
+        "exportKey jwk = RESOLVED",
+        "wrapKey raw = RESOLVED",
+        "wrapKey jwk = RESOLVED",
+        "wrapKey via encrypt = RESOLVED",
+        "wrapKey bogus = REJECTED NotSupportedError: The operation is not supported.",
+        "wrapKey thrower = REJECTED Error: boom",
+        "unwrapKey raw = RESOLVED",
+        "unwrapKey jwk = RESOLVED",
+        "unwrapKey via decrypt = RESOLVED",
+        "unwrapKey jwk not json = REJECTED DataError: WrappedKey cannot be converted to a JSON object",
+        "unwrapKey bogus unwrap algorithm = REJECTED NotSupportedError: The operation is not supported.",
+        "unwrapKey bogus unwrapped type = REJECTED NotSupportedError: The operation is not supported.",
+      ],
+      uncheckedScopes: [],
+      exitCode: 0,
+    });
+  });
+});

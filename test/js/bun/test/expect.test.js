@@ -4271,6 +4271,8 @@ describe("expect()", () => {
     // adopted this yet. https://github.com/jestjs/jest/pull/15463
     test_skipIf(isVitest)("ObjectContaining never matches an array received value", () => {
       expect([1, 2]).not.toEqual(expect.objectContaining({ 0: 1 }));
+      expect([1, 2]).not.toEqual(expect.not.objectContaining({ 0: 1 }));
+      expect([1, 2]).not.toEqual(expect.not.objectContaining({ foo: "bar" }));
       expect(expect.objectContaining({ 0: 1 })).not.toEqual([1, 2]);
       expect(expect.objectContaining({ length: 2 })).not.toEqual([1, 2]);
       expect(expect.objectContaining({})).not.toEqual([1, 2]);

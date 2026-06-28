@@ -355,8 +355,11 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         return;
     }
     // A worker that posts during module evaluation reaches here before
-    // dispatchOnline() has posted the 'open' task; emit 'open' first.
-    dispatchOpenIfNeeded();
+    // dispatchOnline() has posted the 'open' task: emit 'open' first, then run
+    // microtasks the 'online' handler queued, before the first message (as
+    // Node does between the two deliveries).
+    if (dispatchOpenIfNeeded())
+        globalObject->drainMicrotasks();
     bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
         dispatchEvent(event);
     });
@@ -398,15 +401,26 @@ void Worker::dispatchEvent(Event& event)
 // Dispatch 'open' (node's 'online') at most once, on the parent thread: from
 // dispatchOnline()'s posted task, or earlier from drainToParent() when the
 // worker posted a message during module evaluation (Node: 'online' precedes 'message').
-void Worker::dispatchOpenIfNeeded()
+// Returns whether the event was dispatched by this call.
+bool Worker::dispatchOpenIfNeeded()
 {
     if (m_openDispatched)
-        return;
+        return false;
     m_openDispatched = true;
-    if (hasEventListeners(eventNames().openEvent)) {
-        auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
-        dispatchEvent(event);
+    // The 'online' handler may immediately call getHeapSnapshot(), or anything
+    // else gated on isOnline(), so Running must be visible before the event:
+    // the same ordering dispatchOnline() establishes on the worker thread.
+    {
+        Locker lock(m_pendingTasksMutex);
+        // Only Pending -> Running; never walk Closing/Closed back to Running.
+        auto expected = State::Pending;
+        m_state.compare_exchange_strong(expected, State::Running);
     }
+    if (!hasEventListeners(eventNames().openEvent))
+        return false;
+    auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
+    dispatchEvent(event);
+    return true;
 }
 
 bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)

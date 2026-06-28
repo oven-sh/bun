@@ -93,6 +93,44 @@ test("'online' precedes a message posted before a module evaluation error", asyn
   });
 });
 
+test("a 'message' handler attached from a microtask queued by 'online' sees the first message", async () => {
+  // 'online' and the first message can share one parent task; Node still
+  // runs a microtask checkpoint between the two deliveries.
+  const worker = new Worker(`require("node:worker_threads").parentPort.postMessage("first")`, { eval: true });
+  const received: string[] = [];
+  worker.on("online", () => {
+    queueMicrotask(() => worker.on("message", m => received.push("micro:" + m)));
+  });
+  const [code] = await once(worker, "exit");
+  expect(received).toEqual(["micro:first"]);
+  expect(code).toBe(0);
+});
+
+test("an 'online' handler that runs during module evaluation can call getHeapSnapshot()", async () => {
+  // 'online' can fire from the first message drain while the worker is still
+  // evaluating its module; isOnline() must already be true there or
+  // getHeapSnapshot() rejects with ERR_WORKER_NOT_RUNNING.
+  const sab = new SharedArrayBuffer(4);
+  const worker = new Worker(
+    `const { parentPort, workerData } = require("node:worker_threads");
+     parentPort.postMessage("evaluating");
+     Atomics.wait(new Int32Array(workerData), 0, 0);`,
+    { eval: true, workerData: sab },
+  );
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  worker.on("online", () => worker.getHeapSnapshot().then(resolve, reject));
+  // Release the worker from module evaluation only once the parent has
+  // observed its message (and therefore 'online', which precedes it).
+  worker.on("message", () => {
+    Atomics.store(new Int32Array(sab), 0, 1);
+    Atomics.notify(new Int32Array(sab), 0);
+  });
+  worker.on("error", reject);
+  const stream = (await promise) as Readable;
+  expect(stream.constructor.name).toBe("HeapSnapshotStream");
+  await worker.terminate();
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");

@@ -80,6 +80,10 @@ struct WorkerOptions;
 ///                 │Closing │ ───────────────► │ Closed │
 ///                 └────────┘  dispatched      └────────┘
 ///
+/// dispatchOpenIfNeeded() (parent thread) takes the same Pending -> Running
+/// edge, under the same lock, when the parent observes the worker's first
+/// output before the worker thread has reached dispatchOnline().
+///
 /// Closing exists so that inside the 'close'/'exit' handler threadId reads
 /// -1 and isOnline() is false (old ClosingFlag behaviour) while postMessage()
 /// — which only gates on Closed (old TerminatedFlag behaviour) — still
@@ -162,7 +166,7 @@ private:
 
     void enqueueToWorker(MessageWithMessagePorts&&);
     void drainToParent(ScriptExecutionContext&);
-    void dispatchOpenIfNeeded();
+    bool dispatchOpenIfNeeded();
 
     WorkerOptions m_options;
 

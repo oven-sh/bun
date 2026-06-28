@@ -1,6 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
 import path from "node:path";
+
+// Every test here forks at least one cluster worker (a whole bun process, plus
+// a nested fork), which runs well past the 5s default under a debug/ASAN build.
+setDefaultTimeout(40_000);
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -212,12 +216,9 @@ test("worker.disconnect() with a net.Server exits instead of hanging", async () 
   expect(stdout).toContain("[master] all workers exited");
 });
 
-// https://nodejs.org/api/cluster.html#workerdisconnect: in a worker,
-// disconnect() "will close all servers, wait for the 'close' event on those
-// servers, and then disconnect the IPC channel", after which the worker exits
-// on its own. These cover both server types a worker can open under cluster:
-// node:http (binds its own SO_REUSEPORT socket, never enters _getServer) and
-// net.Server (goes through _getServer's bookkeeping stub).
+// Per https://nodejs.org/api/cluster.html#workerdisconnect, disconnect() closes the
+// worker's servers, waits for their 'close' events, then disconnects the IPC channel.
+// Covers both node:http (own SO_REUSEPORT socket) and net.Server (_getServer stub).
 test.concurrent(
   "primary-initiated worker.disconnect() closes the worker's http server and the worker exits",
   async () => {
@@ -289,7 +290,6 @@ test.concurrent(
     );
     expect(exitCode).toBe(0);
   },
-  40_000,
 );
 
 test.concurrent(
@@ -345,5 +345,4 @@ test.concurrent(
     expect(stdout.trim().split("\n")).toEqual(["worker server closed", '{"exit":{"code":0,"signal":null}}']);
     expect(exitCode).toBe(0);
   },
-  40_000,
 );

@@ -291,6 +291,42 @@ describe("console.table reads each cell once", () => {
     ).toThrow(boom);
   });
 
+  // The width pass caches each cell's JSValue in a Rust Vec, which JSC's
+  // conservative scan never visits; only the MarkedArgumentBuffer roots them.
+  // 64 rows spills it past the 8-slot inline (stack-scanned) buffer.
+  test("cell values survive a full GC between the width and render passes", () => {
+    const N = 64;
+    const rows = Array.from({ length: N }, (_, i) => ({
+      get x() {
+        Bun.gc(true);
+        return { id: i };
+      },
+    }));
+    const out = Bun.inspect.table(rows);
+    const missing: number[] = [];
+    for (let i = 0; i < N; i++) if (!out.includes(`{ id: ${i} }`)) missing.push(i);
+    expect(missing).toEqual([]);
+  });
+
+  // Cells are keyed by column index in the width pass. A row that revisits an
+  // already-discovered column after creating a later one must not displace or
+  // truncate the cells it already captured.
+  test("a row whose key order differs from the column order", () => {
+    expect(Bun.inspect.table([{ a: 1 }, { b: 2, a: 3 }])).toBe(
+      `┌───┬───┬───┐\n│   │ a │ b │\n├───┼───┼───┤\n│ 0 │ 1 │   │\n│ 1 │ 3 │ 2 │\n└───┴───┴───┘\n`,
+    );
+  });
+
+  // A single read per cell means the column is sized from the same value that
+  // gets rendered: the [[Get]] result, matching Node. The old render pass
+  // re-read through [[GetOwnProperty]], which a Proxy can observably diverge.
+  test("a Proxy row renders the [[Get]] value the width pass saw", () => {
+    const p = new Proxy({ x: "FROM_TARGET" }, { get: () => "FROM_GET" });
+    expect(Bun.inspect.table([p])).toBe(
+      `┌───┬──────────┐\n│   │ x        │\n├───┼──────────┤\n│ 0 │ FROM_GET │\n└───┴──────────┘\n`,
+    );
+  });
+
   test("console.table", async () => {
     await using proc = Bun.spawn({
       cmd: [

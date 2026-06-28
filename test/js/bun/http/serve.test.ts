@@ -1342,6 +1342,43 @@ describe("should support Content-Range with Bun.file()", () => {
       });
     });
   }
+
+  // The auto-206 for `.slice()` must key on the caller having supplied a
+  // `headers` init, not on whether a FetchHeaders object happens to exist:
+  // the lazy `headers` getter and the body-derived Content-Type also
+  // materialize one.
+  it("206 for a slice is not defeated by reading response.headers", async () => {
+    await runTest(
+      {
+        fetch() {
+          const response = new Response(Bun.file(fixture).slice(0, 10));
+          response.headers.get("x-not-set");
+          return response;
+        },
+      },
+      async server => {
+        const response = await fetch(server.url.origin);
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        expect(response.status).toBe(206);
+      },
+    );
+  });
+
+  it("slice with a headers init and no Content-Range stays 200", async () => {
+    await runTest(
+      {
+        fetch() {
+          return new Response(Bun.file(fixture).slice(0, 10), { headers: { "x-custom": "1" } });
+        },
+      },
+      async server => {
+        const response = await fetch(server.url.origin);
+        expect(response.headers.get("x-custom")).toBe("1");
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        expect(response.status).toBe(200);
+      },
+    );
+  });
 });
 
 it("formats error responses correctly", async () => {

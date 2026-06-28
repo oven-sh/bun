@@ -3488,14 +3488,19 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
+        // Must read this before `swap_init_headers` below takes `init.headers`.
+        let headers_from_init = response.headers_from_init();
         if let Some(mut headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
-            // For .slice()-driven ranges, only promote to 206 if the user
-            // also set Content-Range (preserves the old contract). For an
-            // incoming Range: header (sendfile.total > 0) we always 206.
-            needs_content_range =
-                needs_content_range && (self.sendfile.total > 0 || has_content_range);
+            // For .slice()-driven ranges, auto-promote to 206 unless the
+            // caller's init supplied headers without a Content-Range (they're
+            // managing the response themselves). Headers materialized later
+            // (body-derived Content-Type, the lazy `headers` getter) must not
+            // flip this, hence `headers_from_init` and not `headers` presence.
+            // For an incoming Range: header (sendfile.total > 0) we always 206.
+            needs_content_range = needs_content_range
+                && (self.sendfile.total > 0 || has_content_range || !headers_from_init);
             if needs_content_range {
                 status = 206;
             }

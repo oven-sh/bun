@@ -378,6 +378,12 @@ impl Response {
         self.init.with_mut(|init| init.headers.take())
     }
 
+    /// Whether the caller's `ResponseInit` supplied headers. See
+    /// [`Init::headers_from_init`]: `init.headers.is_some()` is NOT this.
+    pub fn headers_from_init(&self) -> bool {
+        self.init.get().headers_from_init
+    }
+
     #[inline]
     pub fn get_method(&self) -> Method {
         self.init.get().method
@@ -1306,6 +1312,10 @@ impl Response {
 // the remaining `status_text` is still dropped at scope end via field drop glue.
 pub struct Init {
     pub headers: Option<HeadersRef>,
+    /// Whether `headers` came from the caller's `ResponseInit`. `headers` is
+    /// also populated later (the lazy `headers` getter, the body Content-Type
+    /// preservation), so `headers.is_some()` is not that signal.
+    pub headers_from_init: bool,
     pub status_code: u16,
     pub status_text: OwnedString,
     pub method: Method,
@@ -1315,6 +1325,7 @@ impl Default for Init {
     fn default() -> Self {
         Self {
             headers: None,
+            headers_from_init: false,
             status_code: 0,
             status_text: OwnedString::new(BunString::empty()),
             method: Method::GET,
@@ -1333,6 +1344,7 @@ impl Init {
         };
         Ok(Init {
             headers,
+            headers_from_init: self.headers_from_init,
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
@@ -1370,6 +1382,7 @@ impl Init {
                 }
 
                 result.method = req.method;
+                result.headers_from_init = result.headers.is_some();
                 return Ok(Some(result));
             }
 
@@ -1443,6 +1456,7 @@ impl Init {
             }
         }
 
+        result.headers_from_init = result.headers.is_some();
         Ok(Some(result))
     }
 }

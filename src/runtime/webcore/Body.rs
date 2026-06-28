@@ -1690,9 +1690,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// A Blob body's Content-Type (e.g. a FormData's multipart boundary) lives
     /// only on the Blob and is unrecoverable once the body leaves [`Value::Blob`],
     /// so every body-consuming `BodyMixin` method (and `.body`) calls this first.
-    /// `Request` instead materializes its headers in `construct_into`, making this
-    /// a no-op for it; `Response` cannot, because `Bun.serve` reads `init.headers`
-    /// being unset as "no headers init" when auto-206'ing a sliced `Bun.file()`.
+    /// `Request` also materializes its headers in `construct_into`, making this
+    /// a no-op for it; `Response` relies on this path alone, leaving
+    /// `init.headers` unset until something actually needs the headers.
     fn preserve_body_content_type(&self, global_object: &JSGlobalObject) -> JsResult<()> {
         if self.get_fetch_headers().is_some() {
             return Ok(());

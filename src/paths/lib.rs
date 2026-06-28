@@ -752,6 +752,7 @@ pub mod fs {
 
                 // Ignore trailing slashes
                 path = &path[0..i];
+                base = path;
             }
 
             // Strip off the extension

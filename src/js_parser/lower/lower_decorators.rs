@@ -311,15 +311,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         if let js_ast::ExprData::EString(s) = &key_expr.data {
-            return self.new_expr(
-                E::Dot {
-                    target: target_expr,
-                    name: s.data,
-                    name_loc: key_expr.loc,
-                    ..Default::default()
-                },
-                key_expr.loc,
-            );
+            // `E::Dot.name` is a UTF-8 `Str`; a UTF-16 `EString.data` stores
+            // u16-count bytes that are garbage as UTF-8. Fall through to
+            // `E::Index` for UTF-16 keys so the printer emits `["…"]`.
+            if s.is_utf8() {
+                return self.new_expr(
+                    E::Dot {
+                        target: target_expr,
+                        name: s.data,
+                        name_loc: key_expr.loc,
+                        ..Default::default()
+                    },
+                    key_expr.loc,
+                );
+            }
         }
         self.new_expr(
             E::Index {
@@ -1534,7 +1539,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if prop.kind == PropertyKind::AutoAccessor {
                     let accessor_name: &'a [u8] = 'brk: {
                         if let Some(k) = prop.key {
-                            if let js_ast::ExprData::EString(s) = &k.data {
+                            if let js_ast::ExprData::EString(s) = &k.data
+                                && s.is_utf8()
+                            {
                                 break 'brk p.bump_name2(b"_", &s.data);
                             }
                         }
@@ -1781,7 +1788,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else if k == 4 {
                 // Decorated public auto-accessor → WeakMap
                 let accessor_name: &'a [u8] = 'brk: {
-                    if let js_ast::ExprData::EString(s) = &key_expr.data {
+                    if let js_ast::ExprData::EString(s) = &key_expr.data
+                        && s.is_utf8()
+                    {
                         break 'brk p.bump_name2(b"_", &s.data);
                     }
                     let name = p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));

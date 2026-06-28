@@ -692,3 +692,45 @@ it("does not match a dynamic route whose static segment merely collides on lengt
   // A different segment that only collides on (length, 32-bit hash) must not.
   expect(router.match(`/${attackSegment}/42`)).toBeNull();
 });
+
+it("match() does not panic on a leading '?' or a path that percent-decodes to empty", async () => {
+  // URLPath::parse assumed the decoded pathname was non-empty and had a leading
+  // byte to skip. A bare query string ("?", "?foo") makes the path slice end at 0
+  // while the start is hardcoded to 1, and "%PUBLIC_URL%" (which the fault-tolerant
+  // decoder consumes entirely) yields an empty decoded pathname; either case used
+  // to trigger a slice bounds panic. Run in a subprocess so a panic is observable
+  // as a nonzero exit / missing stdout instead of killing the test runner.
+  using dir = tempDir("fsr-degenerate-path", {
+    "pages/index.tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const out = {};
+    for (const input of ["?", "?foo=bar", "%PUBLIC_URL%", "%PUBLIC_URL%?x=1"]) {
+      const m = router.match(input);
+      out[input] = m ? { name: m.name, query: m.query } : null;
+    }
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    "?": { name: "/", query: {} },
+    "?foo=bar": { name: "/", query: { foo: "bar" } },
+    "%PUBLIC_URL%": { name: "/", query: {} },
+    "%PUBLIC_URL%?x=1": { name: "/", query: { x: "1" } },
+  });
+  expect(exitCode).toBe(0);
+});

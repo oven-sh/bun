@@ -1680,7 +1680,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             match self.source.as_mut() {
                 None => return,
                 Some(Source::SyncFile(_)) => {
-                    panic!("This code path shouldn't be reached - sync_file in PipeWriter.zig");
+                    panic!("This code path shouldn't be reached - sync_file in PipeWriter.rs");
                 }
                 Some(Source::File(f)) => (f.as_mut() as *mut _, core::ptr::null_mut()),
                 Some(s) => (core::ptr::null_mut(), s.to_stream()),

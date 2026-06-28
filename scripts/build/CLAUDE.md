@@ -143,7 +143,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
    - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
-4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.zig`/codegen-input globs.
+4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
 6. `emitGeneratorRule(n, cfg, partial)` — persist `configure.json`, emit `regen` rule so editing any build script triggers reconfigure.
 7. `emitBun(n, cfg, sources)` — assemble the build graph (see Phase 2).

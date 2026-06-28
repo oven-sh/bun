@@ -1493,6 +1493,8 @@ pub(crate) fn add_import_meta_defines(
     // Note that it is not currently possible to have mixed
     // modes (production + hmr dev server)
     // TODO: BASE_URL
+    // NOTE: `HTMLBundle::on_plugins_resolved` (the `Bun.serve` path without the
+    // HMR dev server) mirrors this key list; add new keys in both places.
     define.insert(
         b"import.meta.env.DEV",
         DefineData::init_boolean(mode == Mode::Development),

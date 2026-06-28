@@ -1471,19 +1471,20 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
-                let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
+        if let BodyValue::Blob(blob) = req.body_value() {
+            let ct: &[u8] = blob.content_type_slice();
+            if !ct.is_empty() {
+                // Reshaped for borrowck — split borrow of req.body and req.headers
+                let ct_ptr: *const [u8] = ct;
+                // Per Fetch, the header list is fixed at construction. Create it now
+                // so the body-derived Content-Type (a FormData's multipart boundary)
+                // survives the Blob being consumed, no matter which path consumes it.
+                if req.headers.get().is_none() {
+                    req.headers.set(Some(HeadersRef::create_empty()));
+                }
+                let headers = req.headers_mut().as_mut().unwrap();
+                if !headers.fast_has(HTTPHeaderName::ContentType) {
+                    match headers.put(
                         HTTPHeaderName::ContentType,
                         // SAFETY: ct_ptr borrows req.body which is not mutated here.
                         unsafe { &*ct_ptr },

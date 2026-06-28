@@ -738,6 +738,34 @@ for (const { body, fn } of bodyTypes) {
   });
 }
 
+// fetch(request) extracts the body Blob directly, without going through the
+// BodyMixin body-consuming methods. The user-held Request's headers must still
+// carry the multipart boundary afterwards, and it must be the boundary that
+// was actually sent on the wire.
+test("Request content-type survives fetch(request) and matches the wire", async () => {
+  const { promise, resolve } = Promise.withResolvers<{ contentType: string | null; body: string }>();
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      resolve({ contentType: req.headers.get("content-type"), body: await req.text() });
+      return new Response("ok");
+    },
+  });
+
+  const fd = new FormData();
+  fd.append("n", "V");
+  const req = new Request(server.url, { method: "POST", body: fd });
+  const res = await fetch(req);
+  expect(await res.text()).toBe("ok");
+
+  const received = await promise;
+  const ct = req.headers.get("content-type");
+  expect(ct).toMatch(/^multipart\/form-data; boundary=/);
+  expect(received.contentType).toBe(ct);
+  const boundary = ct!.slice("multipart/form-data; boundary=".length);
+  expect(received.body).toContain("--" + boundary);
+});
+
 function arrayBuffer(buffer: BufferSource) {
   if (buffer instanceof ArrayBuffer) {
     return buffer;

@@ -1687,13 +1687,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     fn materialize_headers(&self, global_object: &JSGlobalObject) -> JsResult<()>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
-    /// A Blob body's Content-Type (a FormData's multipart boundary, a
-    /// URLSearchParams' urlencoded type, a typed Blob's `type`) lives only on
-    /// the Blob, and the lazy headers getters recover it from there. Any
-    /// transition away from [`Value::Blob`] (consumption, `.body`) would make
-    /// that unrecoverable, so every such path calls this first. Per Fetch,
-    /// the header list is fixed at construction and must not depend on
-    /// whether the body or the headers happens to be read first.
+    /// A Blob body's Content-Type (e.g. a FormData's multipart boundary) lives
+    /// only on the Blob and is unrecoverable once the body leaves [`Value::Blob`],
+    /// so every body-consuming `BodyMixin` method (and `.body`) calls this first.
+    /// `Request` instead materializes its headers in `construct_into`, making this
+    /// a no-op for it; `Response` cannot, because `Bun.serve` reads `init.headers`
+    /// being unset as "no headers init" when auto-206'ing a sliced `Bun.file()`.
     fn preserve_body_content_type(&self, global_object: &JSGlobalObject) -> JsResult<()> {
         if self.get_fetch_headers().is_some() {
             return Ok(());

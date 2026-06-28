@@ -15,10 +15,11 @@ function stripAsanWarning(s: string): string {
 // IOWriter::on_error iterates the pending writers and drives each callback via the
 // Yield trampoline. A callback can start the next shell state (e.g. the right-hand
 // side of `||`, or the next statement after `;`) which may enqueue on the SAME
-// IOWriter. Previously that re-entrant enqueue appended a writer and registered a
-// poll, but PosixBufferedWriter::_on_error closes the poll handle right after
-// on_error returns, so the new writer was stranded (the shell hung), and on_error's
-// trailing writers.clear() then dropped its bookkeeping entirely.
+// IOWriter. Previously that re-entrant enqueue found no recorded error, appended a
+// writer, and registered a poll; but PosixBufferedWriter::_on_error closes the poll
+// handle right after on_error returns, so the new writer never heard back and the
+// shell hung. fail_pending_writers now records the error before any callback runs,
+// and handle_broken_pipe completes such enqueues with it immediately.
 //
 // These tests require a write error that is *not* EPIPE (EPIPE sets flags.broken_pipe
 // which already short-circuits re-entrant enqueues), so they use Linux-specific
@@ -58,9 +59,11 @@ describe.skipIf(!isLinux)("IOWriter.onError with re-entrant enqueue", () => {
     // With stdout = /dev/full every write fails with ENOSPC. Each echo's
     // on_io_writer_chunk error callback drives the next statement, which
     // enqueues on the same IOWriter. Previously each enqueue re-entered
-    // do_file_write → on_error → Yield::run, one nested level per echo; the
-    // stored error now short-circuits the re-entrant enqueue so the chain
-    // stays flat.
+    // do_file_write → on_error → Yield::run, one nested level per echo,
+    // eventually tripping the Yield depth assertion. on_sync_error now
+    // *returns* the failing child's completion so enqueue unwinds first, and
+    // the recorded error completes a re-entrant enqueue without another
+    // write attempt.
     const full = Bun.file("/dev/full");
     await using proc = Bun.spawn({
       cmd: [

@@ -23,6 +23,7 @@ export default [
       size: { getter: "getSize" },
       memoryUsage: { getter: "getMemoryUsage" },
       truncated: { getter: "getTruncated" },
+      errors: { getter: "getErrors" },
       watching: { getter: "getWatching" },
       complete: { fn: "complete", length: 1 },
       glob: { fn: "glob", length: 1 },
@@ -44,6 +45,19 @@ export default [
         // Reuse an existing BunBuiltinNames entry (see Glob.classes.ts: new
         // private-symbol names do not always resolve).
         privateSymbol: "pull",
+      },
+      // `grep(RegExp)`: the same glob/cwd/size-admitted candidate snapshot the
+      // literal fast path uses, so the JS shim reads/tests each file itself.
+      __grepCandidates: {
+        fn: "__grepCandidates",
+        length: 1,
+        privateSymbol: "paths",
+      },
+      // Post-close observer for the `grep()` async iterator; never throws.
+      __closed: {
+        fn: "__closed",
+        length: 0,
+        privateSymbol: "closeRequested",
       },
       gitStatus: { fn: "gitStatus", length: 0 },
       gitDiff: { fn: "gitDiff", length: 1 },

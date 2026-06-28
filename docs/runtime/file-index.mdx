@@ -5,9 +5,12 @@ description: Build agent and editor tooling with Bun's in-memory, gitignore-awar
 
 `Bun.FileIndex` is an in-memory, gitignore-aware index of a directory tree, designed for building agent and editor tooling: fuzzy filename autocomplete, glob queries over the indexed paths, content search, file-access history, and in-process git status and diff.
 
-The index crawls a directory once (in parallel, on Bun's thread pool), respecting `.gitignore` semantics exactly the way git does, and keeps only paths and stat metadata in memory. After that, autocomplete and glob queries are synchronous and answer from memory in well under a millisecond, even at 100k paths.
+The index crawls a directory once (in parallel, on Bun's thread pool), respecting `.gitignore` semantics exactly the way git does, and keeps only paths and stat metadata in memory. After that, autocomplete and glob queries are synchronous and answer from memory without touching the filesystem.
 
-All paths accepted and returned by `Bun.FileIndex` are **relative to `root` and `/`-separated on every platform**, including Windows.
+All paths accepted and returned by `Bun.FileIndex` are **relative to `root` and `/`-separated on every platform**, including Windows. Two rules apply to every path argument:
+
+- A path must stay inside the root. A NUL byte, an absolute path, or any `..` component (`..`, `../x`, `a/../b`) throws `ERR_INVALID_ARG_VALUE` — these are never silently normalized away.
+- Paths must be valid UTF-8 to round-trip. A file whose on-disk name is not valid UTF-8 is still indexed, but the string Bun returns for it is lossy (invalid bytes become `U+FFFD`), and that lossy string is **not** accepted back by `has()` / `stat()` / `touch()` / `gitDiff()`.
 
 ## Quickstart
 
@@ -73,8 +76,9 @@ console.log(index.root, index.size, index.memoryUsage);
 
 A few rules worth knowing:
 
-- Construction never throws for a missing or unreadable `root` — `index.ready` rejects instead.
+- Construction never throws for a missing or unreadable `root` — `index.ready` rejects with the syscall error instead.
 - Queries issued before `ready` resolves operate on whatever has been indexed so far (initially nothing).
+- `index.errors` counts entries or subtrees the crawl had to skip because of an I/O error (for example a subdirectory the process cannot read). `ready` still resolves in that case; check `errors` if a silently-partial index would be a problem.
 - `FileIndex` implements `Disposable`, so `using index = new Bun.FileIndex(...)` calls `close()` automatically at the end of the scope.
 
 ### gitignore semantics
@@ -98,7 +102,7 @@ const results = index.complete("bdts", { limit: 10 });
 - `cwd` — only return paths under this prefix (relative to `root`).
 - `directories` — return only directories (default `false`).
 
-Matching is smart-case (case-insensitive unless the query contains an uppercase letter), and matches in the basename outrank the same match earlier in the path. `positions` are the indices into `path` that matched, for highlighting in a UI.
+Matching is smart-case (case-insensitive unless the query contains an uppercase letter), and matches in the basename outrank the same match earlier in the path. `positions` are indices into the `path` string (UTF-16 code units — `path[positions[0]]` is the first matched character, even for non-ASCII names), for highlighting in a UI.
 
 Paths you've recorded with [`touch()`](#touch-and-recent-access-history) get a recency boost, so frequently-opened files surface first.
 
@@ -152,7 +156,7 @@ Options:
 
 Two kinds of files are always skipped: files larger than `maxFileSize`, and files that look binary (a NUL byte in the first 8 KiB).
 
-**Note**: String patterns are the fast path — they're matched with a SIMD literal search inside the worker threads that read the files. `RegExp` patterns are supported but slower, because each candidate line has to be decoded and tested by the JavaScript regular-expression engine on the main thread. Prefer string literals when you can.
+**Note**: String patterns are the fast path — they're matched with a SIMD literal search inside the worker threads that read the files. `RegExp` patterns are supported but slower: the candidate files are read and decoded in JavaScript and the expression is tested per line on the JavaScript thread. Prefer string literals when you can. A `RegExp` pattern's case-sensitivity comes from its own `i` flag (the `caseSensitive` option only applies to strings), and Bun always searches with a fresh global copy of the expression, so the caller's `lastIndex` neither affects nor is affected by the search.
 
 ## `touch()` and `recent()` — access history
 
@@ -224,7 +228,7 @@ await index.ready;
 
 Events are coalesced per path and debounced (about 20 ms after the last event in a burst), so a build that writes 500 files produces one callback, not 500. Changes inside gitignored directories never fire. Editing any `.gitignore` (or `.git/info/exclude`) triggers a debounced background re-crawl so the index stays consistent with the new rules.
 
-A watching index keeps the process alive until you call `close()`.
+A watching index keeps the process alive until you call `close()`. On platforms with no supported watch backend (anything other than Linux, macOS, and Windows — e.g. FreeBSD), constructing with `watch: true` throws.
 
 ### `refresh()`
 
@@ -237,7 +241,7 @@ console.log(index.size);
 
 ### `close()`
 
-`index.close()` stops the watcher, frees the native index, and releases its memory. It is idempotent. After `close()`, every other method throws; promises that were already in flight still settle.
+`index.close()` stops the watcher, frees the native index, and releases its memory. It is idempotent. After `close()`, every other method throws an `ERR_INVALID_STATE` error. Promises that were already in flight still settle, and a `grep()` iterator obtained before `close()` ends (`{ done: true }`) on its next `next()` instead of yielding further results.
 
 `Symbol.dispose` is an alias for `close()`, so `using` handles cleanup for you:
 
@@ -270,7 +274,7 @@ The budget covers paths and metadata only — `grep()` reads file contents from 
 
 ## Performance & threading model
 
-The initial crawl, `refresh()`, `grep()`, `gitStatus()`, and `gitDiff()` all run on Bun's thread pool and never block the event loop; they hand back plain data when they finish. Everything else — `complete()`, `glob()`, `has()`, `stat()`, `touch()`, `recent()` — is a synchronous read of the in-memory index on the JavaScript thread, with no locks and no I/O, so it's safe to call on every keystroke: a `complete()` over ~100k indexed paths typically finishes in well under a millisecond.
+The initial crawl, `refresh()`, `grep()` over a string, `gitStatus()`, and `gitDiff()` all run on Bun's thread pool and never block the event loop; they hand back plain data when they finish. `grep()` over a `RegExp` reads candidate files in JavaScript. Everything else — `complete()`, `glob()`, `has()`, `stat()`, `touch()`, `recent()` — is a synchronous read of the in-memory index on the JavaScript thread, with no locks and no I/O, so it is intended to be cheap enough to call on every keystroke.
 
 ## What it is not
 
@@ -312,9 +316,14 @@ class FileIndex implements Disposable {
   readonly memoryUsage: number;
   /** True if maxMemory was hit and the index is incomplete. */
   readonly truncated: boolean;
+  /** Entries/subtrees the last crawl skipped because of an I/O error (EACCES, ...). */
+  readonly errors: number;
   readonly watching: boolean;
 
-  /** Fuzzy filename autocomplete. Synchronous; operates on the in-memory index. */
+  /**
+   * Fuzzy filename autocomplete. Synchronous; operates on the in-memory index.
+   * `positions` are indices into the `path` string of the matched characters.
+   */
   complete(
     query: string,
     options?: { limit?: number; cwd?: string; directories?: boolean },

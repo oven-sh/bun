@@ -10,7 +10,7 @@
 use bun_event_loop::TaskTag;
 use bun_file_index::{GrepHit, GrepQuery, grep_file};
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated};
+use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated};
 use bun_sys::{Dir, O};
 
 use super::{FileIndex, utf8_js};
@@ -42,6 +42,91 @@ struct OwnedHit {
     after: Vec<Box<[u8]>>,
 }
 
+/// `grep()` options, validated once on the JS thread and shared by the
+/// literal fast path ([`start`]) and the RegExp candidate snapshot
+/// (`FileIndex::__grep_candidates`).
+pub(crate) struct GrepArgs {
+    glob: Option<Vec<u8>>,
+    /// Empty, or a `/`-terminated `cwd` prefix.
+    cwd: Vec<u8>,
+    limit: usize,
+    max_file_size: usize,
+    case_sensitive: bool,
+    context: usize,
+}
+
+pub(crate) fn parse_grep_options(
+    index: &FileIndex,
+    global: &JSGlobalObject,
+    options_arg: JSValue,
+) -> JsResult<GrepArgs> {
+    let mut args = GrepArgs {
+        glob: None,
+        cwd: Vec::new(),
+        limit: usize::MAX,
+        max_file_size: index.options().max_file_size,
+        case_sensitive: true,
+        context: 0,
+    };
+    if options_arg.is_undefined_or_null() {
+        return Ok(args);
+    }
+    if !options_arg.is_object() {
+        return Err(global
+            .throw_invalid_arguments(format_args!("FileIndex.grep: options must be an object")));
+    }
+    if let Some(v) = options_arg.get_truthy(global, "glob")? {
+        if !v.is_string() {
+            return Err(global
+                .throw_invalid_arguments(format_args!("FileIndex.grep: glob must be a string")));
+        }
+        args.glob = Some(v.to_slice(global)?.slice().to_vec());
+    }
+    if let Some(v) = options_arg.get_truthy(global, "cwd")? {
+        args.cwd = super::dir_prefix(global, v, "FileIndex.grep")?;
+    }
+    if let Some(v) = options_arg.get(global, "limit")?
+        && !v.is_undefined_or_null()
+    {
+        args.limit = super::non_negative_int_option(global, v, "FileIndex.grep", "limit")?;
+    }
+    if let Some(v) = options_arg.get_truthy(global, "maxFileSize")? {
+        args.max_file_size =
+            super::positive_int_option(global, v, "FileIndex.grep", "maxFileSize")?;
+    }
+    if let Some(v) = options_arg.get(global, "caseSensitive")?
+        && !v.is_undefined_or_null()
+    {
+        args.case_sensitive = v.to_boolean();
+    }
+    if let Some(v) = options_arg.get_truthy(global, "context")? {
+        args.context = super::non_negative_int_option(global, v, "FileIndex.grep", "context")?;
+    }
+    Ok(args)
+}
+
+/// The store snapshot a grep over `args` searches: glob/cwd filtered, files
+/// only, at most `max_file_size` bytes, in store (path) order.
+pub(crate) fn candidate_paths(index: &FileIndex, args: &GrepArgs) -> Vec<Box<[u8]>> {
+    let store = index.store();
+    let admits = |id: bun_file_index::FileId| {
+        let meta = store.meta(id);
+        meta.kind == bun_file_index::EntryKind::File && meta.size <= args.max_file_size as u64
+    };
+    match &args.glob {
+        Some(pattern) => bun_file_index::glob(&store, pattern)
+            .into_iter()
+            .filter(|&id| store.path(id).starts_with(args.cwd.as_slice()) && admits(id))
+            .map(|id| Box::from(store.path(id)))
+            .collect(),
+        None => store
+            .range_with_prefix(&args.cwd)
+            .filter(|&id| admits(id))
+            .map(|id| Box::from(store.path(id)))
+            .collect(),
+    }
+}
+
 /// Validate the arguments, snapshot the candidate set, and schedule the task.
 pub(crate) fn start(
     index: &FileIndex,
@@ -50,13 +135,8 @@ pub(crate) fn start(
     options_arg: JSValue,
 ) -> JsResult<JSValue> {
     if !pattern_arg.is_string() {
-        if pattern_arg.js_type() == jsc::JSType::RegExpObject {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "FileIndex.grep: RegExp patterns are not implemented yet; pass a string literal"
-            )));
-        }
         return Err(global.throw_invalid_arguments(format_args!(
-            "FileIndex.grep(pattern) expects a string"
+            "FileIndex.grep(pattern) expects a string or a RegExp"
         )));
     }
     let needle = pattern_arg.to_slice(global)?;
@@ -65,73 +145,17 @@ pub(crate) fn start(
             "FileIndex.grep(pattern): pattern must not be empty"
         )));
     }
-
-    let mut glob_pattern: Option<Vec<u8>> = None;
-    let mut cwd: Vec<u8> = Vec::new();
-    let mut limit = usize::MAX;
-    let mut max_file_size = index.options().max_file_size;
-    let mut case_sensitive = true;
-    let mut context = 0usize;
-    if !options_arg.is_undefined_or_null() {
-        if !options_arg.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "FileIndex.grep: options must be an object"
-            )));
-        }
-        if let Some(v) = options_arg.get_truthy(global, "glob")? {
-            if !v.is_string() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "FileIndex.grep: glob must be a string"
-                )));
-            }
-            glob_pattern = Some(v.to_slice(global)?.slice().to_vec());
-        }
-        if let Some(v) = options_arg.get_truthy(global, "cwd")? {
-            cwd = super::dir_prefix(global, v, "FileIndex.grep")?;
-        }
-        if let Some(v) = options_arg.get(global, "limit")?
-            && !v.is_undefined_or_null()
-        {
-            limit = super::non_negative_int_option(global, v, "limit")?;
-        }
-        if let Some(v) = options_arg.get_truthy(global, "maxFileSize")? {
-            max_file_size = super::positive_int_option(global, v, "maxFileSize")?;
-        }
-        if let Some(v) = options_arg.get(global, "caseSensitive")?
-            && !v.is_undefined_or_null()
-        {
-            case_sensitive = v.to_boolean();
-        }
-        if let Some(v) = options_arg.get_truthy(global, "context")? {
-            context = super::non_negative_int_option(global, v, "context")?;
-        }
-    }
+    let args = parse_grep_options(index, global, options_arg)?;
 
     // The needle is non-empty (checked above), so the query always compiles.
-    let Some(query) = GrepQuery::literal(needle.slice(), case_sensitive, max_file_size) else {
+    let Some(query) = GrepQuery::literal(needle.slice(), args.case_sensitive, args.max_file_size)
+    else {
         return Err(global.throw_invalid_arguments(format_args!(
             "FileIndex.grep(pattern): pattern must not be empty"
         )));
     };
-
-    let paths: Vec<Box<[u8]>> = {
-        let store = index.store();
-        let admit = |id: bun_file_index::FileId| {
-            store.path(id).starts_with(cwd.as_slice()) && query.admits(store.meta(id))
-        };
-        match &glob_pattern {
-            Some(pattern) => bun_file_index::glob(&store, pattern)
-                .into_iter()
-                .filter(|&id| admit(id))
-                .map(|id| Box::from(store.path(id)))
-                .collect(),
-            None => store
-                .range_with_prefix(&cwd)
-                .filter(|&id| query.admits(store.meta(id)))
-                .map(|id| Box::from(store.path(id)))
-                .collect(),
-        }
-    };
+    let paths = candidate_paths(index, &args);
+    let (limit, context) = (args.limit, args.context);
 
     let job = Box::new(GrepJob {
         global,
@@ -272,8 +296,8 @@ fn lines_before(haystack: &[u8], line_start: usize, n: usize) -> Vec<Box<[u8]>> 
 fn lines_after(haystack: &[u8], line_start: usize, n: usize) -> Vec<Box<[u8]>> {
     let mut out: Vec<Box<[u8]>> = Vec::new();
     // The terminator of the hit line (its `\n`, or end of file).
-    let mut at = memchr::memchr(b'\n', &haystack[line_start..])
-        .map_or(haystack.len(), |i| line_start + i);
+    let mut at =
+        memchr::memchr(b'\n', &haystack[line_start..]).map_or(haystack.len(), |i| line_start + i);
     while out.len() < n && at < haystack.len() {
         let start = at + 1;
         if start >= haystack.len() {

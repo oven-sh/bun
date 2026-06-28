@@ -97,6 +97,49 @@ struct TouchSlot {
     seq: u64,
 }
 
+/// Column capacities one insertion will grow to, and the exact bytes the
+/// store accounts for once it has (see [`Store::plan_growth`]).
+#[derive(Clone, Copy)]
+struct GrowthPlan {
+    arena: usize,
+    paths: usize,
+    meta: usize,
+    flags: usize,
+    sorted: usize,
+    map_entries: usize,
+    bytes: usize,
+}
+
+impl GrowthPlan {
+    fn new(
+        arena: usize,
+        paths: usize,
+        meta: usize,
+        flags: usize,
+        sorted: usize,
+        map_entries: usize,
+        touch_cap: usize,
+    ) -> GrowthPlan {
+        GrowthPlan {
+            arena,
+            paths,
+            meta,
+            flags,
+            sorted,
+            map_entries,
+            bytes: Store::accounted_bytes(
+                arena,
+                paths,
+                meta,
+                flags,
+                sorted,
+                map_entries,
+                touch_cap,
+            ),
+        }
+    }
+}
+
 /// Adapted hash/eq for the path map: keys are entry ids resolved to path
 /// bytes through the arena, so the map never owns a second copy of any path.
 struct PathLookup<'a> {
@@ -551,12 +594,11 @@ impl Store {
             return Err(BudgetExceeded);
         }
 
-        let projected = self.projected_bytes_after_insert(path.len());
-        if projected > self.budget {
+        let Some(plan) = self.plan_growth(path.len()) else {
             self.truncated = true;
             return Err(BudgetExceeded);
-        }
-        self.grow_for_insert(path.len());
+        };
+        self.apply_growth(&plan);
 
         let id = self.paths.len() as u32;
         self.arena.extend_from_slice(path);
@@ -611,50 +653,111 @@ impl Store {
         });
     }
 
-    /// Retained bytes the store would account for after appending one entry
-    /// with `path_len` path bytes, assuming the growth `grow_for_insert`
-    /// performs. The store does all growth itself (`reserve_exact`), so this
-    /// projection is exact.
-    fn projected_bytes_after_insert(&self, path_len: usize) -> usize {
+    /// Column capacities (and the accounted bytes they imply) for one more
+    /// entry with `path_len` path bytes; the store grows to exactly these
+    /// (`reserve_exact`), so the projection is exact. Amortized doubling
+    /// while the doubled total fits the budget; once it does not, every
+    /// column is sized at once for the largest entry count the budget can
+    /// hold ([`Store::fitted_plan`]) so retained bytes approach the budget
+    /// instead of stranding the headroom a refused doubling left behind.
+    /// `None` when even the exact minimum no longer fits.
+    fn plan_growth(&self, path_len: usize) -> Option<GrowthPlan> {
         let n = self.paths.len() + 1;
         let live = self.sorted.len().max(n - self.dead as usize);
-        let arena_cap = grown_capacity(
-            self.arena.capacity(),
-            self.arena.len() + path_len,
-            ARENA_FLOOR,
+        let arena_need = self.arena.len() + path_len;
+        let map_entries = self.by_path.count() + 1;
+        let touch_cap = self.touch.capacity();
+
+        let doubled = GrowthPlan::new(
+            grown_capacity(self.arena.capacity(), arena_need, ARENA_FLOOR),
+            grown_capacity(self.paths.capacity(), n, COLUMN_FLOOR),
+            grown_capacity(self.meta.capacity(), n, COLUMN_FLOOR),
+            grown_capacity(self.flags.capacity(), n, ARENA_FLOOR),
+            grown_capacity(self.sorted.capacity(), live, COLUMN_FLOOR),
+            map_entries,
+            touch_cap,
         );
-        let paths_cap = grown_capacity(self.paths.capacity(), n, COLUMN_FLOOR);
-        let meta_cap = grown_capacity(self.meta.capacity(), n, COLUMN_FLOOR);
-        let flags_cap = grown_capacity(self.flags.capacity(), n, ARENA_FLOOR);
-        let sorted_cap = grown_capacity(self.sorted.capacity(), live, COLUMN_FLOOR);
-        Self::accounted_bytes(
-            arena_cap,
-            paths_cap,
-            meta_cap,
-            flags_cap,
-            sorted_cap,
-            self.by_path.count() + 1,
-            self.touch.capacity(),
-        )
+        if doubled.bytes <= self.budget {
+            return Some(doubled);
+        }
+        let exact = GrowthPlan::new(
+            self.arena.capacity().max(arena_need),
+            self.paths.capacity().max(n),
+            self.meta.capacity().max(n),
+            self.flags.capacity().max(n),
+            self.sorted.capacity().max(live),
+            map_entries,
+            touch_cap,
+        );
+        if exact.bytes > self.budget {
+            return None;
+        }
+        Some(self.fitted_plan(&exact, arena_need, n).unwrap_or(exact))
     }
 
-    fn grow_for_insert(&mut self, path_len: usize) {
-        let n = self.paths.len() + 1;
-        let live = self.sorted.len().max(n - self.dead as usize);
-        let arena_target = grown_capacity(
-            self.arena.capacity(),
-            self.arena.len() + path_len,
-            ARENA_FLOOR,
-        );
-        reserve_to(&mut self.arena, arena_target);
-        let paths_target = grown_capacity(self.paths.capacity(), n, COLUMN_FLOOR);
-        reserve_to(&mut self.paths, paths_target);
-        let meta_target = grown_capacity(self.meta.capacity(), n, COLUMN_FLOOR);
-        reserve_to(&mut self.meta, meta_target);
-        let flags_target = grown_capacity(self.flags.capacity(), n, ARENA_FLOOR);
-        reserve_to(&mut self.flags, flags_target);
-        let sorted_target = grown_capacity(self.sorted.capacity(), live, COLUMN_FLOOR);
-        reserve_to(&mut self.sorted, sorted_target);
+    /// The largest coordinated growth that still fits the budget: model the
+    /// store at `entries` entries of the current average path length (every
+    /// column at the larger of its existing capacity and that entry count,
+    /// plus the per-entry hash-map cost those entries will incur) and find
+    /// the largest affordable entry count by binary search — the modelled
+    /// bytes are monotone in it. `None` when that is no better than `exact`
+    /// (the store is then within one entry of the cap).
+    fn fitted_plan(&self, exact: &GrowthPlan, arena_need: usize, n: usize) -> Option<GrowthPlan> {
+        let touch_cap = self.touch.capacity();
+        let avg_path = arena_need.div_ceil(n).max(1);
+        let at = |entries: usize| {
+            GrowthPlan::new(
+                exact.arena.max(entries.saturating_mul(avg_path)),
+                exact.paths.max(entries),
+                exact.meta.max(entries),
+                exact.flags.max(entries),
+                exact.sorted.max(entries),
+                exact.map_entries.max(entries),
+                touch_cap,
+            )
+        };
+        let per_entry = avg_path
+            + core::mem::size_of::<StrRef>()
+            + core::mem::size_of::<Meta>()
+            + 1
+            + core::mem::size_of::<u32>()
+            + MAP_ENTRY_BYTES;
+        // `at(x).bytes >= x * per_entry`, so `hi` never fits; `lo` must.
+        let mut lo = n;
+        let mut hi = self.budget / per_entry + 1;
+        if at(lo).bytes > self.budget || hi <= lo {
+            return None;
+        }
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            if at(mid).bytes <= self.budget {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo <= n {
+            return None;
+        }
+        // The applied plan accounts for the hash map at its real entry count
+        // (`exact.map_entries`, <= the modelled `lo`), never more than `at(lo)`.
+        Some(GrowthPlan::new(
+            exact.arena.max(lo.saturating_mul(avg_path)),
+            exact.paths.max(lo),
+            exact.meta.max(lo),
+            exact.flags.max(lo),
+            exact.sorted.max(lo),
+            exact.map_entries,
+            touch_cap,
+        ))
+    }
+
+    fn apply_growth(&mut self, plan: &GrowthPlan) {
+        reserve_to(&mut self.arena, plan.arena);
+        reserve_to(&mut self.paths, plan.paths);
+        reserve_to(&mut self.meta, plan.meta);
+        reserve_to(&mut self.flags, plan.flags);
+        reserve_to(&mut self.sorted, plan.sorted);
     }
 
     fn recompute_bytes(&self) -> usize {
@@ -909,6 +1012,47 @@ mod tests {
         // The store keeps working on what fit.
         let first = s.iter_sorted().next().unwrap();
         assert!(s.get(s.path(first).to_vec().as_slice()).is_some());
+    }
+
+    #[test]
+    fn budget_between_doubling_boundaries_is_packed_not_stranded() {
+        // A budget that a column doubling (here: 1024 -> 2048 entries) would
+        // overshoot. Refusing the doubling outright froze the store at the
+        // previous capacity (1024 entries, ~84% of this budget); the fitted
+        // growth must instead pack entries until within one entry of the cap.
+        let budget = 200_000;
+        let mut s = Store::new(budget);
+        let mut accepted = 0usize;
+        loop {
+            let p = format!("some/dir/path/entry_{accepted:017}.rs");
+            assert_eq!(p.len(), 40);
+            match s.upsert(p.as_bytes(), Meta::default()) {
+                Ok(_) => accepted += 1,
+                Err(BudgetExceeded) => break,
+            }
+            assert!(
+                s.memory_usage() <= budget,
+                "bytes {} exceeded budget {budget}",
+                s.memory_usage()
+            );
+        }
+        assert!(s.truncated());
+        assert_eq!(s.len(), accepted);
+        assert_eq!(s.memory_usage(), s.recompute_bytes());
+        let used = s.memory_usage();
+        assert!(used <= budget);
+        assert!(
+            used * 10 > budget * 9,
+            "only {used} of {budget} budget bytes used"
+        );
+        assert!(
+            accepted > 1100,
+            "{accepted} entries: the budget had room for more"
+        );
+        // The cap is sticky: later (even shorter) inserts keep being rejected
+        // once nothing more fits, and reads keep working on what did.
+        assert_eq!(s.upsert(b"zz.rs", Meta::default()), Err(BudgetExceeded));
+        assert!(s.get(b"some/dir/path/entry_00000000000000000.rs").is_some());
     }
 
     #[test]

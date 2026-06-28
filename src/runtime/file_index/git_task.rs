@@ -9,10 +9,12 @@
 //! `gitStatus()` is computed from the *indexed* view of the worktree (the
 //! same gitignore-filtered listing the rest of `FileIndex` exposes), not a
 //! fresh disk walk, so callers should `await index.ready` first. Two
-//! documented consequences:
+//! consequences:
 //! * an ignored file is never reported `??` (matching git);
-//! * a *tracked* path excluded from the index (by a user `ignore:` pattern,
-//!   or because the crawl has not finished) is reported as deleted (` D`).
+//! * a *tracked* path missing from the index (excluded by a `.gitignore`
+//!   rule or a user `ignore:` pattern) is `lstat`ed on the worker before the
+//!   comparison, so it is classified for real (`git status` semantics: the
+//!   tracked set is not subject to ignore rules) rather than reported ` D`.
 
 use bun_event_loop::TaskTag;
 use bun_file_index::{EntryKind, Meta};
@@ -182,14 +184,39 @@ fn compute_status(
     // prefix the snapshot for the comparison and report only (root-relative)
     // paths under it.
     let prefix = work_tree_prefix(repo.work_tree(), root);
-    let repo_paths: Vec<Vec<u8>> = snapshot
+    let work_tree = repo.work_tree().to_vec();
+    let mut entries: Vec<(Vec<u8>, Meta)> = snapshot
         .iter()
-        .map(|(path, _)| join_rel(&prefix, path))
+        .map(|(path, m)| (join_rel(&prefix, path), *m))
         .collect();
-    let worktree: Vec<WorktreeEntry<'_>> = repo_paths
+    // git's tracked set is not subject to ignore rules: a *tracked* path the
+    // store excluded (a `.gitignore` rule or a user `ignore:` pattern) is not
+    // deleted just because it is unindexed. `lstat` it here so it is
+    // classified for real. `index.entries()` is path-sorted, so a `last()`
+    // check dedupes the (consecutive) per-stage duplicates of one path.
+    let indexed = entries.len();
+    for tracked in index.entries() {
+        let path = index.path(tracked);
+        if !path.starts_with(prefix.as_slice())
+            || entries[..indexed]
+                .binary_search_by(|(p, _)| p.as_slice().cmp(path))
+                .is_ok()
+            || entries[indexed..].last().map(|(p, _)| p.as_slice()) == Some(path)
+        {
+            continue;
+        }
+        let abs = join_abs(&work_tree, path);
+        if let Ok(raw) = bun_sys::lstat(zstr(&abs).as_zstr())
+            && let Some(meta) = super::meta_from_stat(&bun_sys::PosixStat::init(&raw))
+            && meta.kind != EntryKind::Dir
+        {
+            entries.push((path.to_vec(), meta));
+        }
+    }
+    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let worktree: Vec<WorktreeEntry<'_>> = entries
         .iter()
-        .zip(snapshot.iter())
-        .map(|(path, (_, m))| WorktreeEntry {
+        .map(|(path, m)| WorktreeEntry {
             path,
             size: m.size,
             mode: m.mode,
@@ -204,7 +231,6 @@ fn compute_status(
         })
         .collect();
 
-    let work_tree = repo.work_tree().to_vec();
     let listing = &worktree;
     // `status()` only ever asks for paths it was handed in `listing`; the
     // lookup recovers that entry's lstat mode so symlinks hash their target.
@@ -295,18 +321,40 @@ impl ConcurrentPromiseTaskContext for GitDiffJob<'_> {
 impl DiffOut {
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 3);
-        obj.put(global, "oldText", optional_text(global, self.old_text.as_deref())?);
-        obj.put(global, "newText", optional_text(global, self.new_text.as_deref())?);
+        obj.put(
+            global,
+            "oldText",
+            optional_text(global, self.old_text.as_deref())?,
+        );
+        obj.put(
+            global,
+            "newText",
+            optional_text(global, self.new_text.as_deref())?,
+        );
         let hunks = JSValue::create_array_from_iter(global, self.hunks.iter(), |hunk| {
             let h = JSValue::create_empty_object(global, 5);
-            h.put(global, "oldStart", JSValue::js_number_from_uint64(u64::from(hunk.old_start)));
-            h.put(global, "oldLines", JSValue::js_number_from_uint64(u64::from(hunk.old_lines)));
-            h.put(global, "newStart", JSValue::js_number_from_uint64(u64::from(hunk.new_start)));
-            h.put(global, "newLines", JSValue::js_number_from_uint64(u64::from(hunk.new_lines)));
-            let lines = JSValue::create_array_from_iter(
+            h.put(
                 global,
-                hunk.lines.iter(),
-                |(origin, text)| {
+                "oldStart",
+                JSValue::js_number_from_uint64(u64::from(hunk.old_start)),
+            );
+            h.put(
+                global,
+                "oldLines",
+                JSValue::js_number_from_uint64(u64::from(hunk.old_lines)),
+            );
+            h.put(
+                global,
+                "newStart",
+                JSValue::js_number_from_uint64(u64::from(hunk.new_start)),
+            );
+            h.put(
+                global,
+                "newLines",
+                JSValue::js_number_from_uint64(u64::from(hunk.new_lines)),
+            );
+            let lines =
+                JSValue::create_array_from_iter(global, hunk.lines.iter(), |(origin, text)| {
                     let line = JSValue::create_empty_object(global, 2);
                     let kind: &[u8] = match origin {
                         DiffOrigin::Context => b"context",
@@ -316,8 +364,7 @@ impl DiffOut {
                     line.put(global, "kind", utf8_js(global, kind)?);
                     line.put(global, "text", utf8_js(global, text)?);
                     Ok(line)
-                },
-            )?;
+                })?;
             h.put(global, "lines", lines);
             Ok(h)
         })?;

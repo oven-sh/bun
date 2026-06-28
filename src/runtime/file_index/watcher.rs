@@ -45,7 +45,12 @@
 // Platforms with no backend (FreeBSD) still compile the shared machinery —
 // only `platform_start` (which fails) reaches it — so don't flag it there.
 #![cfg_attr(
-    not(any(target_os = "linux", target_os = "android", target_os = "macos", windows)),
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        windows
+    )),
     allow(dead_code)
 )]
 
@@ -663,11 +668,10 @@ mod linux_impl {
     impl Backend {
         fn run(mut self) {
             bun_core::Output::Source::configure_named_thread(bun_core::zstr!("FileIndexWatch"));
-            // inotify writes whole events; align the buffer for the header
-            // casts. Heap-allocated to stay off the thread's stack.
-            #[repr(C, align(4))]
-            struct AlignedBuf([u8; 64 * 1024]);
-            let mut buf = Box::new(AlignedBuf([0; 64 * 1024]));
+            // inotify writes whole events into this; `dispatch_events` reads
+            // each header unaligned. Heap-allocated (`vec!`, never a stack
+            // temporary) to stay off the thread's stack.
+            let mut buf: Box<[u8]> = vec![0u8; 64 * 1024].into_boxed_slice();
 
             loop {
                 let timeout_ms: c_int = {
@@ -708,7 +712,7 @@ mod linux_impl {
                 // judged by the newest ignore rules.
                 self.handle_sync();
                 if fds[0].revents != 0 {
-                    self.read_inotify(&mut buf.0);
+                    self.read_inotify(&mut buf);
                 }
                 let due = {
                     let mut state = self.shared.state.lock();
@@ -819,10 +823,16 @@ mod linux_impl {
             const HEADER: usize = core::mem::size_of::<InotifyEvent>();
             let mut i = 0usize;
             while i + HEADER <= bytes.len() {
-                // SAFETY: the kernel writes whole, 4-byte-aligned
-                // `inotify_event` records; `buf` is 4-byte aligned and
-                // `i + HEADER` is in bounds.
-                let ev: &InotifyEvent = unsafe { &*bytes.as_ptr().add(i).cast::<InotifyEvent>() };
+                // SAFETY: `i + HEADER <= bytes.len()` (loop guard), so the
+                // whole header is in bounds; `read_unaligned` has no
+                // alignment requirement and `Event` is a `repr(C)` POD.
+                let ev: InotifyEvent = unsafe {
+                    bytes
+                        .as_ptr()
+                        .add(i)
+                        .cast::<InotifyEvent>()
+                        .read_unaligned()
+                };
                 let name_len = ev.name_len as usize;
                 if i + HEADER + name_len > bytes.len() {
                     return;
@@ -1032,7 +1042,9 @@ mod darwin_impl {
         let root_z: Box<[u8]> = root_z.into_boxed_slice();
         // The CF callback context is one strong reference, released by
         // `WatchHandle::close` after the stream is unregistered.
-        let ctx = Arc::into_raw(Arc::clone(&shared)).cast_mut().cast::<c_void>();
+        let ctx = Arc::into_raw(Arc::clone(&shared))
+            .cast_mut()
+            .cast::<c_void>();
         let fsevents = match fs_events::watch(
             &root_z[..root_z.len() - 1],
             true,

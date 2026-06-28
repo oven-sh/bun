@@ -9383,8 +9383,10 @@ declare module "bun" {
      */
     score: number;
     /**
-     * Byte offsets into `path` of the characters that matched the query, in
-     * ascending order. Useful for highlighting matches in a UI.
+     * Indices into the `path` string (UTF-16 code units — the indexing
+     * `path[i]` and `path.codePointAt(i)` use) of the characters that
+     * matched the query, in ascending order. Useful for highlighting
+     * matches in a UI.
      */
     positions: number[];
   }
@@ -9499,6 +9501,9 @@ declare module "bun" {
      * A watching index keeps the process alive until {@link FileIndex.close}
      * is called.
      *
+     * The constructor throws on platforms with no supported watch backend
+     * (anything other than Linux, macOS, and Windows — e.g. FreeBSD).
+     *
      * @default false
      */
     watch?: boolean;
@@ -9530,7 +9535,12 @@ declare module "bun" {
    * search, change tracking, and in-process git status/diff.
    *
    * Paths returned by and accepted from every method are **relative to `root`
-   * and `/`-separated on all platforms**, including Windows.
+   * and `/`-separated on all platforms**, including Windows. Path arguments
+   * must stay inside the root: a NUL byte, an absolute path, or any `..`
+   * component throws `ERR_INVALID_ARG_VALUE`. Paths must also be valid UTF-8
+   * to round-trip: an indexed entry whose name is not valid UTF-8 is
+   * returned as a lossy string (invalid bytes become `U+FFFD`) that
+   * {@link FileIndex.has} and {@link FileIndex.stat} will **not** accept back.
    *
    * The index holds only paths and stat metadata in memory — never file
    * contents. {@link FileIndex.complete}, {@link FileIndex.glob},
@@ -9633,6 +9643,14 @@ declare module "bun" {
      * incomplete. The index keeps working on the entries that fit.
      */
     readonly truncated: boolean;
+
+    /**
+     * Number of entries or subtrees the last crawl skipped because of an I/O
+     * error (for example, an `EACCES` subdirectory the process cannot read).
+     * `0` for a fully enumerated tree. A non-zero value means the index is
+     * silently missing part of the tree even though `ready` resolved.
+     */
+    readonly errors: number;
 
     /** `true` while a filesystem watcher is active (`watch: true` and not yet closed). */
     readonly watching: boolean;
@@ -9770,8 +9788,13 @@ declare module "bun" {
      * are files larger than `maxFileSize`.
      *
      * `string` patterns are matched as literals using a SIMD substring search
-     * and are the fast path. `RegExp` patterns are supported but slower: each
-     * candidate line is decoded and tested on the JavaScript thread.
+     * on the thread pool and are the fast path. `RegExp` patterns are
+     * supported but slower: candidate files are read and decoded in
+     * JavaScript and the expression is tested per line on the JavaScript
+     * thread. A fresh global copy of the `RegExp` is used, so the caller's
+     * `lastIndex` neither affects nor is affected by the search;
+     * case-sensitivity comes from the expression's own `i` flag (the
+     * `caseSensitive` option only applies to `string` patterns).
      *
      * @param pattern - A literal string (fast path) or a `RegExp`.
      * @param options - Search options.
@@ -9817,7 +9840,8 @@ declare module "bun" {
          */
         maxFileSize?: number;
         /**
-         * Match case-sensitively.
+         * Match case-sensitively. Only applies to `string` patterns; a
+         * `RegExp` pattern's own `i` flag decides.
          * @default true
          */
         caseSensitive?: boolean;
@@ -9943,7 +9967,10 @@ declare module "bun" {
      * memory. Idempotent.
      *
      * After `close()`, every method other than `close()` and
-     * `Symbol.dispose()` throws. In-flight promises still settle.
+     * `Symbol.dispose()` throws an `ERR_INVALID_STATE` error. In-flight
+     * promises still settle, and a {@link FileIndex.grep} iterator obtained
+     * before `close()` ends (`{ done: true }`) instead of yielding further
+     * results.
      *
      * @example
      * ```ts

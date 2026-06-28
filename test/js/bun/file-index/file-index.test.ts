@@ -32,7 +32,9 @@ describe("Bun.FileIndex", () => {
       expect(index.size).toBe(3);
       expect(index.memoryUsage).toBeGreaterThan(0);
       expect(index.truncated).toBe(false);
+      expect(index.errors).toBe(0);
       expect(index.watching).toBe(false);
+      expect(index.onchange).toBeNull();
       expect(index.root).toBe(String(dir));
     });
 
@@ -40,6 +42,24 @@ describe("Bun.FileIndex", () => {
       using dir = tempDir("file-index-missing", {});
       using index = new Bun.FileIndex(join(String(dir), "does-not-exist"));
       await expect(index.ready).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    test("an existing empty root resolves; a root deleted after construction rejects", async () => {
+      using dir = tempDir("file-index-vanish", {});
+      const empty = join(String(dir), "empty");
+      fs.mkdirSync(empty);
+      {
+        using index = new Bun.FileIndex(empty);
+        expect(await index.ready).toBe(index);
+        expect(index.size).toBe(0);
+      }
+      // The constructor's probe succeeds, then the root vanishes before the
+      // crawl completes: `ready` must reject with the syscall error rather
+      // than resolving an empty index.
+      const index = new Bun.FileIndex(empty);
+      fs.rmdirSync(empty);
+      await expect(index.ready).rejects.toMatchObject({ code: "ENOENT" });
+      index.close();
     });
 
     test("invalid arguments throw synchronously", () => {
@@ -50,6 +70,35 @@ describe("Bun.FileIndex", () => {
       expect(() => new Bun.FileIndex(".", { maxFileSize: 0 })).toThrow("positive integer");
       expect(() => new (Bun.FileIndex as any)(".", { ignore: 7 })).toThrow("array of strings");
       expect(() => new (Bun.FileIndex as any)(".", { onchange: 42 })).toThrow("onchange must be a function");
+    });
+
+    test("range violations are RangeErrors with code ERR_OUT_OF_RANGE", async () => {
+      using dir = tempDir("file-index-range", { "a.txt": "1" });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      // Every message names the API the user actually called.
+      const cases: Array<[() => unknown, string]> = [
+        [() => new Bun.FileIndex(".", { maxMemory: -1 }).close(), "new Bun.FileIndex: maxMemory"],
+        [() => new Bun.FileIndex(".", { maxFileSize: 0 }).close(), "new Bun.FileIndex: maxFileSize"],
+        [() => index.complete("a", { limit: -1 }), "FileIndex.complete: limit"],
+        [() => index.glob("**/*", { limit: -1 }), "FileIndex.glob: limit"],
+        [() => index.recent(-1), "FileIndex.recent: limit"],
+        [() => index.grep("a", { limit: -1 }), "FileIndex.grep: limit"],
+        [() => index.grep(/a/, { limit: -1 }), "FileIndex.grep: limit"],
+        [() => index.grep("a", { context: -1 }), "FileIndex.grep: context"],
+        [() => index.grep("a", { maxFileSize: -1 }), "FileIndex.grep: maxFileSize"],
+      ];
+      for (const [call, prefix] of cases) {
+        let err: any;
+        try {
+          call();
+        } catch (e) {
+          err = e;
+        }
+        expect(err, prefix).toBeInstanceOf(RangeError);
+        expect(err.code, prefix).toBe("ERR_OUT_OF_RANGE");
+        expect(err.message, prefix).toStartWith(prefix);
+      }
     });
   });
 
@@ -153,6 +202,14 @@ describe("Bun.FileIndex", () => {
       await index.ready;
       expect(index.size).toBe(2);
       expect(index.glob("**/*")).toHaveLength(2);
+      // DOCUMENTED LIMITATION (pinned so a future fix is deliberate): the
+      // index stores the raw bytes, but JS only sees a lossy U+FFFD string,
+      // which does not round-trip back into `has()` / `stat()`.
+      const lossy = index.glob("**/*").find(p => p.includes("�"))!;
+      expect(lossy).toBe("f��.bin");
+      expect(index.has(lossy)).toBe(false);
+      expect(index.stat(lossy)).toBeNull();
+      expect(index.has("plain.txt")).toBe(true);
     });
   });
 
@@ -206,6 +263,33 @@ describe("Bun.FileIndex", () => {
       const dirs = index.complete("", { directories: true });
       expect(dirs.map(r => r.path).sort()).toEqual(["docs", "src", "src/server"]);
       expect(() => (index as any).complete(1)).toThrow("expects a string");
+    });
+
+    test("positions index the JS string, not its UTF-8 bytes", async () => {
+      using dir = tempDir("file-index-complete-utf16", {
+        // "é" is 2 UTF-8 bytes / 1 UTF-16 code unit; "𝛅" (U+1D6C5) is
+        // 4 UTF-8 bytes / a 2-code-unit surrogate pair. Byte offsets would
+        // index past or inside the wrong characters here.
+        "café.ts": "1",
+        "𝛅elta/naïve.ts": "1",
+        "plain.ts": "1",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      const all = [...index.complete("ts"), ...index.complete("naïve"), ...index.complete("café")];
+      expect(all.length).toBeGreaterThanOrEqual(5);
+      for (const r of all) {
+        expect(r.positions).toEqual([...r.positions].sort((a, b) => a - b));
+        for (const p of r.positions) expect(p).toBeLessThan(r.path.length);
+      }
+      const byChars = (q: string) => index.complete(q).map(r => [...r.positions].map(p => r.path[p]).join(""));
+      // Every position resolves to exactly the matched character.
+      for (const got of byChars("ts")) expect(got.toLowerCase()).toBe("ts");
+      expect(byChars("café")).toEqual(["café"]);
+      expect(byChars("naïve")).toEqual(["naïve"]);
+      // The astral scalar costs 2 code units: "ts" in "𝛅elta/naïve.ts".
+      const astral = index.complete("ts").find(r => r.path === "𝛅elta/naïve.ts")!;
+      expect(astral.positions.map(p => astral.path.codePointAt(p))).toEqual([0x74, 0x73]);
     });
 
     test("touch() boosts a path in complete() and recent() is most-recent-first", async () => {
@@ -348,11 +432,193 @@ describe("Bun.FileIndex", () => {
       using dir = tempDir("file-index-grep-args", { "a.txt": "x" });
       using index = new Bun.FileIndex(String(dir));
       await index.ready;
-      expect(() => index.grep(/needle/)).toThrow("RegExp patterns are not implemented yet");
-      expect(() => (index as any).grep(1)).toThrow("expects a string");
+      expect(() => (index as any).grep(1)).toThrow("expects a string or a RegExp");
+      expect(() => (index as any).grep(null)).toThrow("expects a string or a RegExp");
       expect(() => index.grep("")).toThrow("must not be empty");
       expect(() => (index as any).grep("x", { limit: -1 })).toThrow("must not be negative");
     });
+  });
+
+  describe("grep(RegExp)", () => {
+    async function fixture() {
+      const dir = tempDir("file-index-grep-regexp", {
+        "a.ts": "alpha BETA\nfn foo_bar(x)\nfn fizz_buzz(y)\nBETA\n",
+        "b.ts": "beta\nBETA beta BeTa\n",
+        "sub/c.md": "anchor\nnot an anchor here\n",
+        "bin.dat": "match\0me",
+        "ctx.txt": "one\ntwo\nthree match\nfour\nfive\n",
+      });
+      const index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      return {
+        index,
+        [Symbol.dispose]() {
+          index.close();
+          dir[Symbol.dispose]();
+        },
+      };
+    }
+
+    test("groups, alternation, anchors, flags, multiple matches per line", async () => {
+      using fx = await fixture();
+      const { index } = fx;
+      // Groups + alternation.
+      expect(await collect(index.grep(/fn (foo|fizz)_(bar|buzz)/))).toEqual([
+        { path: "a.ts", line: 2, column: 1, lineText: "fn foo_bar(x)" },
+        { path: "a.ts", line: 3, column: 1, lineText: "fn fizz_buzz(y)" },
+      ]);
+      // `^` anchors to the start of each line, not the start of the file.
+      expect(await collect(index.grep(/^anchor/))).toEqual([
+        { path: "sub/c.md", line: 1, column: 1, lineText: "anchor" },
+      ]);
+      // Case-sensitivity comes from the regex's own flags.
+      expect((await collect(index.grep(/^beta$/))).map(h => `${h.path}:${h.line}`)).toEqual(["b.ts:1"]);
+      expect((await collect(index.grep(/^beta$/i))).map(h => `${h.path}:${h.line}`)).toEqual(["a.ts:4", "b.ts:1"]);
+      // Multiple matches per line, in ascending column order.
+      expect(await collect(index.grep(/beta/i, { glob: "b.ts" }))).toEqual([
+        { path: "b.ts", line: 1, column: 1, lineText: "beta" },
+        { path: "b.ts", line: 2, column: 1, lineText: "BETA beta BeTa" },
+        { path: "b.ts", line: 2, column: 6, lineText: "BETA beta BeTa" },
+        { path: "b.ts", line: 2, column: 11, lineText: "BETA beta BeTa" },
+      ]);
+    });
+
+    test("limit, context, and binary skipping match the literal path's semantics", async () => {
+      using fx = await fixture();
+      const { index } = fx;
+      expect(await collect(index.grep(/beta/i))).toHaveLength(6);
+      expect(await collect(index.grep(/beta/i, { limit: 2 }))).toHaveLength(2);
+      expect(await collect(index.grep(/beta/i, { limit: 0 }))).toEqual([]);
+      // `a.ts` line 4 is the file's last line: `after` is clamped, and the
+      // empty slot after the trailing newline is not a line.
+      expect(await collect(index.grep(/^BETA$/, { context: 2, glob: "a.ts" }))).toEqual([
+        {
+          path: "a.ts",
+          line: 4,
+          column: 1,
+          lineText: "BETA",
+          before: ["fn foo_bar(x)", "fn fizz_buzz(y)"],
+          after: [],
+        },
+      ]);
+      expect(await collect(index.grep(/three match/, { context: 2 }))).toEqual([
+        {
+          path: "ctx.txt",
+          line: 3,
+          column: 1,
+          lineText: "three match",
+          before: ["one", "two"],
+          after: ["four", "five"],
+        },
+      ]);
+      // Without `context` the keys are absent entirely (literal parity).
+      const plain = await collect(index.grep(/three match/));
+      expect(Object.keys(plain[0]).sort()).toEqual(["column", "line", "lineText", "path"]);
+      // A NUL in the first 8 KiB classifies the file as binary.
+      expect(await collect(index.grep(/match me/))).toEqual([]);
+      expect(await collect(index.grep(/match/, { glob: "bin.dat" }))).toEqual([]);
+    });
+
+    test("literal-vs-RegExp parity on the same tree", async () => {
+      using dir = tempDir("file-index-grep-parity", {
+        "at0.txt": "needle at byte zero\nplain\n",
+        "multi.txt": "a needle, a needle\n",
+        "crlf.txt": "first\r\nthe needle line\r\nlast\r\n",
+        "notrail.txt": "x\ntrailing needle",
+        "none.txt": "nothing here\n",
+        "bin.dat": "needle before \0 a NUL",
+        "sub/deep.ts": "the needle again\n",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      for (const options of [undefined, { context: 1 }, { limit: 2 }, { cwd: "sub" }, { glob: "**/*.txt" }]) {
+        const literal = await collect(index.grep("needle", options));
+        const regexp = await collect(index.grep(/needle/, options));
+        expect(regexp, JSON.stringify(options)).toEqual(literal);
+        expect(literal.length).toBeGreaterThan(0);
+      }
+    });
+
+    test("a fresh global copy is used: lastIndex is neither read nor written", async () => {
+      using fx = await fixture();
+      const { index } = fx;
+      const re = /beta/gi;
+      re.lastIndex = 9999;
+      expect(await collect(index.grep(re))).toHaveLength(6);
+      expect(re.lastIndex).toBe(9999);
+      // A sticky regex is not allowed to pin matches to lastIndex.
+      const sticky = /beta/iy;
+      sticky.lastIndex = 3;
+      expect(await collect(index.grep(sticky))).toHaveLength(6);
+    });
+  });
+
+  describe("path argument validation", () => {
+    test("NUL bytes, absolute paths, and `..` components are rejected, never normalized", async () => {
+      using dir = tempDir("file-index-validate", { "a.txt": "x", "a/b.txt": "y" });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      const bad = ["..", "../x", "a/..", "a/../b", "x/../../y", "/abs", "a\0b"];
+      const calls: Array<[string, (p: string) => unknown]> = [
+        ["has", p => index.has(p)],
+        ["stat", p => index.stat(p)],
+        ["touch", p => index.touch(p)],
+        ["gitDiff", p => index.gitDiff(p)],
+        ["complete cwd", p => index.complete("a", { cwd: p })],
+        ["glob cwd", p => index.glob("**/*", { cwd: p })],
+        ["grep cwd", p => index.grep("a", { cwd: p })],
+        ["grep(RegExp) cwd", p => index.grep(/a/, { cwd: p })],
+      ];
+      for (const [name, call] of calls) {
+        for (const p of bad) {
+          let err: any;
+          try {
+            call(p);
+          } catch (e) {
+            err = e;
+          }
+          expect(err?.code, `${name}(${JSON.stringify(p)})`).toBe("ERR_INVALID_ARG_VALUE");
+          expect(err?.message, name).toContain("must be a relative path inside the index root");
+        }
+      }
+      // Benign normalization (leading "./", trailing "/") still works.
+      expect(index.has("./a.txt")).toBe(true);
+      expect(index.has("a/b.txt/")).toBe(true);
+      expect(index.complete("b", { cwd: "./a/" }).map(r => r.path)).toEqual(["a/b.txt"]);
+    });
+  });
+
+  describe("errors", () => {
+    test("a fully enumerated tree reports 0", async () => {
+      using dir = tempDir("file-index-errors-zero", { "a.txt": "1", "b/c.txt": "1" });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      expect(index.errors).toBe(0);
+    });
+
+    // root (getuid()===0) bypasses directory permission bits, so EACCES is
+    // unobtainable; Windows has no mode-bit permissions at all.
+    test.skipIf(isWindows || (process.getuid?.() ?? 1) === 0)(
+      "an EACCES subtree is counted in index.errors and the rest still indexes",
+      async () => {
+        using dir = tempDir("file-index-errors-eacces", {
+          "ok.txt": "1",
+          "locked/secret.txt": "1",
+        });
+        const locked = join(String(dir), "locked");
+        fs.chmodSync(locked, 0o000);
+        try {
+          using index = new Bun.FileIndex(String(dir));
+          await index.ready;
+          expect(index.errors).toBeGreaterThan(0);
+          // The unreadable directory entry itself and its readable sibling
+          // are indexed; nothing below the unreadable directory is.
+          expect(indexed(index)).toEqual(["locked", "ok.txt"]);
+        } finally {
+          fs.chmodSync(locked, 0o755);
+        }
+      },
+    );
   });
 
   describe("memory budget", () => {
@@ -388,6 +654,39 @@ describe("Bun.FileIndex", () => {
       expect(await index.refresh()).toBe(index);
       expect(indexed(index)).toEqual(["b.txt", "c.txt"]);
     });
+
+    test("the touch/recency ring survives refresh()", async () => {
+      using dir = tempDir("file-index-refresh-touch", {
+        "aaa.txt": "1",
+        "bbb.txt": "1",
+        "zzz.txt": "1",
+      });
+      using index = new Bun.FileIndex(String(dir));
+      await index.ready;
+      index.touch("zzz.txt");
+      index.touch("bbb.txt");
+      expect(index.recent()).toEqual(["bbb.txt", "zzz.txt"]);
+      // The frecency boost floats the touched paths above the alphabetical tie.
+      expect(
+        index
+          .complete("")
+          .slice(0, 2)
+          .map(r => r.path),
+      ).toEqual(["bbb.txt", "zzz.txt"]);
+      await index.refresh();
+      // Recency (and its order) is re-keyed by path across the store swap.
+      expect(index.recent()).toEqual(["bbb.txt", "zzz.txt"]);
+      expect(
+        index
+          .complete("")
+          .slice(0, 2)
+          .map(r => r.path),
+      ).toEqual(["bbb.txt", "zzz.txt"]);
+      // A touched path that no longer exists is dropped, not resurrected.
+      fs.rmSync(join(String(dir), "bbb.txt"));
+      await index.refresh();
+      expect(index.recent()).toEqual(["zzz.txt"]);
+    });
   });
 
   describe("close() and Symbol.dispose", () => {
@@ -402,6 +701,14 @@ describe("Bun.FileIndex", () => {
       expect(index.memoryUsage).toBe(0);
       expect(index.watching).toBe(false);
       const closed = /FileIndex is closed/;
+      // ERR_INVALID_STATE is what Node uses for "you closed/consumed this".
+      let stateErr: any;
+      try {
+        index.glob("**/*");
+      } catch (e) {
+        stateErr = e;
+      }
+      expect(stateErr.code).toBe("ERR_INVALID_STATE");
       expect(() => index.glob("**/*")).toThrow(closed);
       expect(() => index.complete("a")).toThrow(closed);
       expect(() => index.has("a.txt")).toThrow(closed);
@@ -426,10 +733,22 @@ describe("Bun.FileIndex", () => {
         const index = new Bun.FileIndex(String(dir));
         await index.ready;
         const refresh = index.refresh();
-        const hits = collect(index.grep("needle"));
+        // Iterators obtained BEFORE close(): the native pull promise still
+        // settles (no hang), but the first next() after close() is done.
+        const literal = index.grep("needle")[Symbol.asyncIterator]();
+        const regexp = index.grep(/needle/)[Symbol.asyncIterator]();
         index.close();
         expect(await refresh).toBe(index);
-        expect(await hits).toHaveLength(1);
+        expect(await literal.next()).toEqual({ done: true, value: undefined });
+        expect(await regexp.next()).toEqual({ done: true, value: undefined });
+      }
+      {
+        // Negative contract: without an intervening close() the same
+        // pre-obtained iterator yields its hit.
+        using index = new Bun.FileIndex(String(dir));
+        await index.ready;
+        const iter = index.grep("needle")[Symbol.asyncIterator]();
+        expect((await iter.next()).value).toMatchObject({ path: "a.txt", line: 1 });
       }
     });
 
@@ -458,6 +777,26 @@ describe("Bun.FileIndex", () => {
       all.length = 0;
       return during;
     }
+
+    // The only reference to the wrapper is the in-flight crawl task's
+    // `Strong`; the conservative test-frame root holds only `ready`.
+    function readyOnly(path: string): Promise<InstanceType<typeof Bun.FileIndex>> {
+      return new Bun.FileIndex(path).ready;
+    }
+
+    test("an in-flight crawl keeps an otherwise-unreferenced index alive", async () => {
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 300; i++) files[`d${i % 20}/f${i}.txt`] = "x";
+      using dir = tempDir("file-index-gc-inflight", files);
+      const ready = readyOnly(String(dir));
+      // Hammer the GC while the crawl is in flight: the wrapper must not be
+      // collected before its completion task resolves `ready` with it.
+      for (let i = 0; i < 24; i++) Bun.gc(true);
+      const index = await ready;
+      expect(index.size).toBe(320);
+      expect(indexed(index)).toContain("d0/f0.txt");
+      index.close();
+    });
 
     test("unreferenced indexes are collected once idle", async () => {
       using dir = tempDir("file-index-gc", { "a.txt": "1", "b/c.txt": "2" });

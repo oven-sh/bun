@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, tempDir } from "harness";
+import { bunEnv, isWindows, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 
@@ -198,6 +198,47 @@ describe("Bun.FileIndex gitStatus()", () => {
     const fromGit = await expectStatusMatchesGit(root, "untracked listing");
     const paths = fromGit.map(f => f.path);
     expect(paths).toEqual([".gitignore", "kept.txt", "sub/.gitignore", "sub/seen.txt"]);
+  });
+
+  test("a tracked file matched by a .gitignore rule is statted, not reported deleted", async () => {
+    using dir = tempDir("file-index-git-tracked-ignored", {
+      "kept.txt": "kept\n",
+      "generated.txt": "v1\n",
+      "out/built.js": "v1\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+    // The rules arrive AFTER the files were tracked: git still tracks them,
+    // but FileIndex's crawl excludes them from the in-memory store.
+    fs.writeFileSync(join(root, ".gitignore"), "generated.txt\nout/\n");
+    {
+      using index = new Bun.FileIndex(root);
+      await index.ready;
+      expect(index.has("generated.txt")).toBe(false);
+      expect(index.has("out/built.js")).toBe(false);
+      // Untouched on disk: must NOT be reported (and never as " D").
+      expect(sortFiles((await index.gitStatus())!.files)).toEqual([{ path: ".gitignore", status: "??" }]);
+    }
+    fs.writeFileSync(join(root, "generated.txt"), "v2 modified in the worktree\n");
+    await expectStatusMatchesGit(root, "tracked-but-gitignored file modified");
+    expect(await bunStatusFiles(root)).toEqual([
+      { path: ".gitignore", status: "??" },
+      { path: "generated.txt", status: " M" },
+    ]);
+    // A user `ignore:` pattern (no .gitignore involvement) behaves the same.
+    fs.rmSync(join(root, ".gitignore"));
+    {
+      using index = new Bun.FileIndex(root, { ignore: ["generated.txt"] });
+      await index.ready;
+      expect(index.has("generated.txt")).toBe(false);
+      expect(sortFiles((await index.gitStatus())!.files)).toEqual([{ path: "generated.txt", status: " M" }]);
+    }
+    // A tracked, ignored file that really IS gone still reports " D".
+    fs.rmSync(join(root, "generated.txt"));
+    fs.writeFileSync(join(root, ".gitignore"), "generated.txt\nout/\n");
+    expect(await bunStatusFiles(root)).toEqual(await expectStatusMatchesGit(root, "really deleted"));
   });
 
   test("empty repository with no commits", async () => {
@@ -488,6 +529,41 @@ describe("Bun.FileIndex gitDiff()", () => {
     expect(text!.oldText).toBe("text\n");
   });
 
+  test.skipIf(isWindows)("a symlink diffs its target string and never reads through the link", async () => {
+    // The link target lives OUTSIDE the index root: if gitDiff() opened
+    // through the link it would read out-of-root file contents.
+    using dir = tempDir("file-index-diff-symlink", {
+      "outside/secret.txt": "OUT-OF-ROOT SECRET CONTENTS\n",
+      "repo/a.txt": "alpha\n",
+    });
+    const outside = join(String(dir), "outside", "secret.txt");
+    const root = join(String(dir), "repo");
+    fs.symlinkSync(outside, join(root, "link"));
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+
+    // Unmodified: both sides are the link target *string* (git mode 120000).
+    const clean = await bunGitDiff(root, "link");
+    expect(clean).toEqual({ oldText: outside, newText: outside, hunks: [] });
+
+    // Re-point the link: the diff is target-string vs target-string.
+    fs.rmSync(join(root, "link"));
+    fs.symlinkSync(join(String(dir), "outside"), join(root, "link"));
+    const repointed = await bunGitDiff(root, "link");
+    expect(repointed!.oldText).toBe(outside);
+    expect(repointed!.newText).toBe(join(String(dir), "outside"));
+    // Negative contract: the linked file's contents never appear anywhere.
+    expect(JSON.stringify(repointed)).not.toContain("SECRET CONTENTS");
+    expect(JSON.stringify(clean)).not.toContain("SECRET CONTENTS");
+
+    // An untracked symlink (no HEAD side) still reads only the link target.
+    fs.symlinkSync(outside, join(root, "newlink"));
+    const fresh = await bunGitDiff(root, "newlink");
+    expect(fresh!.oldText).toBeNull();
+    expect(fresh!.newText).toBe(outside);
+  });
+
   test("invalid arguments throw synchronously", async () => {
     using dir = tempDir("file-index-diff-args", { "a.txt": "alpha\n" });
     using index = new Bun.FileIndex(String(dir));
@@ -495,5 +571,122 @@ describe("Bun.FileIndex gitDiff()", () => {
     // @ts-expect-error - path is required
     expect(() => index.gitDiff()).toThrow("expects a string");
     expect(() => index.gitDiff("")).toThrow("must not be empty");
+    for (const bad of ["../x", "a/../../x", "/abs", "a\0b"]) {
+      let err: any;
+      try {
+        index.gitDiff(bad);
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code, bad).toBe("ERR_INVALID_ARG_VALUE");
+      expect(err?.message, bad).toContain("FileIndex.gitDiff");
+    }
+  });
+});
+
+describe("Bun.FileIndex gitignore differential vs git", () => {
+  // A deterministic PRNG (mulberry32) so the "randomized" tree is the same
+  // on every run: a regression here is reproducible, not flaky.
+  function rng(seed: number) {
+    return function () {
+      seed |= 0;
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildSeededTree(seed: number) {
+    const rand = rng(seed);
+    const pick = <T>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
+    const dirs = ["", "src", "src/deep", "src/deep/er", "lib", "lib/sub", "dist", "docs"];
+    const names = ["a", "b", "keep", "skip", "index", "main", "dist", "node_modules"];
+    const exts = [".ts", ".log", ".md", ".tmp", ""];
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 120; i++) {
+      const d = pick(dirs);
+      const f = `${pick(names)}${i}${pick(exts)}`;
+      files[d ? `${d}/${f}` : f] = `${i}\n`;
+    }
+    // .gitignore stacks at several depths covering negation, anchoring,
+    // dir-only, `**`, and the parent-excluded rule.
+    files[".gitignore"] = "*.log\n!keep*.log\n/dist/\n**/*.tmp\nnode_modules*\n";
+    files["src/.gitignore"] = "deep/er/\n!*.tmp\nmain*\n";
+    files["lib/.gitignore"] = "!*.log\nsub/skip*\n";
+    files["docs/.gitignore"] = "*\n!*.md\n!.gitignore\n";
+    // Guaranteed witnesses for each rule so the comparison is never vacuous.
+    files["build.log"] = "ignored\n";
+    files["keep1.log"] = "re-included\n";
+    files["dist/out.js"] = "dir-only\n";
+    files["src/x.tmp"] = "re-included under src\n";
+    files["lib/x.tmp"] = "ignored\n";
+    files["src/deep/er/buried.ts"] = "parent-excluded\n";
+    files["docs/readme.md"] = "kept\n";
+    files["docs/notes.txt"] = "dropped\n";
+    return files;
+  }
+
+  test("indexed set === `git ls-files --cached --others --exclude-standard`", async () => {
+    using dir = tempDir("file-index-gitignore-diff", buildSeededTree(0x5eed01));
+    const root = String(dir);
+    initRepo(root);
+    const fromGit = git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+      .split("\0")
+      .filter(p => p.length > 0)
+      .sort();
+    using index = new Bun.FileIndex(root);
+    await index.ready;
+    // `ls-files` lists files only; the index also holds directories.
+    const fromBun = index
+      .glob("**/*")
+      .filter(p => index.stat(p)!.kind !== "dir")
+      .sort();
+    expect(fromGit.length).toBeGreaterThan(20);
+    expect(fromBun).toEqual(fromGit);
+  });
+
+  test("probe paths agree with `git check-ignore --no-index -v --non-matching -z --stdin`", async () => {
+    using dir = tempDir("file-index-checkignore-diff", buildSeededTree(0xc0ffee));
+    const root = String(dir);
+    initRepo(root);
+    using index = new Bun.FileIndex(root);
+    await index.ready;
+    const indexedSet = new Set(index.glob("**/*"));
+    // Probe everything that actually exists on disk (recursive walk) so each
+    // side classifies the identical universe of real paths.
+    const probes = fs
+      .readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter(e => e.isFile())
+      .map(e => `${e.parentPath.slice(root.length + 1)}/${e.name}`.replace(/^\//, ""))
+      .filter(p => !p.startsWith(".git/"))
+      .sort();
+    expect(probes.length).toBeGreaterThan(40);
+
+    const { stdout, exitCode, stderr } = Bun.spawnSync({
+      cmd: ["git", "-c", "core.autocrlf=false", "check-ignore", "--no-index", "-v", "--non-matching", "-z", "--stdin"],
+      cwd: root,
+      env: gitEnv,
+      stdin: Buffer.from(probes.join("\0") + "\0"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // 0 = some ignored, 1 = none ignored; anything else is a real failure.
+    expect([0, 1], stderr.toString()).toContain(exitCode);
+    // -v -z output is <source> NUL <linenum> NUL <pattern> NUL <pathname> NUL;
+    // a non-matching path has all three metadata fields empty.
+    const fields = stdout.toString().split("\0");
+    const gitIgnored = new Set<string>();
+    for (let i = 0; i + 3 < fields.length; i += 4) {
+      // `!pattern` = the deciding rule was a negation: the path is NOT ignored.
+      if (fields[i] !== "" && !fields[i + 2].startsWith("!")) gitIgnored.add(fields[i + 3]);
+    }
+    const disagreements = probes
+      .map(p => ({ path: p, git: gitIgnored.has(p), bun: !indexedSet.has(p) }))
+      .filter(x => x.git !== x.bun);
+    expect(disagreements).toEqual([]);
+    // The fixture exercises both outcomes.
+    expect(probes.some(p => gitIgnored.has(p))).toBe(true);
+    expect(probes.some(p => !gitIgnored.has(p))).toBe(true);
   });
 });

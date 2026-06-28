@@ -27,7 +27,7 @@ pub use complete::{
     CompleteCache, CompleteMatch, CompleteOptions, DEFAULT_COMPLETE_LIMIT, complete,
     complete_with_cache,
 };
-pub use crawl::{CrawlOptions, CrawlResult, crawl};
+pub use crawl::{CrawlOptions, CrawlResult, crawl, crawl_batched};
 pub use glob::glob;
 pub use grep::{GrepHit, GrepOutcome, GrepQuery, grep_file};
 pub use store::{EntryKind, FileId, Meta, Store};

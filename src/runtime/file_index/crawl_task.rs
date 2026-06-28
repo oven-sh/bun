@@ -64,10 +64,7 @@ pub(crate) fn start_recrawl(global: &JSGlobalObject, this_value: JSValue, index:
 }
 
 fn start_with(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex, purpose: Purpose) {
-    let root_error = match Dir::open_with(index.root_bytes(), O::CLOEXEC) {
-        Ok(_) => None,
-        Err(err) => Some(err),
-    };
+    let root_error = Dir::open_with(index.root_bytes(), O::CLOEXEC).err();
     let had_root_error = root_error.is_some();
 
     let mut task = Box::new(CrawlTask {
@@ -136,17 +133,26 @@ impl Completion {
         // `vm` points to the JS thread's `VirtualMachine`, whose concurrent
         // queue is the documented cross-thread entry point.
         unsafe {
-            let task = NonNull::from(
-                (*this)
-                    .concurrent_task
-                    .from(this, AutoDeinit::ManualDeinit),
-            );
+            let task = NonNull::from((*this).concurrent_task.from(this, AutoDeinit::ManualDeinit));
             (*(*this).vm).enqueue_task_concurrent(task);
         }
     }
 }
 
 impl CrawlTask {
+    /// Shutdown release (`__bun_release_task_at_shutdown`): the JS thread is
+    /// past `is_shutting_down` and will never dispatch this task, so reclaim
+    /// the box, unref the loop `KeepAlive`, and let `Drop` release the
+    /// `Strong`/`JSPromiseStrong` handles (we are before `destructOnExit`).
+    // `this` is an opaque token forwarded to `heap::take`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn release_at_shutdown(this: *mut CrawlTask) {
+        // SAFETY: same ownership contract as `run_from_js`; the shutdown
+        // drain hands each queued-but-undispatched task here exactly once.
+        let mut owned = unsafe { bun_core::heap::take(this) };
+        owned.keep_alive.unref(bun_io::js_vm_ctx());
+    }
+
     /// JS-thread dispatch (`task_tag::FileIndexCrawlTask`). Takes ownership of
     /// the allocation produced by [`start`].
     // `this` is an opaque token forwarded to `heap::take`; the deref is inside
@@ -175,6 +181,18 @@ impl CrawlTask {
                     if let Some(index) = this_value.as_class_ref::<FileIndex>()
                         && !index.is_closed()
                     {
+                        // The probe in `start_with` and the crawl's own root
+                        // open are distinct: a root that vanished in between
+                        // yields an empty `CrawlResult`, indistinguishable
+                        // from a genuinely empty directory. Re-validate the
+                        // root so `ready` rejects with the syscall error
+                        // instead of resolving an empty index.
+                        if result.entries.is_empty()
+                            && let Err(err) = Dir::open_with(index.root_bytes(), O::CLOEXEC)
+                        {
+                            let err_js = err.to_js(global);
+                            return promise.swap().reject_with_async_stack(global, Ok(err_js));
+                        }
                         index.apply_crawl(global, result);
                         // A watching index resolves `ready` only once the
                         // watcher acknowledges this crawl's registrations.

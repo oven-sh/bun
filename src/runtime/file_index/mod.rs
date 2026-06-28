@@ -20,7 +20,7 @@ use bun_fuzzy::{Scorer, ScorerOptions};
 use bun_ignore::{IgnoreChain, IgnoreFile};
 use bun_io::KeepAlive;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, StringJsc as _,
+    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsRef, JsResult, StringJsc as _,
     SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
@@ -73,6 +73,9 @@ pub struct FileIndex {
     scorer: RefCell<Scorer>,
     /// The last crawl hit `maxMemory` before handing entries to the store.
     crawl_truncated: Cell<bool>,
+    /// Entries/subtrees the last crawl skipped because of an I/O error
+    /// (e.g. an `EACCES` subdirectory). Exposed as `index.errors`.
+    crawl_errors: Cell<usize>,
     /// Bytes retained by the native store, mirrored here because
     /// `estimated_size` runs on the GC thread and must not touch the store.
     reported_bytes: AtomicUsize,
@@ -126,6 +129,7 @@ impl FileIndex {
             store: RefCell::new(Store::new(max_memory)),
             scorer: RefCell::new(Scorer::new(ScorerOptions::default())),
             crawl_truncated: Cell::new(false),
+            crawl_errors: Cell::new(0),
             reported_bytes: AtomicUsize::new(0),
             watcher: RefCell::new(None),
             pending_ready: RefCell::new(Vec::new()),
@@ -161,12 +165,21 @@ impl FileIndex {
 
     // `onchange` is declared with `this: true` in `FileIndex.classes.ts`, so
     // the codegen thunk passes the wrapper cell as `this_value`. The pair
-    // reads/writes the codegen'd `onchange` `values:` slot.
-    bun_jsc::cached_prop_hostfns! {
-        crate::generated_classes::js_FileIndex;
-        (get_onchange, set_onchange => onchange_get_cached, onchange_set_cached),
+    // reads/writes the codegen'd `onchange` `values:` slot. An unassigned
+    // slot reads back as `null` (the documented initial value), never
+    // `undefined`.
+    pub fn get_onchange(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+        js::onchange_get_cached(this_value).unwrap_or(JSValue::NULL)
     }
 
+    pub fn set_onchange(&self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        js::onchange_set_cached(this_value, global, value);
+    }
+
+    // The codegen'd finalizer hands back ownership of the heap allocation
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         jsc::mark_binding();
         // A watcher can still be live here only when the heap is torn down
@@ -209,6 +222,10 @@ impl FileIndex {
         JSValue::js_boolean(self.watcher.borrow().is_some())
     }
 
+    pub fn get_errors(&self, _global: &JSGlobalObject) -> JSValue {
+        JSValue::js_number_from_uint64(self.crawl_errors.get() as u64)
+    }
+
     /// `index.complete(query, { limit, cwd, directories })`
     #[bun_jsc::host_fn(method)]
     pub fn complete(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -233,7 +250,7 @@ impl FileIndex {
             if let Some(v) = options_arg.get(global, "limit")?
                 && !v.is_undefined_or_null()
             {
-                limit = non_negative_int_option(global, v, "limit")?;
+                limit = non_negative_int_option(global, v, "FileIndex.complete", "limit")?;
             }
             if let Some(v) = options_arg.get_truthy(global, "cwd")? {
                 cwd = dir_prefix(global, v, "FileIndex.complete")?;
@@ -258,7 +275,12 @@ impl FileIndex {
                 },
             )
             .into_iter()
-            .map(|m| (store.path(m.id).to_vec(), m.score, m.positions))
+            .map(|m| {
+                let path = store.path(m.id);
+                let mut positions = m.positions;
+                byte_positions_to_utf16(path, &mut positions);
+                (path.to_vec(), m.score, positions)
+            })
             .collect()
         };
 
@@ -266,11 +288,9 @@ impl FileIndex {
             let obj = JSValue::create_empty_object(global, 3);
             obj.put(global, "path", utf8_js(global, &path)?);
             obj.put(global, "score", JSValue::js_number(f64::from(score)));
-            let positions = JSValue::create_array_from_iter(
-                global,
-                positions.into_iter(),
-                |p| Ok(JSValue::js_number_from_uint64(u64::from(p))),
-            )?;
+            let positions = JSValue::create_array_from_iter(global, positions.into_iter(), |p| {
+                Ok(JSValue::js_number_from_uint64(u64::from(p)))
+            })?;
             obj.put(global, "positions", positions);
             Ok(obj)
         })
@@ -298,7 +318,7 @@ impl FileIndex {
             if let Some(v) = options_arg.get(global, "limit")?
                 && !v.is_undefined_or_null()
             {
-                limit = non_negative_int_option(global, v, "limit")?;
+                limit = non_negative_int_option(global, v, "FileIndex.glob", "limit")?;
             }
             if let Some(v) = options_arg.get_truthy(global, "cwd")? {
                 cwd = dir_prefix(global, v, "FileIndex.glob")?;
@@ -321,7 +341,7 @@ impl FileIndex {
     #[bun_jsc::host_fn(method)]
     pub fn has(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.check_open(global)?;
-        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.has")?;
+        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.has", "path")?;
         Ok(JSValue::js_boolean(
             self.store.borrow().get(&path).is_some(),
         ))
@@ -330,7 +350,7 @@ impl FileIndex {
     #[bun_jsc::host_fn(method)]
     pub fn stat(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.check_open(global)?;
-        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.stat")?;
+        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.stat", "path")?;
         let meta = {
             let store = self.store.borrow();
             store.get(&path).map(|id| *store.meta(id))
@@ -341,8 +361,7 @@ impl FileIndex {
         let obj = JSValue::create_empty_object(global, 4);
         // `size` and `mtimeMs` are doubles, like `fs.Stats`.
         obj.put(global, "size", JSValue::js_number(meta.size as f64));
-        let mtime_ms =
-            meta.mtime_s as f64 * 1000.0 + f64::from(meta.mtime_ns) / 1_000_000.0;
+        let mtime_ms = meta.mtime_s as f64 * 1000.0 + f64::from(meta.mtime_ns) / 1_000_000.0;
         obj.put(global, "mtimeMs", JSValue::js_number(mtime_ms));
         obj.put(
             global,
@@ -362,7 +381,7 @@ impl FileIndex {
     #[bun_jsc::host_fn(method)]
     pub fn touch(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.check_open(global)?;
-        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.touch")?;
+        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.touch", "path")?;
         let mut store = self.store.borrow_mut();
         if let Some(id) = store.get(&path) {
             store.touch(id);
@@ -377,7 +396,7 @@ impl FileIndex {
         let limit = if limit_arg.is_undefined_or_null() {
             usize::MAX
         } else {
-            non_negative_int_option(global, limit_arg, "limit")?
+            non_negative_int_option(global, limit_arg, "FileIndex.recent", "limit")?
         };
         let paths: Vec<Vec<u8>> = {
             let store = self.store.borrow();
@@ -407,6 +426,30 @@ impl FileIndex {
         grep_task::start(self, global, pattern_arg, options_arg)
     }
 
+    /// `grep(RegExp)` support (the `paths` private symbol): the same
+    /// glob/cwd/size-admitted candidate snapshot the literal fast path uses,
+    /// as an array of relative path strings, so `src/js/builtins/FileIndex.ts`
+    /// can read and test each candidate on the JS thread.
+    #[bun_jsc::host_fn(method)]
+    pub fn __grep_candidates(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        self.check_open(global)?;
+        let args = grep_task::parse_grep_options(self, global, callframe.argument(0))?;
+        let paths = grep_task::candidate_paths(self, &args);
+        JSValue::create_array_from_iter(global, paths.into_iter(), |p| utf8_js(global, &p))
+    }
+
+    /// `close()` observer for the `grep()` async iterator (the
+    /// `closeRequested` private symbol). Never throws — it is exactly the
+    /// query the post-close guard needs.
+    #[bun_jsc::host_fn(method)]
+    pub fn __closed(&self, _global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(self.closed.get()))
+    }
+
     /// `index.gitStatus()` — `git status --porcelain=v1` of the indexed view,
     /// computed in-process on the work pool. Resolves with `null` when `root`
     /// is not inside a git work tree. Callers should `await index.ready`
@@ -425,7 +468,7 @@ impl FileIndex {
     #[bun_jsc::host_fn(method)]
     pub fn git_diff(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.check_open(global)?;
-        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.gitDiff")?;
+        let path = rel_path_arg(global, callframe.argument(0), "FileIndex.gitDiff", "path")?;
         if path.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "FileIndex.gitDiff(path): path must not be empty"
@@ -468,7 +511,6 @@ impl FileIndex {
         self.this_ref.borrow_mut().downgrade();
     }
 
-
     /// Hand the watcher the directory set of the (re)crawled index.
     fn sync_watcher(&self) {
         let watcher = self.watcher.borrow();
@@ -489,7 +531,11 @@ impl FileIndex {
     /// Apply one delivery of coalesced watch batches: re-`lstat` every dirty
     /// path, update the store (and the GC's view of retained memory), and
     /// only then invoke `onchange` with the resulting events.
-    pub(crate) fn apply_watch_batches(&self, global: &JSGlobalObject, batches: Vec<watcher::Batch>) {
+    pub(crate) fn apply_watch_batches(
+        &self,
+        global: &JSGlobalObject,
+        batches: Vec<watcher::Batch>,
+    ) {
         if self.closed.get() {
             return;
         }
@@ -509,9 +555,7 @@ impl FileIndex {
         self.report_memory(global);
         // The re-crawl is started before the callback so a throwing
         // `onchange` cannot skip it.
-        if recrawl
-            && let Some(this_value) = self.this_value()
-        {
+        if recrawl && let Some(this_value) = self.this_value() {
             crawl_task::start_recrawl(global, this_value, self);
         }
         if synced {
@@ -562,7 +606,10 @@ impl FileIndex {
     pub(crate) fn apply_recrawl(&self, global: &JSGlobalObject, result: CrawlResult) {
         let old_paths: Vec<Vec<u8>> = {
             let store = self.store.borrow();
-            store.iter_sorted().map(|id| store.path(id).to_vec()).collect()
+            store
+                .iter_sorted()
+                .map(|id| store.path(id).to_vec())
+                .collect()
         };
         self.apply_crawl(global, result);
         let mut events: Vec<(WatchEventKind, Vec<u8>)> = Vec::new();
@@ -578,7 +625,10 @@ impl FileIndex {
                         let new = store.path(new_id);
                         match old.as_slice().cmp(new) {
                             core::cmp::Ordering::Less => {
-                                events.push((WatchEventKind::Delete, old_iter.next().map(Vec::clone).unwrap_or_default()));
+                                events.push((
+                                    WatchEventKind::Delete,
+                                    old_iter.next().cloned().unwrap_or_default(),
+                                ));
                             }
                             core::cmp::Ordering::Greater => {
                                 events.push((WatchEventKind::Create, new.to_vec()));
@@ -593,7 +643,7 @@ impl FileIndex {
                     (Some(_), None) => {
                         events.push((
                             WatchEventKind::Delete,
-                            old_iter.next().map(Vec::clone).unwrap_or_default(),
+                            old_iter.next().cloned().unwrap_or_default(),
                         ));
                     }
                     (None, Some(&new_id)) => {
@@ -751,7 +801,7 @@ impl WatchEventKind {
     }
 }
 
-fn meta_from_stat(stat: &bun_sys::PosixStat) -> Option<Meta> {
+pub(crate) fn meta_from_stat(stat: &bun_sys::PosixStat) -> Option<Meta> {
     let kind = match bun_core::kind_from_mode(stat.mode as bun_core::Mode) {
         bun_sys::EntryKind::Directory => EntryKind::Dir,
         bun_sys::EntryKind::File => EntryKind::File,
@@ -777,9 +827,12 @@ fn meta_from_stat(stat: &bun_sys::PosixStat) -> Option<Meta> {
 impl FileIndex {
     fn check_open(&self, global: &JSGlobalObject) -> JsResult<()> {
         if self.closed.get() {
-            return Err(global.throw(format_args!(
-                "FileIndex is closed; create a new index to keep querying"
-            )));
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!("FileIndex is closed; create a new index to keep querying"),
+                )
+                .throw());
         }
         Ok(())
     }
@@ -835,10 +888,25 @@ impl FileIndex {
     pub(crate) fn apply_crawl(&self, global: &JSGlobalObject, result: CrawlResult) {
         {
             let mut store = self.store.borrow_mut();
+            // The touch/recency ring is keyed by `FileId`, which a store swap
+            // invalidates: re-key it by path across the swap so `recent()` and
+            // `complete()`'s frecency boost survive `refresh()`.
+            let touched: Vec<Vec<u8>> = store
+                .recent(usize::MAX)
+                .into_iter()
+                .map(|id| store.path(id).to_vec())
+                .collect();
             *store = Store::new(self.options.max_memory);
             store.bulk_load(result.entries);
+            // `recent()` is newest-first; replay oldest-first to preserve order.
+            for path in touched.iter().rev() {
+                if let Some(id) = store.get(path) {
+                    store.touch(id);
+                }
+            }
         }
         self.crawl_truncated.set(result.truncated);
+        self.crawl_errors.set(result.errors);
         self.report_memory(global);
         self.sync_watcher();
     }
@@ -883,7 +951,7 @@ fn parse_options(
     }
     if !options_arg.is_object() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "Bun.FileIndex: options must be an object"
+            "new Bun.FileIndex: options must be an object"
         )));
     }
 
@@ -900,16 +968,16 @@ fn parse_options(
     {
         if !v.is_callable() {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Bun.FileIndex: onchange must be a function"
+                "new Bun.FileIndex: onchange must be a function"
             )));
         }
         onchange = Some(v);
     }
     if let Some(v) = options_arg.get_truthy(global, "maxMemory")? {
-        options.max_memory = positive_int_option(global, v, "maxMemory")?;
+        options.max_memory = positive_int_option(global, v, "new Bun.FileIndex", "maxMemory")?;
     }
     if let Some(v) = options_arg.get_truthy(global, "maxFileSize")? {
-        options.max_file_size = positive_int_option(global, v, "maxFileSize")?;
+        options.max_file_size = positive_int_option(global, v, "new Bun.FileIndex", "maxFileSize")?;
     }
     if let Some(v) = options_arg.get_truthy(global, "ignore")? {
         options.ignore = parse_ignore_patterns(global, v)?;
@@ -918,30 +986,44 @@ fn parse_options(
     Ok((options, onchange))
 }
 
-fn positive_int_option(global: &JSGlobalObject, v: JSValue, name: &str) -> JsResult<usize> {
+fn positive_int_option(
+    global: &JSGlobalObject,
+    v: JSValue,
+    api: &str,
+    name: &str,
+) -> JsResult<usize> {
     if !v.is_number() {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Bun.FileIndex: {name} must be a number")));
+        return Err(global.throw_invalid_arguments(format_args!("{api}: {name} must be a number")));
     }
     let n = v.to_int64();
     if n <= 0 {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Bun.FileIndex: {name} must be a positive integer, got {n}"
-        )));
+        return Err(global
+            .err(
+                ErrorCode::OUT_OF_RANGE,
+                format_args!("{api}: {name} must be a positive integer, got {n}"),
+            )
+            .throw());
     }
     Ok(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
-fn non_negative_int_option(global: &JSGlobalObject, v: JSValue, name: &str) -> JsResult<usize> {
+fn non_negative_int_option(
+    global: &JSGlobalObject,
+    v: JSValue,
+    api: &str,
+    name: &str,
+) -> JsResult<usize> {
     if !v.is_number() {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Bun.FileIndex: {name} must be a number")));
+        return Err(global.throw_invalid_arguments(format_args!("{api}: {name} must be a number")));
     }
     let n = v.to_int64();
     if n < 0 {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Bun.FileIndex: {name} must not be negative, got {n}"
-        )));
+        return Err(global
+            .err(
+                ErrorCode::OUT_OF_RANGE,
+                format_args!("{api}: {name} must not be negative, got {n}"),
+            )
+            .throw());
     }
     Ok(usize::try_from(n).unwrap_or(usize::MAX))
 }
@@ -963,7 +1045,7 @@ fn parse_ignore_patterns(global: &JSGlobalObject, v: JSValue) -> JsResult<Vec<Bo
             let item = v.get_index(global, i)?;
             if !item.is_string() {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "Bun.FileIndex: ignore must be a string or an array of strings"
+                    "new Bun.FileIndex: ignore must be a string or an array of strings"
                 )));
             }
             let s = item.to_slice(global)?;
@@ -975,25 +1057,56 @@ fn parse_ignore_patterns(global: &JSGlobalObject, v: JSValue) -> JsResult<Vec<Bo
         return Ok(out);
     }
     Err(global.throw_invalid_arguments(format_args!(
-        "Bun.FileIndex: ignore must be a string or an array of strings"
+        "new Bun.FileIndex: ignore must be a string or an array of strings"
     )))
 }
 
 /// A path argument: a string, normalized to the index's relative,
-/// `/`-separated form (no leading `./` or `/`, no trailing `/`).
-fn rel_path_arg(global: &JSGlobalObject, v: JSValue, api: &str) -> JsResult<Vec<u8>> {
+/// `/`-separated form (no leading `./`, no trailing `/`).
+///
+/// SECURITY: `gitDiff` joins its argument to `root` and reads it, so this is
+/// a boundary. NUL bytes, absolute paths, and any `..` component are
+/// rejected (`ERR_INVALID_ARG_VALUE`), never normalized away.
+fn rel_path_arg(global: &JSGlobalObject, v: JSValue, api: &str, arg: &str) -> JsResult<Vec<u8>> {
     if !v.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!("{api}(path) expects a string")));
+        return Err(global.throw_invalid_arguments(format_args!("{api}: {arg} expects a string")));
     }
     let s = v.to_slice(global)?;
-    Ok(normalize_rel(s.slice()).to_vec())
+    let raw = s.slice();
+    if let Some(reason) = invalid_rel_path(raw) {
+        return Err(global
+            .err(
+                ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "{api}: {arg} must be a relative path inside the index root \
+                     ({reason}); received {}",
+                    bun_core::fmt::quote(raw)
+                ),
+            )
+            .throw());
+    }
+    Ok(normalize_rel(raw).to_vec())
+}
+
+/// `Some(reason)` when `p` cannot name an index entry: a NUL byte, an
+/// absolute path, or a `..` component (`..`, `../x`, `x/..`, `a/../b`).
+fn invalid_rel_path(p: &[u8]) -> Option<&'static str> {
+    if memchr::memchr(0, p).is_some() {
+        return Some("it contains a NUL byte");
+    }
+    if bun_paths::is_absolute(p) || p.first() == Some(&b'/') {
+        return Some("it is absolute");
+    }
+    // `\` is a separator on Windows; treating it as one everywhere keeps the
+    // `..` rejection from depending on the host platform.
+    if p.split(|&b| b == b'/' || b == b'\\').any(|c| c == b"..") {
+        return Some("it contains a \"..\" component");
+    }
+    None
 }
 
 fn normalize_rel(mut p: &[u8]) -> &[u8] {
     while let Some(rest) = p.strip_prefix(b"./") {
-        p = rest;
-    }
-    while let Some(rest) = p.strip_prefix(b"/") {
         p = rest;
     }
     while let Some(rest) = p.strip_suffix(b"/") {
@@ -1003,21 +1116,55 @@ fn normalize_rel(mut p: &[u8]) -> &[u8] {
 }
 
 /// The `cwd` option as a `range_with_prefix` prefix: `b""` for the root,
-/// otherwise the normalized directory followed by `/`.
+/// otherwise the normalized directory followed by `/`. Same validation as
+/// [`rel_path_arg`].
 fn dir_prefix(global: &JSGlobalObject, v: JSValue, api: &str) -> JsResult<Vec<u8>> {
-    if !v.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!("{api}: cwd must be a string")));
-    }
-    let s = v.to_slice(global)?;
-    let rel = normalize_rel(s.slice());
+    let rel = rel_path_arg(global, v, api, "cwd")?;
     if rel.is_empty() {
         return Ok(Vec::new());
     }
-    let mut out = rel.to_vec();
+    let mut out = rel;
     out.push(b'/');
     Ok(out)
 }
 
 pub(crate) fn utf8_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bun_core::String::clone_utf8(bytes).to_js(global)
+}
+
+/// `complete()` scores UTF-8 path bytes, but `path` reaches JS as a UTF-16
+/// string: remap each ascending byte offset in `positions` to the index of
+/// the JS string character that byte belongs to. Every byte of a multi-byte
+/// scalar maps to the same index, so the result is deduplicated; an empty
+/// no-op for the (common) all-ASCII path.
+fn byte_positions_to_utf16(path: &[u8], positions: &mut Vec<u32>) {
+    if positions.is_empty() || bun_core::strings::first_non_ascii(path).is_none() {
+        return;
+    }
+    let mut byte = 0usize;
+    let mut unit: u32 = 0;
+    let mut i = 0;
+    while i < positions.len() && byte < path.len() {
+        // UTF-8 scalar width from the lead byte; an astral scalar (4 bytes)
+        // is a surrogate pair (2 UTF-16 code units). Invalid bytes count as
+        // one unit each, matching `clone_utf8`'s per-byte U+FFFD replacement.
+        let (width, units) = match path[byte] {
+            0x00..=0x7F | 0x80..=0xBF | 0xC0..=0xC1 | 0xF5..=0xFF => (1, 1),
+            0xC2..=0xDF => (2, 1),
+            0xE0..=0xEF => (3, 1),
+            0xF0..=0xF4 => (4, 2),
+        };
+        let end = byte + width;
+        while i < positions.len() && (positions[i] as usize) < end {
+            positions[i] = unit;
+            i += 1;
+        }
+        byte = end;
+        unit += units;
+    }
+    while i < positions.len() {
+        positions[i] = unit;
+        i += 1;
+    }
+    positions.dedup();
 }

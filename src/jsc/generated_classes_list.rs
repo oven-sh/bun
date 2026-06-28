@@ -21,7 +21,6 @@ pub mod Classes {
     pub use crate::api::archive as Archive;
     pub use crate::api::bun::secure_context as SecureContext;
     pub use crate::api::filesystem_router::FileSystemRouter;
-    pub use crate::file_index as FileIndex;
     pub use crate::api::glob as Glob;
     pub use crate::api::html_rewriter::AttributeIterator;
     pub use crate::api::html_rewriter::Comment;
@@ -32,6 +31,7 @@ pub mod Classes {
     pub use crate::api::html_rewriter::HTMLRewriter;
     pub use crate::api::html_rewriter::TextChunk;
     pub use crate::crypto::CryptoHasher;
+    pub use crate::file_index as FileIndex;
     pub use crate::image as Image;
     pub use crate::shell::Interpreter as ShellInterpreter;
     pub use crate::test_runner::done_callback::DoneCallback;

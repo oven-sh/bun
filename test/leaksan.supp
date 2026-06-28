@@ -127,3 +127,9 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
+# test/js/bun/file-index/file-index.test.ts — JSC never runs finalizers at
+# process exit, so a `Bun.FileIndex` still referenced when the test file ends
+# leaks its wrapper Box and the native Store the JS thread filled in
+# `apply_crawl`. One residual index per process is expected; same pattern as
+# every other native class above.
+leak:bun_runtime::file_index

@@ -115,13 +115,13 @@ use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
+use crate::api::glob::AsyncGlobWalkTask;
+use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::file_index::{
     CrawlTask as FileIndexCrawlTask, GitDiffTask as FileIndexGitDiffTask,
     GitStatusTask as FileIndexGitStatusTask, GrepTask as FileIndexGrepTask,
     WatchDelivery as FileIndexWatchTask,
 };
-use crate::api::glob::AsyncGlobWalkTask;
-use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::image::AsyncImageTask;
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
@@ -1203,6 +1203,51 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
                 }};
             }
             for_each_fs_async_op!(__fs_destroy);
+            true
+        }
+        // `CrawlTask::start` heap-leaks the box and `run_from_js` reclaims it
+        // with `heap::take`; `release_at_shutdown` does the same reclaim,
+        // unrefs the loop `KeepAlive`, and lets `Drop` release the `Strong`
+        // and the `ready` `JSPromiseStrong` (both still valid here — we're
+        // before `destructOnExit`).
+        task_tag::FileIndexCrawlTask => {
+            FileIndexCrawlTask::release_at_shutdown(task.ptr.cast::<FileIndexCrawlTask>());
+            true
+        }
+        // `ConcurrentPromiseTask`s created by `create_on_js_thread`
+        // (heap-leaked, normally freed by `run_then_destroy!`). `run_from_js`
+        // would have unref'd the loop `KeepAlive` and settled the promise;
+        // here we only unref and drop — `JSPromiseStrong: Drop` releases the
+        // handle.
+        task_tag::FileIndexGrepTask
+        | task_tag::FileIndexGitStatusTask
+        | task_tag::FileIndexGitDiffTask => {
+            macro_rules! __fi_release {
+                ($ty:ty) => {{
+                    let t = task.ptr.cast::<$ty>();
+                    // SAFETY: tag identifies pointee; heap-allocated at
+                    // schedule time; the work-pool callback ran (it posted
+                    // this entry) so this is the sole owner.
+                    unsafe {
+                        (*t).ref_.unref(bun_io::js_vm_ctx());
+                        <$ty>::destroy(t);
+                    }
+                }};
+            }
+            match task.tag {
+                task_tag::FileIndexGrepTask => __fi_release!(FileIndexGrepTask<'_>),
+                task_tag::FileIndexGitStatusTask => __fi_release!(FileIndexGitStatusTask<'_>),
+                task_tag::FileIndexGitDiffTask => __fi_release!(FileIndexGitDiffTask<'_>),
+                // SAFETY: the outer arm guard proves one of the three matched.
+                _ => unsafe { core::hint::unreachable_unchecked() },
+            }
+            true
+        }
+        // The pointer is an `Arc::into_raw` +1 reference taken by
+        // `WatchDelivery::post`; `run_from_js` would have consumed it.
+        task_tag::FileIndexWatchTask => {
+            // SAFETY: balances the `Arc::into_raw` in `WatchDelivery::post`.
+            drop(unsafe { std::sync::Arc::from_raw(task.ptr.cast::<FileIndexWatchTask>()) });
             true
         }
         // Re-queued by the caller; the box stays reachable from the

@@ -54,6 +54,44 @@ describe("multipart serialization (new Response(formData))", () => {
     );
   });
 
+  // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#multipart-form-data
+  // Step 1 of the encoding algorithm replaces every lone CR, lone LF, and CRLF
+  // in an entry's name (and in its value when it is not a File) with CRLF,
+  // before names/filenames are percent-encoded. Filenames are escaped but not
+  // normalized, so lone CR / lone LF stay distinct there.
+  test("normalizes lone CR and lone LF to CRLF in names and string values", async () => {
+    const formData = new FormData();
+    // All three newline spellings in a name must serialize identically.
+    formData.append("a\rb", "1");
+    formData.append("a\nb", "2");
+    formData.append("a\r\nb", "3");
+    // Non-File string value: newlines normalized to CRLF, never percent-encoded.
+    formData.append("value", "x\ry\nz\r\nw");
+    // Filename: percent-encoded only.
+    formData.append("file", new Blob(["hi"]), "q\rw\ne");
+
+    const response = new Response(formData);
+    const contentType = response.headers.get("Content-Type")!;
+    const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
+
+    expect(await response.text()).toBe(
+      [
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="a%0D%0Ab"\r\n\r\n1\r\n`,
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="a%0D%0Ab"\r\n\r\n2\r\n`,
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="a%0D%0Ab"\r\n\r\n3\r\n`,
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="value"\r\n\r\nx\r\ny\r\nz\r\nw\r\n`,
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="file"; filename="q%0Dw%0Ae"\r\n`,
+        `Content-Type: application/octet-stream\r\n\r\nhi\r\n`,
+        `--${boundary}--\r\n`,
+      ].join(""),
+    );
+  });
+
   test("round-trips every entry kind through Response.formData()", async () => {
     const formData = new FormData();
     formData.append("simple", "value");

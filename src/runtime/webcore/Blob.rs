@@ -3957,22 +3957,52 @@ struct FormDataContext<'a> {
     global_this: &'a JSGlobalObject,
 }
 
-/// WHATWG HTML "multipart/form-data encoding algorithm": percent-encode `"`,
-/// CR and LF in field names and filenames so they cannot terminate the
-/// quoted-string or inject part headers. Returns `None` when nothing needs
-/// escaping so the caller can keep using the original bytes without a copy.
-fn escape_form_data_name(bytes: &[u8]) -> Option<Box<[u8]>> {
-    if !bytes.iter().any(|&b| matches!(b, b'"' | b'\r' | b'\n')) {
+/// Which piece of a `multipart/form-data` entry a string is, selecting the
+/// transforms the WHATWG "multipart/form-data encoding algorithm" applies to
+/// it: <https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#multipart-form-data>
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FormDataComponent {
+    /// Entry name: newlines normalized to CRLF, then `"`/CR/LF percent-encoded.
+    Name,
+    /// Non-File entry value: newlines normalized to CRLF, emitted unescaped.
+    StringValue,
+    /// Filename: `"`/CR/LF percent-encoded only; the spec does not normalize it.
+    Filename,
+}
+
+/// WHATWG HTML "multipart/form-data encoding algorithm". Names and non-File
+/// values first have every CR, LF, and CRLF replaced with CRLF; names and
+/// filenames are then percent-encoded (`"` -> `%22`, CR -> `%0D`, LF -> `%0A`)
+/// so they cannot terminate the quoted-string or inject part headers. Returns
+/// `None` when no byte needs either transform so the caller can keep using the
+/// original bytes without a copy.
+fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Option<Box<[u8]>> {
+    let escape = component != FormDataComponent::StringValue;
+    let normalize = component != FormDataComponent::Filename;
+    if !bytes
+        .iter()
+        .any(|&b| matches!(b, b'\r' | b'\n') || (escape && b == b'"'))
+    {
         return None;
     }
-    let mut out = Vec::with_capacity(bytes.len() + 6);
-    for &b in bytes {
+    let mut out = Vec::with_capacity(bytes.len() + 8);
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
         match b {
-            b'"' => out.extend_from_slice(b"%22"),
+            b'"' if escape => out.extend_from_slice(b"%22"),
+            b'\r' | b'\n' if normalize => {
+                out.extend_from_slice(if escape { b"%0D%0A" } else { b"\r\n" });
+                // A CRLF pair is already one normalized newline: consume both.
+                if b == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+                    i += 1;
+                }
+            }
             b'\r' => out.extend_from_slice(b"%0D"),
             b'\n' => out.extend_from_slice(b"%0A"),
             _ => out.push(b),
         }
+        i += 1;
     }
     Some(out.into_boxed_slice())
 }
@@ -3982,13 +4012,16 @@ impl FormDataContext<'_> {
     /// borrowed case points into a WTF string owned by the `DOMFormData` being
     /// serialized, which outlives `joiner.done()` in `from_dom_form_data`; an owned slice
     /// (UTF-16 / non-ASCII Latin-1 conversion) transfers its allocation to the
-    /// joiner. When `escape` is set, `"`/CR/LF are percent-encoded into a copy.
-    fn push_string_slice(joiner: &mut StringJoiner<'_>, slice: ZigStringSlice, escape: bool) {
-        if escape {
-            if let Some(escaped) = escape_form_data_name(slice.slice()) {
-                joiner.push_owned(escaped);
-                return;
-            }
+    /// joiner. `component` selects the spec's newline-normalization and
+    /// percent-encoding transforms, which copy when they apply.
+    fn push_string_slice(
+        joiner: &mut StringJoiner<'_>,
+        slice: ZigStringSlice,
+        component: FormDataComponent,
+    ) {
+        if let Some(encoded) = encode_form_data_component(slice.slice(), component) {
+            joiner.push_owned(encoded);
+            return;
         }
         if matches!(slice, ZigStringSlice::Owned(_)) {
             // `into_vec` moves the buffer out of an `Owned` slice without copying.
@@ -4019,16 +4052,16 @@ impl FormDataContext<'_> {
         joiner.push_static(b"\r\n");
 
         joiner.push_static(b"Content-Disposition: form-data; name=\"");
-        Self::push_string_slice(joiner, name.to_slice(), true);
+        Self::push_string_slice(joiner, name.to_slice(), FormDataComponent::Name);
 
         match entry {
             FormDataEntry::String(value) => {
                 joiner.push_static(b"\"\r\n\r\n");
-                Self::push_string_slice(joiner, value.to_slice(), false);
+                Self::push_string_slice(joiner, value.to_slice(), FormDataComponent::StringValue);
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                Self::push_string_slice(joiner, filename.to_slice(), true);
+                Self::push_string_slice(joiner, filename.to_slice(), FormDataComponent::Filename);
                 joiner.push_static(b"\"\r\n");
 
                 // Borrowed from the blob, which the `DOMFormData` keeps alive

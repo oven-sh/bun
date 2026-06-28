@@ -165,15 +165,22 @@ pub(crate) fn on_internal_message_child(
 /// Node's cluster `internal()` wrapper drops any internal message whose `cmd`
 /// is not exactly "NODE_CLUSTER"; without this gate a non-cluster `NODE_*`
 /// message would be enqueued forever by a child that never loads node:cluster.
+///
+/// Only the advanced decoder's `classify_message` can route an arbitrary user
+/// `{cmd: "NODE_*"}` here, and it requires an object with a string `cmd`. Any
+/// other shape came from the Json decoder's wire-level `0x02` prefix, which
+/// only Bun's own cluster `send_helper_*` ever writes (and which set no `cmd`
+/// before Bun 1.4.1), so it is always a cluster message and must not be
+/// dropped.
 fn is_node_cluster_message(global: &JSGlobalObject, message: JSValue) -> JsResult<bool> {
     if !message.is_object() {
-        return Ok(false);
+        return Ok(true);
     }
     let Some(cmd) = message.fast_get(global, BuiltinName::cmd)? else {
-        return Ok(false);
+        return Ok(true);
     };
     if !cmd.is_string() {
-        return Ok(false);
+        return Ok(true);
     }
     let s = bun_core::OwnedString::new(BunString::from_js(cmd, global)?);
     Ok(s.eql_comptime(b"NODE_CLUSTER"))

@@ -838,7 +838,7 @@ describe("ipc mode advanced structured clone", () => {
 // Node reserves a string `cmd` longer than and starting with "NODE_" for its
 // internals (`isInternal` in lib/internal/child_process.js); advanced mode has
 // no wire-level flag, so the receiver classifies on that exact predicate.
-describe("ipc mode advanced internal message routing", () => {
+describe("ipc internal message routing", () => {
   function forkBun(dir: string, script: string) {
     return fork(path.join(dir, script), [], {
       execPath: bunExe(),
@@ -917,6 +917,50 @@ describe("ipc mode advanced internal message routing", () => {
     } finally {
       child.kill();
     }
+  });
+
+  // The `cmd === "NODE_CLUSTER"` gate only has to reject what the advanced
+  // decoder's classify_message can produce (an object with a string `cmd`).
+  // Json-mode internal messages are classified by the 0x02 wire prefix that
+  // only Bun's own cluster send_helper writes, and Bun versions before 1.4.1
+  // set no `cmd` on them, so a missing `cmd` is always a cluster message.
+  // Dropping it hangs a mixed-version json-mode cluster on the online handshake.
+  rawInjection("a json cluster message without a cmd (older bun) still reaches the primary", async () => {
+    using dir = tempDir("ipc-json-old-cluster", {
+      "primary.cjs": /* js */ `
+        const cluster = require("node:cluster");
+        const path = require("node:path");
+        cluster.setupPrimary({ exec: path.join(__dirname, "old-worker.cjs"), serialization: "json" });
+        const worker = cluster.fork();
+        worker.on("online", () => {
+          console.log("ONLINE");
+          worker.process.kill();
+          process.exit(0);
+        });
+        worker.process.on("exit", (code, signal) => {
+          console.log("WORKER_EXITED_FIRST", code, signal);
+          process.exit(1);
+        });
+      `,
+      // Never loads node:cluster (whose child bootstrap would send the new
+      // {cmd:"NODE_CLUSTER", act:"online"} shape); writes the exact frame an
+      // older bun's send_helper_child produced: 0x02 + json, no cmd property.
+      // NODE_CHANNEL_FD is consumed and unset on adoption; fork() always puts
+      // the ipc slot after stdin/stdout/stderr, so the channel is fd 3.
+      "old-worker.cjs": /* js */ `
+        const fs = require("node:fs");
+        fs.writeSync(3, Buffer.from('\\x02{"act":"online","seq":0}\\n', "latin1"));
+        setInterval(() => {}, 1 << 30);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "primary.cjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "ONLINE\n", exitCode: 0 });
   });
 });
 

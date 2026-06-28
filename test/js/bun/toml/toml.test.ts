@@ -339,14 +339,21 @@ name = "banana"
 });
 
 describe("robustness", () => {
+  // Recursion-overflow depths must hold on every build: release frames are
+  // much smaller than debug/ASAN frames, so a depth that overflows locally
+  // can parse successfully on a release build. 2M frames exceeds any stack
+  // even at tiny frame sizes, while the parses-fine depth of 1000 stays well
+  // under the limit even with large sanitizer frames.
+  const OVERFLOW_DEPTH = 2_000_000;
+
   test("deeply nested arrays throw instead of crashing", () => {
-    const depth = 200000;
-    expect(() => TOML.parse("a = " + "[".repeat(depth) + "]".repeat(depth))).toThrow(RangeError);
+    expect(() => TOML.parse("a = " + "[".repeat(OVERFLOW_DEPTH) + "]".repeat(OVERFLOW_DEPTH))).toThrow(RangeError);
   });
 
   test("deeply nested inline tables throw instead of crashing", () => {
-    const depth = 200000;
-    expect(() => TOML.parse("a = " + "{ b = ".repeat(depth) + "1" + " }".repeat(depth))).toThrow(RangeError);
+    expect(() => TOML.parse("a = " + "{ b = ".repeat(OVERFLOW_DEPTH) + "1" + " }".repeat(OVERFLOW_DEPTH))).toThrow(
+      RangeError,
+    );
   });
 
   test("deep dotted keys parse beyond the old 512-segment cap", () => {
@@ -358,9 +365,11 @@ describe("robustness", () => {
   });
 
   test("extremely deep dotted keys and headers throw instead of crashing", () => {
-    // Parsing these is iterative; the recursion limit is hit when the result
-    // is converted to JS values, which must also fail cleanly.
-    const path = Array(100000).fill("a").join(".");
+    // Parsing these is iterative (every segment is processed before the limit
+    // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
+    // stay small enough to be fast in debug builds while still overflowing
+    // the JS-conversion recursion at release frame sizes.
+    const path = Array(250_000).fill("a").join(".");
     expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
     expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
   });

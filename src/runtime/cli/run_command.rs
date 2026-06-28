@@ -3930,9 +3930,6 @@ mod bunx_fast_path_buffers {
     // buffers (bunx fast-path runs once on the main thread) → RacyCell.
     pub(super) static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
-    // Same `[PATH_MAX_WIDE]u16` shape as the launch buffer.
-    pub(super) static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
-        bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 
 impl BunXFastPath {
@@ -4069,19 +4066,7 @@ impl BunXFastPath {
         // contract is that *this* `passthrough` wins.
         ctx.passthrough = passthrough.to_vec();
 
-        // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-        let env_buf = unsafe { &mut *bunx_fast_path_buffers::ENVIRONMENT_BUFFER.get() };
-        let environment = match env.map.write_windows_env_block(&mut env_buf.0) {
-            Ok(env) => Some(env),
-            Err(_) => {
-                // The shim's `NtClose(metadata_handle)` only
-                // runs if `try_startup_from_bun_js` is reached. Close it
-                // explicitly so the slow-path fallback doesn't inherit a
-                // dangling open HANDLE for the process lifetime.
-                Fd::from_native(handle as u64).close();
-                return;
-            }
-        };
+        let env_block = env.map.write_windows_env_block();
 
         let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
             handle,
@@ -4092,7 +4077,7 @@ impl BunXFastPath {
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,
             cli_context: ::core::ptr::from_mut(ctx),
-            environment,
+            environment: Some(env_block.as_ptr()),
         };
 
         bun_core::scoped_log!(

@@ -53,6 +53,8 @@ bun_output::declare_scope!(FetchTasklet, visible);
 
 pub(crate) type ResumableSink = ResumableFetchSink;
 
+use http::signals::BodyReceiveMode;
+
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
@@ -82,7 +84,6 @@ pub struct FetchTasklet {
     /// native response ref if we still need it when JS is discarted
     // Response is intrusively refcounted; modeled as a raw ptr.
     pub native_response: Option<*mut Response>,
-    pub ignore_data: bool,
     /// stream strong ref if any is available
     pub readable_stream_ref: ReadableStreamStrong,
     pub request_headers: Headers,
@@ -474,7 +475,7 @@ impl FetchTasklet {
             Response::unref(response);
         }
 
-        self.clear_stream_cancel_handler();
+        self.clear_stream_handlers();
         self.readable_stream_ref.deinit();
 
         self.scheduled_response_buffer = MutableString::default();
@@ -667,7 +668,9 @@ impl FetchTasklet {
                 if let Some(bytes) = readable.ptr.bytes() {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
-                    bytes.on_data(StreamResult::Err(StreamError::JSValue(js_err)))?;
+                    bytes.on_data(StreamResult::Err(StreamError::JSValue(
+                        bun_jsc::strong::Optional::create(js_err, &global_this),
+                    )))?;
                 }
             }
             // A failure result is terminal (`to_result` forces `has_more =
@@ -710,8 +713,9 @@ impl FetchTasklet {
                 if self.result.has_more {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
                     bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                    self.drop_backpressure_if_unobserved(&readable, &bytes);
                 } else {
-                    self.clear_stream_cancel_handler();
+                    self.clear_stream_handlers();
                     let prev = core::mem::take(&mut self.readable_stream_ref);
                     buffer_reset.set(false);
 
@@ -737,6 +741,7 @@ impl FetchTasklet {
 
                     if self.result.has_more {
                         bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                        self.drop_backpressure_if_unobserved(&readable, &bytes);
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
@@ -1524,6 +1529,19 @@ impl FetchTasklet {
             return DrainResult::Aborted;
         }
 
+        // A body consumer is attaching; keep the process alive until the
+        // body finishes (undone in `on_progress_update` when `is_done`).
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
+
+        // The bytes already in `scheduled_response_buffer` are handed to the
+        // new stream below. That is the drain `Paused` was waiting for, so
+        // flip back to `AutoPause` so the resume scheduled here actually
+        // un-pauses the socket; otherwise a reader that finds the drained
+        // buffer smaller than the pending view returns `Pending` without
+        // signalling and the transport stays paused past a server FIN.
+        this.signal_store
+            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause);
+
         if let Some(http_) = this.http.as_mut() {
             http_.enable_response_body_streaming();
 
@@ -1531,7 +1549,7 @@ impl FetchTasklet {
             // and if the server doesn't close the connection by itself
             // and doesn't send any follow-up data
             // then we must make sure the HTTP thread flushes.
-            http::http_thread().schedule_response_body_drain(http_.async_http_id);
+            http::http_thread().schedule_receive_resume(http_.async_http_id);
         }
 
         this.mutex.lock();
@@ -1562,27 +1580,78 @@ impl FetchTasklet {
         }
     }
 
-    /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
-    /// Must be called before releasing readable_stream_ref, while the Strong ref
-    /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
-    fn clear_stream_cancel_handler(&mut self) {
+    /// Clear every ByteStream.Source callback whose ctx is this FetchTasklet
+    /// before releasing `readable_stream_ref` — the stream can outlive us in JS.
+    fn clear_stream_handlers(&mut self) {
         if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
             if let Some(bytes) = readable.ptr.bytes() {
-                // R-2: project to the parent `NewSource` via `&self`; the two
-                // fields are `Cell`-wrapped for exactly this caller.
                 let source = bytes.parent_const();
                 source.cancel_handler.set(None);
                 source.cancel_ctx.set(None);
+                source.drain_handler.set(None);
+                source.drain_ctx.set(None);
             }
         }
     }
 
     fn on_stream_cancelled_callback(ctx: Option<*mut c_void>) {
         let this = Self::from_ctx(ctx.expect("ctx"));
-        if this.ignore_data {
+        if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
-        this.ignore_remaining_response_body();
+        this.ignore_remaining_response_body(false);
+    }
+
+    fn on_stream_drained_callback(ctx: Option<*mut c_void>) {
+        let this = Self::from_ctx(ctx.expect("ctx"));
+        if this
+            .signal_store
+            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause)
+        {
+            this.schedule_receive_resume();
+        }
+    }
+
+    fn on_start_buffering_callback(ctx: *mut c_void) {
+        let this = Self::from_ctx(ctx);
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
+        if this
+            .signal_store
+            .set_receive_mode_terminal(BodyReceiveMode::BufferAll)
+        {
+            this.schedule_receive_resume();
+        }
+    }
+
+    fn schedule_receive_resume(&self) {
+        if let Some(http_) = self.http.as_ref() {
+            http::http_thread().schedule_receive_resume(http_.async_http_id);
+        }
+    }
+
+    /// After a body chunk has been delivered to the ByteStream with
+    /// `has_more == true`, flip to `BufferAll` if the stream has no lock,
+    /// no pipe, and no buffer action. An unlocked stream has no reader, so
+    /// there is nothing to apply backpressure against; let the body
+    /// complete so this tasklet (and the source it roots) can be freed.
+    fn drop_backpressure_if_unobserved(
+        &self,
+        readable: &ReadableStream,
+        bytes: &crate::webcore::ByteStream,
+    ) {
+        if self.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
+            return;
+        }
+        if bytes.pipe.get().ctx.is_some()
+            || bytes.buffer_action.get().is_some()
+            || bytes.pending.get().state == crate::webcore::streams::PendingState::Pending
+            || readable.is_locked(&self.global_this)
+        {
+            return;
+        }
+        self.signal_store
+            .set_receive_mode_terminal(BodyReceiveMode::BufferAll);
+        self.schedule_receive_resume();
     }
 
     fn to_body_value(&mut self) -> BodyValue {
@@ -1596,7 +1665,9 @@ impl FetchTasklet {
             pending.on_start_streaming =
                 Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
+            pending.on_start_buffering = Some(FetchTasklet::on_start_buffering_callback);
             pending.on_stream_cancelled = Some(FetchTasklet::on_stream_cancelled_callback);
+            pending.on_stream_drained = Some(FetchTasklet::on_stream_drained_callback);
             return BodyValue::Locked(pending);
         }
 
@@ -1652,20 +1723,32 @@ impl FetchTasklet {
         )
     }
 
-    fn ignore_remaining_response_body(&mut self) {
+    fn ignore_remaining_response_body(&mut self, from_finalizer: bool) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
         // The response is being abandoned. If the request body is still uploading
         // through a ResumableSink, detach its JS wrapper so the cached
         // `ondrain` closure (and the reader/stream graph it captures) becomes
-        // collectible instead of leaking. `detach_js` runs no JS callbacks, so it
-        // is safe even on the GC-finalizer caller (`on_response_finalize`); the
-        // sink's own teardown (`Drop`/`finalize`) handles the rest once its refs
-        // drain.
-        if let Some(sink) = self.sink_mut() {
-            sink.detach_js();
+        // collectible instead of leaking.
+        //
+        // When reached from `on_response_finalize` (a JSC Weak finalizer inside
+        // `WeakBlock::sweep`), `detach_js()` and `clear_stream_handlers()` must be
+        // skipped: both reach `JSCell::classInfo()` via generated cached-value
+        // setters / `ReadableStreamTag__tagged`, and touching any cell during
+        // `MutatorState::Sweeping` is forbidden. `clear_sink()` in `deinit()` (an
+        // event-loop task, outside sweep) performs the deferred detach.
+        if !from_finalizer {
+            if let Some(sink) = self.sink_mut() {
+                sink.detach_js();
+            }
         }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
+        if self
+            .signal_store
+            .set_receive_mode_terminal(BodyReceiveMode::Ignore)
+        {
+            self.schedule_receive_resume();
+        }
         if let Some(http_) = self.http.as_mut() {
             http_.enable_response_body_streaming();
         }
@@ -1673,7 +1756,9 @@ impl FetchTasklet {
         let _ = self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // clean any remaining references
-        self.clear_stream_cancel_handler();
+        if !from_finalizer {
+            self.clear_stream_handlers();
+        }
         self.readable_stream_ref.deinit();
         self.response.clear();
 
@@ -1681,13 +1766,18 @@ impl FetchTasklet {
             // SAFETY: `response` is the +1 ref held in `native_response`.
             Response::unref(response);
         }
-
-        self.ignore_data = true;
     }
 
     pub(crate) fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
         let response = bun_core::heap::into_raw(Box::new(self.to_response()));
+        // The fetch() promise is about to resolve; from here the paused
+        // transport should not by itself keep the event loop alive. The body
+        // consumer hooks (`on_start_streaming_http_response_body_callback`,
+        // `on_start_buffering_callback`) re-ref if the caller reads the body.
+        if self.is_waiting_body {
+            self.poll_ref.unref(bun_io::js_vm_ctx());
+        }
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
         // SAFETY: `response` is freshly allocated above; ownership transfers to JSC.
@@ -1729,7 +1819,6 @@ impl FetchTasklet {
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
             native_response: None,
-            ignore_data: false,
             readable_stream_ref: ReadableStreamStrong::default(),
             request_headers: fetch_options.headers,
             promise,
@@ -1756,7 +1845,7 @@ impl FetchTasklet {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
-        fetch_tasklet.signals = fetch_tasklet.signal_store.to();
+        fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
         fetch_tasklet.tracker.did_schedule(global_this);
 
@@ -1895,6 +1984,7 @@ impl FetchTasklet {
                 reject_unauthorized: Some(fetch_options.reject_unauthorized),
                 verbose: Some(fetch_options.verbose),
                 tls_props: fetch_options.ssl_config,
+                compress: fetch_options.compress,
             },
         )));
         // enable streaming the write side
@@ -2041,6 +2131,15 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
         if self.signal_aborted() {
             return ResumableSinkBackpressure::Done;
+        }
+        // An empty chunk is a no-op on every framing path. It must not reach
+        // the chunked framer below, which would serialize it as "0\r\n\r\n",
+        // the chunked-body TERMINATOR (RFC 9112 section 7.1), ending the
+        // message mid-upload. It must also never report Backpressure: nothing
+        // gets buffered, so the HTTP thread's report_drain (what resumes a
+        // paused sink) can never fire, and the upload stalls forever.
+        if data.is_empty() {
+            return ResumableSinkBackpressure::WantMore;
         }
         // reshaped for borrowck — read sink HWM (Copy) before
         // borrowing the stream buffer so `self` is unborrowed during the
@@ -2196,9 +2295,9 @@ impl FetchTasklet {
 
         bun_output::scoped_log!(
             FetchTasklet,
-            "callback success={} ignore_data={} has_more={} bytes={}",
+            "callback success={} receive_mode={:?} has_more={} bytes={}",
             result.is_success(),
-            task_ref.ignore_data,
+            task_ref.signal_store.body_receive_mode(),
             result.has_more,
             result.body.as_ref().map(|b| b.list.len()).unwrap_or(0)
         );
@@ -2250,7 +2349,7 @@ impl FetchTasklet {
         // above before the lifetime-erasing assignment; the bytes are already in place, so
         // no copy is needed and the `reset()` calls below operate on the right allocation.
 
-        if task_ref.ignore_data {
+        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             task_ref.response_buffer.reset();
 
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
@@ -2272,6 +2371,12 @@ impl FetchTasklet {
                         .scheduled_response_buffer
                         .write(task_ref.response_buffer.list.as_slice()),
                 );
+                if task_ref.result.has_more && !task_ref.scheduled_response_buffer.list.is_empty() {
+                    let _ = task_ref.signal_store.try_transition_receive_mode(
+                        BodyReceiveMode::AutoPause,
+                        BodyReceiveMode::Paused,
+                    );
+                }
             }
             // reset for reuse
             task_ref.response_buffer.reset();
@@ -2362,7 +2467,10 @@ impl FetchTasklet {
             //
             // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
             if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
-                // Scenario 1 or 3.
+                // Scenario 1 or 3. A paused transport in Scenario 1 is
+                // unstuck by `drop_backpressure_if_unobserved` once the next
+                // already-scheduled chunk reaches `on_body_received` and
+                // finds the stream unlocked.
                 return;
             }
 
@@ -2370,11 +2478,11 @@ impl FetchTasklet {
                 if let Some(promise) = locked.promise {
                     if promise.is_empty_or_undefined_or_null() {
                         // Scenario 2b.
-                        this.ignore_remaining_response_body();
+                        this.ignore_remaining_response_body(true);
                     }
                 } else {
                     // Scenario 3.
-                    this.ignore_remaining_response_body();
+                    this.ignore_remaining_response_body(true);
                 }
             }
         }
@@ -2408,6 +2516,7 @@ pub struct FetchOptions {
     pub force_http3: bool,
     pub force_http1: bool,
     pub is_node_http_client: bool,
+    pub compress: Option<http::compress_body::CompressOption>,
 }
 
 impl Default for FetchOptions {
@@ -2442,6 +2551,7 @@ impl Default for FetchOptions {
             force_http3: false,
             force_http1: false,
             is_node_http_client: false,
+            compress: None,
         }
     }
 }

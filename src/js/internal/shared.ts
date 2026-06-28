@@ -163,7 +163,7 @@ const observerCounts = new Map();
 const kObservers = new Set();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns"]);
+const kNodeEntryTypes = new Set(["net", "dns", "http"]);
 
 function hasObserver(type) {
   return (observerCounts.get(type) ?? 0) > 0;
@@ -186,7 +186,10 @@ function stopPerf(target, key, context) {
     entryType: ctx.type,
     startTime,
     duration: performance.now() - startTime,
-    detail: context?.detail !== undefined ? context.detail : ctx.detail,
+    // Node.js merges the detail recorded at startPerf() with the detail
+    // passed to stopPerf() (e.g. http entries carry both req and res).
+    detail:
+      ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined,
   };
   for (const observer of kObservers) {
     observer.bufferEntry(entry);

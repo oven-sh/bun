@@ -189,6 +189,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // Racing an in-flight async write would alias `&mut Context`
+            // across threads; a closed `Context` cannot be re-initialized.
+            CompressionStream::<Self>::throw_unless_idle(self, global_this)?;
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
@@ -265,6 +268,9 @@ mod _impl {
                 if err.is_error() {
                     // impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
                     self.stream.with_mut(|s| s.close());
+                    // The Context is torn down (`mode` is `NONE`); reject any
+                    // further operation the way `close()` does.
+                    self.closed.set(true);
                     return Ok(JSValue::FALSE);
                 }
             }
@@ -429,6 +435,11 @@ mod _impl {
         }
 
         pub fn do_work(&mut self) {
+            // A handle driven before `init()` has no encoder/decoder state;
+            // brotli dereferences the state pointer unconditionally.
+            if self.state.is_none() {
+                return;
+            }
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
                     let mut next_in = self.next_in;
@@ -521,7 +532,11 @@ mod _impl {
         }
 
         pub fn close(&mut self) {
-            self.deinit_state();
+            // Idempotent: a handle that was never (successfully) initialized,
+            // or that was already closed, has no encoder/decoder to free.
+            if self.state.is_some() {
+                self.deinit_state();
+            }
             self.mode = bun_zlib::NodeMode::NONE;
         }
 
@@ -561,48 +576,43 @@ mod _impl {
     crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli");
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
+        // Node builds these as `"ERR_" + <brotli enum suffix>` where the suffix
+        // keeps its leading underscore (`_ERROR_FORMAT_*`), yielding codes like
+        // `ERR__ERROR_FORMAT_PADDING_2` (double underscore). Match node exactly.
         // Rust has no enum reflection — expand the table by hand. Keep in sync
         // with `bun_brotli::c::BrotliDecoderErrorCode2`.
         use c::BrotliDecoderErrorCode2 as E;
         let s: &core::ffi::CStr = match err {
-            E::NO_ERROR => c"ERR_BROTLI_DECODER_NO_ERROR",
-            E::SUCCESS => c"ERR_BROTLI_DECODER_SUCCESS",
-            E::NEEDS_MORE_INPUT => c"ERR_BROTLI_DECODER_NEEDS_MORE_INPUT",
-            E::NEEDS_MORE_OUTPUT => c"ERR_BROTLI_DECODER_NEEDS_MORE_OUTPUT",
-            E::ERROR_FORMAT_EXUBERANT_NIBBLE => c"ERR_BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE",
-            E::ERROR_FORMAT_RESERVED => c"ERR_BROTLI_DECODER_ERROR_FORMAT_RESERVED",
-            E::ERROR_FORMAT_EXUBERANT_META_NIBBLE => {
-                c"ERR_BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE"
-            }
-            E::ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET => {
-                c"ERR_BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET"
-            }
-            E::ERROR_FORMAT_SIMPLE_HUFFMAN_SAME => {
-                c"ERR_BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME"
-            }
-            E::ERROR_FORMAT_CL_SPACE => c"ERR_BROTLI_DECODER_ERROR_FORMAT_CL_SPACE",
-            E::ERROR_FORMAT_HUFFMAN_SPACE => c"ERR_BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE",
-            E::ERROR_FORMAT_CONTEXT_MAP_REPEAT => {
-                c"ERR_BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT"
-            }
-            E::ERROR_FORMAT_BLOCK_LENGTH_1 => c"ERR_BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1",
-            E::ERROR_FORMAT_BLOCK_LENGTH_2 => c"ERR_BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2",
-            E::ERROR_FORMAT_TRANSFORM => c"ERR_BROTLI_DECODER_ERROR_FORMAT_TRANSFORM",
-            E::ERROR_FORMAT_DICTIONARY => c"ERR_BROTLI_DECODER_ERROR_FORMAT_DICTIONARY",
-            E::ERROR_FORMAT_WINDOW_BITS => c"ERR_BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS",
-            E::ERROR_FORMAT_PADDING_1 => c"ERR_BROTLI_DECODER_ERROR_FORMAT_PADDING_1",
-            E::ERROR_FORMAT_PADDING_2 => c"ERR_BROTLI_DECODER_ERROR_FORMAT_PADDING_2",
-            E::ERROR_FORMAT_DISTANCE => c"ERR_BROTLI_DECODER_ERROR_FORMAT_DISTANCE",
-            E::ERROR_COMPOUND_DICTIONARY => c"ERR_BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY",
-            E::ERROR_DICTIONARY_NOT_SET => c"ERR_BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET",
-            E::ERROR_INVALID_ARGUMENTS => c"ERR_BROTLI_DECODER_ERROR_INVALID_ARGUMENTS",
-            E::ERROR_ALLOC_CONTEXT_MODES => c"ERR_BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES",
-            E::ERROR_ALLOC_TREE_GROUPS => c"ERR_BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS",
-            E::ERROR_ALLOC_CONTEXT_MAP => c"ERR_BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP",
-            E::ERROR_ALLOC_RING_BUFFER_1 => c"ERR_BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1",
-            E::ERROR_ALLOC_RING_BUFFER_2 => c"ERR_BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2",
-            E::ERROR_ALLOC_BLOCK_TYPE_TREES => c"ERR_BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES",
-            E::ERROR_UNREACHABLE => c"ERR_BROTLI_DECODER_ERROR_UNREACHABLE",
+            E::NO_ERROR => c"ERR__NO_ERROR",
+            E::SUCCESS => c"ERR__SUCCESS",
+            E::NEEDS_MORE_INPUT => c"ERR__NEEDS_MORE_INPUT",
+            E::NEEDS_MORE_OUTPUT => c"ERR__NEEDS_MORE_OUTPUT",
+            E::ERROR_FORMAT_EXUBERANT_NIBBLE => c"ERR__ERROR_FORMAT_EXUBERANT_NIBBLE",
+            E::ERROR_FORMAT_RESERVED => c"ERR__ERROR_FORMAT_RESERVED",
+            E::ERROR_FORMAT_EXUBERANT_META_NIBBLE => c"ERR__ERROR_FORMAT_EXUBERANT_META_NIBBLE",
+            E::ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET => c"ERR__ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET",
+            E::ERROR_FORMAT_SIMPLE_HUFFMAN_SAME => c"ERR__ERROR_FORMAT_SIMPLE_HUFFMAN_SAME",
+            E::ERROR_FORMAT_CL_SPACE => c"ERR__ERROR_FORMAT_CL_SPACE",
+            E::ERROR_FORMAT_HUFFMAN_SPACE => c"ERR__ERROR_FORMAT_HUFFMAN_SPACE",
+            E::ERROR_FORMAT_CONTEXT_MAP_REPEAT => c"ERR__ERROR_FORMAT_CONTEXT_MAP_REPEAT",
+            E::ERROR_FORMAT_BLOCK_LENGTH_1 => c"ERR__ERROR_FORMAT_BLOCK_LENGTH_1",
+            E::ERROR_FORMAT_BLOCK_LENGTH_2 => c"ERR__ERROR_FORMAT_BLOCK_LENGTH_2",
+            E::ERROR_FORMAT_TRANSFORM => c"ERR__ERROR_FORMAT_TRANSFORM",
+            E::ERROR_FORMAT_DICTIONARY => c"ERR__ERROR_FORMAT_DICTIONARY",
+            E::ERROR_FORMAT_WINDOW_BITS => c"ERR__ERROR_FORMAT_WINDOW_BITS",
+            E::ERROR_FORMAT_PADDING_1 => c"ERR__ERROR_FORMAT_PADDING_1",
+            E::ERROR_FORMAT_PADDING_2 => c"ERR__ERROR_FORMAT_PADDING_2",
+            E::ERROR_FORMAT_DISTANCE => c"ERR__ERROR_FORMAT_DISTANCE",
+            E::ERROR_COMPOUND_DICTIONARY => c"ERR__ERROR_COMPOUND_DICTIONARY",
+            E::ERROR_DICTIONARY_NOT_SET => c"ERR__ERROR_DICTIONARY_NOT_SET",
+            E::ERROR_INVALID_ARGUMENTS => c"ERR__ERROR_INVALID_ARGUMENTS",
+            E::ERROR_ALLOC_CONTEXT_MODES => c"ERR__ERROR_ALLOC_CONTEXT_MODES",
+            E::ERROR_ALLOC_TREE_GROUPS => c"ERR__ERROR_ALLOC_TREE_GROUPS",
+            E::ERROR_ALLOC_CONTEXT_MAP => c"ERR__ERROR_ALLOC_CONTEXT_MAP",
+            E::ERROR_ALLOC_RING_BUFFER_1 => c"ERR__ERROR_ALLOC_RING_BUFFER_1",
+            E::ERROR_ALLOC_RING_BUFFER_2 => c"ERR__ERROR_ALLOC_RING_BUFFER_2",
+            E::ERROR_ALLOC_BLOCK_TYPE_TREES => c"ERR__ERROR_ALLOC_BLOCK_TYPE_TREES",
+            E::ERROR_UNREACHABLE => c"ERR__ERROR_UNREACHABLE",
         };
         s.as_ptr()
     }

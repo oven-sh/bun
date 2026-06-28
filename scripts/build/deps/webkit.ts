@@ -4,7 +4,7 @@
  * From https://github.com/oven-sh/WebKit releases.
  */
 // Preview autobuild of oven-sh/WebKit#235, rebased on the current main pin
-// cd821fecca0d39c8bac874c283d956868c7f0de0 so the JSC/ICU ABI and the artifact
+// f72c0151d39e40bec7755bcdcd9701f3d61b8e8b so the JSC/ICU ABI and the artifact
 // set match upstream: macOS + Windows cross-compiled on Linux, -lto variants
 // built with ThinLTO (per-module summaries for cross-language importing), and
 // the Windows ICU data table filtered + per-item zstd compressed (lazily
@@ -13,7 +13,7 @@
 // works when SA_ONSTACK is set on the handler (e.g. Go cgo's initsig) instead
 // of spinning forever. Swap back to the merged commit hash once #235 lands.
 // See oven-sh/bun#31158.
-export const WEBKIT_VERSION = "autobuild-preview-pr-235-3593e2cc";
+export const WEBKIT_VERSION = "autobuild-preview-pr-235-8dd7b8c2";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

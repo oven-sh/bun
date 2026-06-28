@@ -511,6 +511,24 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     return written;
 }
 
+int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+    if (us_socket_is_closed(s) ||
+        us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) {
+        return 0;
+    }
+
+    size_t total = 0;
+    for (int i = 0; i < count; i++) total += iov[i].iov_len;
+
+    ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
+    if (written != (ssize_t)total) {
+        s->flags.last_write_failed = 1;
+        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+
+    return written < 0 ? 0 : (int)written;
+}
+
 int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking

@@ -77,6 +77,8 @@ public:
     void cachedDataProduced(bool value) { m_cachedDataProduced = value; }
     TriState cachedDataRejected() const { return m_cachedDataRejected; }
     void cachedDataRejected(TriState value) { m_cachedDataRejected = value; }
+    bool sourceMapURLParsed() const { return m_sourceMapURLParsed; }
+    void sourceMapURLParsed(bool value) { m_sourceMapURLParsed = value; }
 
     DECLARE_VISIT_CHILDREN;
 
@@ -87,6 +89,7 @@ private:
     JSC::WriteBarrier<JSC::ProgramExecutable> m_cachedExecutable;
     ScriptOptions m_options;
     bool m_cachedDataProduced = false;
+    bool m_sourceMapURLParsed = false;
     TriState m_cachedDataRejected = TriState::Indeterminate;
 
     NodeVMScript(JSC::VM& vm, JSC::Structure* structure, JSC::SourceCode source, ScriptOptions options)

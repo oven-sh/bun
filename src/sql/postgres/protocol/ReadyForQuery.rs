@@ -18,8 +18,7 @@ impl ReadyForQuery {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        let length = reader.length()?;
-        debug_assert!(length >= 4);
+        reader.length()?;
 
         let status = reader.int::<u8>()?;
         // TransactionStatusIndicator is a `#[repr(transparent)] struct(u8)` newtype —

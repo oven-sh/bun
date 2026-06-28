@@ -1202,10 +1202,8 @@ pub mod time {
     }
 }
 
-/// `bun.schema`. The full generated API
-/// types live in `bun_api` (tier-2); tier-0 only needs the namespace to
-/// exist so `bun_core::schema::api::StringPointer` etc. resolve as re-exports
-/// once that crate un-gates. For now expose the one type tier-0 itself owns.
+/// `bun.schema`. The full generated API types live in `bun_api` (tier-2);
+/// tier-0 cannot depend on that, so expose the one type tier-0 itself owns.
 pub mod schema {
     pub mod api {
         pub use crate::util::StringPointer;
@@ -1845,11 +1843,12 @@ pub(crate) mod strings_impl {
         pub written: u32,
     }
 
-    /// Port of `elementLengthUTF16IntoUTF8` — exact UTF-8 byte length of a UTF-16
-    /// (LE) input. simdutf-backed; falls back to scalar would be in unicode_draft.
+    /// Port of `elementLengthUTF16IntoUTF8`: the exact UTF-8 byte length of a
+    /// UTF-16 (LE) input, charging 3 bytes (U+FFFD) per unpaired surrogate,
+    /// which is exactly what `copy_utf16_into_utf8` / `to_utf8_alloc` write.
     #[inline]
     pub fn element_length_utf16_into_utf8(utf16: &[u16]) -> usize {
-        simdutf::length::utf8::from::utf16::le(utf16)
+        simdutf::length::utf8::from::utf16::le_with_replacement(utf16)
     }
 
     /// Port of `elementLengthLatin1IntoUTF8`.
@@ -1871,7 +1870,7 @@ pub(crate) mod strings_impl {
         let utf8_len = if worst_case <= buf.len() {
             worst_case
         } else {
-            simdutf::length::utf8::from::utf16::le(utf16)
+            element_length_utf16_into_utf8(utf16)
         };
         copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
     }
@@ -2605,9 +2604,9 @@ pub mod debug_allocator_data {
     }
 }
 
-/// `bun.feature_flag.*` runtime env-var getters (real impl in env_var.rs, still gated).
-/// feature_flags.rs (compile-time consts) is now real; this stub provides the
-/// `.get()` accessor surface that env_var.rs will replace.
+/// `bun.feature_flag.*` runtime env-var getters. The canonical typed
+/// accessors live in `env_var::feature_flag`; this stub provides the
+/// `.get()` accessor surface for flags not yet wired there.
 pub mod feature_flag {
     macro_rules! flag { ($($name:ident),* $(,)?) => { $(
         #[allow(non_camel_case_types)] pub struct $name;

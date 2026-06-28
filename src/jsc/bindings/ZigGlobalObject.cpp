@@ -1053,6 +1053,18 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
             return unhandledPromise.get() == promise;
         });
         if (removed) break;
+        // handleRejectedPromises() drains the list into a local buffer before
+        // running any handler. A handler may .catch() a later still-queued
+        // promise; that promise is no longer in m_aboutToBeNotifiedRejectedPromises
+        // but has not yet had 'unhandledRejection' fired, so it must not get
+        // 'rejectionHandled'. Check every in-flight tail (handlers can re-enter
+        // handleRejectedPromises(), so there may be more than one).
+        for (auto* inflight = globalObj->m_rejectedPromisesBeingProcessed; inflight; inflight = inflight->outer) {
+            for (size_t i = inflight->index, n = inflight->buffer->size(); i < n; ++i) {
+                if (inflight->buffer->at(i).asCell() == promise)
+                    return;
+            }
+        }
         // The promise rejection has already been notified, now we need to queue it for the rejectionHandled event
         Bun__handleHandledPromise(globalObj, promise);
         break;
@@ -1613,6 +1625,39 @@ JSC_DEFINE_CUSTOM_SETTER(setterSubtleCrypto,
         JSC::EncodedJSValue, JSC::PropertyName))
 {
     return true;
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetUserAgent, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(JSC::jsString(vm, WTF::String::fromUTF8(Bun__userAgent)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+// https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
+// https://github.com/oven-sh/bun/issues/4588
+#if OS(DARWIN)
+    return JSValue::encode(JSC::jsString(vm, String("MacIntel"_s)));
+#elif OS(WINDOWS)
+    return JSValue::encode(JSC::jsString(vm, String("Win32"_s)));
+#elif OS(LINUX)
+    return JSValue::encode(JSC::jsString(vm, String("Linux x86_64"_s)));
+#elif OS(FREEBSD)
+#if CPU(ARM64)
+    return JSValue::encode(JSC::jsString(vm, String("FreeBSD arm64"_s)));
+#else
+    return JSValue::encode(JSC::jsString(vm, String("FreeBSD amd64"_s)));
+#endif
+#else
+    return JSValue::encode(JSC::jsEmptyString(vm));
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
 }
 
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
@@ -2203,28 +2248,18 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
-            int cpuCount = WTF::numberOfProcessorCores();
+            JSC::JSGlobalObject* globalObject = init.owner;
+            unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-            auto str = WTF::String::fromUTF8(Bun__userAgent);
-            JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
-            JSC::Identifier hardwareConcurrencyIdentifier = JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s);
+            JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
-            JSC::JSObject* obj = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 4);
-            obj->putDirect(init.vm, userAgentIdentifier, JSC::jsString(init.vm, str));
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+
             obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                 jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
-// https://github.com/oven-sh/bun/issues/4588
-#if OS(DARWIN)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("MacIntel"_s)));
-#elif OS(WINDOWS)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("Win32"_s)));
-#elif OS(LINUX)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("Linux x86_64"_s)));
-#endif
-
-            obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
             init.set(obj);
         });
 
@@ -2773,9 +2808,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globa
     auto offsetVal = callFrame->argument(1);
     auto byteLengthVal = callFrame->argument(2);
 
-    ssize_t offset;
-    Bun::V::validateInteger(scope, globalObject, offsetVal, "offset"_s, jsUndefined(), jsUndefined(), &offset);
-    RETURN_IF_EXCEPTION(scope, {});
+    // Mirrors Node's read-path validation (lib/internal/buffer.js): validateNumber
+    // on the offset, then boundsError(). A non-integer offset (NaN, 1.01) reports
+    // "an integer", but a finite-floor value like Infinity or a negative integer
+    // reports the ">= 0 and <= N" range, matching boundsError's MathFloor check.
+    if (!offsetVal.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "offset"_s, "number"_s, offsetVal);
+    double offset = offsetVal.asNumber();
 
     if (!bufVal.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buf"_s, "Buffer"_s, bufVal);
     auto* buf = dynamicDowncast<JSC::JSArrayBufferView>(bufVal.asCell());
@@ -2783,12 +2821,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globa
     size_t byteLength = byteLengthVal.asNumber();
     ssize_t type = ((ssize_t)buf->length()) - byteLength;
 
-    if (!(offset >= 0 && offset <= type)) {
-        if (std::floor(offset) != offset) {
-            Bun::V::validateNumber(scope, globalObject, offsetVal, jsUndefined(), jsUndefined(), jsUndefined());
-            RETURN_IF_EXCEPTION(scope, {});
-            return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, "an integer"_s, offsetVal);
-        }
+    // A non-integer offset (NaN, 1.01) is "an integer" even when numerically
+    // within bounds — the caller only reaches here because buf[offset] was
+    // undefined, which for a fractional index happens regardless of bounds.
+    if (std::floor(offset) != offset) {
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, "an integer"_s, offsetVal);
+    }
+    if (!(offset >= 0 && offset <= (double)type)) {
         if (type < 0) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, globalObject, ""_s);
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, makeString(">= 0 and <= "_s, type), offsetVal);
     }
@@ -3255,18 +3294,41 @@ extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JS
 
 void GlobalObject::handleRejectedPromises()
 {
+    if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
+        return;
+
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
-    while (auto* promise = m_aboutToBeNotifiedRejectedPromises.takeFirst(this)) {
-        if (promise->isHandled())
-            continue;
+    do {
+        // Move the whole list out under one cellLock, then iterate linearly —
+        // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
+        // RejectedPromiseTracker use.
+        JSC::MarkedArgumentBuffer promises;
+        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises);
+        RELEASE_ASSERT(!promises.hasOverflowed());
+        // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
+        // can tell "still pending" apart from "already notified". Linked as a
+        // stack so a re-entrant handleRejectedPromises() (a handler that ticks
+        // the event loop) restores the outer frame instead of nulling it.
+        InFlightRejections inflight { &promises, 0, m_rejectedPromisesBeingProcessed };
+        WTF::SetForScope inflightScope(m_rejectedPromisesBeingProcessed, &inflight);
+        for (size_t i = 0, size = promises.size(); i < size; ++i) {
+            auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());
+            if (promise->isHandled())
+                continue;
+            inflight.index = i + 1;
 
-        Bun__handleRejectedPromise(this, promise);
-        if (auto ex = scope.exception()) {
-            (void)scope.tryClearException();
-            this->reportUncaughtExceptionAtEventLoop(this, ex);
+            Bun__handleRejectedPromise(this, promise);
+            if (auto ex = scope.exception()) {
+                if (virtual_machine.isTerminationException(ex)) [[unlikely]]
+                    return;
+                (void)scope.tryClearException();
+                this->reportUncaughtExceptionAtEventLoop(this, ex);
+            }
         }
-    }
+        // An unhandledRejection handler may itself reject a promise; loop
+        // until the list stays empty.
+    } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);

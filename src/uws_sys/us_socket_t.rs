@@ -32,6 +32,14 @@ pub enum CloseCode {
     fast_shutdown = 2,
 }
 
+/// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UsIoVec {
+    pub base: *const core::ffi::c_void,
+    pub len: usize,
+}
+
 impl us_socket_t {
     pub fn open(&mut self, is_client: bool, ip_addr: Option<&[u8]>) {
         bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
@@ -392,6 +400,23 @@ impl us_socket_t {
         rc
     }
 
+    /// Vectored raw write — all chunks reach the fd in one writev (sequential
+    /// sends on platforms without it). Same closed/shutdown gating and
+    /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
+    /// raw writes bypass TLS framing.
+    pub fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
+        bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
+        // SAFETY: iov entries reference memory owned by the caller for the
+        // duration of this call; the C side only reads them synchronously.
+        unsafe {
+            c::us_socket_raw_writev(
+                self,
+                iov.as_ptr(),
+                i32::try_from(iov.len()).expect("int cast"),
+            )
+        }
+    }
+
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
@@ -506,6 +531,11 @@ mod c {
             len: usize,
             payload: *const u8,
             len2: usize,
+        ) -> i32;
+        pub(super) fn us_socket_raw_writev(
+            s: *mut us_socket_t,
+            iov: *const super::UsIoVec,
+            count: i32,
         ) -> i32;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
         -> i32;

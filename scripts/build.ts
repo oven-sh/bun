@@ -384,6 +384,7 @@ function parseArgs(argv: string[]): CliArgs {
     "tinycc",
     "valgrind",
     "fuzzilli",
+    "socketFaultInjection",
     "unifiedSources",
     "archiveDeps",
     "timeTrace",

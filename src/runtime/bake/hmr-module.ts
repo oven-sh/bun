@@ -8,9 +8,11 @@
 // This was done to make incremental updates as isolated as possible.
 import {
   __callDispose,
+  __EARLY_RETURN_SENTINEL,
   __legacyDecorateClassTS,
   __legacyDecorateParamTS,
   __legacyMetadataTS,
+  __MEMO_CACHE_SENTINEL,
   __name,
   __using,
 } from "../../runtime.bun";
@@ -875,12 +877,13 @@ function toCommonJS(from: any) {
 
 function toESM(mod: any) {
   const to = Object.defineProperty(Object.create(null), "default", { value: mod, enumerable: true });
-  for (let key of Object.getOwnPropertyNames(mod))
-    if (!Object.prototype.hasOwnProperty.call(to, key))
-      Object.defineProperty(to, key, {
-        get: () => mod[key],
-        enumerable: true,
-      });
+  if ((mod && typeof mod === "object") || typeof mod === "function")
+    for (let key of Object.getOwnPropertyNames(mod))
+      if (!Object.prototype.hasOwnProperty.call(to, key))
+        Object.defineProperty(to, key, {
+          get: () => mod[key],
+          enumerable: true,
+        });
   return to;
 }
 
@@ -950,6 +953,8 @@ registerSynthetic("bun:wrap", {
   __legacyMetadataTS,
   __using,
   __callDispose,
+  __MEMO_CACHE_SENTINEL,
+  __EARLY_RETURN_SENTINEL,
 });
 
 if (side === "server") {

@@ -207,7 +207,22 @@ impl BinaryExpressionVisitor {
                 // "(0, this.fn)" => "this.fn"
                 // "(0, this.fn)()" => "(0, this.fn)()"
                 if p.options.features.minify_syntax {
-                    if let Some(simplified_left) = SideEffects::simplify_unused_expr(p, e_.left) {
+                    // If e_.left is itself a comma, its .left was already simplified
+                    // by the previous unwind step; only simplify its .right to avoid
+                    // re-walking/reallocating the whole chain (O(n^2) arena blowup).
+                    let simplified_left = match e_.left.data {
+                        ExprData::EBinary(mut inner) if inner.op == Op::Code::BinComma => {
+                            match SideEffects::simplify_unused_expr(p, inner.right) {
+                                None => Some(inner.left),
+                                Some(simplified_right) => {
+                                    inner.right = simplified_right;
+                                    Some(e_.left)
+                                }
+                            }
+                        }
+                        _ => SideEffects::simplify_unused_expr(p, e_.left),
+                    };
+                    if let Some(simplified_left) = simplified_left {
                         if simplified_left.is_empty() {
                             return e_.right;
                         }
@@ -362,7 +377,7 @@ impl BinaryExpressionVisitor {
                         if is_call_target && e_.right.has_value_for_this_in_call() {
                             return Expr::join_with_comma(
                                 Expr {
-                                    data: ExprData::ENumber(E::Number { value: 0.0 }),
+                                    data: ExprData::ENumber(E::Number::new(0.0)),
                                     loc: e_.left.loc,
                                 },
                                 e_.right,
@@ -422,12 +437,7 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: vals[0] + vals[1],
-                            },
-                            v.loc,
-                        );
+                        return p.new_expr(E::Number::new(vals[0] + vals[1]), v.loc);
                     }
 
                     // "'abc' + 'xyz'" => "'abcxyz'"
@@ -466,12 +476,7 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: vals[0] - vals[1],
-                            },
-                            v.loc,
-                        );
+                        return p.new_expr(E::Number::new(vals[0] - vals[1]), v.loc);
                     }
                 }
             }
@@ -479,12 +484,7 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: vals[0] * vals[1],
-                            },
-                            v.loc,
-                        );
+                        return p.new_expr(E::Number::new(vals[0] * vals[1]), v.loc);
                     }
                 }
             }
@@ -492,12 +492,7 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: vals[0] / vals[1],
-                            },
-                            v.loc,
-                        );
+                        return p.new_expr(E::Number::new(vals[0] / vals[1]), v.loc);
                     }
                 }
             }
@@ -509,9 +504,7 @@ impl BinaryExpressionVisitor {
                             // Rust `%` on f64 has libc fmod semantics (LLVM frem),
                             // which matches what JavaScriptCore does:
                             // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                            E::Number {
-                                value: vals[0] % vals[1],
-                            },
+                            E::Number::new(vals[0] % vals[1]),
                             v.loc,
                         );
                     }
@@ -521,12 +514,8 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: bun_ast::math::pow(vals[0], vals[1]),
-                            },
-                            v.loc,
-                        );
+                        return p
+                            .new_expr(E::Number::new(bun_ast::math::pow(vals[0], vals[1])), v.loc);
                     }
                 }
             }
@@ -537,12 +526,7 @@ impl BinaryExpressionVisitor {
                         let left = float_to_int32(vals[0]);
                         let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
                         let result: i32 = left.wrapping_shl(right);
-                        return p.new_expr(
-                            E::Number {
-                                value: result as f64,
-                            },
-                            v.loc,
-                        );
+                        return p.new_expr(E::Number::new(result as f64), v.loc);
                     }
                 }
             }
@@ -554,12 +538,7 @@ impl BinaryExpressionVisitor {
                         let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
                         // wrapping_shr on i32 is an arithmetic shift right
                         let result: i32 = left.wrapping_shr(right);
-                        return p.new_expr(
-                            E::Number {
-                                value: result as f64,
-                            },
-                            v.loc,
-                        );
+                        return p.new_expr(E::Number::new(result as f64), v.loc);
                     }
                 }
             }
@@ -570,12 +549,7 @@ impl BinaryExpressionVisitor {
                         let left: u32 = float_to_int32(vals[0]) as u32;
                         let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
                         let result: u32 = left.wrapping_shr(right);
-                        return p.new_expr(
-                            E::Number {
-                                value: result as f64,
-                            },
-                            v.loc,
-                        );
+                        return p.new_expr(E::Number::new(result as f64), v.loc);
                     }
                 }
             }
@@ -584,9 +558,9 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(
-                            E::Number {
-                                value: (float_to_int32(vals[0]) & float_to_int32(vals[1])) as f64,
-                            },
+                            E::Number::new(
+                                (float_to_int32(vals[0]) & float_to_int32(vals[1])) as f64,
+                            ),
                             v.loc,
                         );
                     }
@@ -597,9 +571,9 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(
-                            E::Number {
-                                value: (float_to_int32(vals[0]) | float_to_int32(vals[1])) as f64,
-                            },
+                            E::Number::new(
+                                (float_to_int32(vals[0]) | float_to_int32(vals[1])) as f64,
+                            ),
                             v.loc,
                         );
                     }
@@ -610,9 +584,9 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(
-                            E::Number {
-                                value: (float_to_int32(vals[0]) ^ float_to_int32(vals[1])) as f64,
-                            },
+                            E::Number::new(
+                                (float_to_int32(vals[0]) ^ float_to_int32(vals[1])) as f64,
+                            ),
                             v.loc,
                         );
                     }

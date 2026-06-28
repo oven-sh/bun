@@ -118,6 +118,15 @@ static size_t getFramingOverhead(size_t payloadSize)
 
 const size_t maxReasonSizeInBytes = 123;
 
+// Close codes an endpoint may put on the wire (RFC 6455 7.4 + the IANA registry).
+// Deliberately the RFC endpoint set, not the browser's "1000 or 3000-4999":
+// non-browser clients legitimately send 1001 or 1011, and `ws` accepts the same set.
+static inline bool isValidCloseCodeForSending(uint16_t code)
+{
+    return (code >= 1000 && code <= 1014 && code != 1004 && code != 1005 && code != 1006)
+        || (code >= 3000 && code <= 4999);
+}
+
 static inline bool isValidProtocolCharacter(char16_t character)
 {
     // Hybi-10 says "(Subprotocol string must consist of) characters in the range U+0021 to U+007E not including
@@ -969,18 +978,18 @@ void WebSocket::failConnectingWebSocket()
 
 ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
 {
-    int code = optionalCode ? optionalCode.value() : static_cast<int>(1000);
-    if (code == 1000) {
-        // LOG(Network, "WebSocket %p close() without code and reason", this);
-    } else {
-        // LOG(Network, "WebSocket %p close() code=%d reason='%s'", this, code, reason.utf8().data());
-        // if (!(code == WebSocketChannel::CloseEventCodeNormalClosure || (WebSocketChannel::CloseEventCodeMinimumUserDefined <= code && code <= WebSocketChannel::CloseEventCodeMaximumUserDefined)))
-        //     return Exception { InvalidAccessError };
-        if (reason.length() > maxReasonSizeInBytes) {
-            // scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "WebSocket close message is too long."_s);
-            return Exception { SyntaxError, "WebSocket close message is too long."_s };
-        }
+    // https://websockets.spec.whatwg.org/#dom-websocket-close
+    // Validation happens before the readyState checks: an invalid code or an
+    // over-long reason throws even on a CLOSING/CLOSED socket.
+    if (optionalCode && !isValidCloseCodeForSending(optionalCode.value()))
+        return Exception { InvalidAccessError, makeString("The close code must be a valid WebSocket close code (1000-1014, excluding the reserved codes 1004-1006, or in the range of 3000 to 4999). Received "_s, optionalCode.value(), '.') };
+    if (!reason.isEmpty()) {
+        // The limit is on the UTF-8 encoding of the reason, not its UTF-16 length.
+        auto utf8Reason = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        if (utf8Reason.length() > maxReasonSizeInBytes)
+            return Exception { SyntaxError, makeString("The close reason must not be greater than "_s, maxReasonSizeInBytes, " UTF-8 bytes. Received "_s, utf8Reason.length(), " bytes."_s) };
     }
+    int code = optionalCode ? optionalCode.value() : static_cast<int>(1000);
 
     if (m_state == CLOSING || m_state == CLOSED)
         return {};
@@ -1018,7 +1027,10 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         break;
     }
     }
-    this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
+    // Do not clear m_connectedWebSocketKind here: when the close frame cannot
+    // be written in one send(), the native client defers didClose() until the
+    // frame has drained, and didClose() early-returns if the kind is already
+    // None. didClose() itself clears it once the close completes.
     updateHasPendingActivity();
     return {};
 }
@@ -1775,7 +1787,9 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::invalid_utf8: {
-        didReceiveClose(CleanStatus::NotClean, 1003, "Server sent invalid UTF8"_s);
+        // RFC 6455 7.4.1: 1007 is "invalid frame payload data" (for example,
+        // non-UTF-8 in a text message); 1003 would mean an unsupported data type.
+        didReceiveClose(CleanStatus::NotClean, 1007, "Server sent invalid UTF8"_s);
         break;
     }
     case Bun::WebSocketErrorCode::tls_handshake_failed: {

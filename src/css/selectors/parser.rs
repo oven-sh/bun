@@ -1211,11 +1211,6 @@ impl<'a> SelectorParser<'a> {
         raw: Str,
         loc: usize,
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
-        // blocked_on: `Parser::add_symbol_for_name` (gated in css_parser.rs on
-        // ArrayHashMap::entry + SymbolList::push). The CSS-modules branch
-        // returns the symbol-table ref; until that un-gates, fall through to
-        // the ident arm so non-modules parsing is correct.
-
         if input.flags.css_modules() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(
@@ -1303,19 +1298,12 @@ impl<'a> SelectorParser<'a> {
             );
         }
 
-        // blocked_on: properties::custom (TokenList::parse_raw / TokenOrValue) un-gate.
-        // The stub `properties::custom::TokenList` is a unit struct with no `.v`
-        // field and no `parse_raw`; consume the function args as opaque tokens
-        // until the real `custom.rs` un-gates.
-
-        {
-            let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-            TokenList::parse_raw(input, &mut args, self.options, 0)?;
-            return Ok(PseudoElement::CustomFunction {
-                name,
-                arguments: TokenList { v: args },
-            });
-        }
+        let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
+        TokenList::parse_raw(input, &mut args, self.options, 0)?;
+        Ok(PseudoElement::CustomFunction {
+            name,
+            arguments: TokenList { v: args },
+        })
     }
 
     fn parse_is_and_where(&self) -> bool {

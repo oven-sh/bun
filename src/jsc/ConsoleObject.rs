@@ -654,7 +654,7 @@ impl RowKey {
     fn str(name: &BunString) -> Self {
         Self::Str {
             width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
-            text: format!("{name}").into_bytes(),
+            text: name.to_utf8_bytes(),
         }
     }
 

@@ -43,6 +43,7 @@
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/StringObject.h>
+#include <JavaScriptCore/SymbolObject.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/YarrFlags.h>
 #include <wtf/Vector.h>
@@ -360,6 +361,14 @@ private:
             return true;
         }
 
+        // The fifth primitive wrapper. V8's WriteJSPrimitiveWrapper has no
+        // encoding for a boxed Symbol and throws; falling through to
+        // writePlainObject would silently deliver `{}`.
+        if (obj->inherits<JSC::SymbolObject>()) {
+            throwDataCloneError(scope, "The object could not be cloned."_s);
+            return false;
+        }
+
         if (auto* regExp = dynamicDowncast<RegExpObject>(obj)) {
             writeTag(V8Tag::kRegExp);
             writeStringView(StringView(regExp->regExp()->pattern()));
@@ -632,35 +641,41 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         writeTag(V8Tag::kError);
-        switch (err->errorType()) {
-        case ErrorType::EvalError:
+        // V8 picks the prototype tag by string-comparing `error.name` (a
+        // prototype-walking GetProperty followed by ToString), NOT by the
+        // object's internal error type. So `Object.assign(new Error(m),
+        // {name: "TypeError"})` arrives as a TypeError, while a TypeError
+        // subclass whose constructor sets `this.name = "CustomError"`
+        // arrives as a plain Error. Any name outside the six built-ins gets
+        // no prototype tag.
+        JSValue nameValue = err->get(m_globalObject, m_vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, false);
+        String name = nameValue.toWTFString(m_globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (name == "EvalError"_s)
             writeByte(static_cast<uint8_t>(V8ErrorTag::kEvalErrorPrototype));
-            break;
-        case ErrorType::RangeError:
+        else if (name == "RangeError"_s)
             writeByte(static_cast<uint8_t>(V8ErrorTag::kRangeErrorPrototype));
-            break;
-        case ErrorType::ReferenceError:
+        else if (name == "ReferenceError"_s)
             writeByte(static_cast<uint8_t>(V8ErrorTag::kReferenceErrorPrototype));
-            break;
-        case ErrorType::SyntaxError:
+        else if (name == "SyntaxError"_s)
             writeByte(static_cast<uint8_t>(V8ErrorTag::kSyntaxErrorPrototype));
-            break;
-        case ErrorType::TypeError:
+        else if (name == "TypeError"_s)
             writeByte(static_cast<uint8_t>(V8ErrorTag::kTypeErrorPrototype));
-            break;
-        case ErrorType::URIError:
+        else if (name == "URIError"_s)
             writeByte(static_cast<uint8_t>(V8ErrorTag::kUriErrorPrototype));
-            break;
-        default:
-            break;
-        }
         // Sub-tag order must match V8's WriteJSError exactly: message, stack,
         // then cause LAST. V8's reader is order-strict (it walks these
         // linearly, not in a loop) and rejects cause-before-stack, and it
         // constructs the Error after the stack so a self-referential cause
         // can resolve to it.
+        //
+        // V8 emits kMessage for ANY own data `message` and ToStrings it
+        // (`e.message = 42` arrives as "42"); only an own accessor or a
+        // missing own property is skipped. `stack` below differs: V8 gates
+        // it on IsString with no coercion.
         JSValue messageValue = err->getDirect(m_vm, m_vm.propertyNames->message);
-        if (messageValue && messageValue.isString()) {
+        if (messageValue && !messageValue.isGetterSetter() && !messageValue.isCustomGetterSetter()) {
             writeByte(static_cast<uint8_t>(V8ErrorTag::kMessage));
             if (!writeString(messageValue))
                 return false;

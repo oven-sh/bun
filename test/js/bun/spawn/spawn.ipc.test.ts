@@ -162,6 +162,11 @@ describe("ipc mode advanced", () => {
       `,
       "inject.cjs": /* js */ `
         require("fs").writeSync(3, Buffer.from([0x01, 0x01, 0x00, 0x00, 0x00]));
+        // Exit on ANY channel close (including parent.cjs dying on the
+        // failure path) so a timed-out run never orphans this interval. The
+        // parent removes its exit listener before it ever closes the channel,
+        // so this cannot flip a failing run into a pass.
+        process.on("disconnect", () => process.exit());
         setInterval(() => {}, 1000);
       `,
     });
@@ -200,6 +205,8 @@ describe("ipc mode advanced", () => {
       `,
       "inject.cjs": /* js */ `
         require("fs").writeSync(3, Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff]));
+        // See the badframe test above: reap on channel close, never on EOF.
+        process.on("disconnect", () => process.exit());
         setInterval(() => {}, 1000);
       `,
     });
@@ -707,6 +714,47 @@ describe("ipc mode advanced structured clone", () => {
     });
   });
 
+  // V8 picks the error prototype tag by string-comparing `error.name`, not by
+  // the object's internal type: renaming a plain Error to "TypeError"
+  // deserializes as a TypeError, and a TypeError subclass whose constructor
+  // sets a custom `name` deserializes as a plain Error. The node child is the
+  // reference implementation for both.
+  it.skipIf(!nodeExe())("the error prototype tag follows error.name, not the internal type", async () => {
+    using dir = tempDir("ipc-adv-err-name", { "echo.cjs": ECHO_CHILD });
+    class CustomError extends TypeError {
+      constructor(message: string) {
+        super(message);
+        this.name = "CustomError";
+      }
+    }
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), nodeExe()!, {
+      renamed: Object.assign(new Error("r"), { name: "TypeError" }),
+      custom: new CustomError("c"),
+      done: true,
+    });
+
+    expect(got.renamed).toBeInstanceOf(TypeError);
+    expect(got.renamed.message).toBe("r");
+    expect(got.custom).toBeInstanceOf(Error);
+    expect(got.custom).not.toBeInstanceOf(TypeError);
+    expect(got.custom.message).toBe("c");
+  });
+
+  // V8 emits kMessage for any own data `message` and ToStrings it, so a
+  // numeric message arrives as its decimal string (verified against node);
+  // only an own accessor is skipped.
+  it("a non-string own error message is coerced to a string like V8", async () => {
+    using dir = tempDir("ipc-adv-err-msg", { "echo.cjs": ECHO_CHILD });
+    const numeric = new TypeError();
+    (numeric as any).message = 42;
+    const accessor = new TypeError("from accessor");
+    Object.defineProperty(accessor, "message", { get: () => "via getter" });
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), bunExe(), { numeric, accessor, done: true });
+
+    expect(got.numeric.message).toBe("42");
+    expect(got.accessor.message).toBe("");
+  });
+
   // Both ends must assign the Error its object id BEFORE the cause's objects
   // get theirs; getting the reader backwards shifts every id assigned after
   // the cause, so [e, e] silently comes back as [e, e.cause].
@@ -737,8 +785,10 @@ describe("ipc mode advanced structured clone", () => {
   // silently deliver the traps' output (Proxy) or `{}` (the rest) instead of
   // throwing at the sender. The array-target Proxy is the load-bearing case:
   // ES IsArray pierces a proxy to its target, so without an explicit Proxy
-  // rejection it is serialized as an array by running the proxy's traps.
-  it("sending a Proxy, WeakMap, WeakSet, WeakRef, or FinalizationRegistry throws DataCloneError", async () => {
+  // rejection it is serialized as an array by running the proxy's traps. The
+  // boxed Symbol is the fifth primitive wrapper: V8's WriteJSPrimitiveWrapper
+  // handles the other four and throws on this one.
+  it("sending a Proxy, weak collection, or boxed Symbol throws DataCloneError", async () => {
     using dir = tempDir("ipc-adv-weak", { "echo.cjs": ECHO_CHILD });
     const child = fork(path.join(String(dir), "echo.cjs"), [], {
       execPath: bunExe(),
@@ -754,6 +804,7 @@ describe("ipc mode advanced structured clone", () => {
         new WeakSet(),
         new WeakRef({}),
         new FinalizationRegistry(() => {}),
+        Object(Symbol("boxed")),
       ]) {
         expect(() => child.send(value as any)).toThrow("could not be cloned");
       }

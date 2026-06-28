@@ -450,6 +450,14 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
         return 0;
     }
 
+    /* A listening net.Server socket is always SOCK_STREAM (TCP or unix). Reject
+     * SOCK_DGRAM/SOCK_RAW here — on macOS the SO_ACCEPTCONN check below is
+     * compiled out, so this is the only guard that catches a non-stream fd. */
+    if (socktype != SOCK_STREAM) {
+        *error = EINVAL;
+        return 0;
+    }
+
     /* Reject a socket that is not listening. SO_ACCEPTCONN is reliable on Linux
      * but NOT on macOS/BSD — there it can report 0 for a genuinely-listening fd
      * that was inherited/duplicated (e.g. over SCM_RIGHTS), so only treat a 0 as

@@ -84,9 +84,11 @@ export function parseHandle(target, serialized, fd) {
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
-      server.listen({ fd }, () => {
-        emit(target, serialized.msg, server);
-      });
+      // exclusive: true adopts the fd directly (a cluster worker would otherwise
+      // route it to the primary as a queryServer). Bun.listen({ fd }) is
+      // synchronous, so emit now, not from the setTimeout-deferred listen cb.
+      server.listen({ fd, exclusive: true });
+      emit(target, serialized.msg, server);
       return;
     }
     case "net.Socket": {

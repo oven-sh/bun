@@ -212,8 +212,10 @@ impl SocketGroup {
 
     /// Adopt an already-listening fd (received over IPC via SCM_RIGHTS or
     /// inherited from a parent process) as a listen socket, rather than
-    /// creating+binding a new one. POSIX only; on failure returns null and
-    /// writes `ENOTSOCK`/`EINVAL` into `err`, and the caller keeps the fd.
+    /// creating+binding a new one. POSIX only; the caller keeps the fd. On
+    /// failure returns null and writes an errno into `err`: `ENOTSOCK`/`EINVAL`
+    /// for the common validation failures, plus any propagated errno (e.g.
+    /// `EBADF` from the SO_TYPE probe, or a poll-registration error).
     pub fn listen_fd(
         &mut self,
         kind: SocketKind,

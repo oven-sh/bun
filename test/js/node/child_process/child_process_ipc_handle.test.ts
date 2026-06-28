@@ -151,6 +151,135 @@ process.on('message', (m, server) => {
   expect(exitCode).toBe(0);
 });
 
+// A plain message sent right after a handle message must not overtake it: the
+// child reconstructs the server from the fd synchronously, so IPC stays in
+// send order (Node guarantees this; a deferred emit would reorder).
+test.skipIf(isWindows)("a message sent after a net.Server handle is not reordered before it", async () => {
+  using dir = tempDir("ipc-server-handle-order", {
+    "parent.js": `
+import { fork } from 'node:child_process';
+import { createServer } from 'node:net';
+
+const child = fork('child.js');
+const server = createServer();
+server.listen(0, '127.0.0.1', () => {
+  child.send('server', server);
+  child.send('after-server');
+  child.on('message', m => {
+    if (typeof m === 'object' && m.order) {
+      console.log('ORDER:' + m.order.join(','));
+      child.kill();
+      server.close();
+      process.exit(0);
+    }
+  });
+});
+`,
+    "child.js": `
+const net = require('node:net');
+const received = [];
+let reported = false;
+process.on('message', (m, handle) => {
+  if (m === 'server') {
+    received.push(handle instanceof net.Server ? 'server' : 'server(bad:' + typeof handle + ')');
+  } else if (m === 'after-server') {
+    received.push('after-server');
+  }
+  if (received.length === 2 && !reported) {
+    reported = true;
+    process.send({ order: received });
+  }
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "parent.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain("ORDER:server,after-server");
+  expect(exitCode).toBe(0);
+});
+
+// A cluster worker must adopt a received net.Server fd directly, not route it
+// back to the primary as a cluster queryServer (the fd is worker-local). The
+// worker serves a connection to prove it owns the listening socket; with the
+// bug the primary crashes handling the spurious queryServer.
+test.skipIf(isWindows)("a net.Server handle sent to a cluster worker is adopted by the worker", async () => {
+  using dir = tempDir("ipc-server-handle-cluster", {
+    "entry.js": `
+import cluster from 'node:cluster';
+import { createServer, connect } from 'node:net';
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  const server = createServer();
+  function finish(ok, detail) {
+    console.log(ok ? 'RESPONSE:' + detail : 'FAILED:' + detail);
+    try { worker.kill(); } catch {}
+    try { server.close(); } catch {}
+    process.exit(ok ? 0 : 1);
+  }
+  worker.on('online', () => {
+    server.listen(0, '127.0.0.1', () => {
+      worker.send('server', server);
+    });
+  });
+  worker.on('message', m => {
+    if (typeof m !== 'object') return;
+    if (m.ready === false) return finish(false, 'worker-not-ready:' + m.why);
+    if (m.ready) {
+      // The fd was duplicated to the worker (SCM_RIGHTS); close our copy so only
+      // the worker accepts, otherwise the primary (no connection handler) could
+      // win accept() and the client would hang.
+      const port = server.address().port;
+      server.close();
+      const client = connect(port, '127.0.0.1');
+      client.setEncoding('utf8');
+      let data = '';
+      client.on('data', c => { data += c; });
+      client.on('end', () => finish(true, data));
+      client.on('error', e => finish(false, 'client:' + e.message));
+    }
+  });
+  worker.on('error', e => finish(false, 'worker:' + e.message));
+} else {
+  const net = require('node:net');
+  process.on('message', (m, handle) => {
+    if (m !== 'server') return;
+    if (!(handle instanceof net.Server)) {
+      process.send({ ready: false, why: typeof handle });
+      return;
+    }
+    handle.on('connection', sock => sock.end('served-by-worker'));
+    process.send({ ready: true });
+  });
+}
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain("RESPONSE:served-by-worker");
+  expect(exitCode).toBe(0);
+});
+
 async function run(dir: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "parent.mjs"],

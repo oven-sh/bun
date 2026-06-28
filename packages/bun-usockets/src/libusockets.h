@@ -346,7 +346,9 @@ struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
 /* Adopt an already-listening fd (inherited from a parent process or received
  * over IPC via SCM_RIGHTS) instead of creating+binding a new one. POSIX only;
  * on success the group owns the fd (us_listen_socket_close closes it). On
- * failure returns NULL and writes ENOTSOCK/EINVAL into *error. */
+ * failure returns NULL and writes an errno into *error: ENOTSOCK/EINVAL for the
+ * common validation failures, plus any propagated errno (e.g. EBADF from the
+ * SO_TYPE probe, or a poll-registration error). */
 struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     LIBUS_SOCKET_DESCRIPTOR fd, int options, int socket_ext_size, int *error)

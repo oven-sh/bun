@@ -86,19 +86,19 @@ A few rules worth knowing:
 
 With `gitignore: true` (the default), the crawl implements the full [gitignore](https://git-scm.com/docs/gitignore) specification: per-directory `.gitignore` stacks, `!` negation, last-match-wins, `**` globs, anchored vs. basename patterns, directory-only patterns, and the rule that a file inside an excluded directory cannot be re-included.
 
-Every source git itself consults is honored, in git's precedence order: the global excludes file (`core.excludesFile` from the repository config, else `$XDG_CONFIG_HOME/git/ignore`, else `~/.config/git/ignore`), then `$GIT_COMMON_DIR/info/exclude` (found through a linked worktree's `.git` file), then `.gitignore` in every directory from the work-tree top down — so an index rooted at a *subdirectory* of a work tree still applies the ancestor `.gitignore` files, exactly like `git status` run in that subdirectory. The git-specific sources only apply when `root` is inside a git work tree.
+Every source git itself consults is honored, in git's precedence order: the global excludes file (`core.excludesFile` from the repository config, else `$XDG_CONFIG_HOME/git/ignore`, else `~/.config/git/ignore`), then `$GIT_COMMON_DIR/info/exclude` (found through a linked worktree's `.git` file), then `.gitignore` in every directory from the work-tree top down — so an index rooted at a _subdirectory_ of a work tree still applies the ancestor `.gitignore` files, exactly like `git status` run in that subdirectory. The git-specific sources only apply when `root` is inside a git work tree.
 
 #### Tracked files are never ignored
 
-When `root` is inside a git work tree, the indexed file set is exactly the one git reports: **tracked ∪ (untracked − ignored)** — what `git ls-files --cached --others --exclude-standard` prints. In git, ignore rules only ever apply to *untracked* paths, so:
+When `root` is inside a git work tree, the indexed file set is exactly the one git reports: **tracked ∪ (untracked − ignored)** — what `git ls-files --cached --others --exclude-standard` prints. In git, ignore rules only ever apply to _untracked_ paths, so:
 
 - A file that matches a `.gitignore` rule but is tracked in `.git/index` (a `.env` committed before the rule was added, a checked-in fixture inside a generally-ignored extension) **is indexed**, watched, autocompleted, and grepped.
-- An ignored directory that contains tracked files is **not pruned**: the tracked files inside it (and the directories needed to reach them) are indexed. Its *untracked* contents stay hidden, exactly as git hides them.
+- An ignored directory that contains tracked files is **not pruned**: the tracked files inside it (and the directories needed to reach them) are indexed. Its _untracked_ contents stay hidden, exactly as git hides them.
 - An ignored directory with no tracked content is pruned and never descended into, as before.
 
 The tracked set is read from `.git/index` once per crawl (in parallel, on the thread pool — never on the JavaScript thread) and rebuilt by every `refresh()` and every watcher-triggered re-crawl. `.git` itself is never watched, so a `git add` of a previously-ignored file is only reflected after the next crawl or `refresh()`. Outside a git work tree — or if `.git/index` is missing, unreadable, or corrupt — this degrades to pure gitignore filtering: nothing errors, there is simply no tracked set to exempt.
 
-Patterns passed via the `ignore` option use the same syntax and are rooted at `root`, but they are *not* one of git's ignore sources: an explicit `ignore` pattern hides matching files even when they are tracked.
+Patterns passed via the `ignore` option use the same syntax and are rooted at `root`, but they are _not_ one of git's ignore sources: an explicit `ignore` pattern hides matching files even when they are tracked.
 
 ## Querying the index
 
@@ -119,7 +119,7 @@ Matching is smart-case (case-insensitive unless the query contains an uppercase 
 
 Paths you've recorded with [`touch()`](#touch-and-recent-access-history) get a recency boost, so frequently-opened files surface first.
 
-`complete()` is built to be called on every keystroke. Each call caches its survivor set (the candidates the query was a subsequence of), and the next call reuses it when the new query *extends* the previous one with the same options and the index has not changed in between. This is purely a fast path: results are always identical to a cold call, and any index mutation (a watcher event, `refresh()`) invalidates the cache automatically.
+`complete()` is built to be called on every keystroke. Each call caches its survivor set (the candidates the query was a subsequence of), and the next call reuses it when the new query _extends_ the previous one with the same options and the index has not changed in between. This is purely a fast path: results are always identical to a cold call, and any index mutation (a watcher event, `refresh()`) invalidates the cache automatically.
 
 The cache pays off once the query is a few characters long; one- and two-character queries keep most paths alive, so they cost about the same with or without it and dominate the cost of typing a query out. Once a query — cold or cached — has more than a few thousand candidates, `complete()` scores them in parallel on Bun's thread pool; the call is still synchronous, it just uses more cores. Measured on an example Linux x64 box ([`bench/file-index/complete.mjs`](https://github.com/oven-sh/bun/tree/main/bench/file-index), release build): over the Bun repository (19,639 indexed entries) a cold `complete("srvidx")` takes about 2.8 ms; over a 163,653-entry synthetic tree, `"srvidx"` is about 5 ms cold and about 1.2 ms once the survivor cache applies, a 17-character query is about 3.8 ms cold and about 0.45 ms cached, and a worst-case two-letter query like `"in"` is about 10 ms either way (about 20 ms over a tree built from 250,000 paths; before the parallel scoring pass it was about 36-43 ms at 163k either way). That keeps the worst case interactive, but do not plan on sub-millisecond completion over hundreds of thousands of paths.
 
@@ -319,7 +319,7 @@ Synchronous is not free. The numbers below are medians from the committed benchm
 
 - **It is not a daemon.** The index lives inside your process and dies with it. There's no socket, no protocol, and nothing persists to disk between runs.
 - **It is not a language server.** It knows about paths and bytes, not symbols, types, or references.
-- **It does not see the same file set as `rg` / `fd`.** Inside a git repository, those tools hide *every* path matched by an ignore rule, tracked or not. `Bun.FileIndex` matches git instead: a tracked file that happens to match a `.gitignore` rule is indexed (and grepped), because that is what `git ls-files`, `git status` and `git grep` do. Pass `gitignore: false` plus your own `ignore` patterns if you want a purely rule-driven file set.
+- **It does not see the same file set as `rg` / `fd`.** Inside a git repository, those tools hide _every_ path matched by an ignore rule, tracked or not. `Bun.FileIndex` matches git instead: a tracked file that happens to match a `.gitignore` rule is indexed (and grepped), because that is what `git ls-files`, `git status` and `git grep` do. Pass `gitignore: false` plus your own `ignore` patterns if you want a purely rule-driven file set.
 - **`grep()` does not cache file contents.** Every call re-reads matching files from disk. A content cache (and faster repeated regex search) is future work.
 - **`RegExp` grep is the slow path.** Only literal string patterns get the parallel SIMD search today; the same whole-repository search that takes about 30 ms as a literal takes about 950 ms as a `RegExp` on an example Linux x64 box.
 

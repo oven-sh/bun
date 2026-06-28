@@ -55,13 +55,6 @@ export const libuv: Dependency = {
   // already ran, which double-invokes close_cb. Guard the check on
   // !(flags & UV_HANDLE_CLOSED), which uv__poll_endgame already asserts.
   // Nested uv_run is outside libuv's contract, so this is not upstreamable.
-  //
-  // NOTE: patch files must be traditional unified diffs ("--- a/X" headers,
-  // no "diff --git" line). git apply runs from vendor/<dep>/, a subdirectory
-  // of this repo, and only prefixes the patch paths with that subdirectory
-  // for traditional patches; a git-format patch is treated as
-  // toplevel-relative, falls outside the prefix, and is silently Skipped
-  // with exit 0, so the fetch stamps an unpatched tree as done.
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-no-reendgame-after-close.patch",

@@ -242,13 +242,24 @@ function normalizeLf(s: string): string {
  * so a CRLF-mangled checkout still applies cleanly. --no-index: dest/ is
  * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
  * authored against upstream which may have different trailing whitespace.
+ *
+ * GIT_CEILING_DIRECTORIES: `dest` is a subdirectory of this repository, and
+ * `git apply` run from a repo subdirectory only prefixes a patch's paths with
+ * that subdirectory for traditional unified diffs. A git-format patch (one
+ * with a `diff --git a/X b/X` header) is treated as toplevel-relative instead,
+ * falls outside the prefix, and is silently "Skipped" with exit 0, after which
+ * this fetch would stamp an unpatched tree as done. The ceiling hides the
+ * enclosing repo so every path resolves against `dest` regardless of patch
+ * format; the "Skipped patch" check is the fail-loud backstop (-v plus
+ * LC_ALL=C make the message appear and keep it stable).
  */
 function applyPatch(dest: string, patchPath: string, patchBody: string): void {
-  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
+  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-v", "-"], {
     cwd: dest,
     input: normalizeLf(patchBody),
     stdio: ["pipe", "ignore", "pipe"],
     encoding: "utf8",
+    env: { ...process.env, GIT_CEILING_DIRECTORIES: join(dest, ".."), LC_ALL: "C" },
   });
 
   if (result.error) {
@@ -262,6 +273,16 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
     throw new BuildError(`Patch failed: ${result.stderr}`, {
       file: patchPath,
       hint: "The patch may be out of date with the pinned commit",
+    });
+  }
+
+  // A file git considers outside the current directory is skipped with exit 0.
+  // Nothing under patches/ should ever be skipped: a skip here means the .ref
+  // stamp would certify a tree the patch never touched.
+  if (result.stderr !== null && result.stderr.includes("Skipped patch")) {
+    throw new BuildError(`git apply skipped one or more files: ${result.stderr.trim()}`, {
+      file: patchPath,
+      hint: "GIT_CEILING_DIRECTORIES should prevent this. A skip means git resolved the patch's paths outside the dependency's source directory.",
     });
   }
 }

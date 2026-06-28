@@ -1842,12 +1842,23 @@ describe("open/mkdir mode string validation matches node", () => {
     expect(existsSync(file)).toBe(false);
   });
 
-  it.each(["755", "0755", "0644", "0"])("openSync accepts octal mode string %p", mode => {
+  // "37777777777" is exactly u32::MAX: Node crashes on an internal IsInt32()
+  // assertion there, which Bun deliberately does not replicate.
+  it.each(["755", "0755", "0644", "0", "37777777776", "37777777777"])("openSync accepts octal mode string %p", mode => {
     using dir = tempDir("fs-mode-valid", {});
     const file = join(String(dir), "f.txt");
     const fd = openSync(file, "w", mode);
     closeSync(fd);
     expect(existsSync(file)).toBe(true);
+  });
+
+  // Node range-checks the parsed octal string with validateUint32, so a value
+  // past u32::MAX is ERR_OUT_OF_RANGE, not ERR_INVALID_ARG_VALUE.
+  it.each(["40000000000", "777777777777"])("openSync rejects octal mode string %p as out of range", mode => {
+    using dir = tempDir("fs-mode-oor", {});
+    const file = join(String(dir), "f.txt");
+    expect(() => openSync(file, "w", mode)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+    expect(existsSync(file)).toBe(false);
   });
 
   it.each(invalidModes)("mkdirSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {

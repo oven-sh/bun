@@ -1617,22 +1617,32 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         let slice = zig_str.slice();
 
         // Node validates mode strings against /^[0-7]+$/ before parsing.
-        let valid = !slice.is_empty() && slice.iter().all(|b| (b'0'..=b'7').contains(b));
-        match valid.then(|| strings::parse_int::<Mode>(slice, 8)) {
-            Some(Ok(v)) => v as u32,
-            _ => {
-                let actual = JSGlobalObject::inspect_for_error_message(ctx, value)?;
-                return Err(ctx
-                    .err(
-                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
-                            actual
-                        ),
-                    )
-                    .throw());
-            }
+        if slice.is_empty() || !slice.iter().all(|b| (b'0'..=b'7').contains(b)) {
+            let actual = JSGlobalObject::inspect_for_error_message(ctx, value)?;
+            return Err(ctx
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
+                        actual
+                    ),
+                )
+                .throw());
         }
+
+        // Node parses the octal string into a Number and range-checks it with
+        // the same validateUint32 used for numeric modes, so a value past
+        // u32::MAX is ERR_OUT_OF_RANGE, not ERR_INVALID_ARG_VALUE. `slice` is
+        // already [0-7]+, so the only possible parse error is Overflow (>21
+        // octal digits); u64::MAX keeps any such value on the out-of-range
+        // path.
+        let parsed = strings::parse_int::<u64>(slice, 8).unwrap_or(u64::MAX);
+        validators::validate_uint32(
+            ctx,
+            JSValue::js_number_from_uint64(parsed),
+            format_args!("mode"),
+            false,
+        )?
     };
 
     Ok(Some((mode_int & 0o777) as Mode))

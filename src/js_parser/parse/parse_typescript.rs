@@ -212,7 +212,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !p.stack_check.is_safe_to_recurse() {
                 return Err(err!("StackOverflow"));
             }
-            stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
+            // Mirror `parse_stmts_up_to`: a type-only inner namespace is
+            // erased to `S::TypeScript`, which must not make the outer
+            // `namespace A.B` look instantiated.
+            let inner = p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?;
+            if !matches!(inner.data, StmtData::STypeScript(_)) {
+                stmts.push(inner);
+            }
         } else if opts.is_typescript_declare && p.lexer.token != T::TOpenBrace {
             p.lexer.expect_or_insert_semicolon()?;
         } else {

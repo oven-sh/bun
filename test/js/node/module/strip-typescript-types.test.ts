@@ -152,6 +152,11 @@ test.each([
     "TypeScript namespace declaration is not supported in strip-only mode",
   ],
   [
+    "dotted namespace with a value",
+    "namespace A.B { export const x = 1 }",
+    "TypeScript namespace declaration is not supported in strip-only mode",
+  ],
+  [
     "parameter properties",
     "class C { constructor(public x: number) {} }",
     "TypeScript parameter property is not supported in strip-only mode",
@@ -181,6 +186,7 @@ test.each([
   ["declare enum", "declare enum E { A }"],
   ["declare namespace containing an enum", "declare namespace N { enum E { A } }"],
   ["type-only namespace", "namespace N { export type T = 1 }"],
+  ["dotted type-only namespace", "namespace A.B { export type T = 1 }"],
   ['declare module "name"', 'declare module "foo" { export = 1 }'],
   ["declare class parameter properties", "declare class C { constructor(public x: number); }"],
   ["declare global", "declare global { interface W {} }"],

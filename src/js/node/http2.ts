@@ -2334,9 +2334,7 @@ class Http2Stream extends Duplex {
     // already sent one (and a natively closed stream has nothing left to reset).
     const wasClosed = (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0;
     this.push(null);
-    // A pushed stream's request was synthesized by the server, so its local (writable) half is
-    // closed by definition — closing it is not an abort and nothing must be sent on the wire.
-    if (!ending && !this[kPush]) {
+    if (!ending) {
       // If the writable side of the Http2Stream is still open, emit the
       // 'aborted' event and set the aborted flag.
       if (!this.aborted) {

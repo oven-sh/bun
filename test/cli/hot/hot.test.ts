@@ -925,7 +925,9 @@ describe("--hot Bun.serve orphaned server", () => {
         return msg.gen > 1 && msg.port !== oldPort;
       });
       const { port: newPort } = JSON.parse(second) as { port: number };
-      expect(await (await get(newPort)).text()).toMatch(/^gen [2-9]\d*$/);
+      // "gen N" for any integer N >= 2.
+      const genPast1 = /^gen ([2-9]|[1-9]\d+)$/;
+      expect(await (await get(newPort)).text()).toMatch(genPast1);
 
       const { refused: oldRefused, lastText: oldText } = await pollUntilRefused(oldPort);
       // The new server must still be up: proves the old listener was closed
@@ -934,7 +936,7 @@ describe("--hot Bun.serve orphaned server", () => {
       expect({ oldRefused, oldText, newStillUp }).toEqual({
         oldRefused: true,
         oldText: "",
-        newStillUp: expect.stringMatching(/^gen [2-9]\d*$/),
+        newStillUp: expect.stringMatching(genPast1),
       });
       runner.kill();
     },

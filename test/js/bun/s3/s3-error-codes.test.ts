@@ -28,8 +28,8 @@ test("S3 error code is derived from the HTTP status when the error response has 
   // If the fixture crashed before printing, surface its output in the diff.
   const results = stdout.trim() ? JSON.parse(stdout) : { stdout, stderr, exitCode };
   expect(results).toEqual({
-    // A body-less response with a status that has exactly one canonical S3
-    // error code maps to that code and to S3's canonical message for it.
+    // A body-less error response has no XML <Code> to parse, so both the code
+    // and the message come from S3's most representative pair for the status.
     "stat 403": { code: "AccessDenied", message: "Access Denied" },
     "stat 404": { code: "NoSuchKey", message: "The specified key does not exist." },
     "stat 405": { code: "MethodNotAllowed", message: "The specified method is not allowed against this resource." },
@@ -45,7 +45,7 @@ test("S3 error code is derived from the HTTP status when the error response has 
       message: "A header you provided implies functionality that is not implemented.",
     },
     "stat 503": { code: "ServiceUnavailable", message: "Service is unable to handle request." },
-    // A status with no single canonical S3 code keeps the generic code.
+    // A status with no representative S3 code keeps the generic fallback.
     "stat 418": { code: "UnknownError", message: "an unexpected error has occurred" },
     // Every operation goes through the same status fallback.
     "exists 403": "AccessDenied",

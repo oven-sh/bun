@@ -46,9 +46,9 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
     }
 }
 
-/// Canonical S3 error code + message for an HTTP status. Used when the
-/// response carries no XML error document (HEAD responses never have a body),
-/// covering the statuses with exactly one canonical code in the S3 error table.
+/// S3's most representative error code + message for an HTTP status. Used
+/// when the response carries no XML error document to take the real code
+/// from (HEAD responses never have a body). `None` when there is no clear one.
 pub fn get_error_code_and_message_for_status(status: u32) -> Option<ErrorCodeAndMessage> {
     // https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
     Some(match status {

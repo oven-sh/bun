@@ -41,7 +41,7 @@ async function errorOf(promise: Promise<unknown>): Promise<unknown> {
 const results: Record<string, unknown> = {};
 
 // A failed HEAD response has no body (HTTP forbids a body on HEAD), so both the
-// code and the message can only come from the status. 418 has no canonical code.
+// code and the message can only come from the status. 418 has no S3 mapping.
 for (const status of [403, 404, 405, 411, 412, 416, 418, 500, 501, 503]) {
   using server = serve(() => new Response(null, { status }));
   results[`stat ${status}`] = await errorOf(S3Client.file("key", options(server.url.href)).stat());

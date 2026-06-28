@@ -1833,10 +1833,10 @@ describe("open flag string validation matches node", () => {
 });
 
 describe("open/mkdir mode string validation matches node", () => {
-  // The last two are stored 16-bit by JSC (they contain a code unit past
-  // U+0100), so they also guard against the 8-bit-only byte view being read
-  // out of a UTF-16 buffer: "\u3737" is a single code unit whose low byte is
-  // 0x37 ("7"), which a raw byte read wrongly accepts as mode 7.
+  // The last two hold a non-Latin-1 code unit, so JSC stores them 16-bit.
+  // They are rejected by content, and they also guard against the 8-bit-only
+  // byte view being read out of a UTF-16 buffer: "\u3737" is one code unit
+  // whose low byte is 0x37 ("7"), which a raw byte read accepts as mode 7.
   const invalidModes = ["0o755", "+755", "7_5_5", "888", "7a5", "", "7\u20225", "\u3737"];
 
   it.each(invalidModes)("openSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {
@@ -1854,6 +1854,20 @@ describe("open/mkdir mode string validation matches node", () => {
     const fd = openSync(file, "w", mode);
     closeSync(fd);
     expect(existsSync(file)).toBe(true);
+  });
+
+  it("accepts a valid octal mode string regardless of JSC's internal string storage", () => {
+    // JSC does not narrow: a UTF-16 decode yields a 16-bit string even when
+    // its content ("755") is pure ASCII. Storage bitness must be invisible,
+    // so it must parse identically to the 8-bit "755" literal.
+    const sixteenBit = new TextDecoder("utf-16le").decode(new Uint8Array([0x37, 0, 0x35, 0, 0x35, 0]));
+    expect(sixteenBit).toBe("755");
+    using dir = tempDir("fs-mode-16bit", {});
+    const eightBitPath = join(String(dir), "a.txt");
+    const sixteenBitPath = join(String(dir), "b.txt");
+    closeSync(openSync(eightBitPath, "w", "755"));
+    closeSync(openSync(sixteenBitPath, "w", sixteenBit));
+    expect(statSync(sixteenBitPath).mode).toBe(statSync(eightBitPath).mode);
   });
 
   // Node range-checks the parsed octal string with validateUint32, so a value

@@ -986,6 +986,38 @@ impl<C: SourceContext> NewSource<C> {
         remaining
     }
 
+    /// Release one reference on the **next event-loop tick** instead of inline.
+    ///
+    /// Use this instead of [`Self::decrement_count`] when the current native
+    /// stack still holds pointers into `*this` above the caller (e.g. the
+    /// buffered pipe reader embedded in `context` is mid-`read_with_fn`): the
+    /// zero-refcount path frees the allocation, which must not happen until
+    /// that stack has unwound. The task queue is drained by `EventLoop::tick`,
+    /// which never runs inside a poll dispatch, so the release is safe there.
+    ///
+    /// # Safety
+    /// `this` must be live, on the JS thread, and carry the extra reference
+    /// being released (a prior [`Self::increment_count`]).
+    pub unsafe fn decrement_count_deferred(this: *mut Self) {
+        fn release<C: SourceContext>(this: *mut NewSource<C>) -> bun_event_loop::JsResult<()> {
+            // SAFETY: `this` carries the +1 transferred at enqueue time; not
+            // touched afterwards because this call may free `*this`.
+            let _ = unsafe { NewSource::<C>::decrement_count(this) };
+            Ok(())
+        }
+        // SAFETY: JS thread (caller contract); the thread-local VM is alive.
+        let vm = jsc::VirtualMachine::get();
+        if vm.is_shutting_down() {
+            // No further ticks will run, so the task would never fire. Leaking
+            // one reference at shutdown is the same trade
+            // `DeferredDerefTask::schedule` makes.
+            return;
+        }
+        vm.event_loop_ref().enqueue_task(
+            bun_event_loop::ManagedTask::ManagedTask::new::<Self>(this, release::<C>),
+        );
+    }
+
     pub fn get_error(&mut self) -> Option<syscall::Error> {
         self.pending_err.take()
     }

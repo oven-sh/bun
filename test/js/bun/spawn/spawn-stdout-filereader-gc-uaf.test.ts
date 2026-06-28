@@ -172,3 +172,67 @@ test.skipIf(isWindows)(
   },
   60_000,
 );
+
+// FileReader::on_read_chunk fulfils the pending read() promise and drains JS
+// microtasks synchronously (the pipe-poll dispatch never enters the event
+// loop, so fulfill_promise's exit() drains at depth 0). User JS runs there
+// while PosixBufferedReader::read_with_fn still holds `&mut` into the Source
+// box that embeds the reader, and `reader.cancel()` from that JS releases the
+// across-read ref tested above. That used to leave the box one GC away from
+// being freed under read_with_fn (heap-use-after-free; the first touch after
+// the callback was register_poll / on_error / the maxbuf+offset read). The fix
+// holds an extra ref for the whole callback frame and releases it on the next
+// tick. Same idiom as the test above: assert the pin invariant directly.
+test.skipIf(isWindows)(
+  "subprocess stdout FileReader stays pinned across a re-entrant read callback",
+  async () => {
+    const script = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const pinned = () =>
+        heapStats().protectedObjectTypeCounts.FileInternalReadableStreamSource ?? 0;
+
+      const proc = Bun.spawn({
+        cmd: ["cat"],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const reader = proc.stdout.getReader();
+      // Register the read before any byte exists so it goes Pending, then
+      // write. The fulfilment runs this .then nested inside read_with_fn.
+      const nested = reader.read().then(() => {
+        const before = pinned();
+        reader.cancel();
+        return { before, after: pinned() };
+      });
+      proc.stdin.write(Buffer.alloc(65536, "x"));
+      proc.stdin.flush();
+      const counts = await nested;
+      proc.kill();
+      await proc.exited;
+      console.log(JSON.stringify(counts));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    let counts: unknown;
+    try {
+      counts = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+    }
+    // `before: 1` proves the .then ran with the across-read pin still held
+    // (no EOF yet: `cat` is alive and blocked on its stdin). `after` is the
+    // load-bearing assertion: without the per-callback-frame ref, the nested
+    // cancel drops the count to the JS wrapper's own ref and downgrades the
+    // Strong root while read_with_fn is still on the stack.
+    expect(counts).toEqual({ before: 1, after: 1 });
+    expect(exitCode).toBe(0);
+  },
+);

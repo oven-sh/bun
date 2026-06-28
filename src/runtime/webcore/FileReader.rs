@@ -785,8 +785,21 @@ impl FileReader {
             self.pending_value
                 .with_mut(|p| p.clear_without_deallocation());
             self.pending_view.set(&mut []);
+            // `run()` re-enters user JS synchronously (the poll dispatch does
+            // not enter the event loop, so `fulfill_promise`'s `exit()` drains
+            // microtasks right here). That JS can `reader.cancel()`, which
+            // drops the `waiting_for_on_reader_done` ref and leaves the
+            // `Source` box *containing this reader* collectable while
+            // `read_with_fn` is still iterating it. Pin it for this frame.
+            let parent = self.parent();
+            // SAFETY: see `parent()`.
+            unsafe { (*parent).increment_count() };
             self.pending.with_mut(|p| p.run());
             close_if_needed!();
+            // SAFETY: transfers the ref taken above. Deferred because the
+            // release can be the one that frees the box, and the enclosing
+            // `read_with_fn` frame keeps using it after we return.
+            unsafe { Source::decrement_count_deferred(parent) };
             return ret;
         } else if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
             self.buffered.with_mut(|b| b.extend_from_slice(buf));

@@ -420,8 +420,11 @@ describe("async support", () => {
 });
 
 it("should not crash under intensive usage", () => {
+  // GC-churn crash check. 1,000 iterations keeps it well inside the default 5s
+  // per-test timeout on debug+ASAN builds, where each iteration runs about
+  // 100x slower than it does in a release build.
   withoutAggressiveGC(() => {
-    for (let i = 0; i < 10000; ++i) {
+    for (let i = 0; i < 1000; ++i) {
       expect(i)._toBeDivisibleBy(1);
       expect(i).toEqual(expect._toBeDivisibleBy(1));
     }

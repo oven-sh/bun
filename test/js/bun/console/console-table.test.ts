@@ -276,6 +276,25 @@ describe("console.table reads each cell once", () => {
     });
   });
 
+  // String-ifying a cell runs user code. It must run exactly once per cell,
+  // and the table must show that single call's result, not a later one's.
+  test("a custom inspect on a cell value is invoked exactly once", () => {
+    let calls = 0;
+    const out = Bun.inspect.table([
+      {
+        x: {
+          [Bun.inspect.custom]() {
+            return "C" + ++calls;
+          },
+        },
+      },
+    ]);
+    expect({ calls, out }).toEqual({
+      calls: 1,
+      out: `┌───┬────┐\n│   │ x  │\n├───┼────┤\n│ 0 │ C1 │\n└───┴────┘\n`,
+    });
+  });
+
   test("a throwing custom inspect in a cell still propagates", () => {
     const boom = new Error("boom");
     expect(() =>
@@ -291,9 +310,8 @@ describe("console.table reads each cell once", () => {
     ).toThrow(boom);
   });
 
-  // The width pass caches each cell's JSValue in a Rust Vec, which JSC's
-  // conservative scan never visits; only the MarkedArgumentBuffer roots them.
-  // 64 rows spills it past the 8-slot inline (stack-scanned) buffer.
+  // Each getter runs arbitrary user code, including a full GC. The cell must
+  // still render the value that its single read returned.
   test("cell values survive a full GC between the width and render passes", () => {
     const N = 64;
     const rows = Array.from({ length: N }, (_, i) => ({

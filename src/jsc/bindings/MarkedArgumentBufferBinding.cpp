@@ -14,10 +14,7 @@ extern "C" SUPPRESS_ASAN void MarkedArgumentBuffer__run(
     callback(ctx, &args);
 }
 
-// appendWithCrashOnOverflow: with RecordOverflow, plain append() silently
-// drops the value on a failed spill-to-heap, leaving it unrooted while Rust
-// keeps using it. No caller can recover, so prefer a loud OOM to a GC UAF.
 extern "C" void MarkedArgumentBuffer__append(void* args, JSC::EncodedJSValue value)
 {
-    static_cast<JSC::MarkedArgumentBuffer*>(args)->appendWithCrashOnOverflow(JSC::JSValue::decode(value));
+    static_cast<JSC::MarkedArgumentBuffer*>(args)->append(JSC::JSValue::decode(value));
 }

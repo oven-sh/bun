@@ -235,7 +235,7 @@ pub(crate) struct Decoded {
     pub(crate) width: u32,
     pub(crate) height: u32,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
-    /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
+    /// PNG iCCP, WebP ICCP, AVIF colr on Linux), global-allocator-owned. `None` when the
     /// source didn't carry one or the decode path doesn't extract it —
     /// BMP/GIF (no ICC chunk) and system backends (which already colour-
     /// manage into sRGB during decode, so the profile is no longer

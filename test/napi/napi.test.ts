@@ -240,11 +240,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     it("does not retain non-cell primitives from napi_create_int64", async () => {
       // https://github.com/oven-sh/bun/issues/15055
-      // Calling napi_create_int64 many times in one native call should not
-      // bloat the handle scope's storage vector, since numbers are immediate
-      // values encoded directly in the JSValue and cannot be garbage
-      // collected. Before the fix, every number was appended to the scope's
-      // WTF::Vector and the storage lingered until the scope cell was swept.
+      // Numbers are immediate values that cannot be garbage collected, so creating
+      // many of them in one native call must not bloat the handle scope's storage.
       const result = await checkSameOutput("test_napi_handle_scope_int64_does_not_bloat", []);
       expect(result).toContain("PASS");
     }, 15000);

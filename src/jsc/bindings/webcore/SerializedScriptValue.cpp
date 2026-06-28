@@ -5962,8 +5962,12 @@ size_t SerializedScriptValue::computeMemoryCost() const
 #if ENABLE(WEBASSEMBLY)
     // We are not supporting WebAssembly Module memory estimation yet.
     if (m_wasmMemoryHandlesArray) {
-        for (auto& content : *m_wasmMemoryHandlesArray)
-            cost += content->sizeInBytes(std::memory_order_relaxed);
+        // A zero-sized shared WebAssembly.Memory serializes as a null handle, which the
+        // deserializer turns back into a zero-sized shared memory. Never dereference it.
+        for (auto& content : *m_wasmMemoryHandlesArray) {
+            if (content)
+                cost += content->sizeInBytes(std::memory_order_relaxed);
+        }
     }
 #endif
 #if ENABLE(WEB_CODECS)

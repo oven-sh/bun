@@ -1120,23 +1120,46 @@ describe("structuredClone of a SharedArrayBuffer", () => {
 
   // IPC crosses a process boundary, so the Data Block cannot be re-shared. Node's
   // advanced serialization rejects a directly referenced SharedArrayBuffer but
-  // byte-copies the backing store of a view over one. Match both halves.
+  // byte-copies the backing store of a view over one. Match both halves, and have
+  // the child echo back what it deserialized so the byte-copy is actually proven.
   test("subprocess.send() rejects a SharedArrayBuffer but copies a view over one", async () => {
+    // The child describes each payload it receives: constructor name, backing
+    // buffer's constructor name (null for a bare ArrayBuffer), and the first byte.
+    const echo =
+      "process.on('message', m => process.send([m.constructor.name, m.buffer?.constructor.name ?? null, m[0] ?? null]));";
+    const received: unknown[] = [];
+    const { promise: gotBoth, resolve, reject } = Promise.withResolvers<void>();
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "process.on('message', () => {});"],
+      cmd: [bunExe(), "-e", echo],
       env: bunEnv,
-      ipc() {},
+      ipc(message) {
+        received.push(message);
+        if (received.length === 2) resolve();
+      },
       stdout: "inherit",
       stderr: "inherit",
     });
+    proc.exited.then(() => reject(new Error("the child exited before echoing both payloads")));
+
+    // A directly referenced SharedArrayBuffer rejects before anything reaches the child.
     expect(thrownName(() => proc.send(new SharedArrayBuffer(8)))).toBe("DataCloneError");
-    expect(thrownName(() => proc.send(new Uint8Array(new SharedArrayBuffer(8))))).toBeUndefined();
-    // A direct reference to the same buffer anywhere in the payload still rejects,
-    // even after a view over it was already byte-copied earlier in that payload.
+    // It still rejects even after a view over the same buffer was already byte-copied
+    // earlier in that payload (the check runs before the object-pool duplicate lookup).
     const sab = new SharedArrayBuffer(8);
     expect(thrownName(() => proc.send([new Uint8Array(sab), sab]))).toBe("DataCloneError");
-    // A plain ArrayBuffer over the same channel is fine; only the direct SAB is rejected.
-    expect(thrownName(() => proc.send(new ArrayBuffer(8)))).toBeUndefined();
+
+    // A view over a SharedArrayBuffer, and a plain ArrayBuffer, both go through.
+    const view = new Uint8Array(new SharedArrayBuffer(8));
+    view[0] = 11;
+    expect(thrownName(() => proc.send(view))).toBeUndefined();
+    expect(thrownName(() => proc.send(new ArrayBuffer(4)))).toBeUndefined();
+
+    await gotBoth;
+    expect(received).toEqual([
+      // The child got a Uint8Array over a plain, non-shared, byte-copied ArrayBuffer.
+      ["Uint8Array", "ArrayBuffer", 11],
+      ["ArrayBuffer", null, null],
+    ]);
   });
 });
 
@@ -1162,6 +1185,16 @@ describe("structuredClone of WebAssembly objects", () => {
     expect(new Uint8Array(clone.buffer)[0]).toBe(99);
   });
 
+  // A zero-sized shared Memory has no backing-store handle at all: the serializer
+  // records a null and the deserializer re-creates it zero-sized. computeMemoryCost()
+  // must not dereference that null handle.
+  test("zero-sized shared WebAssembly.Memory clones", () => {
+    const mem = new WebAssembly.Memory({ initial: 0, maximum: 0, shared: true });
+    const clone = structuredClone(mem);
+    expect(clone).toBeInstanceOf(WebAssembly.Memory);
+    expect(clone.buffer.byteLength).toBe(0);
+  });
+
   // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
   // The memory map runs before any type dispatch, so a repeated reference must
   // come back as one clone.
@@ -1184,6 +1217,22 @@ describe("structuredClone of WebAssembly objects", () => {
   test("serialize() to bytes rejects WebAssembly.Module and shared Memory", () => {
     expect(thrownName(() => serialize(new WebAssembly.Module(emptyModuleBytes)))).toBe("DataCloneError");
     expect(thrownName(() => serialize(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })))).toBe(
+      "DataCloneError",
+    );
+  });
+
+  // Cross-process IPC reduces the payload to bytes, so the in-process Module and
+  // Memory side channels cannot follow. Node's advanced serialization rejects both.
+  test("subprocess.send() rejects WebAssembly.Module and shared Memory", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.on('message', () => {});"],
+      env: bunEnv,
+      ipc() {},
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(thrownName(() => proc.send(new WebAssembly.Module(emptyModuleBytes)))).toBe("DataCloneError");
+    expect(thrownName(() => proc.send(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true })))).toBe(
       "DataCloneError",
     );
   });

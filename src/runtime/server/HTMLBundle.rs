@@ -10,7 +10,6 @@ use bun_ast::Loader;
 use bun_ast::Log;
 use bun_bundler::bundle_v2::BundleV2Result;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
-use bun_bundler::output_file::Value as OutputFileValue;
 use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
@@ -475,6 +474,20 @@ impl Route {
             config.minify.syntax = true;
         }
 
+        // Mirrors `bake::add_import_meta_defines` (the HMR dev server's key
+        // list; keep the two in sync) so `import.meta.env.*` folds to constants
+        // instead of reaching the browser as a property access that throws.
+        let (dev_bool, prod_bool, mode_str): (&[u8], &[u8], &[u8]) = if is_development {
+            (b"true", b"false", b"\"development\"")
+        } else {
+            (b"false", b"true", b"\"production\"")
+        };
+        config.define.put(b"import.meta.env.DEV", dev_bool)?;
+        config.define.put(b"import.meta.env.PROD", prod_bool)?;
+        config.define.put(b"import.meta.env.MODE", mode_str)?;
+        config.define.put(b"import.meta.env.SSR", b"false")?;
+        config.define.put(b"import.meta.env.STATIC", b"false")?;
+
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
             // `StringMap` exposes only put/insert (no bulk re-index);
@@ -607,28 +620,26 @@ impl Route {
                         _ => unreachable!(),
                     };
                     headers.append(b"Content-Type", content_type);
-                    // Do not apply etags to html.
-                    if output_files[i].loader != Loader::Html
-                        && matches!(output_files[i].value, OutputFileValue::Buffer { .. })
-                    {
-                        let mut hashbuf = [0u8; 64];
-                        let n = {
-                            use std::io::Write as _;
-                            let mut cursor = std::io::Cursor::new(&mut hashbuf[..]);
-                            write!(
-                                cursor,
-                                "{}",
-                                bun_core::fmt::hex_int_lower::<16>(output_files[i].hash)
-                            )
-                            .expect("64 bytes fits 16 hex digits");
-                            cursor.position() as usize
-                        };
-                        headers.append(b"ETag", &hashbuf[..n]);
-                        if !server.config().is_development()
-                            && output_files[i].output_kind == bundler_options::OutputKind::Chunk
-                        {
-                            headers.append(b"Cache-Control", b"public, max-age=31536000");
-                        }
+                    let is_html = output_files[i].loader == Loader::Html;
+                    // Source maps don't carry a precomputed chunk hash; hash
+                    // their bytes so every served file gets a unique ETag.
+                    let hash = match output_files[i].hash {
+                        0 => bun_core::hash::xxhash64(0, blob.slice()),
+                        h => h,
+                    };
+                    let mut hashbuf: bun_http_types::ETag::FormatBuffer = [0; 40];
+                    headers.append(b"ETag", bun_http_types::ETag::format(hash, &mut hashbuf));
+                    if !server.config().is_development() {
+                        // Non-HTML outputs are served at content-hashed paths, so they
+                        // can be cached forever. HTML must be revalidated each request.
+                        headers.append(
+                            b"Cache-Control",
+                            if is_html {
+                                b"no-cache"
+                            } else {
+                                b"public, max-age=31536000, immutable"
+                            },
+                        );
                     }
 
                     // Add a SourceMap header if we have a source map index

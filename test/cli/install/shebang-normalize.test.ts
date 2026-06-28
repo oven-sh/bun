@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { chmodSync, readFileSync } from "fs";
 import { mkdir, readFile, stat, writeFile } from "fs/promises";
-import { bunEnv as env, bunExe, isPosix, isWindows, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, isWindows, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
 test.skipIf(isWindows)("bin linking normalizes CRLF in shebang", async () => {

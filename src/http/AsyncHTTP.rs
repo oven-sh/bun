@@ -327,9 +327,11 @@ impl<'a> AsyncHTTP<'a> {
     }
 
     /// Set the per-origin concurrent-request cap and re-derive the
-    /// process-wide ceiling from it. The only write path for either value.
+    /// process-wide ceiling from it. The only write path for either value;
+    /// clamps to 1 so a zero cap can never wedge the request queue.
     #[inline]
     pub fn set_max_simultaneous_requests(per_origin: usize) {
+        let per_origin = per_origin.max(1);
         MAX_SIMULTANEOUS_REQUESTS.store(per_origin, Ordering::Relaxed);
         MAX_TOTAL_SIMULTANEOUS_REQUESTS.store(
             per_origin.saturating_mul(MAX_TOTAL_REQUESTS_MULTIPLIER),

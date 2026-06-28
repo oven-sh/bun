@@ -91,11 +91,9 @@ test("aborting a fetch that is queued behind max_simultaneous_requests rejects t
   expect(exitCode).toBe(0);
 });
 
-// Same property at the other cap. `max_simultaneous_requests` is per origin
-// with a process-wide ceiling of `MAX_TOTAL_REQUESTS_MULTIPLIER` (4) times it
-// above; four stalled origins pin the process at that ceiling (4 * 1), so a
-// fetch to a fifth, untouched origin is queued without a socket purely by the
-// ceiling. Aborting it must still reject its promise while nothing can start.
+// Same property at the process-wide ceiling (4x the per-origin cap): four
+// stalled origins pin the process at 4 * 1, so a fetch to a fifth, untouched
+// origin is queued without a socket. Aborting it must still reject its promise.
 const ceilingFixture = /* js */ `
   import { createServer } from "net";
   import { once } from "events";
@@ -124,6 +122,9 @@ const ceilingFixture = /* js */ `
   await new Promise(r => setImmediate(r));
   await new Promise(r => setImmediate(r));
 
+  // The fifth origin must never get a socket: it is queued by the process-wide
+  // ceiling, not in flight, so the abort is of a request with no connection.
+  console.log("connections before abort:", sockets.length);
   controller.abort();
 
   try {
@@ -156,12 +157,9 @@ test("aborting a fetch that is queued behind the process-wide request ceiling re
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const stderrLines = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(stderrLines).toBe("");
+  expect(stderr.trim()).toBe("");
   expect(stdout.trim().split("\n")).toEqual([
+    "connections before abort: 4",
     "OK: queued fetch rejected with AbortError",
     "hung requests are pending,pending,pending,pending",
   ]);

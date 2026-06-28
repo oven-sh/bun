@@ -1,12 +1,6 @@
-// `BUN_CONFIG_MAX_HTTP_REQUESTS` (`MAX_SIMULTANEOUS_REQUESTS` in
-// src/http/AsyncHTTP.rs) is a *per-origin* cap on in-flight requests, with a
-// process-wide ceiling of `MAX_TOTAL_REQUESTS_MULTIPLIER` (4) times it above.
-// It used to be a single process-global cap, so one origin that accepted
-// connections but never responded would hold every slot and a fetch to a
-// completely different, healthy origin could never even connect.
-//
-// Each test runs in a child process so BUN_CONFIG_MAX_HTTP_REQUESTS can be set
-// without affecting the rest of the suite.
+// `BUN_CONFIG_MAX_HTTP_REQUESTS` caps in-flight fetch requests *per origin*
+// (it used to be process-global), under a process-wide ceiling of 4x it.
+// Each test runs in a child process so the env var is scoped to that test.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -22,13 +16,7 @@ async function run(cap: number, fixture: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // ASAN debug builds unconditionally print a signal-handler warning to
-  // stderr at startup; ignore that line.
-  const stderrLines = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  return { stdout: stdout.trim().split("\n"), stderr: stderrLines, exitCode };
+  return { stdout: stdout.trim().split("\n"), stderr: stderr.trim(), exitCode };
 }
 
 // Origin A accepts 2 connections and never responds, using up its whole
@@ -109,9 +97,8 @@ test.concurrent("requests to the same origin still queue behind the per-origin c
 });
 
 // The process-wide ceiling (4x the per-origin cap) bounds in-flight requests
-// across origins. With a per-origin cap of 1 and six distinct origins, only
-// four may be connected-and-unanswered at once; the fifth and sixth start only
-// after earlier ones finish, so the high-water mark is exactly the ceiling.
+// across origins: with a per-origin cap of 1 and six origins, only four may
+// be connected-and-unanswered at once, so the high-water mark is the ceiling.
 test.concurrent("the process-wide ceiling bounds in-flight requests across origins", async () => {
   const fixture = /* js */ `
     import { createServer } from "http";

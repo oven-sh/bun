@@ -865,9 +865,7 @@ describe("ServerWebSocket", () => {
     }
   });
   // With the default publishToSelf: false, a ws.publish() from a socket that has never
-  // subscribed to anything must still deliver to other subscribers. Previously this was
-  // a silent no-op because uWS's per-socket publish required the sender to have a
-  // Subscriber object.
+  // subscribed to anything must still deliver to other subscribers.
   describe("publish() from a socket not subscribed to anything", () => {
     const big = Buffer.alloc(20 * 1024, "x").toString();
     const cases = [

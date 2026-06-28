@@ -2991,3 +2991,59 @@ Reo=
     });
   });
 });
+
+// On the libuv (Windows) event loop backend, a synchronous re-entrant loop
+// tick from inside a socket's data callback ran the closed-socket sweep and
+// freed the us_socket_t the suspended outer dispatch frame still held.
+it("survives closing a socket and re-entering the event loop from its own data callback", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // The setImmediate callback only runs inside the nested autoTick that
+        // transform()'s waitForPromise performs, so reentries === 20 proves
+        // every round really re-entered the loop and didn't just terminate().
+        let reentries = 0;
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data(sock) {
+              // Synchronously close the socket, then synchronously re-enter the
+              // event loop: the element handler returns a still-pending promise,
+              // so .transform() spins waitForPromise -> autoTick -> a nested tick.
+              sock.terminate();
+              new HTMLRewriter()
+                .on("p", { element: () => new Promise(r => setImmediate(() => { reentries++; r(); })) })
+                .transform("<p></p>");
+            },
+            close() {},
+            error() {},
+          },
+        });
+        for (let i = 0; i < 20; i++) {
+          const { promise, resolve } = Promise.withResolvers();
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: { open: s => s.write("x"), data() {}, close: resolve, end: resolve, error: resolve, connectError: resolve },
+          }).catch(resolve);
+          await promise;
+        }
+        server.stop(true);
+        console.log("SURVIVED " + reentries);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "SURVIVED 20",
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});

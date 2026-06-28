@@ -238,6 +238,20 @@ describe("mock()", () => {
     const obj = { fn };
     expect(obj.fn()).toBe(obj);
   });
+  test("bare call through a captured binding has an undefined this value", () => {
+    const fn = jest.fn().mockReturnThis();
+    let returned;
+    {
+      const ref = fn;
+      // Capturing `ref` in a closure makes the engine resolve `ref()` through a
+      // scope object; that scope must not be observable as the call's `this`.
+      const capture = () => ref;
+      returned = ref();
+      expect(capture()).toBe(fn);
+    }
+    expect(returned).toBeUndefined();
+    expect(fn.mock.contexts).toEqual([undefined]);
+  });
   if (isBun) {
     test("jest.fn(10) return value shorthand", () => {
       expect(jest.fn(10)()).toBe(10);

@@ -410,8 +410,6 @@ private:
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
-        /* Mark that we are no longer parsing Http */
-        httpResponseData->isParsingHttp = false;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             if(httpContextData->onClientError) {
@@ -427,6 +425,9 @@ private:
         auto returnedData = result.returnedData;
         /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
         if (returnedData != nullptr) {
+            /* Only non-null here: an upgraded socket's HttpResponseData was
+             * destroyed (and the socket possibly reallocated) by upgrade(). */
+            httpResponseData->isParsingHttp = false;
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);
 

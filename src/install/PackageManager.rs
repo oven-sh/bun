@@ -2120,21 +2120,18 @@ pub fn init(
         }
     }
 
-    http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
-        'brk: {
-            if let Some(network_concurrency) = cli_network_concurrency {
-                break 'brk network_concurrency.max(1) as usize;
-            }
+    http::AsyncHTTP::set_max_simultaneous_requests('brk: {
+        if let Some(network_concurrency) = cli_network_concurrency {
+            break 'brk network_concurrency.max(1) as usize;
+        }
 
-            // If any HTTP proxy is set, use a diferent limit
-            if env.has_http_proxy() {
-                break 'brk DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES;
-            }
+        // If any HTTP proxy is set, use a diferent limit
+        if env.has_http_proxy() {
+            break 'brk DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES;
+        }
 
-            DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL
-        },
-        Ordering::Relaxed, // .monotonic
-    );
+        DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL
+    });
 
     // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
     // thread reads these asynchronously after `init` returns, so park the

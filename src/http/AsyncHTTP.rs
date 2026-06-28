@@ -49,6 +49,9 @@ pub struct AsyncHTTP<'a> {
     pub client: HTTPClient<'a>,
     pub err: Option<crate::Error>,
     pub async_http_id: u32,
+    /// See [`request_origin_hash`]. Keys this request's slot in
+    /// `HttpThread.active_per_origin` for the per-origin in-flight cap.
+    pub origin_hash: u64,
 
     pub elapsed: u64,
 
@@ -69,7 +72,27 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
 }
 
 pub static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
-pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
+
+/// Cap on concurrently running requests **per origin** (scheme + hostname +
+/// effective port; see [`request_origin_hash`]). Keeps keep-alive reuse high
+/// without letting one stalled origin starve requests to every other origin.
+/// Write only through [`AsyncHTTP::set_max_simultaneous_requests`] so
+/// [`MAX_TOTAL_SIMULTANEOUS_REQUESTS`] stays derived from it.
+pub(crate) static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize =
+    AtomicUsize::new(DEFAULT_MAX_SIMULTANEOUS_REQUESTS);
+
+/// Process-wide ceiling on in-flight requests across all origins, always
+/// [`MAX_TOTAL_REQUESTS_MULTIPLIER`] times the per-origin cap. The per-origin
+/// cap is what bounds the load any single server sees; this only bounds how
+/// many sockets the process itself holds, so it sits above the per-origin cap
+/// by enough that a stalled origin cannot exhaust the whole pool.
+pub(crate) static MAX_TOTAL_SIMULTANEOUS_REQUESTS: AtomicUsize =
+    AtomicUsize::new(DEFAULT_MAX_SIMULTANEOUS_REQUESTS * MAX_TOTAL_REQUESTS_MULTIPLIER);
+
+/// Default for `BUN_CONFIG_MAX_HTTP_REQUESTS`.
+const DEFAULT_MAX_SIMULTANEOUS_REQUESTS: usize = 256;
+/// `MAX_TOTAL_SIMULTANEOUS_REQUESTS` is this multiple of the per-origin cap.
+const MAX_TOTAL_REQUESTS_MULTIPLIER: usize = 4;
 
 // ──────────────────────────────────────────────────────────────────────────
 // helpers
@@ -106,6 +129,21 @@ unsafe fn free_owned_href(href: &'static [u8]) {
 #[inline]
 fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
+}
+
+/// Hash identifying the request's destination origin (scheme + hostname +
+/// effective port, plus the unix socket path when one is set) for the
+/// per-origin in-flight cap. Computed once in `init` and never updated, so a
+/// request that redirects keeps being counted against the origin it was
+/// admitted under: the increment and decrement of
+/// `HttpThread.active_per_origin` must use the same key.
+fn request_origin_hash(url: &URL<'_>, unix_socket_path: &[u8]) -> u64 {
+    let mut hash = bun_wyhash::hash_with_seed(u64::from(url.is_https()), url.hostname);
+    hash = bun_wyhash::hash_with_seed(hash, &url.get_port_auto().to_le_bytes());
+    if !unix_socket_path.is_empty() {
+        hash = bun_wyhash::hash_with_seed(hash, unix_socket_path);
+    }
+    hash
 }
 
 /// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
@@ -239,7 +277,7 @@ pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
             );
             return;
         }
-        MAX_SIMULTANEOUS_REQUESTS.store(usize::from(max), Ordering::Relaxed);
+        AsyncHTTP::set_max_simultaneous_requests(usize::from(max));
     }
 }
 
@@ -282,11 +320,21 @@ impl<'a> AsyncHTTP<'a> {
             .cast::<AsyncHTTP<'static>>()
     }
 
-    /// Accessor for the global concurrent-request cap. Returned as a static
-    /// so callers can `.load()` / `.store()` directly.
+    /// The per-origin concurrent-request cap.
     #[inline]
-    pub fn max_simultaneous_requests() -> &'static core::sync::atomic::AtomicUsize {
-        &MAX_SIMULTANEOUS_REQUESTS
+    pub fn max_simultaneous_requests() -> usize {
+        MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
+    }
+
+    /// Set the per-origin concurrent-request cap and re-derive the
+    /// process-wide ceiling from it. The only write path for either value.
+    #[inline]
+    pub fn set_max_simultaneous_requests(per_origin: usize) {
+        MAX_SIMULTANEOUS_REQUESTS.store(per_origin, Ordering::Relaxed);
+        MAX_TOTAL_SIMULTANEOUS_REQUESTS.store(
+            per_origin.saturating_mul(MAX_TOTAL_REQUESTS_MULTIPLIER),
+            Ordering::Relaxed,
+        );
     }
 
     pub fn enable_response_body_streaming(&mut self) {
@@ -470,6 +518,8 @@ impl<'a> AsyncHTTP<'a> {
             client,
             err: None,
             async_http_id,
+            // Filled in below once `client.unix_socket_path` is known.
+            origin_hash: 0,
             elapsed: 0,
             signals,
         };
@@ -508,6 +558,7 @@ impl<'a> AsyncHTTP<'a> {
         // `client.proxy_authorization` stays `None` on the JS-thread original;
         // `on_start` derives it on the HTTP-thread clone so redirects can
         // reassign it without double-freeing the `ptr::read`-shared Vec.
+        this.origin_hash = request_origin_hash(&this.url, this.client.unix_socket_path.slice());
         this
     }
 
@@ -790,7 +841,15 @@ impl<'a> AsyncHTTP<'a> {
                 let threadlocal_http: *mut ThreadlocalAsyncHTTP =
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
                 {
-                    let in_flight = &mut crate::http_thread().in_flight;
+                    let thread = crate::http_thread();
+                    // Release the per-origin slot reserved in
+                    // `HttpThread::start_queued_task` (which also pushed the
+                    // `in_flight` entry removed below). A deferred request to
+                    // this origin may now be startable, so force the next
+                    // `drain_events` to rescan the deferred list.
+                    thread.release_origin_slot((*this).origin_hash);
+                    thread.deferred_may_start = true;
+                    let in_flight = &mut thread.in_flight;
                     if let Some(i) = in_flight
                         .iter()
                         .position(|n| n.as_ptr() == threadlocal_http)
@@ -813,9 +872,13 @@ impl<'a> AsyncHTTP<'a> {
         }
 
         let thread = crate::http_thread();
-        if (!thread.queued_tasks.is_empty() || !thread.deferred_tasks.is_empty())
+        // Deferred tasks only become startable when a slot frees
+        // (`deferred_may_start`); queued tasks are new arrivals and always
+        // need a look. Either way nothing can start at the total ceiling.
+        if (!thread.queued_tasks.is_empty()
+            || (thread.deferred_may_start && !thread.deferred_tasks.is_empty()))
             && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
-                < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
+                < MAX_TOTAL_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
         {
             thread.wakeup();
         }

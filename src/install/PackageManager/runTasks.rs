@@ -367,10 +367,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if !has_network_error && task.response.metadata.is_none() {
                     has_network_error = true;
                     let min = manager.options.min_simultaneous_requests;
-                    let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
+                    let max = AsyncHTTP::max_simultaneous_requests();
                     if max > min {
-                        AsyncHTTP::max_simultaneous_requests()
-                            .store(min.max(max / 2), Ordering::Relaxed);
+                        AsyncHTTP::set_max_simultaneous_requests(min.max(max / 2));
                     }
                 }
 
@@ -637,10 +636,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if !has_network_error && task.response.metadata.is_none() {
                     has_network_error = true;
                     let min = manager.options.min_simultaneous_requests;
-                    let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
+                    let max = AsyncHTTP::max_simultaneous_requests();
                     if max > min {
-                        AsyncHTTP::max_simultaneous_requests()
-                            .store(min.max(max / 2), Ordering::Relaxed);
+                        AsyncHTTP::set_max_simultaneous_requests(min.max(max / 2));
                     }
                 }
 

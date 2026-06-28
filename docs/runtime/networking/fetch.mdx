@@ -430,20 +430,20 @@ Bun automatically reuses connections to the same host. This is called **connecti
 
 #### Simultaneous connection limit
 
-By default, Bun limits the number of simultaneous `fetch` requests to 256, for two reasons:
+By default, Bun limits the number of simultaneous `fetch` requests to 256 per origin (scheme + hostname + port), with a process-wide ceiling of four times that (1,024) across all origins, for two reasons:
 
-- It improves overall system stability. Operating systems have an upper limit on the number of simultaneous open TCP sockets, usually in the low thousands. Nearing this limit causes your entire computer to behave strangely. Applications hang and crash.
+- It improves overall system stability. Operating systems have an upper limit on the number of simultaneous open TCP sockets. Nearing this limit causes your entire computer to behave strangely. Applications hang and crash.
 - It encourages HTTP Keep-Alive connection reuse. For short-lived HTTP requests, the slowest step is often the initial connection setup. Reusing connections can save a lot of time.
 
-When the limit is exceeded, requests are queued and sent as soon as the next request ends.
+When an origin is at its limit, further requests to that origin are queued and sent as soon as one of its in-flight requests ends. Requests to other origins are unaffected, so a single slow or unresponsive host never blocks requests to healthy ones.
 
-To raise the limit, set the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable:
+To change the per-origin limit, set the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable; the process-wide ceiling is always four times it:
 
 ```sh
 BUN_CONFIG_MAX_HTTP_REQUESTS=512 bun ./my-script.ts
 ```
 
-The max value for this limit is 65,535. The maximum port number is 65,535, so it's quite difficult for any one computer to exceed this limit.
+The max value for this limit is 65,535.
 
 ### Response buffering
 

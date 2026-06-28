@@ -90,3 +90,80 @@ test("aborting a fetch that is queued behind max_simultaneous_requests rejects t
   expect(stdout.trim().split("\n")).toEqual(["OK: queued fetch rejected with AbortError", "hung request is pending"]);
   expect(exitCode).toBe(0);
 });
+
+// Same property at the other cap. `max_simultaneous_requests` is per origin
+// with a process-wide ceiling of `MAX_TOTAL_REQUESTS_MULTIPLIER` (4) times it
+// above; four stalled origins pin the process at that ceiling (4 * 1), so a
+// fetch to a fifth, untouched origin is queued without a socket purely by the
+// ceiling. Aborting it must still reject its promise while nothing can start.
+const ceilingFixture = /* js */ `
+  import { createServer } from "net";
+  import { once } from "events";
+
+  // Five servers that accept connections and never respond; only the first
+  // four are fetched, so the fifth origin has no in-flight requests at all.
+  const sockets = [];
+  const servers = [];
+  for (let i = 0; i < 5; i++) {
+    const server = createServer(socket => { sockets.push(socket); });
+    server.listen(0);
+    await once(server, "listening");
+    servers.push(server);
+  }
+  const ports = servers.map(server => server.address().port);
+
+  const hung = ports.slice(0, 4).map(port => fetch("http://127.0.0.1:" + port + "/hung").catch(e => e));
+  while (sockets.length < 4) await new Promise(r => setImmediate(r));
+
+  const controller = new AbortController();
+  const queued = fetch("http://127.0.0.1:" + ports[4] + "/queued", {
+    signal: controller.signal,
+  });
+  queued.catch(() => {});
+
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+
+  controller.abort();
+
+  try {
+    await queued;
+    console.log("FAIL: queued fetch resolved");
+  } catch (e) {
+    if (e?.name === "AbortError") {
+      console.log("OK: queued fetch rejected with AbortError");
+    } else {
+      console.log("FAIL: queued fetch rejected with", e?.name, e?.message);
+    }
+  }
+
+  const hungStates = await Promise.all(
+    hung.map(p => Promise.race([p.then(() => "settled"), new Promise(r => setImmediate(() => r("pending")))])),
+  );
+  console.log("hung requests are", hungStates.join(","));
+
+  for (const s of sockets) s.destroy();
+  for (const server of servers) server.close();
+  await Promise.all(hung);
+`;
+
+test("aborting a fetch that is queued behind the process-wide request ceiling rejects the promise", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", ceilingFixture],
+    env: { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([
+    "OK: queued fetch rejected with AbortError",
+    "hung requests are pending,pending,pending,pending",
+  ]);
+  expect(exitCode).toBe(0);
+});

@@ -1354,11 +1354,6 @@ impl Subprocess<'_> {
     pub fn handle_ipc_message(&self, message: &IPC::DecodedIPCMessage, handle: JSValue) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
-            // In future versions we can read this in order to detect version mismatches,
-            // or disable future optimizations if the subprocess is old.
-            IPC::DecodedIPCMessage::Version(v) => {
-                bun_output::scoped_log!(IPC, "Child IPC version is {}", v);
-            }
             IPC::DecodedIPCMessage::Data(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC message from child");
                 let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);

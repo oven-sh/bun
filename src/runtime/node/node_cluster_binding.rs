@@ -82,6 +82,14 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
             .put(singleton.seq, StrongOptional::create(callback, global));
     }
 
+    // Node's cluster tags every internal message with `cmd: "NODE_CLUSTER"`
+    // and the receiver classifies on that prefix (the advanced wire format
+    // has no out-of-band internal/external marker). Match that shape.
+    message.put(
+        global,
+        b"cmd",
+        BunString::static_str("NODE_CLUSTER").to_js(global)?,
+    );
     // sequence number for InternalMsgHolder
     message.put(global, b"seq", JSValue::js_number(singleton.seq as f64));
     singleton.seq = singleton.seq.wrapping_add(1);
@@ -196,6 +204,13 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         );
     }
 
+    // See send_helper_child: node's cluster protocol tags internal messages
+    // with `cmd: "NODE_CLUSTER"`; the advanced decoder classifies on it.
+    message.put(
+        global,
+        b"cmd",
+        BunString::static_str("NODE_CLUSTER").to_js(global)?,
+    );
     // sequence number for InternalMsgHolder
     message.put(
         global,

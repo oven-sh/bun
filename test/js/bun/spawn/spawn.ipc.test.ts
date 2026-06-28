@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick } from "harness";
+import { fork } from "child_process";
+import { bunEnv, bunExe, gcTick, nodeExe, tempDir } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -53,10 +54,11 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 
 describe("ipc mode advanced", () => {
   it("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
-    // The advanced IPC framing is [u8 type][u32-le length][payload]. Decoding previously
-    // checked `data.len < header_length + message_len`, which is u32 arithmetic: a child
-    // sending length 0xFFFFFFFB makes the sum wrap to 0, the guard passes, and the receiver
-    // slices `data[5..0]` (length ~SIZE_MAX) straight into the deserializer.
+    // The advanced IPC framing is [u32-be length][payload]. Checking
+    // `data.len < header_length + message_len` in u32 arithmetic would let a
+    // peer-controlled length near u32::MAX wrap the sum past the guard and
+    // slice an enormous range into the deserializer; the decoder must compare
+    // the length against the *remaining* bytes instead.
     //
     // Run the receiver in its own subprocess so a crash is observed as a failing
     // assertion here rather than taking out the test runner.
@@ -65,9 +67,9 @@ describe("ipc mode advanced", () => {
       const child = Bun.spawn({
         cmd: [
           process.execPath, "-e",
-          // type = SerializedMessage (0x02), length = 0xFFFFFFFB (little-endian).
-          // header_length (5) + 0xFFFFFFFB wraps to 0 in u32.
-          'require("fs").writeSync(3, Buffer.from([0x02, 0xfb, 0xff, 0xff, 0xff]))',
+          // length = 0xFFFFFFFC (big-endian); header_length (4) + 0xFFFFFFFC
+          // wraps to 0 in u32.
+          'require("fs").writeSync(3, Buffer.from([0xff, 0xff, 0xff, 0xfc]))',
         ],
         stdio: ["ignore", "inherit", "inherit"],
         serialization: "advanced",
@@ -89,6 +91,196 @@ describe("ipc mode advanced", () => {
     expect(stdout.trim()).toBe("PARENT_OK");
     expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
     expect(exitCode).toBe(0);
+  });
+
+  it("a deeply nested message is a catchable RangeError, not a stack overflow", async () => {
+    // The serializer recurses once per nesting level of the message, so it
+    // must bound recursion by the native stack and throw, exactly like Node.
+    using dir = tempDir("ipc-adv-deep", {
+      "parent.cjs": /* js */ `
+        const { fork } = require("child_process");
+        const child = fork(require("path").join(__dirname, "echo.cjs"), [], {
+          execPath: process.execPath, execArgv: [], serialization: "advanced", stdio: "ignore",
+        });
+        let deep = {};
+        for (let i = 0; i < 200000; i++) deep = { deep };
+        let name = "no-error";
+        try {
+          child.send(deep);
+        } catch (e) {
+          name = e.name;
+        }
+        child.kill();
+        console.log("SURVIVED " + name);
+      `,
+      "echo.cjs": `process.on("message", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "parent.cjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("SURVIVED RangeError");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Node's "advanced" IPC uses V8's value-serializer format behind a 4-byte
+// big-endian length prefix. Bun previously framed advanced IPC with its own
+// JSC structured-clone bytes, so a bun process and a node process connected
+// over an advanced channel could not understand each other in either
+// direction: messages were silently never delivered.
+// https://nodejs.org/api/child_process.html#advanced-serialization
+describe.skipIf(!nodeExe())("ipc mode advanced node interop", () => {
+  // A CJS child that runs unchanged under node and bun: echo each message
+  // verbatim, then exit after the sentinel so the parent's channel closes.
+  const ECHO_CHILD = /* js */ `
+    process.on("message", m => {
+      process.send(m);
+      if (m && m.done) process.exit(0);
+    });
+  `;
+
+  // A rich payload that JSON-mode IPC cannot represent. Every property here is
+  // lost or corrupted by JSON (Buffer/TypedArray/Map/Set/Date/RegExp/BigInt,
+  // holes, cycles, shared identity), so it can only travel over "advanced".
+  function richPayload() {
+    const cyclic: any[] = [1];
+    cyclic.push(cyclic);
+    const shared = { x: 1 };
+    return {
+      int: 42,
+      neg: -7,
+      dbl: 1.5,
+      big: 2n ** 70n,
+      negBig: -5n,
+      str: "h\u00e9llo \u65e5\u672c",
+      buf: Buffer.from([1, 2, 3]),
+      u16: new Uint16Array([256, 513]),
+      map: new Map<unknown, unknown>([
+        ["k", 1],
+        [2, "v"],
+      ]),
+      set: new Set([1, "a"]),
+      date: new Date(12345),
+      re: /ab+c/gi,
+      undef: { a: undefined },
+      nul: null,
+      sparse: [, , 7],
+      cyclic,
+      shared: [shared, shared],
+      done: true,
+    };
+  }
+
+  // Forks `childSource` with the given execPath over an advanced channel,
+  // sends `payload`, and resolves with the first echoed message. Every
+  // failure path (exit before echo, channel error) rejects so a broken wire
+  // format fails the test immediately instead of just hanging.
+  function echoOnce(childPath: string, execPath: string, payload: unknown): Promise<any> {
+    const child = fork(childPath, [], { execPath, execArgv: [], serialization: "advanced", stdio: "ignore" });
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    child.on("message", resolve);
+    child.on("error", reject);
+    child.on("exit", (code, signal) => reject(new Error(`child exited (${code}, ${signal}) before echoing`)));
+    child.send(payload as any);
+    return promise.finally(() => child.kill());
+  }
+
+  // The node child both deserializes what bun serialized and re-serializes the
+  // echo with real V8, so one round trip exercises both halves of the format
+  // against the reference implementation.
+  it("a bun parent can exchange structured values with a node child", async () => {
+    using dir = tempDir("ipc-adv-bun-node", { "echo.cjs": ECHO_CHILD });
+    const sent = richPayload();
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), nodeExe()!, sent);
+
+    expect(got).toEqual(sent as any);
+    expect(Buffer.isBuffer(got.buf)).toBe(true);
+    expect(got.u16).toBeInstanceOf(Uint16Array);
+    expect(got.map).toBeInstanceOf(Map);
+    expect(got.set).toBeInstanceOf(Set);
+    expect(got.date).toBeInstanceOf(Date);
+    expect(got.re).toBeInstanceOf(RegExp);
+    // Holes survive as holes, not undefined elements.
+    expect(0 in got.sparse).toBe(false);
+    // Cycles and shared references deserialize to the same object identity.
+    expect(got.cyclic[1]).toBe(got.cyclic);
+    expect(got.shared[0]).toBe(got.shared[1]);
+  });
+
+  // Same exchange with a bun child, driven by a node parent whose
+  // assert.deepStrictEqual is the reference comparison. This covers the
+  // child-side NODE_CHANNEL_FD setup path, which is distinct from the
+  // Subprocess path the previous test exercises.
+  it("a node parent can exchange structured values with a bun child", async () => {
+    using dir = tempDir("ipc-adv-node-bun", {
+      "echo.cjs": ECHO_CHILD,
+      // prettier-ignore
+      "parent.cjs": /* js */ `
+        const assert = require("assert");
+        const { fork } = require("child_process");
+        const cyclic = [1]; cyclic.push(cyclic);
+        const shared = { x: 1 };
+        const sent = {
+          int: 42, neg: -7, dbl: 1.5, big: 2n ** 70n, negBig: -5n,
+          str: "h\\u00e9llo \\u65e5\\u672c",
+          buf: Buffer.from([1, 2, 3]),
+          u16: new Uint16Array([256, 513]),
+          map: new Map([["k", 1], [2, "v"]]),
+          set: new Set([1, "a"]),
+          date: new Date(12345),
+          re: /ab+c/gi,
+          undef: { a: undefined },
+          nul: null,
+          sparse: [, , 7],
+          cyclic,
+          shared: [shared, shared],
+          done: true,
+        };
+        const child = fork(require("path").join(__dirname, "echo.cjs"), [], {
+          execPath: process.argv[2], execArgv: [], serialization: "advanced", stdio: "ignore",
+        });
+        child.on("exit", () => { console.log("FAIL child exited before echoing"); process.exit(1); });
+        child.on("message", got => {
+          child.removeAllListeners("exit");
+          try {
+            assert.deepStrictEqual(got, sent);
+            assert.strictEqual(got.cyclic[1], got.cyclic);
+            assert.strictEqual(got.shared[0], got.shared[1]);
+            assert.strictEqual(0 in got.sparse, false);
+            console.log("OK");
+          } catch (e) {
+            console.log("FAIL " + e.message);
+          }
+          child.kill();
+          process.exit(0);
+        });
+        child.send(sent);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [nodeExe()!, path.join(String(dir), "parent.cjs"), bunExe()],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({ stdout: "OK", exitCode: 0, stderr: "" });
+  });
+
+  it("a bun parent can exchange structured values with a bun child", async () => {
+    using dir = tempDir("ipc-adv-bun-bun", { "echo.cjs": ECHO_CHILD });
+    const sent = richPayload();
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), bunExe(), sent);
+
+    expect(got).toEqual(sent as any);
+    expect(Buffer.isBuffer(got.buf)).toBe(true);
+    expect(got.cyclic[1]).toBe(got.cyclic);
+    expect(got.shared[0]).toBe(got.shared[1]);
   });
 });
 

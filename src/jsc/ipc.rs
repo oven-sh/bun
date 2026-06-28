@@ -5,7 +5,7 @@ use crate as jsc;
 use crate::js_value::Protected;
 use crate::json_line_buffer::JSONLineBuffer;
 use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
+use crate::{JSGlobalObject, JSValue, JsError, JsResult, Task};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
 use bun_core::{String as BunString, immutable as strings};
@@ -203,8 +203,9 @@ pub enum SerializeAndSendResult {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Mode {
-    /// Uses SerializedScriptValue to send data. Only valid for bun <--> bun communication.
-    /// The first packet sent here is a version packet so that the version of the other end is known.
+    /// Uses Node's V8 value-serializer wire format with a 4-byte big-endian
+    /// length prefix, matching node's `serialization: "advanced"`. This lets
+    /// a bun process exchange structured-clone messages with a node process.
     Advanced,
     /// Uses JSON messages, one message per line.
     /// This must match the behavior of node.js, and supports bun <--> node.js/etc communication.
@@ -233,7 +234,6 @@ impl Mode {
 }
 
 pub enum DecodedIPCMessage {
-    Version(u32),
     Data(JSValue),
     Internal(JSValue),
 }
@@ -287,37 +287,43 @@ pub enum IPCSerializationError {
 mod advanced {
     use super::*;
 
-    pub(super) const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
-    // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
+    // Node's framing: 4-byte big-endian length, then the V8-serialized payload.
+    pub(super) const HEADER_LENGTH: usize = size_of::<u32>();
     pub(super) const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
-    pub(super) const VERSION: u32 = 1;
 
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub(super) enum IPCMessageType {
-        Version = 1,
-        SerializedMessage = 2,
-        SerializedInternalMessage = 3,
+    unsafe extern "C" {
+        fn Bun__NodeIPC__serialize(
+            global: *const JSGlobalObject,
+            value: JSValue,
+            out_bytes: *mut *mut u8,
+        ) -> usize;
+        fn Bun__NodeIPC__serialize_free(ptr: *mut u8);
+        fn Bun__NodeIPC__deserialize(
+            global: *const JSGlobalObject,
+            bytes: *const u8,
+            size: usize,
+        ) -> JSValue;
     }
-    // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
-    // `Copy + 'static`; the single byte is always an initialized discriminant.
-    unsafe impl bytemuck::NoUninit for IPCMessageType {}
 
-    impl IPCMessageType {
-        fn tag_name(raw: u8) -> &'static str {
-            match raw {
-                1 => "Version",
-                2 => "SerializedMessage",
-                3 => "SerializedInternalMessage",
-                _ => "unknown",
-            }
+    /// Owns the `Vector<uint8_t>` buffer handed out by
+    /// `Bun__NodeIPC__serialize`; freed exactly once in Drop.
+    struct NodeIPCBuffer {
+        ptr: *mut u8,
+        len: usize,
+    }
+    impl NodeIPCBuffer {
+        fn slice(&self) -> &[u8] {
+            // SAFETY: `ptr` is the live buffer of length `len` produced by
+            // `Bun__NodeIPC__serialize`; freed only in Drop.
+            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
         }
     }
-
-    static VERSION_PACKET_BYTES: [u8; HEADER_LENGTH] = {
-        let v = VERSION.to_ne_bytes();
-        [IPCMessageType::Version as u8, v[0], v[1], v[2], v[3]]
-    };
+    impl Drop for NodeIPCBuffer {
+        fn drop(&mut self) {
+            // SAFETY: pairs with the `releaseBuffer().leakSpan()` in C++.
+            unsafe { Bun__NodeIPC__serialize_free(self.ptr) };
+        }
+    }
 
     pub(super) fn decode_ipc_message(
         data: &[u8],
@@ -331,109 +337,110 @@ mod advanced {
             return Err(IPCDecodeError::NotEnoughBytes);
         }
 
-        let message_type_raw: u8 = data[0];
-        let message_len = u32::from_le_bytes(
-            data[1..1 + size_of::<u32>()]
+        let message_len = u32::from_be_bytes(
+            data[0..size_of::<u32>()]
                 .try_into()
                 .expect("infallible: size matches"),
         );
 
-        log!(
-            "Received IPC message type {} ({}) len {}",
-            message_type_raw,
-            IPCMessageType::tag_name(message_type_raw),
-            message_len
-        );
+        log!("Received advanced IPC message of len {}", message_len);
 
-        match message_type_raw {
-            x if x == IPCMessageType::Version as u8 => Ok(DecodeIPCMessageResult {
-                bytes_consumed: HEADER_LENGTH_U32,
-                message: DecodedIPCMessage::Version(message_len),
-            }),
-            x if x == IPCMessageType::SerializedMessage as u8
-                || x == IPCMessageType::SerializedInternalMessage as u8 =>
-            {
-                // `header_length + message_len` would be evaluated as u32; a peer-controlled
-                // `message_len >= 0xFFFFFFFB` wraps the sum to a small value and defeats the
-                // bounds check. Compare against the remaining bytes instead — `data.len >=
-                // header_length` is already established above, so the subtraction cannot
-                // underflow.
-                if data.len() - HEADER_LENGTH < message_len as usize {
-                    log!(
-                        "Not enough bytes to decode IPC message body of len {}, have {} bytes",
-                        message_len,
-                        data.len()
-                    );
-                    return Err(IPCDecodeError::NotEnoughBytes);
-                }
-
-                let message = &data[HEADER_LENGTH..][..message_len as usize];
-                let deserialized = JSValue::deserialize(message, global)?;
-
-                Ok(DecodeIPCMessageResult {
-                    bytes_consumed: HEADER_LENGTH_U32 + message_len,
-                    message: if x == IPCMessageType::SerializedInternalMessage as u8 {
-                        DecodedIPCMessage::Internal(deserialized)
-                    } else {
-                        DecodedIPCMessage::Data(deserialized)
-                    },
-                })
-            }
-            _ => Err(IPCDecodeError::InvalidFormat),
+        // Compare against the remaining bytes so a peer-controlled
+        // `message_len` close to u32::MAX cannot wrap `HEADER_LENGTH +
+        // message_len` into a small value that passes the bounds check.
+        if data.len() - HEADER_LENGTH < message_len as usize {
+            log!(
+                "Not enough bytes to decode IPC message body of len {}, have {} bytes",
+                message_len,
+                data.len()
+            );
+            return Err(IPCDecodeError::NotEnoughBytes);
         }
+
+        let message = &data[HEADER_LENGTH..][..message_len as usize];
+        // SAFETY: `global` is live; `message` valid for the duration of the call.
+        let deserialized = crate::host_fn::from_js_host_call(global, || unsafe {
+            Bun__NodeIPC__deserialize(global, message.as_ptr(), message.len())
+        })?;
+
+        Ok(DecodeIPCMessageResult {
+            bytes_consumed: HEADER_LENGTH_U32 + message_len,
+            message: classify_message(deserialized, global)?,
+        })
     }
 
-    #[inline]
-    pub(super) fn get_version_packet() -> &'static [u8] {
-        &VERSION_PACKET_BYTES
+    /// Node has no wire-level internal/external distinction; internal messages
+    /// carry `{cmd: "NODE_..."}` and the receiver classifies them. `value` is a
+    /// graph built by the deserializer, so the property read cannot re-enter
+    /// user code; any error still propagates as an `IPCDecodeError::JSError`.
+    fn classify_message(value: JSValue, global: &JSGlobalObject) -> JsResult<DecodedIPCMessage> {
+        if !value.is_object() {
+            return Ok(DecodedIPCMessage::Data(value));
+        }
+        let Some(cmd) = value.fast_get(global, jsc::BuiltinName::cmd)? else {
+            return Ok(DecodedIPCMessage::Data(value));
+        };
+        if !cmd.is_string() {
+            return Ok(DecodedIPCMessage::Data(value));
+        }
+        // `from_js` returns a +1 ref on the WTFStringImpl; OwnedString
+        // releases it on every exit path.
+        let s = bun_core::OwnedString::new(crate::bun_string_jsc::from_js(cmd, global)?);
+        // NODE_HANDLE / NODE_HANDLE_ACK / NODE_HANDLE_NACK stay on the Data
+        // path; `handle_ipc_message` consumes them there (matching the
+        // Json-mode decoder).
+        if s.length() > 5
+            && s.has_prefix_comptime(b"NODE_")
+            && !s.eql_comptime(b"NODE_HANDLE")
+            && !s.eql_comptime(b"NODE_HANDLE_ACK")
+            && !s.eql_comptime(b"NODE_HANDLE_NACK")
+        {
+            return Ok(DecodedIPCMessage::Internal(value));
+        }
+        Ok(DecodedIPCMessage::Data(value))
     }
+
+    // Pre-serialized `{cmd:"NODE_HANDLE_ACK"}` / `{cmd:"NODE_HANDLE_NACK"}` in
+    // Node's advanced framing (BE length, V8 header, object with one
+    // one-byte-string key/value pair).
     pub(super) fn get_ack_packet() -> &'static [u8] {
-        b"\x02\x24\x00\x00\x00\r\x00\x00\x00\x02\x03\x00\x00\x80cmd\x10\x0f\x00\x00\x80NODE_HANDLE_ACK\xff\xff\xff\xff"
+        b"\x00\x00\x00\x1b\xff\x0f\x6f\x22\x03cmd\x22\x0fNODE_HANDLE_ACK\x7b\x01"
     }
     pub(super) fn get_nack_packet() -> &'static [u8] {
-        b"\x02\x25\x00\x00\x00\r\x00\x00\x00\x02\x03\x00\x00\x80cmd\x10\x10\x00\x00\x80NODE_HANDLE_NACK\xff\xff\xff\xff"
+        b"\x00\x00\x00\x1c\xff\x0f\x6f\x22\x03cmd\x22\x10NODE_HANDLE_NACK\x7b\x01"
     }
 
     pub(super) fn serialize(
         writer: &mut StreamBuffer,
         global: &JSGlobalObject,
         value: JSValue,
-        is_internal: IsInternal,
+        _is_internal: IsInternal,
     ) -> Result<usize, IPCSerializationError> {
-        let serialized = value
-            .serialize(
-                global,
-                SerializedFlags {
-                    // IPC sends across process.
-                    for_cross_process_transfer: true,
-                    for_storage: false,
-                },
-            )
-            .map_err(|e| match e {
-                JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
-                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-            })?;
-        // `serialized` Drops at scope exit (defer serialized.deinit()).
+        let mut out_ptr: *mut u8 = core::ptr::null_mut();
+        // SAFETY: `global` is live; `out_ptr` receives an owned allocation on success.
+        let total = crate::host_fn::from_js_host_call_generic(global, || unsafe {
+            Bun__NodeIPC__serialize(global, value, &raw mut out_ptr)
+        })
+        .map_err(|e| match e {
+            JsError::Thrown => IPCSerializationError::JSError,
+            JsError::Terminated => IPCSerializationError::JSTerminated,
+            JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+        })?;
+        if total == usize::MAX || out_ptr.is_null() {
+            return Err(IPCSerializationError::SerializationFailed);
+        }
+        let buf = NodeIPCBuffer {
+            ptr: out_ptr,
+            len: total,
+        };
 
-        let size: u32 = u32::try_from(serialized.data().len()).expect("int cast");
-
-        let payload_length: usize = size_of::<IPCMessageType>() + size_of::<u32>() + size as usize;
-
-        // Propagate OOM so serializeAndSend
-        // returns `.failure` instead of silently discarding the Result.
+        // Propagate OOM so serializeAndSend returns `.failure`.
         writer
-            .ensure_unused_capacity(payload_length)
+            .ensure_unused_capacity(total)
             .map_err(|_| IPCSerializationError::OutOfMemory)?;
+        writer.write_assume_capacity(buf.slice());
 
-        writer.write_type_as_bytes_assume_capacity(match is_internal {
-            IsInternal::Internal => IPCMessageType::SerializedInternalMessage,
-            IsInternal::External => IPCMessageType::SerializedMessage,
-        });
-        writer.write_type_as_bytes_assume_capacity(size);
-        writer.write_assume_capacity(serialized.data());
-
-        Ok(payload_length)
+        Ok(total)
     }
 }
 
@@ -446,9 +453,6 @@ mod json {
         unsafe { *context = true };
     }
 
-    pub(super) fn get_version_packet() -> &'static [u8] {
-        &[]
-    }
     pub(super) fn get_ack_packet() -> &'static [u8] {
         b"{\"cmd\":\"NODE_HANDLE_ACK\"}\n"
     }
@@ -619,14 +623,6 @@ pub fn decode_ipc_message(
     match mode {
         Mode::Advanced => advanced::decode_ipc_message(data, global),
         Mode::Json => json::decode_ipc_message(data, global, known_newline),
-    }
-}
-
-/// Returns the initialization packet for the given mode. Can be zero-length.
-pub fn get_version_packet(mode: Mode) -> &'static [u8] {
-    match mode {
-        Mode::Advanced => advanced::get_version_packet(),
-        Mode::Json => json::get_version_packet(),
     }
 }
 
@@ -829,7 +825,7 @@ pub struct SendQueue {
     pub retry_count: u32,
     pub keep_alive: KeepAlive,
     #[cfg(debug_assertions)]
-    pub has_written_version: u8,
+    pub channel_ready: bool,
     pub mode: Mode,
     pub internal_msg_queue: InternalMsgHolder,
     incoming: IncomingBuffer,
@@ -909,7 +905,7 @@ impl SendQueue {
             retry_count: 0,
             keep_alive: KeepAlive::default(),
             #[cfg(debug_assertions)]
-            has_written_version: 0,
+            channel_ready: false,
             mode,
             internal_msg_queue: InternalMsgHolder::default(),
             incoming: IncomingBuffer::init(mode),
@@ -1099,7 +1095,7 @@ impl SendQueue {
     ) -> JsResult<&mut SendHandle> {
         log!("SendQueue#startMessage");
         #[cfg(debug_assertions)]
-        debug_assert!(self.has_written_version == 1);
+        debug_assert!(self.channel_ready);
 
         // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
         // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
@@ -1137,7 +1133,7 @@ impl SendQueue {
     pub fn insert_message(&mut self, message: SendHandle) {
         log!("SendQueue#insertMessage");
         #[cfg(debug_assertions)]
-        debug_assert!(self.has_written_version == 1);
+        debug_assert!(self.channel_ready);
         if (self.queue.is_empty() || self.queue[0].data.cursor == 0) && !self.write_in_progress {
             // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
             self.queue.insert(0, message);
@@ -1327,27 +1323,18 @@ impl SendQueue {
         }
     }
 
-    pub fn write_version_packet(&mut self, global: &JSGlobalObject) {
-        log!("SendQueue#writeVersionPacket");
-        #[cfg(debug_assertions)]
-        debug_assert!(self.has_written_version == 0);
+    /// Marks the channel as ready to send. Must be called exactly once, after
+    /// the socket is configured and before the first `start_message`. Neither
+    /// protocol has a handshake: JSON is newline-delimited, and advanced uses
+    /// Node's length-prefixed V8 framing.
+    pub fn mark_channel_ready(&mut self) {
+        log!("SendQueue#markChannelReady");
         debug_assert!(self.queue.is_empty());
         debug_assert!(self.waiting_for_ack.is_none());
-        let bytes = get_version_packet(self.mode);
-        if !bytes.is_empty() {
-            self.queue.push(SendHandle {
-                data: StreamBuffer::default(),
-                handle: None,
-                callbacks: CallbackList::None,
-            });
-            let last = self.queue.len() - 1;
-            handle_oom(self.queue[last].data.write(bytes));
-            log!("IPC call continueSend() from version packet");
-            self.continue_send(global, ContinueSendReason::NewMessageAppended);
-        }
         #[cfg(debug_assertions)]
         {
-            self.has_written_version = 1;
+            debug_assert!(!self.channel_ready);
+            self.channel_ready = true;
         }
     }
 
@@ -1757,9 +1744,6 @@ fn handle_ipc_message(
         // The `Formatter` runs its deinit in `Drop`.
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         match &message {
-            DecodedIPCMessage::Version(version) => {
-                log!("received ipc message: version: {}", version)
-            }
             DecodedIPCMessage::Data(jsvalue) => {
                 log!("received ipc message: {}", jsvalue.to_fmt(&mut formatter))
             }
@@ -1788,8 +1772,10 @@ fn handle_ipc_message(
                     if !cmd.is_cell() {
                         break 'handle_message;
                     }
+                    // `from_js` returns a +1 ref on the WTFStringImpl;
+                    // OwnedString releases it on every exit path.
                     let cmd_str = match crate::bun_string_jsc::from_js(cmd, global_this) {
-                        Ok(s) => s,
+                        Ok(s) => bun_core::OwnedString::new(s),
                         Err(e) => {
                             let _ = global_this.take_exception(e);
                             break 'handle_message;
@@ -2044,12 +2030,8 @@ pub mod IPCHandlers {
         pub fn on_open(_: *mut c_void, _: Socket) {
             log!("onOpen");
             // it is NOT safe to use the first argument here because it has not been initialized yet.
-            // ideally we would call .ipc.writeVersionPacket() here, and we need that to handle the
-            // theoretical write failure, but since the .ipc.outgoing buffer isn't available, that
-            // data has nowhere to go.
-            //
-            // therefore, initializers of IPC handlers need to call .ipc.writeVersionPacket() themselves
-            // this is covered by an assertion.
+            // initializers of IPC handlers must call .ipc.markChannelReady() themselves once the
+            // SendQueue is fully set up; this is covered by a debug assertion in startMessage().
         }
 
         pub fn on_close(send_queue: &mut SendQueue, _: Socket, _: c_int, _: Option<*mut c_void>) {

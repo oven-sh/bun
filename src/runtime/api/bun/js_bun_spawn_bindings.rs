@@ -1510,7 +1510,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 return Err(global_this.throw_value(err_js));
             }
         }
-        ipc_data.write_version_packet(global_this);
+        ipc_data.mark_channel_ready();
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {

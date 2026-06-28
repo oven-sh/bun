@@ -2800,11 +2800,6 @@ impl IPCInstance {
         let event_loop = VirtualMachine::get().event_loop_mut();
 
         match *message {
-            // In future versions we can read this in order to detect version mismatches,
-            // or disable future optimizations if the subprocess is old.
-            crate::ipc::DecodedIPCMessage::Version(v) => {
-                bun_core::scoped_log!(IPC, "Parent IPC version is {}", v);
-            }
             crate::ipc::DecodedIPCMessage::Data(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC message from parent");
                 event_loop.enter();
@@ -6468,7 +6463,7 @@ impl VirtualMachine {
             // in `uv_handle_t.data` for the pipe's lifetime, so that pointer
             // must derive from the root raw `instance` (SharedReadWrite tag,
             // never popped), NOT from a `&mut SendQueue` auto-ref whose Unique
-            // tag would be invalidated by `(*instance).data.write_version_packet`
+            // tag would be invalidated by `(*instance).data.mark_channel_ready`
             // below — every later libuv read callback would then deref a popped
             // pointer (UB under Stacked Borrows). Mirror the POSIX branch's
             // `addr_of_mut!` treatment.
@@ -6490,7 +6485,7 @@ impl VirtualMachine {
         };
 
         // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { (*instance).data.write_version_packet(self.global()) };
+        unsafe { (*instance).data.mark_channel_ready() };
 
         Some(instance)
     }

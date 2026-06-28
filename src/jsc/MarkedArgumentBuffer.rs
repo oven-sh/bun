@@ -47,6 +47,9 @@ impl MarkedArgumentBuffer {
         ctx.r.unwrap()
     }
 
+    /// Append `value` and GC-root it for the buffer's lifetime. Infallible:
+    /// the C++ side uses `appendWithCrashOnOverflow`, so an allocation
+    /// failure is a loud OOM crash, never a silently unrooted value.
     pub fn append(&mut self, value: JSValue) {
         MarkedArgumentBuffer__append(self, value)
     }

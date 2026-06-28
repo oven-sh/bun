@@ -14,7 +14,12 @@ extern "C" SUPPRESS_ASAN void MarkedArgumentBuffer__run(
     callback(ctx, &args);
 }
 
+// appendWithCrashOnOverflow, not append: under MarkedArgumentBuffer's
+// RecordOverflow policy a failed spill-to-heap allocation makes append() a
+// silent no-op, leaving the value unrooted while Rust callers keep using it.
+// No Rust caller can recover from that, so turn allocation failure into a
+// loud OOM crash instead of a GC use-after-free.
 extern "C" void MarkedArgumentBuffer__append(void* args, JSC::EncodedJSValue value)
 {
-    static_cast<JSC::MarkedArgumentBuffer*>(args)->append(JSC::JSValue::decode(value));
+    static_cast<JSC::MarkedArgumentBuffer*>(args)->appendWithCrashOnOverflow(JSC::JSValue::decode(value));
 }

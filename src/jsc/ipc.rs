@@ -2136,6 +2136,15 @@ pub mod IPCHandlers {
             send_queue.close_socket_next_tick(true);
         }
 
+        /// A protocol error while decoding (malformed frame, deserialization
+        /// failure, oversized message) tears down the channel. Closing the uv
+        /// pipe synchronously here would run `uv_close` from inside its own
+        /// read callback while libuv's pipe dispatch still holds the handle,
+        /// so defer to the next tick exactly like `on_read_error` above.
+        fn close_on_decode_error(send_queue: &mut SendQueue) {
+            send_queue.close_socket_next_tick(true);
+        }
+
         /// `nread` is the byte count libuv reported into the slice handed out
         /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
         /// current `len`). The slice itself is *not* passed through because it
@@ -2185,12 +2194,12 @@ pub mod IPCHandlers {
                                 | IPCDecodeError::JSError
                                 | IPCDecodeError::JSTerminated,
                             ) => {
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                                close_on_decode_error(send_queue);
                                 return;
                             }
                             Err(IPCDecodeError::OutOfMemory) => {
                                 Output::print_errorln("IPC message is too long.");
-                                send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                                close_on_decode_error(send_queue);
                                 return;
                             }
                         };
@@ -2233,12 +2242,12 @@ pub mod IPCHandlers {
                                     | IPCDecodeError::JSError
                                     | IPCDecodeError::JSTerminated,
                                 ) => {
-                                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                                    close_on_decode_error(send_queue);
                                     return;
                                 }
                                 Err(IPCDecodeError::OutOfMemory) => {
                                     Output::print_errorln("IPC message is too long.");
-                                    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+                                    close_on_decode_error(send_queue);
                                     return;
                                 }
                             };

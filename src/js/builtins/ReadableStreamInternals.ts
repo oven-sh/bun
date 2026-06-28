@@ -2597,7 +2597,18 @@ export function readableStreamAsyncIterator(stream, preventCancel) {
   function nextSteps() {
     if (isFinished) return $createFulfilledPromise({ value: undefined, done: true });
 
-    return $readableStreamDefaultReaderRead(reader).$then(
+    const readPromise = $readableStreamDefaultReaderRead(reader);
+    if ($isPromiseFulfilled(readPromise)) {
+      // The chunk (or close) was available synchronously, and the read promise
+      // already resolves to the { value, done } the iterator needs.
+      if ($peekPromiseSettledValue(readPromise).done) {
+        isFinished = true;
+        $readableStreamDefaultReaderRelease(reader);
+      }
+      return readPromise;
+    }
+
+    return readPromise.$then(
       function (result) {
         if (result.done) {
           isFinished = true;
@@ -2630,19 +2641,24 @@ export function readableStreamAsyncIterator(stream, preventCancel) {
   }
 
   // Inherits from %AsyncIteratorPrototype% so the iterator is itself async
-  // iterable. next()/return() calls are serialized through ongoingPromise.
+  // iterable. next()/return() only serialize behind a still-pending step;
+  // chaining onto a settled ongoingPromise would cost a microtask per chunk.
   const iterator = {
     __proto__: $getPrototypeOf($getPrototypeOf(async function* () {}).prototype),
     next() {
       if (this !== iterator) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
-      return (ongoingPromise = ongoingPromise ? ongoingPromise.$then(nextSteps, nextSteps) : nextSteps());
+      return (ongoingPromise =
+        ongoingPromise && !$isPromiseFulfilled(ongoingPromise)
+          ? ongoingPromise.$then(nextSteps, nextSteps)
+          : nextSteps());
     },
     return(value) {
       if (this !== iterator) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamAsyncIterator"));
       const chainedReturnSteps = () => returnSteps(value);
-      return (ongoingPromise = ongoingPromise
-        ? ongoingPromise.$then(chainedReturnSteps, chainedReturnSteps)
-        : chainedReturnSteps());
+      return (ongoingPromise =
+        ongoingPromise && !$isPromiseFulfilled(ongoingPromise)
+          ? ongoingPromise.$then(chainedReturnSteps, chainedReturnSteps)
+          : chainedReturnSteps());
     },
   };
   return iterator;

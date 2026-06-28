@@ -90,7 +90,7 @@ test("expect.assertions with an invalid numeric argument fails the test instead 
       });
 
       test("non-number argument still throws synchronously", () => {
-        expect(() => expect.assertions("2" as any)).toThrow("Expected value must be a non-negative integer");
+        expect(() => expect.assertions("2" as any)).toThrow("Expected value must be a number");
       });
 
       test("missing argument still throws synchronously", () => {

@@ -1651,7 +1651,7 @@ impl Expect {
         if !expected.is_number() {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
             return Err(global_this.throw(format_args!(
-                "Expected value must be a non-negative integer: {}",
+                "Expected value must be a number: {}",
                 expected.to_fmt(&mut fmt),
             )));
         }

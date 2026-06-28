@@ -1,5 +1,15 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
@@ -529,6 +539,54 @@ describe("fs.watch", () => {
       expect(err.code).toBe("EACCES");
       expect(err.syscall).toBe("watch");
     }
+  });
+
+  // Deleting the watched path retires its inotify watch: the kernel queues
+  // IN_DELETE_SELF followed by IN_IGNORED, and node (libuv) reports both as
+  // "rename". The exact sequence is inotify-specific, so Linux only.
+  test.skipIf(!isLinux)("unlinking the watched file delivers both rename self-events", async () => {
+    using dir = tempDir("fs-watch-unlink-self", { "f.txt": "x" });
+    const target = path.join(String(dir), "f.txt");
+    const events: [string, string | null][] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const watcher = fs.watch(target, (eventType, filename) => {
+      events.push([eventType, filename]);
+      if (events.filter(([type]) => type === "rename").length === 2) resolve();
+    });
+    try {
+      fs.unlinkSync(target);
+      await promise;
+    } finally {
+      watcher.close();
+    }
+    // unlink(2) emits IN_ATTRIB (link count drop), IN_DELETE_SELF, IN_IGNORED.
+    expect(events).toEqual([
+      ["change", "f.txt"],
+      ["rename", "f.txt"],
+      ["rename", "f.txt"],
+    ]);
+  });
+
+  test.skipIf(!isLinux)("removing the watched directory delivers both rename self-events named after it", async () => {
+    using dir = tempDir("fs-watch-rmdir-self", { "sub": {} });
+    const target = path.join(String(dir), "sub");
+    const events: [string, string | null][] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const watcher = fs.watch(target, (eventType, filename) => {
+      events.push([eventType, filename]);
+      if (events.filter(([type]) => type === "rename").length === 2) resolve();
+    });
+    try {
+      fs.rmdirSync(target);
+      await promise;
+    } finally {
+      watcher.close();
+    }
+    // The self-events carry no name; node reports basename(watched path).
+    expect(events).toEqual([
+      ["rename", "sub"],
+      ["rename", "sub"],
+    ]);
   });
 });
 

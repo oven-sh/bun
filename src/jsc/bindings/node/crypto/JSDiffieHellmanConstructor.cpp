@@ -93,7 +93,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         }
 
         if (!generatorValue.isNumber()) {
-            return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, "Second argument must be an int32"_s));
+            throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Second argument must be an int32"_s);
+            return {};
         }
 
         int32_t generator = 0;
@@ -108,7 +109,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
 
         dh = ncrypto::DHPointer::New(bits, generator);
         if (!dh) {
-            return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid DH parameters"_s));
+            throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid DH parameters"_s);
+            return {};
         }
     } else {
 
@@ -119,12 +121,14 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         RETURN_IF_EXCEPTION(scope, {});
 
         if (keyView->byteLength() > INT32_MAX) {
-            return JSValue::encode(createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, "prime is too big"_s));
+            throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "prime is too big"_s);
+            return {};
         }
 
         ncrypto::BignumPointer bn_p(reinterpret_cast<uint8_t*>(keyView->vector()), keyView->byteLength());
         if (!bn_p) {
-            return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid prime"_s));
+            throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid prime"_s);
+            return {};
         }
         ncrypto::BignumPointer bn_g;
 
@@ -145,12 +149,14 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
             RETURN_IF_EXCEPTION(scope, {});
 
             if (generatorView->byteLength() > INT32_MAX) {
-                return JSValue::encode(createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, "generator is too big"_s));
+                throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "generator is too big"_s);
+                return {};
             }
 
             bn_g = ncrypto::BignumPointer(reinterpret_cast<uint8_t*>(generatorView->vector()), generatorView->byteLength());
             if (!bn_g) {
-                return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid generator"_s));
+                throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid generator"_s);
+                return {};
             }
 
             if (bn_g.getWord() < 2) {
@@ -162,7 +168,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
 
         dh = ncrypto::DHPointer::New(WTF::move(bn_p), WTF::move(bn_g));
         if (!dh) {
-            return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid DH parameters"_s));
+            throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid DH parameters"_s);
+            return {};
         }
     }
 

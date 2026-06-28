@@ -11,10 +11,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_core::{ZStr, handle_oom, kind_from_mode};
-use bun_ignore::{IgnoreChain, IgnoreFile, Match};
+use bun_ignore::{IgnoreChain, IgnoreFile};
 use bun_sys::{Dir, EntryKind as SysEntryKind, O, PosixStat, lstatat};
 use bun_threading::{GuardedBy, Mutex, WorkPool};
 
+use crate::exempt::{ExemptSet, classify_entry};
 use crate::store::{EntryKind, Meta};
 
 /// One enumerated entry: its path relative to the crawl root and the kind
@@ -34,6 +35,13 @@ pub struct CrawlOptions {
     pub ignore_chain_root: IgnoreChain,
     /// Read each directory's `.gitignore` and apply it to that subtree.
     pub load_gitignore_files: bool,
+    /// Paths the ignore rules must never drop (git's tracked files under the
+    /// root) and the directories that contain them. Built by the caller —
+    /// this crate never reads `.git` — and consulted, with the ignore chain,
+    /// through [`classify_entry`] for every enumerated entry (the same call
+    /// is the directory-pruning decision). Default: empty (pure gitignore
+    /// semantics).
+    pub exempt: Arc<ExemptSet>,
     /// Stop recording entries past this count (sets `truncated`).
     pub max_entries: usize,
     /// Approximate byte cap on the result (path bytes + metadata); entries
@@ -47,6 +55,7 @@ impl Default for CrawlOptions {
             follow_root_symlink: false,
             ignore_chain_root: IgnoreChain::empty(),
             load_gitignore_files: true,
+            exempt: ExemptSet::none(),
             max_entries: usize::MAX,
             budget: usize::MAX,
         }
@@ -68,6 +77,10 @@ pub struct CrawlResult {
     pub errors: usize,
     /// `max_entries` or `budget` was hit; the result is incomplete.
     pub truncated: bool,
+    /// The [`CrawlOptions::exempt`] set this crawl was filtered through,
+    /// handed back so the caller's watcher can keep applying the same
+    /// exemption to events until the next (re)crawl rebuilds it.
+    pub exempt: Arc<ExemptSet>,
 }
 
 /// Entries accumulated across completed directories before `on_batch` is
@@ -121,6 +134,7 @@ pub fn crawl_batched(
         Err(_) => {
             on_done(CrawlResult {
                 errors: 1,
+                exempt: options.exempt,
                 ..CrawlResult::default()
             });
             return;
@@ -129,6 +143,7 @@ pub fn crawl_batched(
     let shared = Arc::new(Shared {
         root,
         load_gitignore: options.load_gitignore_files,
+        exempt: options.exempt,
         max_entries: options.max_entries,
         budget: options.budget,
         pending: AtomicUsize::new(1),
@@ -145,6 +160,7 @@ pub fn crawl_batched(
         shared,
         rel: Vec::new(),
         chain: options.ignore_chain_root,
+        ignored: false,
     });
 }
 
@@ -155,6 +171,8 @@ type OnBatch = Box<dyn Fn(Vec<CrawlEntry>) + Send + Sync>;
 struct Shared {
     root: Dir,
     load_gitignore: bool,
+    /// See [`CrawlOptions::exempt`].
+    exempt: Arc<ExemptSet>,
     max_entries: usize,
     budget: usize,
     /// In-flight directory tasks plus one for the crawl itself until the
@@ -173,10 +191,15 @@ struct Shared {
 
 /// One directory to scan. `rel` is its path relative to the root (`b""` for
 /// the root itself); `chain` is the ignore chain in force *above* it.
+/// `ignored` means the directory itself is ignored and was descended into
+/// only because the exempt set says it contains tracked files: nothing under
+/// it is kept unless the exemption admits it (git never re-includes under an
+/// excluded directory), and its own `.gitignore` is not read.
 struct DirJob {
     shared: Arc<Shared>,
     rel: Vec<u8>,
     chain: IgnoreChain,
+    ignored: bool,
 }
 
 /// `pending` was already incremented for this job (the root holds the
@@ -186,12 +209,17 @@ fn schedule_dir(job: DirJob) {
 }
 
 fn run_dir(job: DirJob) {
-    let DirJob { shared, rel, chain } = job;
-    process_dir(&shared, &rel, chain);
+    let DirJob {
+        shared,
+        rel,
+        chain,
+        ignored,
+    } = job;
+    process_dir(&shared, &rel, chain, ignored);
     finish_one(&shared);
 }
 
-fn process_dir(shared: &Arc<Shared>, rel: &[u8], mut chain: IgnoreChain) {
+fn process_dir(shared: &Arc<Shared>, rel: &[u8], mut chain: IgnoreChain, ignored: bool) {
     let open_path: &[u8] = if rel.is_empty() { b"." } else { rel };
     let dir = match shared
         .root
@@ -204,7 +232,10 @@ fn process_dir(shared: &Arc<Shared>, rel: &[u8], mut chain: IgnoreChain) {
         }
     };
 
-    if shared.load_gitignore
+    // git does not consult `.gitignore` files inside an excluded directory
+    // (nothing under one can be re-included), so don't read this one's.
+    if !ignored
+        && shared.load_gitignore
         && let Some(file) = read_gitignore(shared, &dir, rel)
         && !file.is_empty()
     {
@@ -262,9 +293,14 @@ fn process_dir(shared: &Arc<Shared>, rel: &[u8], mut chain: IgnoreChain) {
         rel_child.extend_from_slice(name);
 
         let is_dir = kind == EntryKind::Dir;
-        // The walker prunes ignored directories (it never descends into
-        // them), so the ancestors-already-checked fast path applies.
-        if chain.matches(&rel_child, is_dir) == Match::Ignore {
+        // The one shared ignore decision: per-entry filtering and directory
+        // pruning are the same call. The walker prunes a `Drop` directory
+        // (it never descends into it), so the ancestors-already-checked fast
+        // path of `IgnoreChain::matches` applies; an ignored directory the
+        // exempt set refuses to prune (`KeepIgnored`) is descended into with
+        // `ignored = true` so nothing inside it is kept unless exempt.
+        let verdict = classify_entry(&chain, ignored, &shared.exempt, &rel_child, is_dir);
+        if verdict.is_dropped() {
             continue;
         }
         if !shared.admit(rel_child.len()) {
@@ -276,6 +312,7 @@ fn process_dir(shared: &Arc<Shared>, rel: &[u8], mut chain: IgnoreChain) {
                 shared: Arc::clone(shared),
                 rel: rel_child.clone(),
                 chain: chain.clone(),
+                ignored: verdict.is_ignored(),
             });
         }
         local.push((rel_child, kind));
@@ -305,6 +342,7 @@ fn finish_one(shared: &Arc<Shared>) {
         gitignore_count: shared.gitignore_count.load(Ordering::Relaxed),
         errors: shared.errors.load(Ordering::Relaxed),
         truncated: shared.truncated.load(Ordering::Relaxed),
+        exempt: Arc::clone(&shared.exempt),
     };
     // `on_done` is taken exactly once: only one task can see `pending == 0`.
     let on_done = shared.on_done.lock().take();
@@ -633,6 +671,69 @@ mod tests {
         assert!(store.get(b"ignored_dir/x.txt").is_none());
         assert!(store.get(b".git/config").is_none());
         assert!(store.get(b"linkdir/main.rs").is_none());
+    }
+
+    /// Maintainer rule: with `gitignore: true` inside a repository, the
+    /// indexed set is git's real file set — tracked ∪ (untracked − ignored).
+    /// A tracked file matching an ignore rule is indexed, and an ignored
+    /// directory containing tracked files is not pruned, but the *untracked*
+    /// contents of that directory stay hidden.
+    #[test]
+    fn exempt_tracked_paths_survive_ignore_rules() {
+        let t = TempTree::new("exempt");
+        t.file(b".gitignore", b"*.log\nignored_dir/\n.env\n");
+        t.file(b"a.txt", b"alpha\n");
+        t.file(b"build.log", b"tracked but ignored\n");
+        t.file(b"other.log", b"untracked, ignored\n");
+        t.file(b".env", b"tracked dotenv\n");
+        t.file(
+            b"ignored_dir/keep/me.txt",
+            b"tracked, deep in an ignored dir\n",
+        );
+        t.file(b"ignored_dir/keep/junk.txt", b"untracked sibling\n");
+        t.file(b"ignored_dir/junk.txt", b"untracked\n");
+        // A `.gitignore` inside an excluded directory is never consulted:
+        // its `!junk.txt` must not re-include the untracked sibling.
+        t.file(b"ignored_dir/keep/.gitignore", b"!junk.txt\n");
+        let exempt = Arc::new(ExemptSet::from_files([
+            b"build.log".as_slice(),
+            b".env",
+            b"ignored_dir/keep/me.txt",
+        ]));
+        let result = run_crawl(
+            &t.root,
+            CrawlOptions {
+                exempt: Arc::clone(&exempt),
+                ..CrawlOptions::default()
+            },
+        );
+        assert_eq!(result.errors, 0);
+        let expected: Vec<Vec<u8>> = [
+            b".env".as_slice(),
+            b".gitignore",
+            b"a.txt",
+            b"build.log",
+            b"ignored_dir",
+            b"ignored_dir/keep",
+            b"ignored_dir/keep/me.txt",
+        ]
+        .iter()
+        .map(|p| p.to_vec())
+        .collect();
+        assert_eq!(sorted_paths(&result), expected);
+        assert_eq!(kind_of(&result, b"build.log"), EntryKind::File);
+        assert_eq!(kind_of(&result, b"ignored_dir"), EntryKind::Dir);
+        // The set that filtered the crawl is handed back for the watcher.
+        assert!(Arc::ptr_eq(&result.exempt, &exempt));
+
+        // No exemption set: the pure-gitignore behavior is byte-identical
+        // to before (every ignored path is dropped, the directory pruned).
+        let bare = run_crawl(&t.root, CrawlOptions::default());
+        assert_eq!(
+            sorted_paths(&bare),
+            vec![b".gitignore".to_vec(), b"a.txt".to_vec()]
+        );
+        assert!(bare.exempt.is_empty());
     }
 
     #[test]

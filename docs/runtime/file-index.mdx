@@ -84,11 +84,21 @@ A few rules worth knowing:
 
 ### gitignore semantics
 
-With `gitignore: true` (the default), the crawl implements the full [gitignore](https://git-scm.com/docs/gitignore) specification: per-directory `.gitignore` stacks, `!` negation, last-match-wins, `**` globs, anchored vs. basename patterns, directory-only patterns, and the rule that a file inside an excluded directory cannot be re-included. The crawler never descends into an ignored directory.
+With `gitignore: true` (the default), the crawl implements the full [gitignore](https://git-scm.com/docs/gitignore) specification: per-directory `.gitignore` stacks, `!` negation, last-match-wins, `**` globs, anchored vs. basename patterns, directory-only patterns, and the rule that a file inside an excluded directory cannot be re-included.
 
 Every source git itself consults is honored, in git's precedence order: the global excludes file (`core.excludesFile` from the repository config, else `$XDG_CONFIG_HOME/git/ignore`, else `~/.config/git/ignore`), then `$GIT_COMMON_DIR/info/exclude` (found through a linked worktree's `.git` file), then `.gitignore` in every directory from the work-tree top down — so an index rooted at a *subdirectory* of a work tree still applies the ancestor `.gitignore` files, exactly like `git status` run in that subdirectory. The git-specific sources only apply when `root` is inside a git work tree.
 
-Patterns passed via the `ignore` option use the same syntax and are rooted at `root`.
+#### Tracked files are never ignored
+
+When `root` is inside a git work tree, the indexed file set is exactly the one git reports: **tracked ∪ (untracked − ignored)** — what `git ls-files --cached --others --exclude-standard` prints. In git, ignore rules only ever apply to *untracked* paths, so:
+
+- A file that matches a `.gitignore` rule but is tracked in `.git/index` (a `.env` committed before the rule was added, a checked-in fixture inside a generally-ignored extension) **is indexed**, watched, autocompleted, and grepped.
+- An ignored directory that contains tracked files is **not pruned**: the tracked files inside it (and the directories needed to reach them) are indexed. Its *untracked* contents stay hidden, exactly as git hides them.
+- An ignored directory with no tracked content is pruned and never descended into, as before.
+
+The tracked set is read from `.git/index` once per crawl (in parallel, on the thread pool — never on the JavaScript thread) and rebuilt by every `refresh()` and every watcher-triggered re-crawl. `.git` itself is never watched, so a `git add` of a previously-ignored file is only reflected after the next crawl or `refresh()`. Outside a git work tree — or if `.git/index` is missing, unreadable, or corrupt — this degrades to pure gitignore filtering: nothing errors, there is simply no tracked set to exempt.
+
+Patterns passed via the `ignore` option use the same syntax and are rooted at `root`, but they are *not* one of git's ignore sources: an explicit `ignore` pattern hides matching files even when they are tracked.
 
 ## Querying the index
 
@@ -129,7 +139,7 @@ The pattern syntax and the option semantics are the same as [`Bun.Glob`](/runtim
 - `onlyFiles` — return only files (default `true`, like `Bun.Glob`). Pass `false` to also return directories and symlinks.
 - `limit` — maximum number of paths to return.
 
-The one intentional difference from `new Bun.Glob(pattern).scanSync({ cwd })`: `glob()` only sees what was indexed, so gitignored entries (and anything beyond `maxMemory`) never match.
+The one intentional difference from `new Bun.Glob(pattern).scanSync({ cwd })`: `glob()` only sees what was indexed, so ignored untracked entries (and anything beyond `maxMemory`) never match.
 
 ### `has()` and `stat()`
 
@@ -244,7 +254,7 @@ index.onchange = events => {
 await index.ready;
 ```
 
-Events are coalesced per path and debounced (about 20 ms after the last event in a burst), so a build that writes 500 files produces one callback, not 500. Changes inside gitignored directories never fire. Editing any `.gitignore` (or `.git/info/exclude`) triggers a debounced background re-crawl so the index stays consistent with the new rules.
+Events are coalesced per path and debounced (about 20 ms after the last event in a burst), so a build that writes 500 files produces one callback, not 500. Unindexed paths — ignored untracked files, and anything inside a pruned directory — never fire; a tracked file that matches an ignore rule is indexed and therefore does. Editing any `.gitignore` (or `.git/info/exclude`) triggers a debounced background re-crawl so the index stays consistent with the new rules.
 
 A watching index keeps the process alive until you call `close()`. On platforms with no supported watch backend (anything other than Linux, macOS, and Windows — e.g. FreeBSD), constructing with `watch: true` throws.
 
@@ -309,6 +319,7 @@ Synchronous is not free. The numbers below are medians from the committed benchm
 
 - **It is not a daemon.** The index lives inside your process and dies with it. There's no socket, no protocol, and nothing persists to disk between runs.
 - **It is not a language server.** It knows about paths and bytes, not symbols, types, or references.
+- **It does not see the same file set as `rg` / `fd`.** Inside a git repository, those tools hide *every* path matched by an ignore rule, tracked or not. `Bun.FileIndex` matches git instead: a tracked file that happens to match a `.gitignore` rule is indexed (and grepped), because that is what `git ls-files`, `git status` and `git grep` do. Pass `gitignore: false` plus your own `ignore` patterns if you want a purely rule-driven file set.
 - **`grep()` does not cache file contents.** Every call re-reads matching files from disk. A content cache (and faster repeated regex search) is future work.
 - **`RegExp` grep is the slow path.** Only literal string patterns get the parallel SIMD search today; the same whole-repository search that takes about 30 ms as a literal takes about 950 ms as a `RegExp` on an example Linux x64 box.
 
@@ -321,10 +332,17 @@ interface FileIndexOptions {
   /**
    * Respect every gitignore source git consults: .gitignore files (including
    * the ancestors of a sub-directory root), $GIT_COMMON_DIR/info/exclude and
-   * the global excludes file. Default true. `.git` itself is always skipped.
+   * the global excludes file. Inside a git work tree the indexed set is
+   * git's real file set — tracked ∪ (untracked − ignored) — so a tracked
+   * file matching an ignore rule is still indexed; without a repository (or
+   * a readable .git/index) this degrades to pure gitignore filtering.
+   * Default true. `.git` itself is always skipped.
    */
   gitignore?: boolean;
-  /** Extra ignore patterns (gitignore syntax, rooted at `root`). */
+  /**
+   * Extra ignore patterns (gitignore syntax, rooted at `root`). Unlike
+   * git's own ignore sources, these also exclude tracked files.
+   */
   ignore?: string[];
   /** Keep the index live with a filesystem watcher (default false). */
   watch?: boolean;

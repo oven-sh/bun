@@ -110,6 +110,101 @@ describe.skipIf(!watchSupported)("Bun.FileIndex watch", () => {
     expect(index.has("build.log")).toBe(false);
   });
 
+  // Inside a git repository the indexed set is git's real file set —
+  // tracked ∪ (untracked − ignored) — so a TRACKED file matching an ignore
+  // rule must be WATCHED (its events fire, gitStatus sees the change), an
+  // ignored directory containing tracked files must be watched too, and
+  // ignored UNTRACKED paths still never fire. `git check-ignore` is the
+  // oracle for the latter.
+  test("tracked-but-ignored files are watched; ignored untracked siblings never fire", async () => {
+    using dir = tempDir("fi-watch-tracked-ignored", {
+      "src/a.txt": "a\n",
+      "build.log": "tracked\n",
+      "ignored_dir/keep/me.txt": "tracked\n",
+    });
+    const root = String(dir);
+    const gitEnv = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_AUTHOR_NAME: "bun",
+      GIT_AUTHOR_EMAIL: "bun@example.com",
+      GIT_COMMITTER_NAME: "bun",
+      GIT_COMMITTER_EMAIL: "bun@example.com",
+    };
+    const git = (...args: string[]) => {
+      const { exitCode, stderr } = Bun.spawnSync({
+        cmd: ["git", "-c", "core.autocrlf=false", ...args],
+        cwd: root,
+        env: gitEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${stderr.toString()}`);
+    };
+    git("init", "-q", "-b", "main");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    // The rules arrive after those paths were tracked.
+    await Bun.write(join(root, ".gitignore"), "*.log\nignored_dir/\n");
+
+    using index = new Bun.FileIndex(root, { watch: true });
+    await index.ready;
+    expect(index.has("build.log")).toBe(true);
+    expect(index.has("ignored_dir/keep/me.txt")).toBe(true);
+    const c = collect(index);
+
+    // Modifying a tracked-but-ignored file fires onchange and a fresh
+    // gitStatus reflects it.
+    await Bun.write(join(root, "build.log"), "modified tracked-but-ignored\n");
+    await c.until(has("modify", "build.log"));
+    expect((await index.gitStatus())!.files).toContainEqual({ path: "build.log", status: " M" });
+
+    // So does one deep inside the ignored (but tracked-containing) directory.
+    await Bun.write(join(root, "ignored_dir/keep/me.txt"), "also modified\n");
+    await c.until(has("modify", "ignored_dir/keep/me.txt"));
+    expect((await index.gitStatus())!.files).toContainEqual({
+      path: "ignored_dir/keep/me.txt",
+      status: " M",
+    });
+
+    // Ignored UNTRACKED paths: git is the oracle that every probe really is
+    // ignored. `ignored_dir/new_sub/x.txt` is a brand-new file inside a
+    // brand-new subdirectory of the ignored directory — per git it is
+    // ignored, so it must produce neither an event nor an index entry.
+    const probes = ["other.log", "ignored_dir/keep/junk.txt", "ignored_dir/new_sub/x.txt"];
+    for (const probe of probes) await Bun.write(join(root, probe), "x");
+    const checkIgnore = Bun.spawnSync({
+      cmd: ["git", "check-ignore", "-z", "--stdin"],
+      cwd: root,
+      env: gitEnv,
+      stdin: Buffer.from(probes.join("\0") + "\0"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(checkIgnore.stdout.toString().split("\0").filter(Boolean).toSorted()).toEqual(probes.toSorted());
+
+    // A non-ignored witness written AFTER the probes bounds the wait: by
+    // the time its event arrives, the probes had their chance.
+    await Bun.write(join(root, "src/witness.txt"), "x");
+    const events = await c.until(has("create", "src/witness.txt"));
+    for (const probe of probes) {
+      expect(
+        events.map(e => e.path),
+        probe,
+      ).not.toContain(probe);
+      expect(index.has(probe), probe).toBe(false);
+    }
+    const status = (await index.gitStatus())!;
+    expect(status.files).toContainEqual({ path: "src/witness.txt", status: "??" });
+    for (const probe of probes) {
+      expect(
+        status.files.map(f => f.path),
+        probe,
+      ).not.toContain(probe);
+    }
+  });
+
   test("a brand-new directory tree is watched and its contents indexed", async () => {
     using dir = tempDir("fi-watch-tree", { "root.txt": "r" });
     using index = new Bun.FileIndex(String(dir), { watch: true });

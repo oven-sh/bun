@@ -9494,6 +9494,22 @@ declare module "bun" {
      * `~/.config/git/ignore`). The git-specific sources apply only when
      * `root` is inside a git work tree.
      *
+     * When `root` IS inside a git work tree, the indexed file set is exactly
+     * git's: **tracked ∪ (untracked − ignored)**, what
+     * `git ls-files --cached --others --exclude-standard` lists. git's ignore
+     * sources only ever hide *untracked* paths, so a file that matches a
+     * `.gitignore` rule but is tracked in `.git/index` is still indexed (and
+     * watched), as is every directory needed to contain one — an ignored
+     * directory holding tracked files is not pruned, though its untracked
+     * contents stay hidden. (Patterns passed through the explicit `ignore`
+     * option are NOT a git ignore source and still hide tracked files.)
+     * The tracked set is read from `.git/index` once per
+     * (re)crawl, so a `git add` of a previously-ignored file is only
+     * reflected after the next {@link FileIndex.refresh} (or a
+     * watcher-triggered re-crawl); `.git` itself is never watched. Outside a
+     * git work tree (or if `.git/index` is missing or unreadable) this
+     * degrades to pure gitignore filtering with no tracked-file exemption.
+     *
      * The `.git` directory itself is always skipped regardless of this option.
      *
      * @default true
@@ -9501,7 +9517,9 @@ declare module "bun" {
     gitignore?: boolean;
     /**
      * Extra ignore patterns in gitignore syntax, rooted at `root`. These apply
-     * in addition to (and after) any `.gitignore` files.
+     * in addition to (and after) any `.gitignore` files. Unlike git's own
+     * ignore sources, they also exclude git-tracked files — an explicit
+     * request to hide a path always wins.
      *
      * @example ["dist/**", "*.log", "!important.log"]
      */
@@ -10003,7 +10021,8 @@ declare module "bun" {
      * the index was constructed with `watch: true`.
      *
      * Events are coalesced per path and debounced (~20 ms after the last event
-     * in a burst). Changes inside gitignored directories never fire. A change
+     * in a burst). Unindexed paths (ignored untracked files, anything inside
+     * a pruned directory) never fire. A change
      * to any `.gitignore` triggers a debounced background re-crawl.
      *
      * @example

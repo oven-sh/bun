@@ -14,9 +14,11 @@
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use std::sync::Arc;
+
 use bun_core::ZStr;
 use bun_file_index::{
-    CompleteCache, CompleteOptions, CrawlEntry, CrawlResult, EntryKind, Meta, Store,
+    CompleteCache, CompleteOptions, CrawlEntry, CrawlResult, EntryKind, ExemptSet, Meta, Store,
 };
 use bun_fuzzy::{Scorer, ScorerOptions};
 use bun_ignore::{IgnoreChain, IgnoreFile};
@@ -87,6 +89,16 @@ pub struct FileIndex {
     /// [`HeadTreeCache::memory_cost`] of `git_head`, folded into the bytes
     /// reported to the GC.
     git_head_bytes: Cell<usize>,
+    /// The gitignore exemption set of the last completed (re)crawl: git's
+    /// tracked files under the root, which ignore rules never drop. Built on
+    /// the work pool from `.git/index` by every crawl
+    /// ([`crawl_task::build_exempt_set`]); retained here so the watcher's
+    /// event filter applies the same exemption the crawl did. Empty without
+    /// a repository or with `gitignore: false`.
+    exempt: RefCell<Arc<ExemptSet>>,
+    /// [`ExemptSet::memory_cost`] of `exempt`, folded into the bytes
+    /// reported to the GC.
+    exempt_bytes: Cell<usize>,
     /// The last crawl hit `maxMemory` before handing entries to the store.
     crawl_truncated: Cell<bool>,
     /// Entries/subtrees the last crawl skipped because of an I/O error
@@ -147,6 +159,8 @@ impl FileIndex {
             complete_cache: RefCell::new(None),
             git_head: RefCell::new(None),
             git_head_bytes: Cell::new(0),
+            exempt: RefCell::new(ExemptSet::none()),
+            exempt_bytes: Cell::new(0),
             crawl_truncated: Cell::new(false),
             crawl_errors: Cell::new(0),
             reported_bytes: AtomicUsize::new(0),
@@ -570,6 +584,8 @@ impl FileIndex {
             *self.store.borrow_mut() = Store::new(0);
             *self.git_head.borrow_mut() = None;
             self.git_head_bytes.set(0);
+            *self.exempt.borrow_mut() = ExemptSet::none();
+            self.exempt_bytes.set(0);
             self.reported_bytes.store(0, Ordering::Relaxed);
         }
         Ok(JSValue::UNDEFINED)
@@ -605,7 +621,11 @@ impl FileIndex {
                 .map(|id| store.path(id).to_vec())
                 .collect()
         };
-        watcher.sync(dirs, self.root_ignore_chain());
+        watcher.sync(
+            dirs,
+            self.root_ignore_chain(),
+            Arc::clone(&self.exempt.borrow()),
+        );
     }
 
     /// Apply one delivery of coalesced watch batches: re-`lstat` every dirty
@@ -876,9 +896,20 @@ impl FileIndex {
         self.report_memory(global);
     }
 
+    /// Replace the retained exemption set with the one a completed (re)crawl
+    /// was filtered through. Must precede [`FileIndex::sync_watcher`] so the
+    /// watcher's event filter matches the crawl that produced its directory
+    /// set. JS thread only.
+    fn set_exempt(&self, exempt: Arc<ExemptSet>) {
+        self.exempt_bytes.set(exempt.memory_cost());
+        *self.exempt.borrow_mut() = exempt;
+    }
+
     /// Re-report retained native bytes to the GC after a store mutation.
     fn report_memory(&self, global: &JSGlobalObject) {
-        let new_bytes = self.store.borrow().memory_usage() + self.git_head_bytes.get();
+        let new_bytes = self.store.borrow().memory_usage()
+            + self.git_head_bytes.get()
+            + self.exempt_bytes.get();
         let old = self.reported_bytes.swap(new_bytes, Ordering::Relaxed);
         if let Some(grown) = new_bytes.checked_sub(old)
             && grown > 0
@@ -1013,13 +1044,26 @@ impl FileIndex {
                 rest = &rest[slash + 1..];
             }
         }
-        if !self.options.ignore.is_empty() {
-            chain = chain.append(IgnoreFile::from_lines(
-                b"",
-                self.options.ignore.iter().map(|p| &**p),
-            ));
+        if let Some(file) = self.user_ignore_file() {
+            chain = chain.append(file);
         }
         chain
+    }
+
+    /// The `ignore:` option as a parsed gitignore-format file (rooted at the
+    /// index root), or `None` when no patterns were given. Appended last to
+    /// [`FileIndex::root_ignore_chain`] (highest precedence among the root
+    /// sources), and ALSO evaluated on its own by
+    /// [`crawl_task::build_exempt_set`]: git's tracked-file exemption never
+    /// overrides a pattern the user passed explicitly.
+    pub(crate) fn user_ignore_file(&self) -> Option<IgnoreFile> {
+        if self.options.ignore.is_empty() {
+            return None;
+        }
+        Some(IgnoreFile::from_lines(
+            b"",
+            self.options.ignore.iter().map(|p| &**p),
+        ))
     }
 
     /// Replace the store with a crawl's result, re-report retained bytes,
@@ -1027,6 +1071,7 @@ impl FileIndex {
     pub(crate) fn apply_crawl(&self, global: &JSGlobalObject, result: CrawlResult) {
         // The cached survivor ids name entries of the outgoing store.
         *self.complete_cache.borrow_mut() = None;
+        self.set_exempt(Arc::clone(&result.exempt));
         {
             let mut store = self.store.borrow_mut();
             // The touch/recency ring is keyed by `FileId`, which a store swap
@@ -1079,6 +1124,7 @@ impl FileIndex {
     /// `sync` O(dirs).
     pub(crate) fn finish_initial_crawl(&self, global: &JSGlobalObject, result: &CrawlResult) {
         self.store.borrow_mut().ensure_sorted();
+        self.set_exempt(Arc::clone(&result.exempt));
         self.crawl_truncated.set(result.truncated);
         self.crawl_errors.set(result.errors);
         self.report_memory(global);

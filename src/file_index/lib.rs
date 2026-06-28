@@ -21,6 +21,7 @@
 mod budget;
 mod complete;
 mod crawl;
+mod exempt;
 mod glob;
 mod grep;
 mod read;
@@ -34,6 +35,7 @@ pub use complete::{
     complete_with_cache,
 };
 pub use crawl::{CrawlEntry, CrawlOptions, CrawlResult, crawl, crawl_batched};
+pub use exempt::{EntryVerdict, ExemptSet, classify_entry, classify_path};
 pub use glob::glob;
 pub use grep::{GrepHit, GrepOutcome, GrepQuery, grep_file};
 pub use read::{FileReadOutcome, read_regular_at};

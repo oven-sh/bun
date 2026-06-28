@@ -244,14 +244,15 @@ describe("Bun.FileIndex gitStatus()", () => {
     initRepo(root);
     git(root, "add", ".");
     git(root, "commit", "-q", "-m", "init");
-    // The rules arrive AFTER the files were tracked: git still tracks them,
-    // but FileIndex's crawl excludes them from the in-memory store.
+    // The rules arrive AFTER the files were tracked: git still tracks (and
+    // `git ls-files` still lists) them, so FileIndex indexes them too —
+    // git's ignore sources only ever hide untracked paths.
     fs.writeFileSync(join(root, ".gitignore"), "generated.txt\nout/\n");
     {
       using index = new Bun.FileIndex(root);
       await index.ready;
-      expect(index.has("generated.txt")).toBe(false);
-      expect(index.has("out/built.js")).toBe(false);
+      expect(index.has("generated.txt")).toBe(true);
+      expect(index.has("out/built.js")).toBe(true);
       // Untouched on disk: must NOT be reported (and never as " D").
       expect(sortFiles((await index.gitStatus())!.files)).toEqual([{ path: ".gitignore", status: "??" }]);
     }
@@ -261,7 +262,11 @@ describe("Bun.FileIndex gitStatus()", () => {
       { path: ".gitignore", status: "??" },
       { path: "generated.txt", status: " M" },
     ]);
-    // A user `ignore:` pattern (no .gitignore involvement) behaves the same.
+    // An explicit user `ignore:` pattern is NOT one of git's ignore sources
+    // and still excludes the tracked file from the store. The status worker
+    // must then `lstat` the tracked-but-unindexed path itself instead of
+    // reporting it deleted — this is the fallback the in-store membership
+    // above no longer exercises.
     fs.rmSync(join(root, ".gitignore"));
     {
       using index = new Bun.FileIndex(root, { ignore: ["generated.txt"] });
@@ -1055,5 +1060,235 @@ describe("Bun.FileIndex gitignore differential vs git", () => {
     // The fixture exercises both outcomes.
     expect(probes.some(p => gitIgnored.has(p))).toBe(true);
     expect(probes.some(p => !gitIgnored.has(p))).toBe(true);
+  });
+
+  // Inside a git repository, the indexed file set must be git's REAL file
+  // set — tracked ∪ (untracked − ignored), exactly what
+  // `git ls-files --cached --others --exclude-standard` lists. Ignore rules
+  // only ever hide *untracked* paths, so a file that matches an ignore rule
+  // but IS TRACKED is indexed, and an ignored directory holding tracked
+  // files is not pruned (while its untracked contents stay hidden).
+  test("tracked-but-ignored files: indexed set === `git ls-files --cached --others --exclude-standard`", async () => {
+    using dir = tempDir("file-index-tracked-ignored-diff", {
+      // (a) tracked files that will match a root `.gitignore` rule.
+      "build.log": "tracked, matches *.log\n",
+      ".env": "tracked, matches .env\n",
+      // (b) a tracked file deep inside a directory that will be ignored.
+      "ignored_dir/keep/me.txt": "tracked before the dir was ignored\n",
+      // (d) plain files.
+      "src/main.ts": "ok\n",
+      "README.md": "ok\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "init");
+    // The ignore rules arrive AFTER those paths were tracked: git keeps
+    // tracking (and listing) them.
+    fs.writeFileSync(join(root, ".gitignore"), "*.log\n.env\nignored_dir/\n");
+    // (c) ignored UNTRACKED siblings of (a) and (b).
+    fs.writeFileSync(join(root, "other.log"), "untracked, ignored\n");
+    fs.mkdirSync(join(root, "ignored_dir/sub"), { recursive: true });
+    fs.writeFileSync(join(root, "ignored_dir/junk.txt"), "untracked, parent ignored\n");
+    fs.writeFileSync(join(root, "ignored_dir/keep/junk.txt"), "untracked sibling of a tracked file\n");
+    fs.writeFileSync(join(root, "ignored_dir/sub/x.txt"), "untracked, no tracked content here\n");
+    // git never consults a `.gitignore` inside an excluded directory: this
+    // negation must NOT re-include `ignored_dir/keep/junk.txt`.
+    fs.writeFileSync(join(root, "ignored_dir/keep/.gitignore"), "!junk.txt\n");
+
+    using index = new Bun.FileIndex(root);
+    await index.ready;
+
+    // The oracle, byte-for-byte and unnormalized (`-z` output).
+    const fromGit = git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+      .split("\0")
+      .filter(p => p.length > 0)
+      .sort();
+    expect(index.glob("**", { onlyFiles: true }).sort()).toEqual(fromGit);
+
+    // The witnesses, spelled out so the differential is never vacuous.
+    expect(fromGit).toContain("build.log");
+    expect(fromGit).toContain(".env");
+    expect(fromGit).toContain("ignored_dir/keep/me.txt");
+    for (const hidden of [
+      "other.log",
+      "ignored_dir/junk.txt",
+      "ignored_dir/keep/junk.txt",
+      "ignored_dir/keep/.gitignore",
+      "ignored_dir/sub/x.txt",
+    ]) {
+      expect(fromGit, hidden).not.toContain(hidden);
+      expect(index.has(hidden), hidden).toBe(false);
+    }
+
+    // complete()/has()/stat()/grep() all see (a) and (b).
+    for (const kept of ["build.log", ".env", "ignored_dir/keep/me.txt"]) {
+      expect(index.has(kept), kept).toBe(true);
+      expect(index.stat(kept), kept).toMatchObject({ kind: "file" });
+    }
+    expect(index.complete("buildlog").map(m => m.path)).toContain("build.log");
+    expect(index.complete("keepmetxt").map(m => m.path)).toContain("ignored_dir/keep/me.txt");
+    {
+      const hits: string[] = [];
+      for await (const m of index.grep("tracked before the dir was ignored")) hits.push(m.path);
+      expect(hits).toEqual(["ignored_dir/keep/me.txt"]);
+    }
+    {
+      const hits: string[] = [];
+      for await (const m of index.grep("tracked, matches *.log")) hits.push(m.path);
+      expect(hits).toEqual(["build.log"]);
+    }
+
+    // gitStatus() on the same tree still matches `git status --porcelain
+    // -z -uall`, and a modified tracked-but-ignored file is reported " M"
+    // through the index's own membership (it is no longer an unindexed
+    // path that has to be lstat'ed as a fallback).
+    fs.writeFileSync(join(root, "build.log"), "modified tracked-but-ignored\n");
+    const fromGitStatus = await expectStatusMatchesGit(root, "tracked-but-ignored modified");
+    expect(fromGitStatus).toContainEqual({ path: "build.log", status: " M" });
+    {
+      using fresh = new Bun.FileIndex(root);
+      await fresh.ready;
+      expect(fresh.has("build.log")).toBe(true);
+      expect(sortFiles((await fresh.gitStatus())!.files)).toContainEqual({ path: "build.log", status: " M" });
+    }
+
+    // `gitignore: false` is completely unchanged: everything on disk
+    // (except `.git` itself) is indexed, tracked or not, ignored or not.
+    {
+      using all = new Bun.FileIndex(root, { gitignore: false });
+      await all.ready;
+      const onDisk = fs
+        .readdirSync(root, { recursive: true, withFileTypes: true })
+        .filter(e => e.isFile())
+        .map(e =>
+          join(e.parentPath, e.name)
+            .slice(root.length + 1)
+            .replaceAll("\\", "/"),
+        )
+        .filter(p => p !== ".git" && !p.startsWith(".git/"))
+        .sort();
+      expect(onDisk).toContain("other.log");
+      expect(onDisk).toContain("ignored_dir/sub/x.txt");
+      expect(all.glob("**", { onlyFiles: true }).sort()).toEqual(onDisk);
+    }
+  });
+
+  // The `.git/index` is work-tree-relative. An index rooted at a
+  // SUBDIRECTORY of the work tree must re-root the tracked set to it.
+  test("subdirectory root: the tracked set is re-rooted to the index root", async () => {
+    using dir = tempDir("file-index-tracked-ignored-subroot", {
+      "sub/build.log": "tracked under sub\n",
+      "sub/a.txt": "a\n",
+      "top.log": "tracked at the top\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "init");
+    fs.writeFileSync(join(root, ".gitignore"), "*.log\n");
+    fs.writeFileSync(join(root, "sub/other.log"), "untracked, ignored\n");
+
+    using index = new Bun.FileIndex(join(root, "sub"));
+    await index.ready;
+    // `git ls-files` from inside `sub/` prints paths relative to it.
+    const fromGit = git(join(root, "sub"), "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+      .split("\0")
+      .filter(p => p.length > 0)
+      .sort();
+    expect(fromGit).toEqual(["a.txt", "build.log"]);
+    expect(index.glob("**", { onlyFiles: true }).sort()).toEqual(fromGit);
+    expect(index.has("build.log")).toBe(true);
+    // The repository-relative spelling of an exempt path never leaks in.
+    expect(index.has("sub/build.log")).toBe(false);
+  });
+
+  // A linked worktree's `.git` is a FILE with `gitdir:` indirection and its
+  // `.git/index` lives in the per-worktree gitdir; the exemption set must be
+  // read from there.
+  test("linked worktree: tracked-but-ignored files are indexed", async () => {
+    using dir = tempDir("file-index-tracked-ignored-worktree", {
+      "main/kept.txt": "x\n",
+      "main/secret.env": "tracked, will match *.env\n",
+    });
+    const main = join(String(dir), "main");
+    const linked = join(String(dir), "linked");
+    initRepo(main);
+    git(main, "add", ".");
+    git(main, "commit", "-q", "-m", "init");
+    git(main, "worktree", "add", "-q", "-b", "feature", linked);
+    fs.writeFileSync(join(linked, ".gitignore"), "*.env\n");
+    fs.writeFileSync(join(linked, "other.env"), "untracked, ignored\n");
+
+    using index = new Bun.FileIndex(linked);
+    await index.ready;
+    const fromGit = git(linked, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+      .split("\0")
+      .filter(p => p.length > 0)
+      .sort();
+    expect(fromGit).toEqual([".gitignore", "kept.txt", "secret.env"]);
+    expect(index.glob("**", { onlyFiles: true }).sort()).toEqual(fromGit);
+  });
+
+  // The tracked-file exemption applies only to git's OWN ignore sources. An
+  // explicit `ignore:` option pattern is the user asking by name and still
+  // hides tracked files; `gitignore: false` disables the exemption with the
+  // rest of the git machinery.
+  test("the explicit `ignore` option and `gitignore: false` still hide tracked files", async () => {
+    using dir = tempDir("file-index-tracked-ignored-option", {
+      "kept.txt": "x\n",
+      "build.log": "tracked\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "init");
+    fs.writeFileSync(join(root, ".gitignore"), "*.log\n");
+    {
+      using index = new Bun.FileIndex(root);
+      await index.ready;
+      expect(index.has("build.log")).toBe(true);
+    }
+    {
+      using index = new Bun.FileIndex(root, { ignore: ["*.log"] });
+      await index.ready;
+      expect(index.has("build.log")).toBe(false);
+    }
+    {
+      using index = new Bun.FileIndex(root, { gitignore: false, ignore: ["*.log"] });
+      await index.ready;
+      expect(index.has("build.log")).toBe(false);
+      expect(index.has(".gitignore")).toBe(true);
+    }
+  });
+
+  // `git add` of a previously-ignored file is only reflected at the next
+  // crawl: `.git` is never watched, but a `refresh()` rebuilds the
+  // exemption set from the current `.git/index`.
+  test("refresh() picks up a newly `git add`ed previously-ignored file", async () => {
+    using dir = tempDir("file-index-tracked-ignored-refresh", {
+      "kept.txt": "x\n",
+      ".gitignore": "*.log\n",
+      "added-later.log": "ignored until git add -f\n",
+    });
+    const root = String(dir);
+    initRepo(root);
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "init");
+    using index = new Bun.FileIndex(root);
+    await index.ready;
+    expect(index.has("added-later.log")).toBe(false);
+    git(root, "add", "-f", "added-later.log");
+    // Documented staleness: the index only learns about the new tracked
+    // entry at the next (re)crawl.
+    expect(index.has("added-later.log")).toBe(false);
+    await index.refresh();
+    expect(index.has("added-later.log")).toBe(true);
+    expect(index.glob("**", { onlyFiles: true }).sort()).toEqual(
+      git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+        .split("\0")
+        .filter(p => p.length > 0)
+        .sort(),
+    );
   });
 });

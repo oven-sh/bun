@@ -21,14 +21,16 @@
 use core::ptr::NonNull;
 use std::sync::Arc;
 
+use bun_core::handle_oom;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_file_index::{CrawlEntry, CrawlOptions, CrawlResult, crawl, crawl_batched};
+use bun_file_index::{CrawlEntry, CrawlOptions, CrawlResult, ExemptSet, crawl, crawl_batched};
+use bun_ignore::IgnoreChain;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, JsTerminated, Strong, SysErrorJsc as _};
 use bun_sys::{Dir, O};
-use bun_threading::{GuardedBy, Mutex};
+use bun_threading::{GuardedBy, Mutex, WorkPool};
 
 use super::FileIndex;
 
@@ -174,6 +176,9 @@ fn start_with(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex, p
         follow_root_symlink: true,
         ignore_chain_root: index.root_ignore_chain(),
         load_gitignore_files: index.options().gitignore,
+        // Placeholder: the real exemption set is built by `run_setup` on the
+        // work pool (it reads `.git/index`), never on the JS thread.
+        exempt: ExemptSet::none(),
         max_entries: usize::MAX,
         budget: index.options().max_memory,
     };
@@ -185,7 +190,47 @@ fn start_with(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex, p
         return;
     }
     outbox.inbox.lock().handle = Some(handle);
-    let root = index.root_bytes().to_vec();
+    // The rest of the setup — repository discovery and the `.git/index` read
+    // that build the ignore exemption set — is I/O and must not block the JS
+    // thread: hop to the pool, then fan the crawl out from there.
+    handle_oom(WorkPool::go(
+        SetupJob {
+            root: index.root_bytes().to_vec(),
+            gitignore: index.options().gitignore,
+            user_ignore: index
+                .user_ignore_file()
+                .map_or_else(IgnoreChain::empty, |file| IgnoreChain::empty().append(file)),
+            options,
+            progressive,
+            outbox,
+        },
+        run_setup,
+    ));
+}
+
+/// Owned, `Send` inputs of [`run_setup`].
+struct SetupJob {
+    root: Vec<u8>,
+    gitignore: bool,
+    /// The `ignore:` option alone (see [`FileIndex::user_ignore_file`]).
+    user_ignore: IgnoreChain,
+    options: CrawlOptions,
+    progressive: bool,
+    outbox: Arc<Outbox>,
+}
+
+/// Pool-side start of every crawl (initial, `refresh()`, watcher re-crawl):
+/// build this crawl's gitignore exemption set, then fan the walk out.
+fn run_setup(job: SetupJob) {
+    let SetupJob {
+        root,
+        gitignore,
+        user_ignore,
+        mut options,
+        progressive,
+        outbox,
+    } = job;
+    options.exempt = build_exempt_set(&root, gitignore, &user_ignore);
     let done_outbox = Arc::clone(&outbox);
     let on_done = move |result: CrawlResult| done_outbox.post(None, Some(Ok(result)));
     if progressive {
@@ -199,6 +244,43 @@ fn start_with(global: &JSGlobalObject, this_value: JSValue, index: &FileIndex, p
     } else {
         crawl(&root, options, on_done);
     }
+}
+
+/// The "ignore exemption set" of a crawl: the work-tree-relative path of
+/// every `.git/index` entry under the index root, re-rooted to it (the git
+/// index is work-tree-relative; an index rooted at a subdirectory of the
+/// work tree — or in a linked worktree — needs the prefix stripped). With
+/// it, the crawl indexes git's real file set, tracked ∪ (untracked −
+/// ignored), instead of pruning tracked-but-ignored paths.
+///
+/// The exemption neutralizes git's OWN ignore sources only. A pattern the
+/// user passed explicitly through the `ignore:` option is not one of them,
+/// so tracked paths `user_ignore` matches (evaluated alone, with the
+/// parent-directory rule) are subtracted from the set.
+///
+/// Rebuilt on every (re)crawl: a `git add` of a previously-ignored file is
+/// only reflected at the next crawl/`refresh()` (`.git` is never watched).
+/// Empty — pure gitignore semantics, never an error — when `gitignore` is
+/// off, `root` is not inside a git work tree, or `.git/index` is missing,
+/// unreadable or corrupt.
+fn build_exempt_set(root: &[u8], gitignore: bool, user_ignore: &IgnoreChain) -> Arc<ExemptSet> {
+    if !gitignore {
+        return ExemptSet::none();
+    }
+    let Ok(Some(repo)) = bun_git::Repository::discover(root) else {
+        return ExemptSet::none();
+    };
+    let Ok(index) = repo.read_index() else {
+        return ExemptSet::none();
+    };
+    let prefix = super::git_task::work_tree_prefix(repo.work_tree(), root);
+    Arc::new(ExemptSet::from_files(
+        index
+            .entries()
+            .iter()
+            .filter_map(|entry| index.path(entry).strip_prefix(prefix.as_slice()))
+            .filter(|rel| !user_ignore.is_ignored(rel, false)),
+    ))
 }
 
 /// The owning handle to a parked [`CrawlTask`], moved into the VM's

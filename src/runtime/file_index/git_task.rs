@@ -11,10 +11,15 @@
 //! fresh disk walk, so callers should `await index.ready` first. Two
 //! consequences:
 //! * an ignored file is never reported `??` (matching git);
-//! * a *tracked* path missing from the index (excluded by a `.gitignore`
-//!   rule or a user `ignore:` pattern) is `lstat`ed on the worker before the
-//!   comparison, so it is classified for real (`git status` semantics: the
-//!   tracked set is not subject to ignore rules) rather than reported ` D`.
+//! * a tracked path matching a `.gitignore` rule IS in the store (the crawl
+//!   exempts git's tracked set from git's own ignore sources), so it is
+//!   compared like any other entry;
+//! * the rare *tracked* path still missing from the store (excluded by a
+//!   user `ignore:` pattern, dropped by `maxMemory` truncation, or hidden
+//!   because the exemption set could not be read) is `lstat`ed on the worker
+//!   before the comparison, so it is classified for real (`git status`
+//!   semantics: the tracked set is not subject to ignore rules) rather than
+//!   reported ` D`.
 
 use std::sync::Arc;
 
@@ -676,7 +681,7 @@ fn own_hunks(old: &[u8], new: &[u8], hunks: Vec<Hunk>) -> Vec<OwnedHunk> {
 
 /// `root` relative to the repository work tree, as an (empty or
 /// `/`-terminated) prefix to prepend to root-relative paths.
-fn work_tree_prefix(work_tree: &[u8], root: &[u8]) -> Vec<u8> {
+pub(super) fn work_tree_prefix(work_tree: &[u8], root: &[u8]) -> Vec<u8> {
     let rest = root.strip_prefix(work_tree).unwrap_or_default();
     let rest = rest.strip_prefix(b"/").unwrap_or(rest);
     if rest.is_empty() {

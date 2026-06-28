@@ -402,7 +402,7 @@ impl Expect {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
                 // Jest's `.rejects` accepts a function returning a promise or thenable;
-                // call it first. `value` stays the original received for error messages.
+                // call it first. The usage error below reports the original `value`.
                 let received = if resolution == Promise::Rejects && value.is_callable() {
                     value.call(global_this, JSValue::UNDEFINED, &[])?
                 } else {
@@ -445,7 +445,7 @@ impl Expect {
                                         flags,
                                         format_args!(
                                             "Expected promise that rejects<r>\nReceived promise that resolved: <red>{}<r>\n",
-                                            value.to_fmt(&mut formatter),
+                                            new_value.to_fmt(&mut formatter),
                                         ),
                                     ));
                                 }
@@ -466,7 +466,7 @@ impl Expect {
                                         flags,
                                         format_args!(
                                             "Expected promise that resolves<r>\nReceived promise that rejected: <red>{}<r>\n",
-                                            value.to_fmt(&mut formatter),
+                                            new_value.to_fmt(&mut formatter),
                                         ),
                                     ));
                                 }

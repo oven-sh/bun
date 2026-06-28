@@ -203,7 +203,28 @@ describe("expect()", () => {
       await expectFailure(() =>
         expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(1) }).rejects.toBe(1),
       ).toThrow();
+      // a function that throws synchronously propagates its error (it is not a rejection)
+      await expectFailure(() =>
+        expect(
+          ANY(() => {
+            throw new Error("sync throw");
+          }),
+        ).rejects.toThrow("anything"),
+      ).toThrow("sync throw");
     }
+  });
+
+  // The wrong-settlement error reports the settled value, not the received
+  // function / thenable that produced the promise.
+  test_skipIf(!isBun)("resolves/rejects settlement errors show the settled value", async () => {
+    await expectFailure(() => expect(ANY(() => Promise.resolve("rejectsSettledTo"))).rejects.toBe(1)).toThrow(
+      "rejectsSettledTo",
+    );
+    await expectFailure(() =>
+      expect({
+        then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected("resolvesSettledTo"),
+      }).resolves.toBe(1),
+    ).toThrow("resolvesSettledTo");
   });
 
   test("can call without an argument", () => {
@@ -1237,11 +1258,9 @@ describe("expect()", () => {
   // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
   // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
-    // Exercises the Set/Map iterator-allocation path in deepEquals (see #14256):
-    // the elements are distinct-identity arrays, so every comparison falls back
-    // to a linear search that allocates a fresh iterator per element. The counts
-    // below keep thousands of those allocations while staying within the default
-    // test timeout under a debug + ASAN build.
+    // Exercises Set/Map iterator allocation in deepEquals (#14256): distinct-identity
+    // array elements force the linear-search fallback that allocates an iterator per
+    // element. Counts sized to stay within the default timeout under debug + ASAN.
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
@@ -4695,6 +4714,16 @@ describe("expect()", () => {
             setTimeout(() => resolve("a"), 0);
           }),
         ).toEqual(expect.resolvesTo.stringContaining("a"));
+      });
+
+      // `rejectsTo` calls a received function like `.rejects` does; a synchronous
+      // throw must propagate as the test error, never be flipped to a pass by `.not`.
+      test("expect.rejectsTo calls a received function and propagates a sync throw", () => {
+        const boom = () => {
+          throw new Error("asymmetric sync boom");
+        };
+        expect(() => expect(boom).toEqual(expect.rejectsTo.anything())).toThrow("asymmetric sync boom");
+        expect(() => expect(boom).toEqual(expect.not.rejectsTo.anything())).toThrow("asymmetric sync boom");
       });
     }
   });

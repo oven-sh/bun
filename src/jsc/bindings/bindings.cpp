@@ -575,6 +575,9 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
 {
     ExpectFlags flags = ExpectFlags();
     AsymmetricMatcherResult result = matchAsymmetricMatcherAndGetFlags(globalObject, matcherProp, otherProp, throwScope, flags);
+    // readFlagsAndProcessPromise / the custom matcher can run user JS (a `.rejects`
+    // function, a `then` getter). Propagate instead of flipping FAIL to PASS on `.not`.
+    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
     if (result != AsymmetricMatcherResult::NOT_MATCHER && (flags & FLAG_NOT)) {
         result = (result == AsymmetricMatcherResult::PASS) ? AsymmetricMatcherResult::FAIL : AsymmetricMatcherResult::PASS;
     }

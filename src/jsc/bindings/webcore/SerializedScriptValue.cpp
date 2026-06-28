@@ -91,6 +91,7 @@
 #include <JavaScriptCore/JSWebAssemblyModule.h>
 #include <JavaScriptCore/NumberObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ObjectPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
@@ -2774,7 +2775,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // a DataCloneError.
             // NapiPrototype is allowed because napi_create_object should behave
             // like a plain object from JS's perspective (matches Node.js).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info())
+            // ObjectPrototype is allowed because %Object.prototype% is an immutable
+            // prototype exotic object that the spec carves out of this rejection.
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

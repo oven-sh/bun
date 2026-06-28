@@ -650,3 +650,28 @@ describe("deserializing a version 13 payload", () => {
     expect(cloned[0]).not.toBe(cloned[1]);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/32981
+// %Object.prototype% is an immutable prototype exotic object that the structured
+// serialization spec carves out of the exotic-object rejection, so it clones to
+// an empty plain object instead of throwing a DataCloneError.
+describe("structuredClone(Object.prototype)", () => {
+  test("clones to an empty plain object", () => {
+    const cloned = structuredClone(Object.prototype);
+    expect(cloned).toEqual({});
+    expect(Object.keys(cloned)).toEqual([]);
+    expect(cloned).not.toBe(Object.prototype);
+    expect(Object.getPrototypeOf(cloned)).toBe(Object.prototype);
+  });
+
+  test("clones when nested inside another object", () => {
+    const cloned = structuredClone({ a: Object.prototype, b: 1 });
+    expect(cloned).toEqual({ a: {}, b: 1 });
+    expect(cloned.a).not.toBe(Object.prototype);
+  });
+
+  test("bun:jsc serialize/deserialize round-trips it too", () => {
+    const cloned = deserialize(serialize(Object.prototype));
+    expect(cloned).toEqual({});
+  });
+});

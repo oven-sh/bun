@@ -685,9 +685,9 @@ impl IOWriter {
 
     // ── file write (non-pollable sync path) ─────────────────────────────
 
-    /// POSIX-only.
+    /// POSIX-only. `child` is the writer being enqueued (see `on_sync_error`).
     #[cfg(not(windows))]
-    fn do_file_write(&self) -> Yield {
+    fn do_file_write(&self, child: ChildPtr) -> Yield {
         {
             let s = self.state();
             debug_assert!(!s.flags.pollable);
@@ -715,7 +715,7 @@ impl IOWriter {
             }
             // The caller is inside the enqueuing child's trampoline, so the
             // error completion is returned, not `Yield::run` from here.
-            bun_io::WriteResult::Err(e) => return self.on_sync_error(&e),
+            bun_io::WriteResult::Err(e) => return self.on_sync_error(child, &e),
         };
         let s = self.state();
         let lo = s.total_bytes_written;
@@ -878,25 +878,36 @@ impl IOWriter {
         }
     }
 
-    /// Synchronous write failure, i.e. the enqueuing child's trampoline is
-    /// still on the stack (`enqueue` → `write`/`do_file_write`). Returning the
-    /// error completion lets that trampoline deliver it once we unwind back to
-    /// it; calling `on_error` here instead would re-enter `Yield::run`, which
-    /// nests once per command-substitution level and fires the child's
-    /// callback while its `enqueue` call is still executing.
-    fn on_sync_error(&self, err: &sys::Error) -> Yield {
-        let pending = self.fail_pending_writers(err);
-        // A synchronous failure only happens on the first write attempt of a
-        // batch, so the writer `enqueue` just pushed is the only pending one.
-        debug_assert_eq!(pending.len(), 1);
-        match pending.first() {
-            Some(&child) => Yield::OnIoWriterChunk {
-                child,
+    /// Synchronous write failure while `child`'s `enqueue` call (and therefore
+    /// its trampoline) is still on the stack. `child`'s error completion is
+    /// *returned* so that trampoline delivers it after `enqueue` unwinds;
+    /// calling `on_error` here instead would re-enter `Yield::run` once per
+    /// failing command and fire `child`'s callback from inside its own
+    /// `enqueue`. Usually `child`'s chunk is the only pending one (a
+    /// synchronous failure is the first write attempt of a batch); if a poll
+    /// re-registration fails while other children are still queued, those are
+    /// dispatched the way the async path dispatches them.
+    fn on_sync_error(&self, child: ChildPtr, err: &sys::Error) -> Yield {
+        let _keepalive = self.keepalive();
+        let mut completion = None;
+        for ptr in self.fail_pending_writers(err) {
+            // `SystemError` owns `bun_core::String`s by value (no shared
+            // refcount yet), so re-derive a fresh one per callee.
+            let y = Yield::OnIoWriterChunk {
+                child: ptr,
                 written: 0,
                 err: Some(err.to_shell_system_error()),
-            },
-            None => Yield::done(),
+            };
+            if completion.is_none() && ptr == child {
+                completion = Some(y);
+            } else {
+                self.run_yield(y);
+            }
         }
+        // The writer `enqueue` just pushed for `child` is live and at or past
+        // `writer_idx`, so it is always in the pending list.
+        debug_assert!(completion.is_some());
+        completion.unwrap_or_else(Yield::done)
     }
 
     fn on_close(&self) {
@@ -935,7 +946,7 @@ impl IOWriter {
     }
 
     #[cfg(not(windows))]
-    fn enqueue_file(&self) -> Yield {
+    fn enqueue_file(&self, child: ChildPtr) -> Yield {
         let s = self.state();
         if s.is_writing {
             return Yield::suspended();
@@ -944,21 +955,22 @@ impl IOWriter {
         // path bypasses write() entirely, so set it here.
         s.started = true;
         self.set_writing(true);
-        self.do_file_write()
+        self.do_file_write(child)
     }
 
     /// You MUST have already added the data to `self.buf`!
-    fn enqueue_internal(&self) -> Yield {
+    /// `child` is the writer that was just pushed (see `on_sync_error`).
+    fn enqueue_internal(&self, child: ChildPtr) -> Yield {
         debug_assert!(!self.state().flags.broken_pipe);
         #[cfg(not(windows))]
         if !self.state().flags.pollable {
-            return self.enqueue_file();
+            return self.enqueue_file(child);
         }
         match self.write() {
             WriteOutcome::Suspended => Yield::suspended(),
             #[cfg(not(windows))]
-            WriteOutcome::IsActuallyFile => self.enqueue_file(),
-            WriteOutcome::Failed(e) => self.on_sync_error(&e),
+            WriteOutcome::IsActuallyFile => self.enqueue_file(child),
+            WriteOutcome::Failed(e) => self.on_sync_error(child, &e),
         }
     }
 
@@ -983,7 +995,7 @@ impl IOWriter {
             written: 0,
             bytelist,
         });
-        self.enqueue_internal()
+        self.enqueue_internal(child)
     }
 
     /// Prefix `"{kind}: "` then format.
@@ -1021,7 +1033,7 @@ impl IOWriter {
             written: 0,
             bytelist,
         });
-        self.enqueue_internal()
+        self.enqueue_internal(child)
     }
 
     /// Format `args` into the write buffer and enqueue the resulting chunk

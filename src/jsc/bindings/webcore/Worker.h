@@ -98,7 +98,7 @@ class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWith
 public:
     enum class State : uint8_t {
         Pending, // created; worker thread starting up
-        Running, // dispatchOnline has fired; worker event loop is spinning
+        Running, // set by dispatchOnline (worker thread) or dispatchOpenIfNeeded (parent); isOnline() is true
         Closing, // worker thread has exited; close task is dispatching the 'close' event
         Closed, // close event dispatched on the parent; worker is fully done
     };

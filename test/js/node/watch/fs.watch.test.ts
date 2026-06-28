@@ -1,5 +1,15 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isLinux, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";

@@ -111,6 +111,14 @@ it("exposes matcherUtils in context", () => {
 });
 
 it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with jest semantics", () => {
+  // `typeof` reports these as "function", which puts them outside both testers'
+  // domains in jest even when they are objects that happen to be iterable.
+  const callableIterable = Object.assign(() => {}, {
+    *[Symbol.iterator]() {
+      yield 1;
+    },
+  });
+  const fnWithProp = Object.assign(function f() {}, { a: 2 });
   /** @type {any} */
   let captured;
   expect.extend({
@@ -127,6 +135,7 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
         iterEqArrays: this.utils.iterableEquality([1], [1]),
         iterEqTypedArrays: this.utils.iterableEquality(new Uint8Array([1]), new Uint8Array([1])),
         iterEqWeakSets: this.utils.iterableEquality(new WeakSet(), new WeakSet()),
+        iterEqCallable: this.utils.iterableEquality(callableIterable, callableIterable),
         iterEqNonIter: this.utils.iterableEquality({}, {}),
         subsetEqMatch: this.utils.subsetEquality({ a: 1, b: 2 }, { a: 1 }),
         subsetEqMiss: this.utils.subsetEquality({ a: 1 }, { b: 2 }),
@@ -135,7 +144,12 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
         subsetEqMap: this.utils.subsetEquality({ a: 1 }, new Map([[1, 2]])),
         subsetEqWeakSet: this.utils.subsetEquality({ a: 1 }, new WeakSet()),
         subsetEqWeakMap: this.utils.subsetEquality({ a: 1 }, new WeakMap()),
+        subsetEqFn: this.utils.subsetEquality({ a: 1 }, () => {}),
+        subsetEqFnWithProp: this.utils.subsetEquality({ a: 1 }, fnWithProp),
         subsetEqPrimitive: this.utils.subsetEquality(1, 1),
+        subsetEqNullObjEmpty: this.utils.subsetEquality(null, {}),
+        subsetEqUndefObjWeakMap: this.utils.subsetEquality(undefined, new WeakMap()),
+        subsetEqNullObjNonEmpty: this.utils.subsetEquality(null, { a: 1 }),
       };
       return { pass: true, message: () => "" };
     },
@@ -153,24 +167,32 @@ it("exposes customTesters and utils.diff/iterableEquality/subsetEquality with je
 
   expect(captured.iterEqSets).toBe(true);
   expect(captured.iterEqSetsNe).toBe(false);
-  // Arrays and ArrayBuffer views are out of iterableEquality's domain in jest,
-  // and so are weak collections (no Symbol.iterator).
+  // Arrays, ArrayBuffer views, callables (typeof "function"), and weak
+  // collections (no Symbol.iterator) are out of iterableEquality's domain in jest.
   expect(captured.iterEqArrays).toBe(undefined);
   expect(captured.iterEqTypedArrays).toBe(undefined);
   expect(captured.iterEqWeakSets).toBe(undefined);
+  expect(captured.iterEqCallable).toBe(undefined);
   expect(captured.iterEqNonIter).toBe(undefined);
 
   expect(captured.subsetEqMatch).toBe(true);
   expect(captured.subsetEqMiss).toBe(false);
-  // Only a plain-ish object subset is in subsetEquality's domain in jest.
+  // Only a `typeof "object"` plain-ish subset is in subsetEquality's domain in jest.
   expect(captured.subsetEqArray).toBe(undefined);
   expect(captured.subsetEqSet).toBe(undefined);
   expect(captured.subsetEqMap).toBe(undefined);
+  expect(captured.subsetEqFn).toBe(undefined);
+  expect(captured.subsetEqFnWithProp).toBe(undefined);
+  expect(captured.subsetEqPrimitive).toBe(undefined);
   // WeakSet/WeakMap are NOT instanceof Set/Map, so jest keeps them in the
   // domain; they have no enumerable keys, so the subset match is vacuously true.
   expect(captured.subsetEqWeakSet).toBe(true);
   expect(captured.subsetEqWeakMap).toBe(true);
-  expect(captured.subsetEqPrimitive).toBe(undefined);
+  // jest only gates the subset arg: every subset key is checked against
+  // `object`, so an empty-key subset matches even a null or undefined object.
+  expect(captured.subsetEqNullObjEmpty).toBe(true);
+  expect(captured.subsetEqUndefObjWeakMap).toBe(true);
+  expect(captured.subsetEqNullObjNonEmpty).toBe(false);
 });
 
 it("is ok if there is no message specified", () => {

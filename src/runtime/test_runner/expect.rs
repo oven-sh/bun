@@ -2884,17 +2884,21 @@ impl ExpectMatcherUtils {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }
 
-    /// Jest's `iterableEquality` "out of domain" guard: not an object,
+    /// `typeof value === "object"` for a non-null value. JSC's `is_object()`
+    /// is `type >= ObjectType`, which also admits callables; Jest's domain
+    /// guards are written in terms of `typeof`, which reports them as "function".
+    fn is_typeof_object(value: JSValue) -> bool {
+        value.is_cell() && value.js_type().is_object() && !value.is_callable()
+    }
+
+    /// Jest's `iterableEquality` "out of domain" guard: not `typeof "object"`,
     /// an Array, an `ArrayBuffer.isView`, or not iterable.
     fn is_iterable_equality_operand(value: JSValue, global_this: &JSGlobalObject) -> JsResult<bool> {
-        if !value.is_cell() {
+        if !Self::is_typeof_object(value) {
             return Ok(false);
         }
         let ty = value.js_type();
-        Ok(ty.is_object()
-            && !ty.is_array()
-            && !ty.is_typed_array_or_array_buffer()
-            && value.is_iterable(global_this)?)
+        Ok(!ty.is_array() && !ty.is_typed_array_or_array_buffer() && value.is_iterable(global_this)?)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2917,23 +2921,26 @@ impl ExpectMatcherUtils {
         let args = arguments.slice();
         let object = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
         let subset = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
-        // Jest's `isObjectWithKeys`: not an Array, Error, Date, Set, or Map.
-        // Its `instanceof Set`/`Map` does not match WeakSet/WeakMap, so only the
-        // strong variants are out of domain (`is_set`/`is_map` include the weak ones).
-        if !subset.is_cell() {
+        // Jest's `isObjectWithKeys`: `typeof "object"`, and not an Array, Error,
+        // Date, Set, or Map. Its `instanceof Set`/`Map` does not match
+        // WeakSet/WeakMap, so only the strong variants are out of domain.
+        if !Self::is_typeof_object(subset) {
             return Ok(JSValue::UNDEFINED);
         }
         let subset_ty = subset.js_type();
-        if !subset_ty.is_object()
-            || subset_ty.is_array()
+        if subset_ty.is_array()
             || matches!(subset_ty, JSType::Set | JSType::Map)
             || subset.is_error()
             || subset.is_date()
         {
             return Ok(JSValue::UNDEFINED);
         }
-        if !object.is_cell() || !object.js_type().is_object() {
-            return Ok(JSValue::FALSE);
+        // Jest never gates `object`: every subset key is checked against it, so
+        // a subset with no own enumerable keys matches anything vacuously.
+        if !Self::is_typeof_object(object) {
+            return Ok(JSValue::from(
+                subset.keys(global_this)?.get_length(global_this)? == 0,
+            ));
         }
         Ok(JSValue::from(object.jest_deep_match(subset, global_this, false)?))
     }

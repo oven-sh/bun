@@ -994,10 +994,9 @@ impl BufferOutputSink {
             // and kept alive by (*sink).response_value (Strong root).
             let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
             let sink_ptr_usize = sink as usize;
-            // If a `.body` readable is already attached, the body must stay
-            // `Locked` so `to_error_instance` below delivers the error to its
-            // `ByteStream`; clearing to `Empty` here would strand any pending
-            // `reader.read()` forever.
+            // If a `.body` readable is already attached, stay `Locked` so
+            // `to_error_instance` delivers the error to its ByteStream; clearing
+            // to `Empty` here would strand any pending `reader.read()` forever.
             let has_readable = match sink_body_value {
                 webcore::body::Value::Locked(l) => l.readable.has(),
                 _ => false,

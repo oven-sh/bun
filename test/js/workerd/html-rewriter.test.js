@@ -213,10 +213,9 @@ describe("HTMLRewriter", () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
-        // Acquire the reader and start the read BEFORE the upstream fails.
-        // This is the one shape (readable attached, no pending promise) where
-        // the error handler must deliver the failure to the attached stream:
-        // discarding the readable here would leave this read pending forever.
+        // Start the read BEFORE the upstream fails. This is the one shape
+        // (readable attached, no pending promise) where the error must reach
+        // the attached stream; discarding it would strand this read forever.
         const read = settle(transformed.body.getReader().read());
         release();
         expect(await read).toEqual(rejectedWithConnectionError);

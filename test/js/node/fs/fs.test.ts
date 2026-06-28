@@ -1833,7 +1833,11 @@ describe("open flag string validation matches node", () => {
 });
 
 describe("open/mkdir mode string validation matches node", () => {
-  const invalidModes = ["0o755", "+755", "7_5_5", "888", "7a5", ""];
+  // The last two are stored 16-bit by JSC (they contain a code unit past
+  // U+0100), so they also guard against the 8-bit-only byte view being read
+  // out of a UTF-16 buffer: "\u3737" is a single code unit whose low byte is
+  // 0x37 ("7"), which a raw byte read wrongly accepts as mode 7.
+  const invalidModes = ["0o755", "+755", "7_5_5", "888", "7a5", "", "7\u20225", "\u3737"];
 
   it.each(invalidModes)("openSync rejects mode string %p with ERR_INVALID_ARG_VALUE", mode => {
     using dir = tempDir("fs-mode-invalid", {});

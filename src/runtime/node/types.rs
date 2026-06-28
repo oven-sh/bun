@@ -1614,9 +1614,14 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 
         let mut zig_str = ZigString::EMPTY;
         value.to_zig_string(&mut zig_str, ctx)?;
-        let slice = zig_str.slice();
 
-        // Node validates mode strings against /^[0-7]+$/ before parsing.
+        // Node validates mode strings against /^[0-7]+$/ before parsing. A
+        // JSC string is stored 16-bit only when it holds a code unit past
+        // U+0100, which can never be an octal digit, so no 16-bit string can
+        // pass; it must be rejected here because `slice()` below is the
+        // 8-bit-only view (it debug-asserts `!is_16bit()` and would otherwise
+        // read `len` raw bytes out of a `2 * len`-byte UTF-16 buffer).
+        let slice = if zig_str.is_16bit() { &[][..] } else { zig_str.slice() };
         if slice.is_empty() || !slice.iter().all(|b| (b'0'..=b'7').contains(b)) {
             let actual = JSGlobalObject::inspect_for_error_message(ctx, value)?;
             return Err(ctx

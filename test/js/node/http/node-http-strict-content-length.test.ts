@@ -169,8 +169,9 @@ test("strictContentLength: an invalid chunk still throws the chunk-type error, n
   expect(await handled).toBe("ERR_INVALID_ARG_TYPE");
 });
 
-// Bun's native write/end accepts every ArrayBuffer-like type (not just
-// Uint8Array), so the pre-flush check must measure all of them too.
+// Bun's native write/end accepts every ArrayBuffer-like type and boxed String
+// objects (not just strings and Uint8Array), so the pre-flush check must
+// measure all of them too.
 test.each([
   ["DataView", () => new DataView(new ArrayBuffer(2))],
   ["ArrayBuffer", () => new ArrayBuffer(2)],
@@ -178,6 +179,8 @@ test.each([
   ["Int8Array", () => new Int8Array(2)],
   ["Uint8ClampedArray", () => new Uint8ClampedArray(2)],
   ["Float32Array", () => new Float32Array(2)],
+  ["String object", () => new String("hi")],
+  ["derived String object", () => new (class extends String {})("hi")],
 ] as const)(
   "strictContentLength: a short %s end() throws before any bytes reach the wire",
   async (_name, makeChunk) => {

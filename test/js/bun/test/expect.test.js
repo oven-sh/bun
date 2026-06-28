@@ -4642,6 +4642,14 @@ describe("expect()", () => {
         await expect({ a: Promise.reject("1") }).toEqual({ a: expect.not.rejectsTo.stringContaining("2") });
         await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
 
+        // a non-Promise thenable should match too
+        await expect({ then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected("1") }).toEqual(
+          expect.rejectsTo.stringContaining("1"),
+        );
+        await expect({
+          a: { then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected("1") },
+        }).toEqual({ a: expect.rejectsTo.stringContaining("1") });
+
         // a resolved promise should not match
         await expect(Promise.resolve("a")).not.toEqual(expect.rejectsTo.stringContaining("a"));
 
@@ -4666,6 +4674,14 @@ describe("expect()", () => {
             throw new Error();
           }),
         ).resolves.toThrow();
+
+        // a non-Promise thenable should match too
+        await expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled("1") }).toEqual(
+          expect.resolvesTo.stringContaining("1"),
+        );
+        await expect({ a: { then: (/** @type {any} */ onFulfilled) => void onFulfilled("1") } }).toEqual({
+          a: expect.resolvesTo.stringContaining("1"),
+        });
 
         // a rejected promise should not match
         await expect(Promise.reject("a")).not.toEqual(expect.resolvesTo.stringContaining("a"));

@@ -235,7 +235,7 @@ pub struct Decoded {
     pub width: u32,
     pub height: u32,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
-    /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
+    /// PNG iCCP, WebP ICCP, AVIF colr on Linux), global-allocator-owned. `None` when the
     /// source didn't carry one or the decode path doesn't extract it —
     /// BMP/GIF (no ICC chunk) and system backends (which already colour-
     /// manage into sRGB during decode, so the profile is no longer
@@ -497,7 +497,7 @@ pub struct EncodeOptions {
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub progressive: bool,
     /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
-    /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
+    /// WebP ICCP, AVIF colr on Linux). `None` ⇒ no profile chunk/marker is written. The
     /// pipeline forwards this from the decode step so a non-sRGB source
     /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
     /// re-encode. Borrowed; the caller retains ownership.

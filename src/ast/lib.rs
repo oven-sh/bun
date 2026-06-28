@@ -1178,9 +1178,8 @@ impl BabyString {
             return BabyString::new(0, 0);
         }
         // `parent` is a formatted message the caller promises embeds `text`
-        // verbatim. This runs while reporting errors, so a broken promise
-        // (e.g. a formatter rendering `text` lossily) degrades to "no
-        // specifier" instead of panicking.
+        // verbatim. A broken promise (e.g. a formatter rendering `text`
+        // lossily) degrades to "no specifier" instead of panicking.
         let Some(off) = bun_core::strings::index_of(parent, text) else {
             return BabyString::new(0, 0);
         };

@@ -1785,7 +1785,17 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The fixture's S3 requests target an in-process server and must not
+      // be rerouted by ambient proxy configuration on CI hosts.
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

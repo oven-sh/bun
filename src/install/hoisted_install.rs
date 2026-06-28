@@ -121,11 +121,17 @@ pub(crate) fn install_hoisted_packages(
     // aliases (all behaviors, so `--production`/`--omit` never turn a
     // reinstall into a delete) unioned with the unfiltered root tree (the
     // hoisted transitives that belong there; `original_trees` was snapshotted
-    // before `filter()`, so `--filter` cannot shrink it either). Skipped for
-    // the security scanner's narrowed pre-install pass; the full install
-    // that follows performs the prune.
+    // before `filter()`, so `--filter` cannot shrink it either).
+    //
+    // `None` (no prune) for:
+    // - global installs: the global `node_modules` is also the `bun link`
+    //   registry, whose entries are bare symlinks recorded in no manifest
+    //   and must survive `bun add -g`.
+    // - the security scanner's narrowed pre-install pass; the full install
+    //   that follows performs the prune.
     let expected_root_entries: Option<StringHashMap<()>> = 'expected: {
-        if packages_to_install.is_some() || this.lockfile.packages.is_empty() {
+        if this.options.global || packages_to_install.is_some() || this.lockfile.packages.is_empty()
+        {
             break 'expected None;
         }
         let deps = this.lockfile.buffers.dependencies.as_slice();
@@ -264,10 +270,15 @@ pub(crate) fn install_hoisted_packages(
     // `bun install`.
     if !new_node_modules {
         if let Some(expected) = expected_root_entries.as_ref() {
+            // `keep_symlinks`: a root symlink here is a workspace link, a
+            // `file:` folder dependency, or an unsaved `bun link <pkg>`
+            // registration; the last is recorded in no manifest and must
+            // survive `bun install`.
             package_install::prune_extraneous_node_modules(
                 expected,
                 node_modules_folder.fd(),
                 this.options.bin_path.as_bytes(),
+                true,
             );
         }
     }

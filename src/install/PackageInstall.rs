@@ -2579,8 +2579,16 @@ impl<'a> PackageInstall<'a> {
 /// legitimately place at the root", independent of install flags: the root
 /// package's declared dependency aliases (all behaviors, so `--production`
 /// or `--omit` never turn a reinstall into a delete) unioned with the
-/// linker's own root placements (the hoisted root tree, or the isolated root
-/// store entry's dependencies which include `publicHoistPattern` hoists).
+/// linker's own root placements (the hoisted root tree, or every lockfile
+/// alias matching `publicHoistPattern` for the isolated store).
+///
+/// `keep_symlinks` is set by the hoisted linker: its extraneous entries are
+/// always real extracted directories, while a root symlink there is a
+/// workspace link, a `file:` folder dependency, or a `bun link <pkg>`
+/// registration. The last of those is recorded in no manifest (`bun link` is
+/// `--no-save` by default), so it can never be in `expected` and must not be
+/// deleted. The isolated linker's own root entries are symlinks into
+/// `node_modules/.bun`, so it cannot skip them.
 ///
 /// The prune is best effort: a stale directory the filesystem refuses to
 /// delete (locked, read-only) is left behind rather than failing the
@@ -2589,6 +2597,7 @@ pub(crate) fn prune_extraneous_node_modules(
     expected: &StringHashMap<()>,
     node_modules: Fd,
     bin_path: &[u8],
+    keep_symlinks: bool,
 ) {
     let dir = Dir::borrow(&node_modules);
 
@@ -2607,13 +2616,16 @@ pub(crate) fn prune_extraneous_node_modules(
         if name.is_empty() || name[0] == b'.' {
             continue;
         }
+        if keep_symlinks && matches!(entry.kind, EntryKind::SymLink) {
+            continue;
+        }
         names.push(name.to_vec());
     }
 
     let mut removed_any = false;
     for name in &names {
         if name[0] == b'@' {
-            removed_any |= prune_extraneous_scope(node_modules, name, expected);
+            removed_any |= prune_extraneous_scope(node_modules, name, expected, keep_symlinks);
             continue;
         }
         if expected.contains_key(name.as_slice()) {
@@ -2674,7 +2686,12 @@ pub(crate) fn prune_dangling_bin_links(bin_dir: Fd) {
 }
 
 /// Returns `true` if anything was deleted.
-fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>) -> bool {
+fn prune_extraneous_scope(
+    parent: Fd,
+    scope: &[u8],
+    expected: &StringHashMap<()>,
+    keep_symlinks: bool,
+) -> bool {
     let scope_fd = match sys::open_dir_for_iteration(parent, scope) {
         Ok(fd) => fd,
         Err(_) => return false,
@@ -2694,7 +2711,7 @@ fn prune_extraneous_scope(parent: Fd, scope: &[u8], expected: &StringHashMap<()>
         if name.is_empty() {
             continue;
         }
-        if name[0] == b'.' {
+        if name[0] == b'.' || (keep_symlinks && matches!(entry.kind, EntryKind::SymLink)) {
             has_remaining = true;
             continue;
         }

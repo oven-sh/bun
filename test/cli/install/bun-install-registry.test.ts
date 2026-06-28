@@ -9383,5 +9383,137 @@ for (const linker of ["hoisted", "isolated"] as const) {
         expect(await binEntries()).toEqual([]);
       }
     });
+
+    test("a publicHoistPattern hoist from a filtered-out workspace survives --filter", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: true, publicHoistPattern: ["no-deps"] },
+        files: {
+          "package.json": JSON.stringify({ name: "foo", workspaces: ["packages/*"] }),
+          // `one-dep` depends on `no-deps@1.0.1`; the hoist comes from a
+          // workspace's transitive, not from the root's own dependencies.
+          "packages/wsa/package.json": JSON.stringify({
+            name: "wsa",
+            version: "1.0.0",
+            dependencies: { "one-dep": "1.0.0" },
+          }),
+          "packages/wsb/package.json": JSON.stringify({
+            name: "wsb",
+            version: "1.0.0",
+            dependencies: { "a-dep": "1.0.1" },
+          }),
+        },
+      });
+
+      await runBunInstall(env, packageDir);
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+
+      // A filtered install excludes `wsa` (the hoist's origin). The lockfile
+      // still places `no-deps` at the root, so the prune must not delete it.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--filter", "wsb"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ exitCode: 0 });
+
+      expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+    });
   });
 }
+
+// The global install directory doubles as the `bun link` registry: `bun link`
+// records a package as a bare `node_modules/<name>` symlink there without
+// touching the global package.json or lockfile. A global install must never
+// prune it, or every link registration is destroyed by the next `bun add -g`.
+test("a bun link registration survives a global install", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true },
+    files: {
+      "linked-pkg/package.json": JSON.stringify({ name: "my-linked-pkg", version: "1.0.0" }),
+    },
+  });
+
+  const bunInstallDir = join(packageDir, "global-home");
+  const globalEnv = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    BUN_CONFIG_REGISTRY: registry.registryUrl(),
+  };
+  const globalNodeModules = join(bunInstallDir, "install", "global", "node_modules");
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "link"],
+      cwd: join(packageDir, "linked-pkg"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ exitCode: 0 });
+  }
+  expect(await exists(join(globalNodeModules, "my-linked-pkg", "package.json"))).toBe(true);
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "add", "--global", "no-deps@1.0.0"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ exitCode: 0 });
+  }
+
+  expect(await exists(join(globalNodeModules, "no-deps", "package.json"))).toBe(true);
+  // The link registration must not have been pruned by the global install.
+  expect(await exists(join(globalNodeModules, "my-linked-pkg", "package.json"))).toBe(true);
+});
+
+// `bun link <pkg>` in a consumer is `--no-save` by default: it creates
+// `node_modules/<pkg>` as a symlink without writing package.json or bun.lock.
+// The prune must not remove it on the next `bun install`, even while pruning a
+// genuinely removed dependency in the same pass.
+test("an unsaved bun link in a consumer survives bun install", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true },
+    files: {
+      "linked-src/package.json": JSON.stringify({ name: "my-linked-pkg", version: "1.0.0" }),
+    },
+  });
+  const globalEnv = { ...env, BUN_INSTALL: join(packageDir, "global-home") };
+  const run = async (cmd: string[], cwd: string) => {
+    await using proc = Bun.spawn({ cmd, cwd, stdout: "pipe", stderr: "pipe", env: globalEnv });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ cmd, stdout, stderr: stderrForInstall(stderr), exitCode }).toMatchObject({ cmd, exitCode: 0 });
+  };
+
+  await run([bunExe(), "link"], join(packageDir, "linked-src"));
+
+  await write(
+    packageJson,
+    JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } }),
+  );
+  await run([bunExe(), "install"], packageDir);
+  await run([bunExe(), "link", "my-linked-pkg"], packageDir);
+  expect(await exists(join(packageDir, "node_modules", "my-linked-pkg", "package.json"))).toBe(true);
+  // unsaved by default: neither manifest records the link
+  expect(await file(packageJson).text()).not.toContain("my-linked-pkg");
+  expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("my-linked-pkg");
+
+  // drop a-dep so the prune actually runs; the link must survive it
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
+  await run([bunExe(), "install"], packageDir);
+
+  expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(false);
+  expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+  expect(await exists(join(packageDir, "node_modules", "my-linked-pkg", "package.json"))).toBe(true);
+});

@@ -357,6 +357,13 @@ export const hostedGitInfo = {
   fromUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsFromUrl", 1),
 };
 
+// Exposes the Windows bin-shim shebang parser so it can be exercised on any
+// platform (it only runs on Windows during `bun install`).
+export const parseBinShebang = $newRustFunction("BinLinkingShim.rs", "TestingAPIs.parseShebang", 2) as (
+  contents: string,
+  binPath: string,
+) => { launcher: string; isNodeOrBun: boolean } | null;
+
 export const translateUVErrorToE: (code: number) => string | undefined = $newRustFunction(
   "sys.rs",
   "TestingAPIs.translateUVErrorToE",

@@ -45,6 +45,7 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 // requires adding its entry below.
 const rustIdentifierPaths: Record<string, string> = {
   "bun.rs": "bun.rs",
+  "BinLinkingShim.rs": "install/windows-shim/BinLinkingShim.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
   "Listener.rs": "runtime/socket/Listener.rs",

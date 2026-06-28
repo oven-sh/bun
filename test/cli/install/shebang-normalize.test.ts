@@ -1,9 +1,27 @@
 import { spawn } from "bun";
+import { parseBinShebang } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { chmodSync, readFileSync } from "fs";
 import { mkdir, readFile, stat, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isPosix, isWindows, runBunInstall, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
+
+// https://github.com/oven-sh/bun/issues/31387
+// The Windows bin-shim shebang parser (`BinLinkingShim::parse`) only runs on
+// Windows during `bun install`, so drive it directly through the testing
+// binding to assert `env -S` (and the joined `-Sbun`) don't end up as the
+// launcher program. Without the fix, the launcher kept the `-S` token and the
+// shim tried to spawn `-S`, failing with `interpreter executable "-S" not found`.
+test.each([
+  ["#!/usr/bin/env -S bun --no-env-file\n", "bun --no-env-file", true],
+  ["#!/usr/bin/env -S node --experimental-vm-modules\n", "node --experimental-vm-modules", true],
+  ["#!/usr/bin/env -S python3 -u\n", "python3 -u", false],
+  ["#!/usr/bin/env -Sbun --no-env-file\n", "bun --no-env-file", true],
+  ["#!/usr/bin/env bun\n", "bun", true],
+  ["#!/bin/env -S bun --flag\n", "bun --flag", true],
+])("parseBinShebang(%j) strips env -S and keeps the real interpreter", (contents, launcher, isNodeOrBun) => {
+  expect(parseBinShebang(contents, "index.js")).toEqual({ launcher, isNodeOrBun });
+});
 
 test.skipIf(isWindows)("bin linking normalizes CRLF in shebang", async () => {
   const testDir = tmpdirSync();

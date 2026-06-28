@@ -3,7 +3,7 @@ import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunEnvNoProxy, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -1787,15 +1787,7 @@ describe("s3 multipart upload id validation", () => {
       cmd: [bunExe(), "-e", fixture],
       // The fixture's S3 requests target an in-process server and must not
       // be rerouted by ambient proxy configuration on CI hosts.
-      env: {
-        ...bunEnv,
-        NO_PROXY: undefined,
-        no_proxy: undefined,
-        HTTP_PROXY: undefined,
-        http_proxy: undefined,
-        HTTPS_PROXY: undefined,
-        https_proxy: undefined,
-      },
+      env: bunEnvNoProxy,
       stdout: "pipe",
       stderr: "pipe",
     });

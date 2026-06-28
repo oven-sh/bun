@@ -1,6 +1,6 @@
 import { S3Client } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunEnvNoProxy, bunExe } from "harness";
 import { createHash, createHmac } from "node:crypto";
 
 describe("S3Client.list() option encoding", () => {
@@ -274,21 +274,9 @@ describe.concurrent("S3 header auth with a long session token", () => {
       await client.file("some-object-key").write("hello s3");
       console.log(JSON.stringify(await captured.promise));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      // The fixture's S3 request targets an in-process server and must not
-      // be rerouted by ambient proxy configuration on CI hosts.
-      env: {
-        ...bunEnv,
-        NO_PROXY: undefined,
-        no_proxy: undefined,
-        HTTP_PROXY: undefined,
-        http_proxy: undefined,
-        HTTPS_PROXY: undefined,
-        https_proxy: undefined,
-      },
-      stderr: "pipe",
-    });
+    // The fixture's S3 request targets an in-process server and must not
+    // be rerouted by ambient proxy configuration on CI hosts.
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnvNoProxy, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
 

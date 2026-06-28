@@ -1830,7 +1830,14 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The fixture only talks to its own localhost mock: an ambient proxy must not capture that traffic.
+      env: {
+        ...bunEnv,
+        http_proxy: undefined,
+        HTTP_PROXY: undefined,
+        https_proxy: undefined,
+        HTTPS_PROXY: undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

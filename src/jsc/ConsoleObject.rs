@@ -677,14 +677,14 @@ struct CellRef {
     /// Byte offset into `cell_text`.
     offset: usize,
     /// Byte length in `cell_text`.
-    len: u32,
+    len: usize,
     /// Visible width of the text, excluding ANSI escape sequences.
     width: u32,
 }
 
 impl CellRef {
     fn text<'t>(&self, cell_text: &'t [u8]) -> &'t [u8] {
-        &cell_text[self.offset..self.offset + self.len as usize]
+        &cell_text[self.offset..self.offset + self.len]
     }
 }
 
@@ -752,7 +752,7 @@ impl<'a> TablePrinter<'a> {
         let text = &cell_text[offset..];
         Ok(CellRef {
             offset,
-            len: u32::try_from(text.len()).expect("int cast"),
+            len: text.len(),
             width: strings::immutable::visible::width::exclude_ansi_colors::utf8(text) as u32,
         })
     }

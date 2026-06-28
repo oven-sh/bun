@@ -1131,6 +1131,21 @@ describe("structuredClone of WebAssembly objects", () => {
     expect(new Uint8Array(clone.buffer)[0]).toBe(99);
   });
 
+  // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
+  // The memory map runs before any type dispatch, so a repeated reference must
+  // come back as one clone.
+  test("preserves identity within one payload", () => {
+    const mod = new WebAssembly.Module(emptyModuleBytes);
+    const [a, b] = structuredClone([mod, mod]);
+    expect(a).toBeInstanceOf(WebAssembly.Module);
+    expect(a).toBe(b);
+
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    const [c, d] = structuredClone([mem, mem]);
+    expect(c).toBeInstanceOf(WebAssembly.Memory);
+    expect(c).toBe(d);
+  });
+
   test("non-shared WebAssembly.Memory still rejects", () => {
     expect(thrownName(() => structuredClone(new WebAssembly.Memory({ initial: 1 })))).toBe("DataCloneError");
   });

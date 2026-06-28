@@ -575,7 +575,8 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * indexed property section in arrays). Bun has adopted neither, but skips those
  * numbers so a future sync never has to disambiguate the same version number.
  * Version 16. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
- * and Bun cloneable types are recorded in the object reference pool on both sides.
+ * WebAssembly.Module, shared WebAssembly.Memory, and Bun cloneable types are recorded
+ * in the object reference pool on both sides.
  */
 [[maybe_unused]] static constexpr unsigned CurrentVersion = 16;
 // Deserializers must not pool the version 16 terminal types for older payloads,
@@ -2029,6 +2030,8 @@ private:
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
+                if (!startObjectInternal(obj)) // handle duplicates
+                    return true;
 
                 uint32_t index = m_wasmModules.size();
                 m_wasmModules.append(&module->module());
@@ -2047,6 +2050,8 @@ private:
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
+                if (!startObjectInternal(obj)) // handle duplicates
+                    return true;
                 uint32_t index = m_wasmMemoryHandles.size();
                 m_wasmMemoryHandles.append(memory->memory().shared());
                 write(WasmMemoryTag);
@@ -5279,7 +5284,9 @@ private:
                 fail();
                 return JSValue();
             }
-            return JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
+            JSValue result = JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
+            addTerminalToObjectPool(result);
+            return result;
         }
         case WasmMemoryTag: {
             if (m_version >= 12) {
@@ -5325,6 +5332,7 @@ private:
 
             result->adopt(memory.releaseNonNull());
             m_gcBuffer.appendWithCrashOnOverflow(result);
+            addTerminalToObjectPool(result);
             return result;
         }
 #endif

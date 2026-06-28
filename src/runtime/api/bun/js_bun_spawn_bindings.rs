@@ -933,7 +933,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
     let _ = &inherited_env_storage;
 
-    for fd_index in 0..stdio.len() {
+    // Skip stdin: a memfd on fd 0 is a seekable regular file to the child,
+    // which breaks S_ISFIFO/S_ISSOCK detection. Route stdin data through the
+    // socketpair path so the child sees a socket like under Node.js.
+    for fd_index in 1..stdio.len() {
         if stdio[fd_index].can_use_memfd() {
             if stdio[fd_index].use_memfd(fd_index as u32) {
                 jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);

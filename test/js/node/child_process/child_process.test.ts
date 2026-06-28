@@ -479,6 +479,48 @@ describe("spawnSync()", () => {
       signal: null,
     });
   });
+
+  // The memfd optimization used to dup a memfd into the child's fd 0, so
+  // the child saw a seekable regular file instead of a pipe/socket and
+  // S_ISFIFO/S_ISSOCK checks took the wrong branch.
+  const fstatScript = [
+    `const fs = require("fs");`,
+    `const s = fs.fstatSync(0);`,
+    `process.stdout.write(JSON.stringify({`,
+    `  fifo: s.isFIFO(), socket: s.isSocket(), file: s.isFile(),`,
+    `  data: fs.readFileSync(0, "utf8"),`,
+    `}));`,
+  ].join("");
+
+  it.skipIf(!isLinux)("stdin 'pipe' with input is a socket, not a regular file", () => {
+    const { stdout, stderr, status } = spawnSync(bunExe(), ["-e", fstatScript], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+      input: "hello",
+    });
+    expect({ stderr: stderr.toString(), ...JSON.parse(stdout.toString()), status }).toEqual({
+      stderr: "",
+      fifo: false,
+      socket: true,
+      file: false,
+      data: "hello",
+      status: 0,
+    });
+  });
+
+  it.skipIf(!isLinux)("stdin 'pipe' without input is not a regular file", () => {
+    const { stdout, stderr, status } = spawnSync(bunExe(), ["-e", fstatScript], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const out = JSON.parse(stdout.toString());
+    expect({ stderr: stderr.toString(), file: out.file, data: out.data, status }).toEqual({
+      stderr: "",
+      file: false,
+      data: "",
+      status: 0,
+    });
+  });
 });
 
 describe("execFileSync()", () => {

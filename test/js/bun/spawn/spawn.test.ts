@@ -292,6 +292,32 @@ for (let [gcTick, label] of [
         expect(readFileSync(stdinPath, "utf8")).toBe(hugeString);
       });
 
+      it.skipIf(process.platform !== "linux").each([
+        ["Blob", (s: string) => new Blob([s])],
+        ["Uint8Array", (s: string) => new TextEncoder().encode(s)],
+      ] as const)("%s stdin is a socket in the child, not a regular file", async (_, make) => {
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const s = require("fs").fstatSync(0);` +
+              `process.stdout.write(JSON.stringify({ socket: s.isSocket(), file: s.isFile(), data: require("fs").readFileSync(0, "utf8") }));`,
+          ],
+          stdin: make("hi"),
+          stdout: "pipe",
+          stderr: "pipe",
+          env: bunEnv,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderr, ...JSON.parse(stdout), exitCode }).toEqual({
+          stderr: "",
+          socket: true,
+          file: false,
+          data: "hi",
+          exitCode: 0,
+        });
+      });
+
       it("Bun.file() works as stdout", async () => {
         rmSync(tmp + "out.123.txt", { force: true });
         gcTick();

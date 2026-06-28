@@ -315,6 +315,15 @@ private:
             return true;
         }
 
+        // V8's WriteJSReceiver rejects exotic receivers right after the id
+        // check. Proxy must be rejected HERE, before the isArray dispatch
+        // below: ES IsArray pierces a proxy to its target, so a proxied
+        // array would otherwise run the proxy's traps via writeArray.
+        if (obj->type() == JSC::ProxyObjectType) {
+            throwDataCloneError(scope, "The object could not be cloned."_s);
+            return false;
+        }
+
         if (auto* date = dynamicDowncast<DateInstance>(obj)) {
             writeTag(V8Tag::kDate);
             writeDouble(date->internalNumber());
@@ -572,23 +581,27 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         writeTag(V8Tag::kBeginJSMap);
+        // Snapshot every entry before the first writeValue: a getter on a
+        // nested value can mutate this Map, and JSMapIterator is live (a
+        // deleted not-yet-visited entry would be skipped where V8's
+        // WriteJSMap, which copies the table first, still emits it).
         JSMapIterator* iterator = JSMapIterator::create(m_vm, m_globalObject->mapIteratorStructure(), map, IterationKind::Entries);
         RETURN_IF_EXCEPTION(scope, false);
         JSC::EnsureStillAliveScope keepIter(iterator);
-        uint32_t count = 0;
+        MarkedArgumentBuffer entries;
         JSValue key, value;
         while (iterator->nextKeyValue(m_globalObject, key, value)) {
-            bool ok = writeValue(key);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!ok) return false;
-            ok = writeValue(value);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!ok) return false;
-            count += 2;
+            entries.appendWithCrashOnOverflow(key);
+            entries.appendWithCrashOnOverflow(value);
         }
         RETURN_IF_EXCEPTION(scope, false);
+        for (unsigned i = 0; i < entries.size(); i++) {
+            bool ok = writeValue(entries.at(i));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!ok) return false;
+        }
         writeTag(V8Tag::kEndJSMap);
-        writeVarint(count);
+        writeVarint(static_cast<uint32_t>(entries.size()));
         return true;
     }
 
@@ -596,20 +609,22 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         writeTag(V8Tag::kBeginJSSet);
+        // Snapshot before writing; see writeMap.
         JSSetIterator* iterator = JSSetIterator::create(m_vm, m_globalObject->setIteratorStructure(), set, IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, false);
         JSC::EnsureStillAliveScope keepIter(iterator);
-        uint32_t count = 0;
+        MarkedArgumentBuffer entries;
         JSValue key;
-        while (iterator->next(m_globalObject, key)) {
-            bool ok = writeValue(key);
+        while (iterator->next(m_globalObject, key))
+            entries.appendWithCrashOnOverflow(key);
+        RETURN_IF_EXCEPTION(scope, false);
+        for (unsigned i = 0; i < entries.size(); i++) {
+            bool ok = writeValue(entries.at(i));
             RETURN_IF_EXCEPTION(scope, false);
             if (!ok) return false;
-            count++;
         }
-        RETURN_IF_EXCEPTION(scope, false);
         writeTag(V8Tag::kEndJSSet);
-        writeVarint(count);
+        writeVarint(static_cast<uint32_t>(entries.size()));
         return true;
     }
 
@@ -892,8 +907,28 @@ private:
 
     JSValue trackObject(JSObject* obj)
     {
-        m_objectIds.append(JSValue(obj));
-        return obj;
+        return fillSlot(reserveSlot(), obj);
+    }
+
+    // readHostObject's id must be reserved BEFORE its body runs, because
+    // the non-view branch recurses into readValue() and the objects it
+    // tracks have to land at later ids (V8's ReadHostObject does
+    // `next_id_++` before dispatching to the delegate). Everything else
+    // tracks nothing between reserve and fill, so trackObject fuses them.
+    size_t reserveSlot()
+    {
+        size_t slot = m_objectIds.size();
+        m_objectIds.append(JSValue());
+        return slot;
+    }
+
+    JSValue fillSlot(size_t slot, JSValue value)
+    {
+        m_objectIds[slot] = value;
+        // m_objectIds is a plain Vector, not a GC root; keep every tracked
+        // object alive for the deserializer's lifetime via the marked buffer.
+        m_gcRoots.appendWithCrashOnOverflow(value);
+        return value;
     }
 
     JSValue readValueImpl()
@@ -949,6 +984,12 @@ private:
             auto id = readVarint();
             if (!id || *id >= m_objectIds.size()) break;
             JSValue referenced = m_objectIds.at(*id);
+            // A reserved-but-not-yet-filled id (a host object referenced
+            // from inside its own delegate body) is V8's the_hole: reject
+            // it as a format error. The empty JSValue MUST never escape
+            // this function (isCell() is true for the empty encoding, so
+            // getObject() on it is a null dereference).
+            if (referenced.isEmpty()) break;
             // V8's ReadObject consumes a trailing kArrayBufferView after ANY
             // tag that resolved to an ArrayBuffer, including an object
             // reference: a raw v8.Serializer emits the second view over an
@@ -1440,11 +1481,18 @@ private:
     JSValue readHostObject()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
+        // See reserveSlot(): claim this host object's id up front so the
+        // recursive readValue() below assigns strictly later ids.
+        size_t slot = reserveSlot();
         if (m_forIPC) {
             auto discriminator = readVarint();
             if (!discriminator) return {};
-            if (*discriminator == kChildProcessNotArrayBufferViewTag)
-                RELEASE_AND_RETURN(scope, readValue());
+            if (*discriminator == kChildProcessNotArrayBufferViewTag) {
+                JSValue inner = readValue();
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!inner) return {};
+                return fillSlot(slot, inner);
+            }
             if (*discriminator != kChildProcessArrayBufferViewTag) return {};
         }
         auto typeIndex = readVarint();
@@ -1569,7 +1617,7 @@ private:
         }
         RETURN_IF_EXCEPTION(scope, {});
         if (!view) return {};
-        return trackObject(view);
+        return fillSlot(slot, view);
     }
 
     JSValue readError()
@@ -1666,7 +1714,10 @@ private:
     bool m_forIPC;
     // Wire version from the header; some trailing fields are version-gated.
     uint32_t m_version { 0 };
-    MarkedArgumentBuffer m_objectIds;
+    // id -> value. A Vector so readHostObject can back-fill its reserved
+    // slot; every entry is rooted via m_gcRoots, never by this Vector.
+    Vector<JSValue, 32> m_objectIds;
+    MarkedArgumentBuffer m_gcRoots;
 };
 
 } // namespace Bun

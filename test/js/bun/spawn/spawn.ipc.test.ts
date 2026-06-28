@@ -348,6 +348,21 @@ describe("ipc mode advanced", () => {
       expect(exitCode).toBe(0);
     }
   });
+
+  // V8's ReadHostObject reserves the host object's id BEFORE dispatching to
+  // the delegate, so everything the delegate body reads gets a strictly
+  // later id. The frame is `[hostObj, {y:2}, ^3]` where the host body is
+  // `{x: {}}`; writer ids are array=0, host=1, body=2, inner `{}`=3. Not
+  // reserving shifts every id from the body on down by one, so `^3` would
+  // resolve to `{y:2}`. Confirmed: node's ChildProcessDeserializer on these
+  // bytes yields `got[2] === got[0].x`.
+  rawInjection("a host object reserves its id before its delegate body is read", async () => {
+    const { messages, exitCode } = await injectFrames("ff0f41035c016f2201786f7b007b016f22017949047b015e03240003");
+    const [got] = messages;
+    expect(got).toEqual([{ x: {} }, { y: 2 }, {}]);
+    expect(got[2]).toBe(got[0].x);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Structured-clone round trips over an advanced channel. The node-interop
@@ -522,6 +537,9 @@ describe("ipc mode advanced structured clone", () => {
     // toEqual does not distinguish -0 from +0; only SameValue does.
     expect(Object.is(got.negZero, -0)).toBe(true);
     expect(Buffer.isBuffer(got.buf)).toBe(true);
+    // Holes survive as holes, not undefined elements. toEqual cannot tell
+    // them apart, and this is the only sparse guard on a node-less runner.
+    expect(0 in got.sparse).toBe(false);
     expect(got.cyclic[1]).toBe(got.cyclic);
     expect(got.shared[0]).toBe(got.shared[1]);
   });
@@ -546,6 +564,31 @@ describe("ipc mode advanced structured clone", () => {
     expect(Object.keys(got).sort()).toEqual(["a", "done"]);
     expect("b" in got).toBe(false);
     expect(got.a).toBe(1);
+  });
+
+  // The Map rule is the OPPOSITE of the plain-object rule above, and both
+  // are V8's: WriteJSMap copies every entry out of the table BEFORE the
+  // first value is serialized ("First copy the key-value pairs, since
+  // getters could mutate them"), so an entry a getter deletes mid-walk is
+  // still emitted. A live iterator would skip it.
+  it("a Map entry deleted by an earlier value's getter is still serialized", async () => {
+    using dir = tempDir("ipc-adv-map-snapshot", { "echo.cjs": ECHO_CHILD });
+    const sent = new Map<string, unknown>();
+    sent.set("a", {
+      get x() {
+        sent.delete("b");
+        return 1;
+      },
+    });
+    sent.set("b", 2);
+    const got = await echoOnce(path.join(String(dir), "echo.cjs"), bunExe(), sent);
+
+    expect(got).toEqual(
+      new Map<string, unknown>([
+        ["a", { x: 1 }],
+        ["b", 2],
+      ]),
+    );
   });
 
   // V8 enumerates only an array's own keys, so an inherited index must stay
@@ -653,8 +696,11 @@ describe("ipc mode advanced structured clone", () => {
   });
 
   // V8 refuses to clone these; falling through to the plain-object path would
-  // silently deliver `{}` to the receiver instead of throwing at the sender.
-  it("sending a WeakMap, WeakSet, WeakRef, or FinalizationRegistry throws DataCloneError", async () => {
+  // silently deliver the traps' output (Proxy) or `{}` (the rest) instead of
+  // throwing at the sender. The array-target Proxy is the load-bearing case:
+  // ES IsArray pierces a proxy to its target, so without an explicit Proxy
+  // rejection it is serialized as an array by running the proxy's traps.
+  it("sending a Proxy, WeakMap, WeakSet, WeakRef, or FinalizationRegistry throws DataCloneError", async () => {
     using dir = tempDir("ipc-adv-weak", { "echo.cjs": ECHO_CHILD });
     const child = fork(path.join(String(dir), "echo.cjs"), [], {
       execPath: bunExe(),
@@ -663,7 +709,14 @@ describe("ipc mode advanced structured clone", () => {
       stdio: "ignore",
     });
     try {
-      for (const value of [new WeakMap(), new WeakSet(), new WeakRef({}), new FinalizationRegistry(() => {})]) {
+      for (const value of [
+        new Proxy({ a: 1 }, {}),
+        new Proxy([1, 2], {}),
+        new WeakMap(),
+        new WeakSet(),
+        new WeakRef({}),
+        new FinalizationRegistry(() => {}),
+      ]) {
         expect(() => child.send(value as any)).toThrow("could not be cloned");
       }
     } finally {

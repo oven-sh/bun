@@ -42,18 +42,9 @@ public:
         int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
+    // The overload below performs the same name/path/domain validation.
     static ExceptionOr<Ref<Cookie>> create(const CookieInit& init)
     {
-        if (!isValidCookieName(init.name)) {
-            return Exception { TypeError, "Invalid cookie name: contains invalid characters"_s };
-        }
-        if (!isValidCookiePath(init.path)) {
-            return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
-        }
-        if (!isValidCookieDomain(init.domain)) {
-            return Exception { TypeError, "Invalid cookie domain: labels must be 1-63 letters, digits, or hyphens and cannot start or end with a hyphen"_s };
-        }
-
         return create(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned);
     }
 

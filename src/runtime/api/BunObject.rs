@@ -1601,12 +1601,16 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
     use bun_jsc::rare_data::HotMapEntry;
 
     if config.allow_hot {
+        let generation = vm.hot_reload_counter;
         if let Some(hot) = vm.hot_map() {
             if config.id.is_empty() {
                 config.id = config.compute_id().into();
             }
 
             if let Some(entry) = hot.get_entry(&config.id) {
+                // Mark the entry as adopted by the current module generation
+                // so the post-reload orphan sweep leaves it running.
+                hot.touch(&config.id, generation);
                 macro_rules! reload {
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
@@ -1670,12 +1674,15 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             if server_ref.config.allow_hot {
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
-                if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
+                let vm = global_object.bun_vm().as_mut();
+                let generation = vm.hot_reload_counter;
+                if let Some(hot) = vm.hot_map() {
                     hot.insert_raw(
                         &server_ref.config.id,
                         HotMapEntry {
                             tag: $tag as u8,
                             ptr: server.cast::<()>(),
+                            generation,
                         },
                     );
                 }

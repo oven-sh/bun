@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -766,3 +766,254 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// On a `--hot` soft reload, a `Bun.serve` instance the new module generation
+// does not re-adopt (no `Bun.serve` call, or a different host/port) must stop
+// listening instead of serving the previous generation's handler forever.
+describe("--hot Bun.serve orphaned server", () => {
+  const gen1 = `
+    declare global { var n: number }
+    globalThis.n = (globalThis.n ?? 0) + 1;
+    const g = globalThis.n;
+    const server = Bun.serve({ port: 0, fetch() { return new Response("gen " + g); } });
+    console.log(JSON.stringify({ event: "listening", gen: g, port: server.port }));
+  `;
+
+  /**
+   * Incremental newline-delimited reader over a child stream. A plain
+   * `for await` would close the underlying ReadableStream when its loop
+   * exits, so a second `waitFor` on the same stream would see it drained.
+   */
+  function lineReader(stream: ReadableStream<Uint8Array>) {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let done = false;
+    const queue: string[] = [];
+
+    async function fill() {
+      const { value, done: d } = await reader.read();
+      if (d) {
+        done = true;
+        if (buf) {
+          queue.push(buf);
+          buf = "";
+        }
+        return;
+      }
+      buf += decoder.decode(value);
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        queue.push(buf.slice(0, i));
+        buf = buf.slice(i + 1);
+      }
+    }
+
+    return {
+      async waitFor(predicate: (line: string) => boolean): Promise<string> {
+        const seen: string[] = [];
+        while (true) {
+          while (queue.length) {
+            const line = queue.shift()!;
+            seen.push(line);
+            if (predicate(line)) return line;
+          }
+          if (done) {
+            throw new Error("stream ended; saw: " + JSON.stringify(seen));
+          }
+          await fill();
+        }
+      },
+    };
+  }
+
+  /**
+   * GET with connection pooling disabled, so every probe opens a fresh TCP
+   * connection. The orphan sweep closes the *listener* (same semantics as
+   * `server.stop()`), not sockets that are already established; a pooled
+   * keep-alive socket from an earlier fetch would keep getting answers.
+   */
+  function get(port: number) {
+    return fetch(`http://127.0.0.1:${port}/`, { headers: { Connection: "close" } });
+  }
+
+  /** Poll `port` until nothing answers, or the bounded window expires. */
+  async function pollUntilRefused(port: number): Promise<{ refused: boolean; lastText: string }> {
+    let lastText = "";
+    for (let i = 0; i < 100; i++) {
+      try {
+        lastText = await (await get(port)).text();
+      } catch {
+        return { refused: true, lastText: "" };
+      }
+      await Bun.sleep(50);
+    }
+    return { refused: false, lastText };
+  }
+
+  it(
+    "stops the previous generation's server when the new generation has no Bun.serve",
+    async () => {
+      using dir = tempDir("hot-serve-orphan", { "s.ts": gen1 });
+      const src = join(String(dir), "s.ts");
+
+      await using runner = spawn({
+        cmd: [bunExe(), "--hot", "run", src],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      const out = lineReader(runner.stdout);
+
+      const first = await out.waitFor(l => l.includes('"listening"'));
+      const { port } = JSON.parse(first) as { port: number };
+      expect(await (await get(port)).text()).toBe("gen 1");
+
+      // Reload to a version that never calls Bun.serve. The generation-1
+      // server was not adopted, so its listener must be closed.
+      writeFileSync(src, `console.log(JSON.stringify({ event: "no-server" }));\nsetInterval(() => {}, 1e9);\n`);
+      await out.waitFor(l => l.includes('"no-server"'));
+
+      const { refused, lastText } = await pollUntilRefused(port);
+      // `childAlive` guards against passing because the child crashed/exited
+      // (which would also make the port stop answering).
+      expect({ refused, lastText, childAlive: runner.exitCode === null }).toEqual({
+        refused: true,
+        lastText: "",
+        childAlive: true,
+      });
+      runner.kill();
+    },
+    timeout,
+  );
+
+  it(
+    "stops the previous generation's server when the new generation's server has a different id",
+    async () => {
+      using dir = tempDir("hot-serve-orphan-id", { "s.ts": gen1 });
+      const src = join(String(dir), "s.ts");
+
+      await using runner = spawn({
+        cmd: [bunExe(), "--hot", "run", src],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      const out = lineReader(runner.stdout);
+
+      const first = await out.waitFor(l => l.includes('"listening"'));
+      const { port: oldPort } = JSON.parse(first) as { port: number };
+      expect(await (await get(oldPort)).text()).toBe("gen 1");
+
+      // The hot-reuse id is derived from hostname+port, so a different
+      // hostname is a different server: the old one is an orphan.
+      writeFileSync(src, gen1.replace("port: 0", `port: 0, hostname: "127.0.0.1"`));
+
+      // The watcher can fire more than once per save, so the generation the
+      // new port serves may be > 2. Accept any generation past 1 that bound a
+      // fresh port; later reloads of the same source re-adopt that server, so
+      // `newPort` is stable from here on.
+      const second = await out.waitFor(l => {
+        if (!l.includes('"listening"')) return false;
+        const msg = JSON.parse(l) as { gen: number; port: number };
+        return msg.gen > 1 && msg.port !== oldPort;
+      });
+      const { port: newPort } = JSON.parse(second) as { port: number };
+      expect(await (await get(newPort)).text()).toMatch(/^gen [2-9]\d*$/);
+
+      const { refused: oldRefused, lastText: oldText } = await pollUntilRefused(oldPort);
+      // The new server must still be up: proves the old listener was closed
+      // by the orphan sweep, not by the whole process dying.
+      const newStillUp = await (await get(newPort)).text();
+      expect({ oldRefused, oldText, newStillUp }).toEqual({
+        oldRefused: true,
+        oldText: "",
+        newStillUp: expect.stringMatching(/^gen [2-9]\d*$/),
+      });
+      runner.kill();
+    },
+    timeout,
+  );
+
+  it(
+    "keeps serving when the new generation adopts the same server",
+    async () => {
+      using dir = tempDir("hot-serve-adopted", { "s.ts": gen1 });
+      const src = join(String(dir), "s.ts");
+
+      await using runner = spawn({
+        cmd: [bunExe(), "--hot", "run", src],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      const out = lineReader(runner.stdout);
+
+      const first = await out.waitFor(l => l.includes('"listening"'));
+      const { port } = JSON.parse(first) as { port: number };
+      expect(await (await get(port)).text()).toBe("gen 1");
+
+      // Same config on every reload => same hot id => the server is adopted,
+      // keeps its bound port, and the sweep must leave it alone.
+      let lastSeen = 1;
+      for (let round = 0; round < 3; round++) {
+        writeFileSync(src, gen1 + `\n// touch ${round}\n`);
+        const line = await out.waitFor(l => {
+          if (!l.includes('"listening"')) return false;
+          return (JSON.parse(l) as { gen: number }).gen > lastSeen;
+        });
+        lastSeen = (JSON.parse(line) as { gen: number }).gen;
+        // Still answering on the original port, with a handler from the
+        // current (or a later, if the watcher double-fired) generation.
+        const body = await (await get(port)).text();
+        expect(body).toMatch(/^gen \d+$/);
+        expect(Number(body.slice("gen ".length))).toBeGreaterThanOrEqual(lastSeen);
+      }
+      runner.kill();
+    },
+    timeout,
+  );
+
+  it(
+    "keeps the previous server running when the new generation throws during load",
+    async () => {
+      using dir = tempDir("hot-serve-throw", { "s.ts": gen1 });
+      const src = join(String(dir), "s.ts");
+
+      await using runner = spawn({
+        cmd: [bunExe(), "--hot", "run", src],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+
+      const out = lineReader(runner.stdout);
+      const err = lineReader(runner.stderr);
+
+      const first = await out.waitFor(l => l.includes('"listening"'));
+      const { port } = JSON.parse(first) as { port: number };
+      expect(await (await get(port)).text()).toBe("gen 1");
+
+      // The new generation throws at top level: its entry-point promise
+      // rejects, so the orphan sweep does not run and the last good
+      // generation's server keeps answering.
+      writeFileSync(src, `throw new Error("boom-on-load");\n`);
+      await err.waitFor(l => l.includes("boom-on-load"));
+
+      expect(await (await get(port)).text()).toBe("gen 1");
+      runner.kill();
+    },
+    timeout,
+  );
+});

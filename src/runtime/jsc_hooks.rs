@@ -1411,6 +1411,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     parse_worker_exec_argv_allow_addons,
     cron_clear_all_teardown,
     cron_clear_all_reload,
+    hot_stop_orphaned_servers,
     terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
     cancel_all_timers,
@@ -1503,6 +1504,38 @@ fn cron_clear_all_teardown(vm: &mut VirtualMachine) {
 fn cron_clear_all_reload(vm: &mut VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
     CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
+}
+
+/// Stop every `Bun.serve` instance registered by a previous `--hot` generation
+/// that the current generation did not adopt (by calling `Bun.serve` again
+/// with the same computed id). Entries are stale when their stamped
+/// `generation` predates `vm.hot_reload_counter`; inserting and adopting both
+/// stamp the current counter (see `crate::api::bun_object::serve`).
+fn hot_stop_orphaned_servers(vm: &mut VirtualMachine) {
+    use crate::server::{AnyServer, AnyServerTag};
+    let current = vm.hot_reload_counter;
+    // Snapshot the stale entries first: `NewServer::stop` removes its own key
+    // from the hot map, which would invalidate an in-place iterator.
+    let stale = match vm.hot_map() {
+        Some(hot) => hot.collect_stale(current),
+        None => return,
+    };
+    for entry in stale {
+        let tag = match entry.tag {
+            t if t == AnyServerTag::HTTPServer as u8 => AnyServerTag::HTTPServer,
+            t if t == AnyServerTag::HTTPSServer as u8 => AnyServerTag::HTTPSServer,
+            t if t == AnyServerTag::DebugHTTPServer as u8 => AnyServerTag::DebugHTTPServer,
+            t if t == AnyServerTag::DebugHTTPSServer as u8 => AnyServerTag::DebugHTTPSServer,
+            _ => continue,
+        };
+        let mut server = AnyServer {
+            tag,
+            ptr: entry.ptr,
+        };
+        // Graceful stop: close the listener so in-flight requests on the old
+        // handler can drain, matching `server.stop()` from JS.
+        server.stop(false);
+    }
 }
 
 /// `webcore.WebWorker.terminateAllAndWait(timeout_ms)` —

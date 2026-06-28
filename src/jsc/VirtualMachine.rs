@@ -292,6 +292,10 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
+    /// `hot_reload_counter` value at the last `--hot` orphan sweep. Gates
+    /// [`Self::report_exception_in_hot_reloaded_module_if_needed`] so each
+    /// generation sweeps at most once.
+    pub hot_reload_orphan_swept_at: u32,
     pub entry_point_result: EntryPointResult,
 
     pub auto_install_dependencies: bool,
@@ -1765,6 +1769,12 @@ pub struct RuntimeHooks {
     /// the `.reload` mode preserves the next-fire schedule across the new
     /// global so timers re-register instead of being torn down.
     pub cron_clear_all_reload: fn(vm: &mut VirtualMachine),
+    /// Stop every `Bun.serve` instance the current `--hot` generation did not
+    /// re-adopt. The server types live in `bun_runtime` (forward-dep), so the
+    /// body is hoisted to the high tier; the low-tier caller is
+    /// [`VirtualMachine::report_exception_in_hot_reloaded_module_if_needed`],
+    /// once the reloaded entry-point promise fulfills.
+    pub hot_stop_orphaned_servers: fn(vm: &mut VirtualMachine),
     /// Standalone-graph sourcemap load.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier reaches them via the graph's own
@@ -3385,7 +3395,19 @@ impl VirtualMachine {
                     crate::JSPromise::opaque_mut(promise).set_handled();
                 }
             }
-            crate::js_promise::Status::Fulfilled => {}
+            crate::js_promise::Status::Fulfilled => {
+                // The reloaded module finished evaluating: any `Bun.serve` a
+                // previous `--hot` generation registered but this one did not
+                // adopt is an orphan. Sweep at most once per generation.
+                if self.hot_reload == HOT_RELOAD_HOT
+                    && self.hot_reload_orphan_swept_at != self.hot_reload_counter
+                {
+                    self.hot_reload_orphan_swept_at = self.hot_reload_counter;
+                    if let Some(hooks) = runtime_hooks() {
+                        (hooks.hot_stop_orphaned_servers)(self);
+                    }
+                }
+            }
         }
 
         if self.hot_reload_deferred {

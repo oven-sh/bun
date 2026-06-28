@@ -63,12 +63,17 @@ pub struct HotMap {
 pub struct HotMapEntry {
     pub tag: u8,
     pub ptr: *mut (),
+    /// `vm.hot_reload_counter` at the time this entry was last inserted or
+    /// adopted by `Bun.serve`. An entry whose generation is older than the
+    /// current counter was not re-adopted by the latest module generation.
+    pub generation: u32,
 }
 impl Default for HotMapEntry {
     fn default() -> Self {
         Self {
             tag: 0,
             ptr: core::ptr::null_mut(),
+            generation: 0,
         }
     }
 }
@@ -106,6 +111,25 @@ impl HotMap {
         let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
         debug_assert!(!is_same_slice);
         self._map.swap_remove(key);
+    }
+
+    /// Stamp the entry at `key` (if any) with `generation`.
+    pub fn touch(&mut self, key: &[u8], generation: u32) {
+        if let Some(v) = self._map.get_mut(key) {
+            v.generation = generation;
+        }
+    }
+
+    /// Copy out every entry whose `generation` is older than `current`. The
+    /// entries themselves are left in place; callers remove them via the
+    /// object's own teardown path (which calls [`HotMap::remove`]).
+    pub fn collect_stale(&self, current: u32) -> Vec<HotMapEntry> {
+        self._map
+            .values()
+            .iter()
+            .filter(|v| v.generation < current)
+            .copied()
+            .collect()
     }
 }
 

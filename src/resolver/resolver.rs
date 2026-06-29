@@ -497,6 +497,7 @@ impl<C> ResolveWatcher<C> {
             callback: unsafe {
                 bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(self.on_watch)
             },
+            package_json_callback: None,
         }
     }
 }
@@ -1810,6 +1811,21 @@ impl<'a> Resolver<'a> {
         if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
             if let Some(pkg) = result.package_json_ref() {
                 module_type = pkg.module_type;
+            }
+        }
+
+        // Register the package.json this module resolved through so the hot
+        // reloader can bust its directory cache when it changes. Gated like
+        // the module watch in `maybe_watch_file`: `node_modules` is excluded.
+        if let Some(watcher) = self.watcher {
+            if let Some(package_json) = result.package_json_ref() {
+                let manifest_path = package_json.source.path.text;
+                if result.path().is_some_and(|path| {
+                    bun_paths::is_absolute(path.text)
+                        && !strings::contains(path.text, b"node_modules")
+                }) {
+                    watcher.watch_package_json(manifest_path);
+                }
             }
         }
 

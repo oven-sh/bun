@@ -73,12 +73,23 @@ pub struct AnyResolveWatcher {
     // closure-style invariant upheld by this struct), and the body discharges
     // its own type-recovery `unsafe` internally.
     pub callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
+    /// Registers a package.json the resolver read so `--hot`/`--watch` observe
+    /// edits to its exports/imports maps, "main", and "type". `None` when the
+    /// producer has no file watcher to register it with.
+    pub package_json_callback: Option<fn(*mut (), path: &[u8])>,
 }
 
 impl AnyResolveWatcher {
     #[inline]
     pub fn watch(self, dir_path: &[u8], dir_fd: Fd) {
         (self.callback)(self.context, dir_path, dir_fd)
+    }
+
+    #[inline]
+    pub fn watch_package_json(self, path: &[u8]) {
+        if let Some(callback) = self.package_json_callback {
+            callback(self.context, path);
+        }
     }
 }
 
@@ -947,9 +958,15 @@ impl Watcher {
             let this = unsafe { &mut *ctx.cast::<Watcher>() };
             Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
         }
+        fn wrap_package_json(ctx: *mut (), path: &[u8]) {
+            // SAFETY: same pairing invariant as `wrap` above.
+            let this = unsafe { &mut *ctx.cast::<Watcher>() };
+            let _ = this.add_file_by_path_slow(path, Loader::Json);
+        }
         AnyResolveWatcher {
             context: std::ptr::from_mut::<Self>(self).cast::<()>(),
             callback: wrap,
+            package_json_callback: Some(wrap_package_json),
         }
     }
 

@@ -57,4 +57,6 @@ impl Loader {
     /// drift guard lives in `src/jsc/hot_reloader.rs` (a crate that sees both
     /// types).
     pub const File: Loader = Loader(5);
+    /// Mirrors `bun_ast::Loader::Json as u8`; same drift guard as [`Self::File`].
+    pub const Json: Loader = Loader(6);
 }

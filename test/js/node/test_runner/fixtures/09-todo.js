@@ -60,6 +60,11 @@ test("regular test still runs", () => {
 });
 
 describe.todo("todo suite (modifier)", () => {
+  // A passing hook must not be reported or counted as a todo entry.
+  before(() => {
+    console.log("LOG:passing-before-hook");
+  });
+
   test("inside the modifier suite", () => {
     console.log("LOG:todo-suite-modifier");
   });
@@ -78,8 +83,9 @@ describe("todo suite (option)", { todo: true }, () => {
   });
 });
 
-// Node runs a todo suite's before/after hooks and absorbs their failures too:
-// the hook and the tests it cancels are reported as todo, never as failures.
+// Node runs a todo suite's before/after hooks and absorbs their failures too,
+// whether they throw synchronously or reject asynchronously: the hook and the
+// tests it cancels are reported as todo, never as failures.
 describe.todo("throwing before suite", () => {
   before(() => {
     console.log("LOG:before-hook");
@@ -92,9 +98,9 @@ describe.todo("throwing before suite", () => {
 });
 
 describe("throwing after suite", { todo: true }, () => {
-  after(() => {
+  after(async () => {
     console.log("LOG:after-hook");
-    assert.fail("expected failure: a todo suite's after() must not fail the run");
+    assert.fail("expected failure: a todo suite's rejecting after() must not fail the run");
   });
 
   test("inside the after suite", () => {

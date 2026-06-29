@@ -775,17 +775,10 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
-  const runHook = (done: (error?: unknown) => void) => {
-    // A synchronous throw must propagate: the runner attributes it to this
-    // hook's own entry. Routing it through `done(error)` instead reports it as
-    // an unattributed error, because a before/after hook has no current test.
-    const result = fn();
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
-    } else {
-      done();
-    }
-  };
+  // Return the hook's result instead of signalling through a done callback: the
+  // runner attributes a throw or a rejected return to this hook's own entry,
+  // while `done(error)` is attributed to the current test, and a hook has none.
+  const runHook = () => fn();
 
   return { options, fn: runHook };
 }

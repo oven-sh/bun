@@ -678,7 +678,8 @@ impl Execution {
         }
         // Node reports a todo test as todo no matter how it finished: a passing
         // body, a throwing body, a timeout, and a failing hook all count as todo.
-        if sequence.is_todo_run() {
+        // A passing before/after-only sequence stays Pass so it is not reported.
+        if sequence.is_todo_run() && (sequence.test_entry.is_some() || sequence.result != Result::Pass) {
             sequence.result = Result::Todo;
         }
         if let Some(first_entry) = sequence.first_entry {

@@ -74,6 +74,7 @@ describe("node:test", () => {
         "LOG:todo-reason-string",
         "LOG:todo-timeout",
         "LOG:regular",
+        "LOG:passing-before-hook",
         "LOG:todo-suite-modifier",
         "LOG:todo-suite-option",
         "LOG:before-hook",
@@ -125,7 +126,7 @@ describe("node:test", () => {
   // A failing before() in a plain (non-todo) suite fails the run, attributed
   // to the hook rather than counted as an unhandled error between tests, and
   // the suite's tests do not run.
-  test("a failing before hook in a plain suite fails the run", async () => {
+  test("a failing before hook in a plain suite fails the run, sync or async", async () => {
     const { exitCode, stdout, stderr } = await runTests(["13-hook-failure.js"]);
     expect({
       exitCode,
@@ -133,8 +134,8 @@ describe("node:test", () => {
       summary: summarize(stderr),
     }).toEqual({
       exitCode: 1,
-      logs: ["LOG:before"],
-      summary: { pass: 0, fail: 1, todo: 0, skip: 0, errors: 0 },
+      logs: ["LOG:before", "LOG:async-before"],
+      summary: { pass: 0, fail: 2, todo: 0, skip: 0, errors: 0 },
     });
   });
 

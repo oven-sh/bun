@@ -193,6 +193,24 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  // Reading `.size` on a BunFile caches the stat result into the blob. The
+  // copy length must come from the source, never from the destination blob's
+  // cached size, or a smaller pre-existing destination silently truncates
+  // the source to its own old length.
+  it("Bun.file -> Bun.file: a destination with a resolved .size is fully overwritten", async () => {
+    using dir = tempDir("bun-write-resolved-dest", {
+      "src.txt": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "dst.txt": "old",
+    });
+    const src = join(String(dir), "src.txt");
+    const dstPath = join(String(dir), "dst.txt");
+    const dst = Bun.file(dstPath);
+    expect(dst.size).toBe(3);
+    const ret = await Bun.write(dst, Bun.file(src));
+    expect(await Bun.file(dstPath).text()).toBe("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    expect(ret).toBe(26);
+  });
+
   describe("Bun.file -> Bun.file with sliced source", () => {
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 

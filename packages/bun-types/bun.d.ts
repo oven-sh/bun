@@ -3729,7 +3729,7 @@ declare module "bun" {
   /**
    * Bundles JavaScript, TypeScript, CSS, HTML and other supported files into optimized outputs.
    *
-   * @param config - Build configuration options
+   * @param config Build configuration options
    * @returns Promise that resolves to build output containing generated artifacts and build status
    * @throws {AggregateError} When build fails and config.throw is true (default in Bun 1.2+)
    *
@@ -3839,7 +3839,7 @@ declare module "bun" {
    *```
    *
    * @example
-   * Implement comprehensive error handling with position info
+   * Handle build errors with position info
    *```ts
    * try {
    *   const result = await Bun.build({
@@ -3990,7 +3990,7 @@ declare module "bun" {
     passphrase?: string;
 
     /**
-     * File path to a .pem file custom Diffie Helman parameters
+     * File path to a `.pem` file containing custom Diffie-Hellman parameters
      */
     dhParamsFile?: string;
 
@@ -4000,8 +4000,8 @@ declare module "bun" {
     serverName?: string;
 
     /**
-     * This sets `OPENSSL_RELEASE_BUFFERS` to 1.
-     * It reduces overall performance but saves some memory.
+     * Sets `OPENSSL_RELEASE_BUFFERS` to 1.
+     * Reduces overall performance but saves some memory.
      * @default false
      */
     lowMemoryMode?: boolean;
@@ -4013,7 +4013,7 @@ declare module "bun" {
     rejectUnauthorized?: boolean;
 
     /**
-     * If set to `true`, the server will request a client certificate.
+     * If set to `true`, the server requests a client certificate.
      *
      * Default is `false`.
      */
@@ -4033,25 +4033,25 @@ declare module "bun" {
      *  including the root CA (the root CA must be pre-known to the peer,
      *  see ca). When providing multiple cert chains, they do not have to
      *  be in the same order as their private keys in key. If the
-     *  intermediate certificates are not provided, the peer will not be
-     *  able to validate the certificate, and the handshake will fail.
+     *  intermediate certificates are not provided, the peer cannot
+     *  validate the certificate, and the handshake fails.
      */
     cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
-     * being encrypted. Encrypted keys will be decrypted with
+     * being encrypted. Encrypted keys are decrypted with
      * options.passphrase. Multiple keys using different algorithms can be
      * provided either as an array of unencrypted key strings or buffers,
      * or an array of objects in the form {pem: <string|buffer>[,
      * passphrase: <string>]}. The object form can only occur in an array.
-     * object.passphrase is optional. Encrypted keys will be decrypted with
+     * object.passphrase is optional. Encrypted keys are decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
      */
     key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      * Optionally affect the OpenSSL protocol behavior, which is not
-     * usually necessary. This should be used carefully if at all! Value is
-     * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
+     * usually necessary. Use it carefully, if at all. Value is a numeric
+     * bitmask of the SSL_OP_* options from OpenSSL Options
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
 
@@ -4084,9 +4084,9 @@ declare module "bun" {
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
-   * This Blob is lazy. That means it won't do any work until you read from it.
+   * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` will not be valid until the contents of the file are read at least once.
+   * - `size` is not valid until the contents of the file are read at least once.
    * - `type` is auto-set based on the file extension when possible
    *
    * @example
@@ -4103,14 +4103,14 @@ declare module "bun" {
    *   "Hello, world!"
    * );
    * ```
-   * @param path The path to the file (lazily loaded) if the path starts with `s3://` it will behave like {@link S3File}
+   * @param path The path to the file (lazily loaded). If the path starts with `s3://`, the file behaves like {@link S3File}
    */
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
 
   /**
-   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   * A list of files embedded into the standalone executable, lexicographically sorted by name.
    *
-   * If the process is not a standalone executable, this returns an empty array.
+   * If the process is not a standalone executable, this array is empty.
    */
   const embeddedFiles: ReadonlyArray<Blob>;
 
@@ -4131,43 +4131,43 @@ declare module "bun" {
   const isStandaloneExecutable: boolean;
 
   /**
-   * `Blob` that leverages the fastest system calls available to operate on files.
+   * `Blob` that uses the fastest system calls available to operate on files.
    *
-   * This Blob is lazy. It won't do any work until you read from it. Errors propagate as promise rejections.
+   * This Blob is lazy: it does no work until you read from it. Errors propagate as promise rejections.
    *
-   * `Blob.size` will not be valid until the contents of the file are read at least once.
-   * `Blob.type` will have a default set based on the file extension
+   * `Blob.size` is not valid until the contents of the file are read at least once.
+   * `Blob.type` is set based on the file extension when possible
    *
    * @example
    * ```js
-   * const file = Bun.file(new TextEncoder.encode("./hello.json"));
+   * const file = Bun.file(new TextEncoder().encode("./hello.json"));
    * console.log(file.type); // "application/json"
    * ```
    *
-   * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
+   * @param path The path to the file as a byte buffer (the buffer is copied). If the path starts with `s3://`, the file behaves like {@link S3File}
    */
   function file(path: ArrayBufferLike | Uint8Array<ArrayBuffer>, options?: BlobPropertyBag): BunFile;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
-   * This Blob is lazy. That means it won't do any work until you read from it.
+   * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` will not be valid until the contents of the file are read at least once.
+   * - `size` is not valid until the contents of the file are read at least once.
    *
    * @example
    * ```js
    * const file = Bun.file(fd);
    * ```
    *
-   * @param fileDescriptor The file descriptor of the file
+   * @param fileDescriptor An open file descriptor
    */
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
    *
-   * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
+   * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can leak anything recently in memory.
    */
   function allocUnsafe(size: number): Uint8Array<ArrayBuffer>;
 
@@ -4478,7 +4478,7 @@ declare module "bun" {
   }
 
   /**
-   * Pretty-print an object the same as {@link console.log} to a `string`
+   * Pretty-prints an object to a `string`, the same as {@link console.log}
    *
    * Supports JSX
    *
@@ -4488,7 +4488,7 @@ declare module "bun" {
   function inspect(arg: any, options?: BunInspectOptions): string;
   namespace inspect {
     /**
-     * That can be used to declare custom inspect functions.
+     * Symbol for declaring a custom inspect function on an object. Same as `util.inspect.custom` in Node.js.
      */
     const custom: typeof import("util").inspect.custom;
 
@@ -4507,8 +4507,8 @@ declare module "bun" {
      */
     sync?: boolean;
     /**
-     * Allow other processes to see results instantly?
-     * This enables MAP_SHARED. If false, it enables MAP_PRIVATE.
+     * Whether other processes see writes immediately.
+     * `true` maps with MAP_SHARED; `false` maps with MAP_PRIVATE.
      * @default true
      */
     shared?: boolean;
@@ -4518,18 +4518,18 @@ declare module "bun" {
    * - Writing to the array writes to the file.
    * - Reading from the array reads from the file.
    *
-   * This uses the [`mmap()`](https://man7.org/linux/man-pages/man2/mmap.2.html) syscall under the hood.
+   * This uses the [`mmap()`](https://man7.org/linux/man-pages/man2/mmap.2.html) syscall.
    *
    * ---
    *
    * This API inherently has some rough edges:
-   * - It does not support empty files. It will throw a `SystemError` with `EINVAL`
-   * - Usage on shared/networked filesystems is discouraged. It will be very slow.
-   * - If you delete or truncate the file, that will crash bun. This is called a segmentation fault.
+   * - It does not support empty files. It throws a `SystemError` with `EINVAL`
+   * - Usage on shared/networked filesystems is discouraged. It is very slow.
+   * - Deleting or truncating the file crashes Bun with a segmentation fault.
    *
    * ---
    *
-   * To close the file, set the array to `null` and it will be garbage collected eventually.
+   * To close the file, set the array to `null`; it is garbage collected eventually.
    */
   function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
@@ -4570,7 +4570,7 @@ declare module "bun" {
     | { toString(): string };
 
   /**
-   * Converts formats of colors
+   * Converts a color to a different format
    *
    * @category Utilities
    *
@@ -4633,17 +4633,17 @@ declare module "bun" {
   /**
    * Convert any color input to rgb
    * @param input Any color input
-   * @param outputFormat Specify `[rgb]` to output as an array with `r`, `g`, and `b` properties
+   * @param outputFormat Specify `[rgb]` to output as a `[r, g, b]` array
    */
   function color(input: ColorInput, outputFormat: "[rgb]"): [number, number, number] | null;
   /**
    * Convert any color input to rgba
    * @param input Any color input
-   * @param outputFormat Specify `[rgba]` to output as an array with `r`, `g`, `b`, and `a` properties
+   * @param outputFormat Specify `[rgba]` to output as a `[r, g, b, a]` array
    */
   function color(input: ColorInput, outputFormat: "[rgba]"): [number, number, number, number] | null;
   /**
-   * Convert any color input to a number
+   * Convert any color input to rgb
    * @param input Any color input
    * @param outputFormat Specify `{rgb}` to output as an object with `r`, `g`, and `b` properties
    */
@@ -4651,7 +4651,7 @@ declare module "bun" {
   /**
    * Convert any color input to rgba
    * @param input Any color input
-   * @param outputFormat Specify {rgba} to output as an object with `r`, `g`, `b`, and `a` properties
+   * @param outputFormat Specify `{rgba}` to output as an object with `r`, `g`, `b`, and `a` properties
    */
   function color(input: ColorInput, outputFormat: "{rgba}"): { r: number; g: number; b: number; a: number } | null;
   /**
@@ -4662,11 +4662,11 @@ declare module "bun" {
   function color(input: ColorInput, outputFormat: "number"): number | null;
 
   /**
-   * Bun.semver provides a fast way to parse and compare version numbers.
+   * Bun.semver parses and compares version numbers.
    */
   namespace semver {
     /**
-     * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
+     * Tests whether `version` satisfies `range`. Both arguments are stringified first.
      */
     function satisfies(version: StringLike, range: StringLike): boolean;
 
@@ -4681,9 +4681,9 @@ declare module "bun" {
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
      *
-     * **Only use this for ASCII strings**. If there are non-ascii characters, your application may crash and/or very confusing bugs will happen such as `"foo" !== "foo"`.
+     * **Only use this for ASCII strings**. If there are non-ASCII characters, your application may crash or hit confusing bugs such as `"foo" !== "foo"`.
      *
-     * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
+     * **The input buffer must not be garbage collected**. Hold a reference to it for the lifetime of the string.
      */
     function arrayBufferToString(buffer: Uint8Array<ArrayBuffer> | ArrayBufferLike): string;
 
@@ -4692,7 +4692,7 @@ declare module "bun" {
      *
      * **The input must be a UTF-16 encoded string**. This API does no validation whatsoever.
      *
-     * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
+     * **The input buffer must not be garbage collected**. Hold a reference to it for the lifetime of the string.
      */
 
     function arrayBufferToString(buffer: Uint16Array): string;
@@ -4709,7 +4709,7 @@ declare module "bun" {
      *
      * `BUN_GARBAGE_COLLECTOR_LEVEL` environment variable is also supported.
      *
-     * @param level
+     * @param level The level to set: `0`, `1`, or `2`
      * @returns The previous level
      */
     function gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
@@ -4737,16 +4737,14 @@ declare module "bun" {
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
 
   /**
-   * Are ANSI colors enabled for stdin and stdout?
+   * Whether ANSI colors are enabled for stdin and stdout
    *
    * Used for {@link console.log}
    */
   const enableANSIColors: boolean;
 
   /**
-   * What script launched Bun?
-   *
-   * Absolute file path
+   * Absolute path of the script that launched Bun
    *
    * @example "/never-gonna-give-you-up.js"
    */
@@ -4764,11 +4762,9 @@ declare module "bun" {
   function gc(force?: boolean): void;
 
   /**
-   * JavaScriptCore engine's internal heap snapshot
+   * JavaScriptCore engine's internal heap snapshot format
    *
-   * I don't know how to make this something Chrome or Safari can read.
-   *
-   * If you have any ideas, please file an issue https://github.com/oven-sh/bun
+   * For a snapshot Chrome DevTools can read, use {@link generateHeapSnapshot} with the `"v8"` format.
    */
   interface HeapSnapshot {
     /** 2 */
@@ -4786,35 +4782,29 @@ declare module "bun" {
   }
 
   /**
-   * Returns the number of nanoseconds since the process was started.
+   * Returns the number of nanoseconds since the process was started, measured with a
+   * high-resolution monotonic system timer.
    *
-   * This function uses a high-resolution monotonic system timer to provide precise time measurements.
-   * In JavaScript, numbers are represented as double-precision floating-point values (IEEE 754),
-   * which can safely represent integers up to 2^53 - 1 (Number.MAX_SAFE_INTEGER).
+   * JavaScript numbers are IEEE 754 doubles, which represent integers exactly only up to
+   * 2^53 - 1 (`Number.MAX_SAFE_INTEGER`). After about 14.8 weeks of uptime the nanosecond
+   * count exceeds that, so the returned value keeps counting but loses precision.
    *
-   * Due to this limitation, while the internal counter may continue beyond this point,
-   * the precision of the returned value will degrade after 14.8 weeks of uptime (when the nanosecond
-   * count exceeds Number.MAX_SAFE_INTEGER). Beyond this point, the function will continue to count but
-   * with reduced precision, which might affect time calculations and comparisons in long-running applications.
-   *
-   * @returns {number} The number of nanoseconds since the process was started, with precise values up to
-   * Number.MAX_SAFE_INTEGER.
+   * @returns Nanoseconds since the process started
    */
   function nanoseconds(): number;
 
   /**
-   * Show precise statistics about memory usage of your application
-   *
-   * Generate a heap snapshot in JavaScriptCore's format that can be viewed with `bun --inspect` or Safari's Web Inspector
+   * Generates a heap snapshot in JavaScriptCore's format. View it with `bun --inspect` or
+   * Safari's Web Inspector
    */
   function generateHeapSnapshot(format?: "jsc"): HeapSnapshot;
 
   /**
-   * Show precise statistics about memory usage of your application
+   * Generates a V8 heap snapshot for use with Chrome DevTools or Visual Studio Code
    *
-   * Generate a V8 Heap Snapshot that can be used with Chrome DevTools & Visual Studio Code
+   * Returns a JSON string you can save to a file.
    *
-   * This is a JSON string that can be saved to a file.
+   * @example
    * ```ts
    * const snapshot = Bun.generateHeapSnapshot("v8");
    * await Bun.write("heap.heapsnapshot", snapshot);
@@ -4823,12 +4813,11 @@ declare module "bun" {
   function generateHeapSnapshot(format: "v8"): string;
 
   /**
-   * Show precise statistics about memory usage of your application
-   *
-   * Generate a V8 Heap Snapshot as an ArrayBuffer.
+   * Generates a V8 heap snapshot as an `ArrayBuffer` containing the UTF-8 encoded JSON.
    *
    * This avoids the overhead of creating a JavaScript string for large heap snapshots.
-   * The ArrayBuffer contains the UTF-8 encoded JSON.
+   *
+   * @example
    * ```ts
    * const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
    * await Bun.write("heap.heapsnapshot", snapshot);
@@ -4844,9 +4833,10 @@ declare module "bun" {
   function shrink(): void;
 
   /**
-   * Open a file in your local editor. Auto-detects via `$VISUAL` || `$EDITOR`
+   * Open a file in your local editor. The editor is detected from `$VISUAL` or `$EDITOR`
    *
-   * @param path path to open
+   * @param path Path of the file to open
+   * @param options Editor, line, and column overrides
    */
   function openInEditor(path: string, options?: EditorOptions): void;
 
@@ -4865,14 +4855,14 @@ declare module "bun" {
     /**
      * Update the hash with data
      *
-     * @param data
+     * @param data Data to add to the hash
      */
     update(data: Bun.BlobOrStringOrBuffer): T;
 
     /**
      * Finalize the hash
      *
-     * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
+     * @param encoding `DigestEncoding` to return the hash in. If none is provided, the hash is returned as a `Uint8Array`
      */
     digest(encoding: DigestEncoding): string;
 

@@ -565,7 +565,7 @@ fn iterate_included_project_tree(
                 }
             }
 
-            if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath, dir_depth, &[]) {
+            if let Some((pattern, kind)) = is_unconditionally_excluded(entry_name, dir_depth) {
                 if log_level.is_verbose() {
                     bun_core::prettyln!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
@@ -1617,6 +1617,42 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     false
 }
 
+/// Default ignores that nothing (including an explicit `"files"` entry) can
+/// re-include: the root lockfiles and the `can_override == false` patterns.
+fn is_unconditionally_excluded(
+    entry_name: &[u8],
+    dir_depth: usize,
+) -> Option<(&'static [u8], IgnorePatternsKind)> {
+    if dir_depth == 1 {
+        // check default ignores that only apply to the root project directory
+        for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
+            match glob::r#match(pattern, entry_name) {
+                GlobMatchResult::Match => {
+                    // cannot be reversed
+                    return Some((pattern, IgnorePatternsKind::Default));
+                }
+                GlobMatchResult::NoMatch => {}
+                // default patterns don't use `!`
+                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+            }
+        }
+    }
+
+    for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
+        if can_override {
+            continue;
+        }
+        match glob::r#match(pattern, entry_name) {
+            GlobMatchResult::Match => return Some((pattern, IgnorePatternsKind::Default)),
+            GlobMatchResult::NoMatch => {}
+            // default patterns don't use `!`
+            GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+        }
+    }
+
+    None
+}
+
 fn is_excluded<'a>(
     entry: &DirIterator::IteratorResult,
     entry_subpath: &'a ZStr,
@@ -1633,19 +1669,10 @@ fn is_excluded<'a>(
         {
             return None;
         }
+    }
 
-        // check default ignores that only apply to the root project directory
-        for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
-            match glob::r#match(pattern, entry_name) {
-                GlobMatchResult::Match => {
-                    // cannot be reversed
-                    return Some((pattern, IgnorePatternsKind::Default));
-                }
-                GlobMatchResult::NoMatch => {}
-                // default patterns don't use `!`
-                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
-            }
-        }
+    if let Some(excluded) = is_unconditionally_excluded(entry_name, dir_depth) {
+        return Some(excluded);
     }
 
     let mut ignore_pattern: &[u8] = &[];
@@ -1656,19 +1683,18 @@ fn is_excluded<'a>(
     let mut ignored = false;
 
     for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
+        if !can_override {
+            continue;
+        }
         match glob::r#match(pattern, entry_name) {
             GlobMatchResult::Match => {
-                if can_override {
-                    ignored = true;
-                    ignore_pattern = pattern;
-                    ignore_kind = IgnorePatternsKind::Default;
+                ignored = true;
+                ignore_pattern = pattern;
+                ignore_kind = IgnorePatternsKind::Default;
 
-                    // break. doesn't matter if more default patterns
-                    // match this path
-                    break;
-                }
-
-                return Some((pattern, IgnorePatternsKind::Default));
+                // break. doesn't matter if more default patterns
+                // match this path
+                break;
             }
             GlobMatchResult::NoMatch => {}
             // default patterns don't use `!`

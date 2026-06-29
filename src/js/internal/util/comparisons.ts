@@ -293,11 +293,9 @@ function slowHasUnequalTag(val1Tag, val1, val2) {
 
 function objectComparisonStart(val1, val2, mode, memos) {
   if (mode === kStrict) {
-    if (
-      wellKnownConstructors.has(val1.constructor) ||
-      (val1.constructor !== undefined && !hasOwn(val1, "constructor"))
-    ) {
-      if (val1.constructor !== val2.constructor) {
+    const constructor1 = val1.constructor;
+    if (wellKnownConstructors.has(constructor1) || (constructor1 !== undefined && !hasOwn(val1, "constructor"))) {
+      if (constructor1 !== val2.constructor) {
         return false;
       }
     } else if (ObjectGetPrototypeOf(val1) !== ObjectGetPrototypeOf(val2)) {
@@ -543,9 +541,11 @@ function handleCycles(val1, val2, mode, keys1, keys2, memos, iterationType) {
       memos.deep = true;
       const result = objEquiv(val1, val2, mode, keys1, keys2, memos, iterationType);
       memos.deep = false;
-      if (memos.set !== undefined) {
-        memos.set.delete(memos.c);
-        memos.set.delete(memos.d);
+      // objEquiv may have created the set in a deeper recursive call.
+      const { set } = memos;
+      if (set !== undefined) {
+        set.delete(memos.c);
+        set.delete(memos.d);
       }
       return result;
     }
@@ -561,8 +561,9 @@ function handleCycles(val1, val2, mode, keys1, keys2, memos, iterationType) {
   const originalSize = set.size;
   set.add(val1);
   set.add(val2);
-  if (originalSize !== set.size - 2) {
-    return originalSize === set.size;
+  const newSize = set.size;
+  if (originalSize !== newSize - 2) {
+    return originalSize === newSize;
   }
 
   const areEq = objEquiv(val1, val2, mode, keys1, keys2, memos, iterationType);
@@ -967,12 +968,13 @@ function sparseArrayEquiv(a, b, mode, memos, i) {
 }
 
 function objEquiv(a, b, mode, keys1, keys2, memos, iterationType) {
+  const keys2Length = keys2.length;
   // The pair must have equivalent values for every corresponding key.
-  if (keys2.length > 0) {
+  if (keys2Length > 0) {
     let i = 0;
     // Ordered keys
     if (keys1 !== undefined) {
-      for (; i < keys2.length; i++) {
+      for (; i < keys2Length; i++) {
         const key = keys2[i];
         if (keys1[i] !== key) {
           break;
@@ -983,7 +985,7 @@ function objEquiv(a, b, mode, keys1, keys2, memos, iterationType) {
       }
     }
     // Unordered keys
-    for (; i < keys2.length; i++) {
+    for (; i < keys2Length; i++) {
       const key = keys2[i];
       // It is faster to get the whole descriptor and to check it's enumerable
       // property in V8 13.0 compared to calling Object.propertyIsEnumerable()

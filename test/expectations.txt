@@ -33,6 +33,26 @@ test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/bi
 test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 
+# Pre-existing compat gaps unmasked by assert.deepStrictEqual implementing
+# Node's algorithm, which distinguishes Buffer from Uint8Array (their
+# assertions used to false-pass because Bun.deepEquals does not compare
+# constructors):
+#
+# 1. Over `serialization: "advanced"` IPC, Node's v8 DefaultDeserializer
+#    revives every Uint8Array view as a Buffer, so
+#    `{ buffer: Buffer.from("Hello!") }` round-trips as a Buffer in Node but
+#    as a plain Uint8Array in Bun (same for `v8.deserialize(v8.serialize(b))`).
+test/js/node/test/parallel/test-child-process-advanced-serialization.js [ FAIL ] # Buffer arrives as a plain Uint8Array over advanced IPC
+# 2. Node's `Buffer.from(string)` allocates out of the 8 KB pool, so
+#    stream/iter's concatBytes copies such a chunk into a plain Uint8Array
+#    (the chunk never covers its whole backing allocation). Bun's Buffers are
+#    not pool-allocated, so the same fast path hands back the pushed Buffer
+#    itself and `bytes()` returns a Buffer where Node returns a Uint8Array.
+#    Making concatBytes always re-view Buffers is not an option: Node's
+#    test-stream-iter-transform-sync.js pins the opposite (a Buffer out of
+#    `bytes()`) for exact-allocation (unpooled) chunks like zlib output.
+test/js/node/test/parallel/test-stream-iter-readable-interop.js [ FAIL ] # bytes() returns the pushed Buffer; Node's is pooled so it copies to a Uint8Array
+
 # Pre-existing fs.watch leak unmasked by this PR's eval-entry exception fix:
 # the child's thrown leak error ("fs.watch(dir) leaked N MB") used to be
 # swallowed by the silent-exit-0 eval bug (uncaught throw in a CJS -e script

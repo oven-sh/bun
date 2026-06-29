@@ -28,6 +28,18 @@
 // control character inside a string lives here", assigned, never OR'd, so the
 // caller does not need to zero the buffer) and returns document-global flags.
 //
+// Two entry points share the implementation:
+//   - `highway_json_index`: whole document in one call (appends two sentinel
+//     entries equal to `len` after the indices).
+//   - `highway_json_index_chunk`: resumable. The caller feeds consecutive
+//     chunks whose lengths are multiples of 4096 (except the last) and
+//     threads `state[3]` (escape carry, in-string carry, scalar-run carry)
+//     through the calls; emitted indices are absolute (chunk base + offset).
+//     This bounds the per-call output buffer for huge documents: a
+//     worst-case whole-document index buffer is 4 bytes per input byte,
+//     which for the largest npm manifests is a >100 MB allocation that
+//     costs more in page faults than the entire parse.
+//
 // Comments and single-quoted strings (both accepted by Bun's JSON parser)
 // cannot be folded into the quote-parity math: a `"` inside `// comment`
 // poisons the in-string mask. The first `/` or `'` seen outside a string sets
@@ -85,8 +97,13 @@ alignas(16) static const uint8_t kLutLo[16] = { 0x50, 0x40, 0x40, 0x40, 0x40, 0x
 alignas(16) static const uint8_t kLutHi[16] = { 0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01,
     0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00, 0x00 };
 
-size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint32_t* HWY_RESTRICT out,
-    uint64_t* HWY_RESTRICT out_dirty, uint32_t* HWY_RESTRICT out_flags)
+// `base_offset` is added to every emitted index. `inout_state[0..3]` carries
+// the escape / in-string / scalar-run state across chunks (zeros for the
+// first chunk); `len` must be a multiple of 4096 for every chunk but the
+// last so 64-block groups (dirty-bitmap words) never straddle a call.
+size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_offset,
+    uint32_t* HWY_RESTRICT out, uint64_t* HWY_RESTRICT out_dirty,
+    uint64_t* HWY_RESTRICT inout_state, uint32_t* HWY_RESTRICT out_flags)
 {
     const D8 d;
     const size_t N = hn::Lanes(d);
@@ -105,9 +122,9 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint32_t* HW
     const auto v_zero = hn::Zero(d);
     const auto iota32 = hn::Iota(d32, 0);
 
-    uint64_t prev_escaped = 0;
-    uint64_t prev_in_string = 0; // ~0 if the previous block ended inside a string
-    uint64_t prev_scalar = 0; // bit 0: last byte of previous block was a scalar char
+    uint64_t prev_escaped = inout_state[0];
+    uint64_t prev_in_string = inout_state[1]; // ~0 if still inside a string
+    uint64_t prev_scalar = inout_state[2]; // bit 0: prev byte was a scalar char
     uint64_t acc_bs_in_str = 0;
     uint64_t acc_ctrl_in_str = 0;
     uint64_t dirty_acc = 0;
@@ -192,7 +209,7 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint32_t* HW
         const uint64_t emit = (op_out | rq | scalar_start) & valid;
 
         // --- flatten: branchless CompressStore of iota+base, L bits at a time ---
-        const uint32_t base = (uint32_t)pos;
+        const uint32_t base = (uint32_t)(base_offset + pos);
         for (size_t k = 0; k < 64; k += L) {
             uint64_t slice = (emit >> k) & (L >= 64 ? ~(uint64_t)0 : (((uint64_t)1 << L) - 1));
             uint8_t slice_bytes[8];
@@ -217,10 +234,9 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint32_t* HW
     if (acc_bs_in_str) flags |= BUN_JSON_IDX_HAS_BACKSLASH_IN_STRING;
     if (acc_ctrl_in_str) flags |= BUN_JSON_IDX_HAS_CTRL_IN_STRING;
     *out_flags = flags;
-
-    // Two sentinels so stage 2 can always read `indices[i + 1]`.
-    out[n_out] = (uint32_t)len;
-    out[n_out + 1] = (uint32_t)len;
+    inout_state[0] = prev_escaped;
+    inout_state[1] = prev_in_string;
+    inout_state[2] = prev_scalar;
     return n_out;
 }
 
@@ -233,10 +249,24 @@ HWY_AFTER_NAMESPACE();
 namespace bun {
 HWY_EXPORT(JsonIndexImpl);
 
+// Resumable form: see the header comment. Sentinels are the caller's job.
+extern "C" size_t highway_json_index_chunk(const uint8_t* input, size_t len, size_t base_offset,
+    uint32_t* out_indices, uint64_t* out_dirty, uint64_t* inout_state, uint32_t* out_flags)
+{
+    return HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(
+        input, len, base_offset, out_indices, out_dirty, inout_state, out_flags);
+}
+
+// Whole-document form; appends the two `len` sentinels stage 2 relies on.
 extern "C" size_t highway_json_index(const uint8_t* input, size_t len, uint32_t* out_indices,
     uint64_t* out_dirty, uint32_t* out_flags)
 {
-    return HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(input, len, out_indices, out_dirty, out_flags);
+    uint64_t state[3] = { 0, 0, 0 };
+    size_t n = HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(
+        input, len, /*base_offset=*/0, out_indices, out_dirty, state, out_flags);
+    out_indices[n] = (uint32_t)len;
+    out_indices[n + 1] = (uint32_t)len;
+    return n;
 }
 } // namespace bun
 #endif

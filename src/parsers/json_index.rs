@@ -137,6 +137,9 @@ impl StructuralIndex {
 struct ScratchBufs {
     indices: Vec<u32>,
     dirty: Vec<u64>,
+    /// Per-chunk output of the resumable kernel (documents > `ONESHOT_MAX`);
+    /// fixed capacity, always pooled.
+    chunk_out: Vec<u32>,
 }
 
 const MAX_POOLED_BYTES: usize = 8 * 1024 * 1024;
@@ -146,9 +149,11 @@ thread_local! {
 }
 
 fn scratch_get() -> ScratchBufs {
-    SCRATCH
-        .with_borrow_mut(Option::take)
-        .unwrap_or(ScratchBufs { indices: Vec::new(), dirty: Vec::new() })
+    SCRATCH.with_borrow_mut(Option::take).unwrap_or(ScratchBufs {
+        indices: Vec::new(),
+        dirty: Vec::new(),
+        chunk_out: Vec::new(),
+    })
 }
 
 fn scratch_put(mut bufs: ScratchBufs) {
@@ -159,6 +164,7 @@ fn scratch_put(mut bufs: ScratchBufs) {
         bufs.indices.clear();
         bufs.dirty.clear();
     }
+    bufs.chunk_out.clear();
     SCRATCH.with_borrow_mut(|slot| {
         if slot.is_none() {
             *slot = Some(bufs);
@@ -170,6 +176,14 @@ fn scratch_put(mut bufs: ScratchBufs) {
 // Build
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Documents up to this size are indexed with a single kernel call into a
+/// worst-case-sized buffer (4 bytes per input byte). Bigger documents (large
+/// registry manifests) go through the resumable kernel in `CHUNK_BYTES`
+/// pieces so the only large allocation is the exactly-sized result.
+const ONESHOT_MAX: usize = 1024 * 1024;
+/// Multiple of 4096 (see `json_structural_index_chunk`).
+const CHUNK_BYTES: usize = 1024 * 1024;
+
 /// Build the structural index for `contents`.
 pub fn build(contents: &[u8]) -> Result<StructuralIndex, IndexError> {
     debug_assert!(contents.len() < u32::MAX as usize);
@@ -177,31 +191,96 @@ pub fn build(contents: &[u8]) -> Result<StructuralIndex, IndexError> {
 
     // SIMD fast path: native targets, no comments / single quotes.
     if bun_core::env::IS_NATIVE && !contents.is_empty() {
-        let need = contents.len() + 64 + SENTINELS;
-        let dirty_words = (contents.len().div_ceil(64)).div_ceil(64);
-        bufs.indices.clear();
-        bufs.indices.reserve(need);
-        bufs.dirty.clear();
-        bufs.dirty.reserve(dirty_words);
-        let (n, flags) = bun_highway::json_structural_index(
-            contents,
-            &mut bufs.indices.spare_capacity_mut()[..need],
-            &mut bufs.dirty.spare_capacity_mut()[..dirty_words],
-        );
+        let (n, flags) = if contents.len() <= ONESHOT_MAX {
+            build_simd_oneshot(contents, &mut bufs)
+        } else {
+            build_simd_chunked(contents, &mut bufs)
+        };
         if flags & FLAG_ODDITY == 0 {
-            // SAFETY: per `json_structural_index`'s contract (no ODDITY), the
-            // kernel initialized `indices[..n + SENTINELS]` and
-            // `dirty[..dirty_words]`, both within the reserved capacity.
-            unsafe {
-                bufs.indices.set_len(n + SENTINELS);
-                bufs.dirty.set_len(dirty_words);
-            }
             return Ok(StructuralIndex { bufs, n, flags, first_comment: None });
         }
         // fall through to the scalar indexer
     }
 
     scalar_index(contents, bufs)
+}
+
+/// One kernel call over the whole document. On success `bufs.indices` holds
+/// the indices + the two sentinels and `bufs.dirty` the whole bitmap.
+fn build_simd_oneshot(contents: &[u8], bufs: &mut ScratchBufs) -> (usize, u32) {
+    let need = contents.len() + 64 + SENTINELS;
+    let dirty_words = (contents.len().div_ceil(64)).div_ceil(64);
+    bufs.indices.clear();
+    bufs.indices.reserve(need);
+    bufs.dirty.clear();
+    bufs.dirty.reserve(dirty_words);
+    let (n, flags) = bun_highway::json_structural_index(
+        contents,
+        &mut bufs.indices.spare_capacity_mut()[..need],
+        &mut bufs.dirty.spare_capacity_mut()[..dirty_words],
+    );
+    if flags & FLAG_ODDITY == 0 {
+        // SAFETY: per `json_structural_index`'s contract (no ODDITY), the
+        // kernel initialized `indices[..n + SENTINELS]` and
+        // `dirty[..dirty_words]`, both within the reserved capacity.
+        unsafe {
+            bufs.indices.set_len(n + SENTINELS);
+            bufs.dirty.set_len(dirty_words);
+        }
+    }
+    (n, flags)
+}
+
+/// Resumable kernel over `CHUNK_BYTES` pieces: the per-call output buffer is
+/// small and pooled, and the only allocation proportional to the document is
+/// the exactly-sized index vector itself.
+#[cold]
+fn build_simd_chunked(contents: &[u8], bufs: &mut ScratchBufs) -> (usize, u32) {
+    let len = contents.len();
+    let total_dirty_words = (len.div_ceil(64)).div_ceil(64);
+    bufs.indices.clear();
+    // Real-world structural density tops out around ~25%; growing once more
+    // for denser documents is fine.
+    bufs.indices.reserve(len / 3 + 64 + SENTINELS);
+    bufs.dirty.clear();
+    bufs.dirty.reserve(total_dirty_words);
+    bufs.chunk_out.clear();
+    bufs.chunk_out.reserve(CHUNK_BYTES + 66);
+
+    let mut state = [0u64; 3];
+    let mut flags = 0u32;
+    let mut off = 0usize;
+    while off < len {
+        let chunk_len = (len - off).min(CHUNK_BYTES);
+        let chunk_words = (chunk_len.div_ceil(64)).div_ceil(64);
+        // `off` is always a multiple of CHUNK_BYTES (itself a multiple of
+        // 4096), so this chunk's dirty words start at `off / 4096`.
+        let word_off = off / 4096;
+        let (n, chunk_flags) = bun_highway::json_structural_index_chunk(
+            &contents[off..off + chunk_len],
+            off,
+            &mut bufs.chunk_out.spare_capacity_mut()[..chunk_len + 66],
+            &mut bufs.dirty.spare_capacity_mut()[word_off..word_off + chunk_words],
+            &mut state,
+        );
+        flags |= chunk_flags;
+        if chunk_flags & FLAG_ODDITY != 0 {
+            return (0, flags);
+        }
+        // SAFETY: the kernel initialized `chunk_out[..n]` (no sentinels in
+        // the chunked form) and this chunk's `dirty` words.
+        unsafe { bufs.chunk_out.set_len(n) };
+        bufs.indices.extend_from_slice(&bufs.chunk_out);
+        bufs.chunk_out.clear();
+        off += chunk_len;
+    }
+    // SAFETY: every chunk initialized its `dirty` words; together they cover
+    // `[0, total_dirty_words)`.
+    unsafe { bufs.dirty.set_len(total_dirty_words) };
+    let n = bufs.indices.len();
+    bufs.indices.push(len as u32);
+    bufs.indices.push(len as u32);
+    (n, flags)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -387,6 +466,29 @@ mod tests {
         let (ci, cf) = (scalar.indices()[..scalar.len()].to_vec(), scalar.flags);
         scalar.release();
         Some((si, sf, ci, cf))
+    }
+
+    #[test]
+    fn chunked_and_scalar_indexers_agree_on_large_documents() {
+        // > ONESHOT_MAX exercises the resumable kernel across many chunks.
+        let mut doc = String::with_capacity(3 * 1024 * 1024);
+        doc.push('{');
+        let mut i = 0;
+        while doc.len() < 5 * ONESHOT_MAX / 2 {
+            if i > 0 {
+                doc.push(',');
+            }
+            doc.push_str(&format!(
+                "\"key{i}\":[\"value with a tail {i}\", {i}, true, null, {{\"nested\": \"x{i}\", \"esc\": \"a\\n{i}\"}}]"
+            ));
+            i += 1;
+        }
+        doc.push('}');
+        let (si, sf, ci, cf) = build_both(doc.as_bytes()).unwrap();
+        assert!(doc.len() > ONESHOT_MAX);
+        assert_eq!(si.len(), ci.len(), "index count");
+        assert_eq!(si, ci);
+        assert_eq!(sf, cf);
     }
 
     #[test]

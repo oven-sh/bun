@@ -95,6 +95,16 @@ unsafe extern "C" {
         out_dirty: *mut u64,
         out_flags: *mut u32,
     ) -> usize;
+
+    fn highway_json_index_chunk(
+        input: *const u8,
+        len: usize,
+        base_offset: usize,
+        out_indices: *mut u32,
+        out_dirty: *mut u64,
+        inout_state: *mut u64,
+        out_flags: *mut u32,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -636,6 +646,44 @@ pub fn json_structural_index(
             input.len(),
             out.as_mut_ptr().cast::<u32>(),
             dirty.as_mut_ptr().cast::<u64>(),
+            &mut flags,
+        )
+    };
+    (n, flags)
+}
+
+/// Resumable form of [`json_structural_index`] for one chunk of a larger
+/// document, so the caller never needs a worst-case whole-document output
+/// buffer (4 bytes per input byte). `chunk` must start at `base_offset` in
+/// the document; every chunk's length except the last must be a multiple of
+/// 4096 (so 64-block dirty words never straddle calls); `state` carries the
+/// kernel's escape / in-string / scalar-run state and must be zeroed before
+/// the first chunk.
+///
+/// On return `out[..n]` is initialized with absolute indices (no sentinels)
+/// and `dirty[..ceil(ceil(chunk.len()/64)/64)]` with this chunk's blocks.
+#[inline(always)]
+pub fn json_structural_index_chunk(
+    chunk: &[u8],
+    base_offset: usize,
+    out: &mut [core::mem::MaybeUninit<u32>],
+    dirty: &mut [core::mem::MaybeUninit<u64>],
+    state: &mut [u64; 3],
+) -> (usize, u32) {
+    assert!(out.len() >= chunk.len() + 66);
+    assert!(dirty.len() >= (chunk.len().div_ceil(64)).div_ceil(64));
+    assert!(base_offset % 4096 == 0);
+    let mut flags: u32 = 0;
+    // SAFETY: same contract as `json_structural_index`, per chunk; `state`
+    // is a valid 3-element buffer the kernel reads and writes.
+    let n = unsafe {
+        highway_json_index_chunk(
+            chunk.as_ptr(),
+            chunk.len(),
+            base_offset,
+            out.as_mut_ptr().cast::<u32>(),
+            dirty.as_mut_ptr().cast::<u64>(),
+            state.as_mut_ptr(),
             &mut flags,
         )
     };

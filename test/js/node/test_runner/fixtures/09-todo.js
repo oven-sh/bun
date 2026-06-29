@@ -43,6 +43,18 @@ test("skip wins over todo", { todo: true, skip: true }, () => {
   assert.fail("a skipped body must never execute");
 });
 
+test.todo("skip wins over the todo modifier", { skip: true }, () => {
+  console.log("LOG:MUST-NOT-APPEAR-skip-and-todo-modifier");
+  assert.fail("a skipped body must never execute");
+});
+
+describe.todo("skipped todo suite", { skip: true }, () => {
+  test("inside the skipped todo suite", () => {
+    console.log("LOG:MUST-NOT-APPEAR-skipped-todo-suite");
+    assert.fail("a skipped suite's bodies must never execute");
+  });
+});
+
 test("regular test still runs", () => {
   console.log("LOG:regular");
 });

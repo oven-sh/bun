@@ -593,7 +593,8 @@ describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createDescribe(arg0, arg1, arg2);
-  applyConcurrency(kTodoDescribe, options.concurrency)(name, fn);
+  const { describe } = bunTest();
+  applyConcurrency(options.skip ? describe.skip : kTodoDescribe, options.concurrency)(name, fn);
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -626,7 +627,8 @@ test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 
 test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  kTodoTest(name, fn, options);
+  const { test } = bunTest();
+  (options.skip ? test.skip : kTodoTest)(name, fn, options);
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {

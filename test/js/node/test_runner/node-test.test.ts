@@ -76,7 +76,10 @@ describe("node:test", () => {
         "LOG:todo-suite-modifier",
         "LOG:todo-suite-option",
       ],
-      summary: { pass: 1, fail: 0, todo: 9, skip: 2 },
+      // Node reports the same logs and the same pass/fail/todo counts; its skip
+      // count is 3 because it never evaluates a skipped suite's callback, while
+      // bun:test's `describe.skip` registers the suite's child as skipped.
+      summary: { pass: 1, fail: 0, todo: 9, skip: 4 },
     });
   });
 

@@ -48,6 +48,12 @@ pub struct JSONOptions {
     /// Mark as originally for a macro to enable inlining.
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
+    /// Produce the JSON-only compact containers (`E::ObjectSimple` /
+    /// `E::ArraySimple`: 32-byte property rows whose leaves are inline
+    /// `E::JsonValue`s, not `Expr` nodes) instead of `E::Object` /
+    /// `E::Array`. Only for entry points whose consumers understand them
+    /// (see the `E::ObjectSimple` docs); requires `force_utf8` strings.
+    pub simple_objects: bool,
 }
 
 impl JSONOptions {
@@ -60,6 +66,7 @@ impl JSONOptions {
         json_warn_duplicate_keys: true,
         was_originally_macro: false,
         guess_indentation: false,
+        simple_objects: false,
     };
 }
 
@@ -145,16 +152,29 @@ fn parse_impl(
 ) -> Result<ParseOutput, bun_core::Error> {
     let contents: &[u8] = &source.contents;
 
-    let sidx = match json_index::build(contents) {
-        Ok(s) => s,
-        Err(e) => return Err(report_index_error(e, source, log)),
-    };
+    let mut sidx = StructuralIndex::new(contents);
+    let log_mark = (log.errors, log.warnings, log.msgs.len());
+    let result = run_stage2(source, log, bump, &mut sidx, opts, force_utf8, check_len);
 
-    // Comments are rejected up front (the indexer already skipped them) so a
-    // single stage 2 serves both modes.
+    // Index-layer errors take precedence: the index stream was truncated at
+    // the offending byte, so whatever stage 2 logged about the truncated
+    // document is noise. The old parser surfaced these before parsing at
+    // all, with nothing else in the log.
+    let drop_stage2_msgs = |log: &mut bun_ast::Log| {
+        log.errors = log_mark.0;
+        log.warnings = log_mark.1;
+        log.msgs.truncate(log_mark.2);
+    };
+    if let Some(e) = sidx.index_error {
+        drop_stage2_msgs(log);
+        return Err(report_index_error(e, source, log));
+    }
+    // Comments are detected by the indexer (the index contains nothing for
+    // their bytes) so a single stage 2 serves both modes.
     if !opts.allow_comments
         && let Some(range) = sidx.first_comment
     {
+        drop_stage2_msgs(log);
         log.add_error_fmt_opts(
             format_args!("JSON does not support comments"),
             bun_ast::AddErrorOptions {
@@ -164,31 +184,38 @@ fn parse_impl(
                 ..Default::default()
             },
         );
-        sidx.release();
         return Err(bun_core::err!("SyntaxError"));
     }
-
-    let result = run_stage2(source, log, bump, &sidx, opts, force_utf8, check_len);
-    sidx.release();
     result
 }
 
-fn run_stage2(
-    source: &bun_ast::Source,
+fn run_stage2<'s>(
+    source: &'s bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-    sidx: &StructuralIndex,
+    sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
     force_utf8: bool,
     check_len: bool,
 ) -> Result<ParseOutput, bun_core::Error> {
+    debug_assert!(
+        !opts.simple_objects || force_utf8,
+        "simple_objects requires force_utf8 string handling"
+    );
     let mut parser = Parser::new(source, log, bump, sidx, opts, force_utf8);
-    let root = parser.parse_value()?;
+    let root = if opts.simple_objects {
+        parser.parse_value::<true>()?
+    } else {
+        parser.parse_value::<false>()?
+    };
     if check_len && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
     }
     let is_ascii_only = parser.is_ascii_only;
     drop(parser);
+    let is_ascii_only = is_ascii_only
+        && sidx.flags & (json_index::FLAG_HAS_BACKSLASH_IN_STRING | json_index::FLAG_HAS_NON_ASCII)
+            == 0;
     Ok(ParseOutput {
         root,
         is_ascii_only,
@@ -370,6 +397,7 @@ pub fn parse_package_json_utf8_with_opts<
             ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
             ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
             json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
+            simple_objects: false,
             was_originally_macro: WAS_ORIGINALLY_MACRO,
             guess_indentation: GUESS_INDENTATION,
         },
@@ -457,6 +485,25 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
         return Ok(empty_object_expr());
     }
     Ok(parse_impl(source, log, bump, TSCONFIG_OPTS, FORCE_UTF8, false)?.root)
+}
+
+/// `Bun.JSONC.parse`: the same dialect as tsconfig (comments, trailing
+/// commas), but producing the compact JSON-only containers
+/// (`E::ObjectSimple` — see `JSONOptions::simple_objects`). The only
+/// consumer is `Expr::to_js`, which understands them.
+pub fn parse_jsonc(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> Result<Expr, bun_core::Error> {
+    if source.contents.is_empty() {
+        return Ok(empty_object_expr());
+    }
+    const JSONC_OPTS: JSONOptions = JSONOptions {
+        simple_objects: true,
+        ..TSCONFIG_OPTS
+    };
+    Ok(parse_impl(source, log, bump, JSONC_OPTS, true, false)?.root)
 }
 
 /// `.env` / `--define` values: JSON if it looks like JSON, `true/false/null/
@@ -859,6 +906,18 @@ mod tests {
             Which::TsConfig => parse_ts_config::<true>(&source, &mut log, &bump),
             Which::Env => parse_env_json(&source, &mut log, &bump),
             Which::PackageJson => parse_package_json_utf8(&source, &mut log, &bump),
+            Which::Jsonc => parse_jsonc(&source, &mut log, &bump),
+            Which::Simple => parse_package_json_utf8_with_opts_rt(
+                JSONOptions {
+                    is_json: true,
+                    simple_objects: true,
+                    ..JSONOptions::DEFAULT
+                },
+                &source,
+                &mut log,
+                &bump,
+            )
+            .map(|r| r.root),
         };
         let first_msg = log
             .msgs
@@ -882,14 +941,77 @@ mod tests {
         TsConfig,
         Env,
         PackageJson,
+        /// `Bun.JSONC.parse`'s entry: tsconfig dialect + `simple_objects`.
+        Jsonc,
+        /// Strict JSON + `simple_objects` (what a registry-manifest caller
+        /// would use).
+        Simple,
     }
 
     /// Render the parsed AST as compact JSON (object keys in source order,
     /// last duplicate wins is NOT applied — duplicates appear as parsed).
     /// Only for test assertions.
+    fn json_value_to_string(v: &E::JsonValue, out: &mut String) {
+        match v {
+            E::JsonValue::Null => out.push_str("null"),
+            E::JsonValue::Boolean(b) => out.push_str(if *b { "true" } else { "false" }),
+            E::JsonValue::Number(n) => {
+                let tmp = Expr::init(*n, bun_ast::Loc::EMPTY);
+                to_json_string(&tmp, out);
+            }
+            E::JsonValue::String(s) => {
+                write_json_string(&std::string::String::from_utf8_lossy(s.slice()), out)
+            }
+            E::JsonValue::Object(o) => {
+                out.push('{');
+                for (i, p) in o.get().properties.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_json_string(&std::string::String::from_utf8_lossy(p.key.slice()), out);
+                    out.push(':');
+                    json_value_to_string(&p.value, out);
+                }
+                out.push('}');
+            }
+            E::JsonValue::Array(a) => {
+                out.push('[');
+                for (i, item) in a.get().items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    json_value_to_string(item, out);
+                }
+                out.push(']');
+            }
+        }
+    }
+
     fn to_json_string(e: &Expr, out: &mut String) {
         use std::fmt::Write;
         match &e.data {
+            Data::EObjectSimple(o) => {
+                out.push('{');
+                for (i, p) in o.get().properties.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_json_string(&std::string::String::from_utf8_lossy(p.key.slice()), out);
+                    out.push(':');
+                    json_value_to_string(&p.value, out);
+                }
+                out.push('}');
+            }
+            Data::EArraySimple(a) => {
+                out.push('[');
+                for (i, item) in a.get().items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    json_value_to_string(item, out);
+                }
+                out.push(']');
+            }
             Data::ENull(_) => out.push_str("null"),
             Data::EBoolean(b) => out.push_str(if b.value { "true" } else { "false" }),
             Data::ENumber(n) => {
@@ -1172,6 +1294,75 @@ mod tests {
         let many: String = (0..200).map(|i| format!("\"k{i}\":{i},")).collect();
         let p = run(format!("{{{many}\"k7\":1}}").as_bytes(), Which::Utf8);
         assert_eq!(p.warnings, 1);
+    }
+
+    /// The compact containers must be semantically identical to the full
+    /// AST: same canonical JSON, same warnings, same errors, on every shape
+    /// the parser supports.
+    #[test]
+    fn simple_objects_match_the_full_ast() {
+        let mut generated = std::string::String::from("{");
+        for i in 0..120 {
+            if i > 0 {
+                generated.push(',');
+            }
+            generated.push_str(&format!(
+                "\"k{i}\":[{i}, -1.5e3, \"s{i}\", \"esc\\n\\u00e9{i}\", true, false, null, {{\"n\": {{\"deep\": [\"x{i}\"]}}}}]"
+            ));
+        }
+        generated.push('}');
+        let docs: Vec<&str> = vec![
+            "{}",
+            "[]",
+            "null",
+            "  42.5e-3 ",
+            "\"plain\"",
+            "\"esc\\u00e9\\n\\\\\"",
+            r#"{"a": 1, "b": [true, null, "x"], "c": {"d": "é🚀", "e": ""}}"#,
+            r#"{"dup": 1, "dup": 2, "big": {"x": [1,2,3,4,5,6,7,8,9,10]}}"#,
+            "\u{FEFF}{\"bom\": 1}",
+            &generated,
+        ];
+        // The AST store is reset by the next `run()`, so each tree must be
+        // serialized before the other parse happens.
+        fn canon(
+            doc: &str,
+            which: Which,
+        ) -> (
+            Option<std::string::String>,
+            usize,
+            usize,
+            std::string::String,
+        ) {
+            let p = run(doc.as_bytes(), which);
+            let root = p.root.as_ref().map(|r| {
+                let mut s = std::string::String::new();
+                to_json_string(r, &mut s);
+                s
+            });
+            (root, p.errors, p.warnings, p.first_msg)
+        }
+        for doc in docs {
+            let (fr, fe, fw, fm) = canon(doc, Which::Utf8);
+            let (sr, se, sw, sm) = canon(doc, Which::Simple);
+            assert_eq!((fe, fw, &fm), (se, sw, &sm), "log differs for {doc:?}");
+            if fr != sr {
+                let (a, b) = (fr.unwrap_or_default(), sr.unwrap_or_default());
+                let i = a
+                    .bytes()
+                    .zip(b.bytes())
+                    .position(|(x, y)| x != y)
+                    .unwrap_or(a.len().min(b.len()));
+                panic!(
+                    "values differ at byte {i}:\n full: ...{}\n simple: ...{}",
+                    &a[i.saturating_sub(40)..(i + 40).min(a.len())],
+                    &b[i.saturating_sub(40)..(i + 40).min(b.len())],
+                );
+            }
+        }
+        // The JSONC entry (comments + trailing commas + single quotes) too.
+        let jsonc = "// c\n{\"a\": [1, 2,], /* x */ \"b\": 'sq', } ";
+        assert_eq!(canon(jsonc, Which::TsConfig), canon(jsonc, Which::Jsonc));
     }
 
     #[test]

@@ -862,6 +862,161 @@ impl BigInt {
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 }
 
+// ── JSON "simple" nodes ───────────────────────────────────────────────────
+//
+// Compact, read-only object/array nodes produced only by the JSON parser for
+// entry points that opt in (`JSONOptions::simple_objects`: npm registry
+// manifests, package.json readers, `Bun.JSONC.parse`, tsconfig). The
+// *containers* are ordinary `Expr` nodes in the Store, so everything keeps
+// passing `Expr` around; their *children* are not: a property is a 32-byte
+// `PropertySimple` row and a leaf value is an inline 16-byte [`JsonValue`]
+// (a tagged value "like JSValue": number/bool/null inline, strings as a
+// `Str` — borrowing the source when they contain no escapes — and nested
+// containers as `StoreRef`s). Compared to `E::Object` this removes the three
+// per-node costs that dominate JSON parsing: a 112-byte `G::Property` per
+// key, an `EString` Store node per key and per string value, and the
+// `Option`/kind/initializer baggage JSON never uses.
+//
+// They are produced only with `force_utf8` string handling (every JSON data
+// consumer), so string leaves are always UTF-8 and never UTF-16.
+
+/// A JSON value inside an `ObjectSimple` / `ArraySimple`.
+#[derive(Clone, Copy)]
+pub enum JsonValue {
+    Null,
+    Boolean(bool),
+    /// Same packed-`f64` payload as `Data::ENumber`.
+    Number(Number),
+    /// UTF-8 bytes of the decoded string: a zero-copy slice of the source
+    /// when the literal has no escapes (the common case), otherwise decoded
+    /// into the parse arena.
+    String(Str),
+    Object(StoreRef<ObjectSimple>),
+    Array(StoreRef<ArraySimple>),
+}
+
+const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
+const _: () = assert!(core::mem::align_of::<JsonValue>() == 4);
+
+impl JsonValue {
+    /// Structural hash (used by [`crate::expr::Data::write_to_hasher`]).
+    pub fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+        match self {
+            JsonValue::Null => hasher.update(&[0]),
+            JsonValue::Boolean(b) => hasher.update(&[1, *b as u8]),
+            JsonValue::Number(n) => {
+                hasher.update(&[2]);
+                hasher.update(&n.value().to_bits().to_le_bytes());
+            }
+            JsonValue::String(s) => {
+                hasher.update(&[3]);
+                hasher.update(s.slice());
+            }
+            JsonValue::Object(o) => {
+                let o = o.get();
+                hasher.update(&[4]);
+                for p in o.properties.iter() {
+                    hasher.update(p.key.slice());
+                    p.value.write_to_hasher(hasher);
+                }
+            }
+            JsonValue::Array(a) => {
+                hasher.update(&[5]);
+                for item in a.get().items.iter() {
+                    item.write_to_hasher(hasher);
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> Option<&[u8]> {
+        match self {
+            JsonValue::String(s) => Some(s.slice()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_object(&self) -> Option<&ObjectSimple> {
+        match self {
+            JsonValue::Object(o) => Some(o.get()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_array(&self) -> Option<&ArraySimple> {
+        match self {
+            JsonValue::Array(a) => Some(a.get()),
+            _ => None,
+        }
+    }
+}
+
+/// One `"key": value` row of an [`ObjectSimple`].
+#[derive(Clone, Copy)]
+pub struct PropertySimple {
+    /// Decoded UTF-8 key (zero-copy unless the literal had escapes).
+    pub key: Str,
+    pub key_loc: crate::Loc,
+    pub value: JsonValue,
+}
+
+const _: () = assert!(core::mem::size_of::<PropertySimple>() == 32);
+
+pub type PropertySimpleList = Vec<PropertySimple, bun_alloc::AstAlloc>;
+pub type JsonValueList = Vec<JsonValue, bun_alloc::AstAlloc>;
+
+/// `Data::EObjectSimple` — see the JSON "simple" nodes comment above.
+pub struct ObjectSimple {
+    pub properties: PropertySimpleList,
+    pub close_brace_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+impl Default for ObjectSimple {
+    fn default() -> Self {
+        ObjectSimple {
+            properties: bun_alloc::AstAlloc::vec(),
+            close_brace_loc: crate::Loc::EMPTY,
+            is_single_line: false,
+        }
+    }
+}
+
+impl ObjectSimple {
+    /// First value whose key's decoded bytes equal `key` (objects with a
+    /// duplicate key behave like `JSON.parse`: documented for callers that
+    /// care, the *last* one wins — JSON consumers index by key, so `get`
+    /// matches `E::Object::get`'s first-match semantics used everywhere in
+    /// the codebase).
+    #[inline]
+    pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
+        self.properties
+            .iter()
+            .find(|p| p.key.slice() == key)
+            .map(|p| &p.value)
+    }
+}
+
+/// `Data::EArraySimple` — see the JSON "simple" nodes comment above.
+pub struct ArraySimple {
+    pub items: JsonValueList,
+    pub close_bracket_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+impl Default for ArraySimple {
+    fn default() -> Self {
+        ArraySimple {
+            items: bun_alloc::AstAlloc::vec(),
+            close_bracket_loc: crate::Loc::EMPTY,
+            is_single_line: false,
+        }
+    }
+}
+
 pub struct Object {
     pub properties: G::PropertyList,
     pub comma_after_spread: crate::Loc,

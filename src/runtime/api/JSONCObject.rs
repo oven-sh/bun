@@ -18,7 +18,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         false,
         true,
         |arena, log, source| {
-            let parse_result = match json::parse_ts_config::<true>(source, log, arena) {
+            let parse_result = match json::parse_jsonc(source, log, arena) {
                 Ok(v) => v,
                 Err(e) => {
                     if e == bun_core::err!(StackOverflow) {

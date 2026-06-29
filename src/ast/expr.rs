@@ -1028,6 +1028,8 @@ impl_into_expr_data_boxed! {
     JSXElement => EJsxElement,
     BigInt => EBigInt,
     Object => EObject,
+    ObjectSimple => EObjectSimple,
+    ArraySimple => EArraySimple,
     Spread => ESpread,
     Template => ETemplate,
     RegExp => ERegExp,
@@ -1212,6 +1214,8 @@ pub enum Tag {
     EArrow,
     EJsxElement,
     EObject,
+    EObjectSimple,
+    EArraySimple,
     ESpread,
     ETemplate,
     ERegExp,
@@ -1693,6 +1697,10 @@ pub enum Data {
 
     EJsxElement(StoreRef<E::JSXElement>),
     EObject(StoreRef<E::Object>),
+    // JSON-only compact containers (see `E::ObjectSimple`): produced solely
+    // by the JSON parser for opted-in entry points, never by the JS parser.
+    EObjectSimple(StoreRef<E::ObjectSimple>),
+    EArraySimple(StoreRef<E::ArraySimple>),
     ESpread(StoreRef<E::Spread>),
     ETemplate(StoreRef<E::Template>),
     ERegExp(StoreRef<E::RegExp>),
@@ -2637,6 +2645,23 @@ impl Data {
             Data::EClass(_) => {}
             Data::ENew(_) | Data::ECall(_) => {}
             Data::EFunction(_) => {}
+            Data::EObjectSimple(e) => {
+                let e = e.get();
+                raw(hasher, e.is_single_line);
+                raw(hasher, e.properties.len() as u32);
+                for p in e.properties.iter() {
+                    hasher.update(p.key.slice());
+                    p.value.write_to_hasher(hasher);
+                }
+            }
+            Data::EArraySimple(e) => {
+                let e = e.get();
+                raw(hasher, e.is_single_line);
+                raw(hasher, e.items.len() as u32);
+                for item in e.items.iter() {
+                    item.write_to_hasher(hasher);
+                }
+            }
             Data::EDot(e) => {
                 // Encode `Option<#[repr(u8)] OptionalChain>` as its niche byte
                 // (Some(Start)=0, Some(Continuation)=1, None=2) — same bytes
@@ -3339,6 +3364,8 @@ crate::new_store!(
         E::JSXElement,
         E::Number,
         E::Object,
+        E::ObjectSimple,
+        E::ArraySimple,
         E::Spread,
         E::TemplatePart,
         E::Template,

@@ -24,6 +24,9 @@ pub(crate) fn lower_expression(
 ) -> Result<InstructionValue, CompilerError> {
     let loc = convert_loc(expr.loc);
     match &expr.data {
+        // JSON-only nodes (`Bun.JSONC` / package.json parsing); never inside
+        // a component function.
+        Data::EObjectSimple(_) | Data::EArraySimple(_) => Ok(unsupported_node("JSONValue", loc)),
         Data::EIdentifier(ident) => lower_identifier_reference(builder, ident.ref_, loc),
         Data::EImportIdentifier(ident) => lower_identifier_reference(builder, ident.ref_, loc),
         Data::ENull(_) => Ok(InstructionValue::Primitive {

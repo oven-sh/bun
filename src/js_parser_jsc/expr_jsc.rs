@@ -59,6 +59,8 @@ fn data_to_js_with_check(
     match this {
         ExprData::EArray(e) => array_to_js(e, global, stack_check),
         ExprData::EObject(e) => object_to_js(e, global, stack_check),
+        ExprData::EObjectSimple(e) => object_simple_to_js(e, global, stack_check),
+        ExprData::EArraySimple(e) => array_simple_to_js(e, global, stack_check),
         ExprData::EString(e) => string_to_js(e, global),
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
@@ -143,10 +145,70 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
+/// JSON "simple" containers (`E::ObjectSimple` / `E::ArraySimple`,
+/// produced by the JSON parser for opted-in entry points like
+/// `Bun.JSONC.parse`): children are inline `E::JsonValue`s, with string
+/// leaves already-decoded UTF-8.
+pub(crate) fn object_simple_to_js(
+    this: &E::ObjectSimple,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(js_err(global.throw_stack_overflow()));
+    }
+    let obj = JSValue::create_empty_object(global, this.properties.len());
+    let _guard = obj.protected();
+    for prop in this.properties.iter() {
+        let key = utf8_bytes_to_js(prop.key.slice(), global)?;
+        let value = json_value_to_js(&prop.value, global, stack_check)?;
+        JSValue::put_to_property_key(obj, global, key, value).map_err(js_err)?;
+    }
+    Ok(obj)
+}
+
+pub(crate) fn array_simple_to_js(
+    this: &E::ArraySimple,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(js_err(global.throw_stack_overflow()));
+    }
+    let array = JSValue::create_empty_array(global, this.items.len()).map_err(js_err)?;
+    let _guard = array.protected();
+    for (j, item) in this.items.iter().enumerate() {
+        let value = json_value_to_js(item, global, stack_check)?;
+        array.put_index(global, j as u32, value).map_err(js_err)?;
+    }
+    Ok(array)
+}
+
+fn json_value_to_js(
+    value: &E::JsonValue,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    Ok(match value {
+        E::JsonValue::Null => JSValue::NULL,
+        E::JsonValue::Boolean(true) => JSValue::TRUE,
+        E::JsonValue::Boolean(false) => JSValue::FALSE,
+        E::JsonValue::Number(n) => number_to_js(*n),
+        E::JsonValue::String(s) => utf8_bytes_to_js(s.slice(), global)?,
+        E::JsonValue::Object(o) => object_simple_to_js(o.get(), global, stack_check)?,
+        E::JsonValue::Array(a) => array_simple_to_js(a.get(), global, stack_check)?,
+    })
+}
+
 /// Serialize UTF-8 bytes to a JS string, transcoding to UTF-16 only when the
 /// bytes are not pure ASCII (`to_utf16_alloc` returns `Ok(None)` for
 /// pure-ASCII, in which case the 8-bit Latin-1 form is kept).
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+    if bytes.is_empty() {
+        // `create_uninitialized_latin1` requires a non-zero length.
+        let empty = BunString::EMPTY;
+        return bun_string_jsc::to_js(&empty, global).map_err(js_err);
+    }
     let utf16 = strings::to_utf16_alloc(bytes, false, false).map_err(|_| ToJSError::OutOfMemory)?;
     if let Some(utf16) = utf16 {
         let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());

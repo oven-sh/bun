@@ -3979,6 +3979,26 @@ pub mod __gated_printer {
                         self.print(b")");
                     }
                 }
+                // JSON-only compact containers (`E::ObjectSimple`): children
+                // are inline `JsonValue`s, not `Expr`s, so they are printed
+                // here rather than through `print_property`/`print_expr`.
+                ExprData::EObjectSimple(e) => {
+                    let e = e.get();
+                    let n = self.writer.written();
+                    let wrap = !IS_JSON && (self.stmt_start == n || self.arrow_expr_start == n);
+                    if wrap {
+                        self.print(b"(");
+                    }
+                    self.add_source_mapping(expr.loc);
+                    self.print_object_simple(e);
+                    if wrap {
+                        self.print(b")");
+                    }
+                }
+                ExprData::EArraySimple(e) => {
+                    self.add_source_mapping(expr.loc);
+                    self.print_array_simple(e.get());
+                }
                 ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => {
                     self.add_source_mapping(expr.loc);
                     if self.options.minify_syntax {
@@ -4628,6 +4648,91 @@ pub mod __gated_printer {
             value.is_sign_negative()
                 || (value == f64::INFINITY
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+        }
+
+        /// `E::ObjectSimple` (JSON-only): always printed in JSON shape.
+        pub fn print_object_simple(&mut self, e: &E::ObjectSimple) {
+            self.print(b"{");
+            let props = e.properties.as_slice();
+            if !props.is_empty() {
+                if !e.is_single_line {
+                    self.indent();
+                }
+                for (i, prop) in props.iter().enumerate() {
+                    if i > 0 {
+                        self.print(b",");
+                    }
+                    if e.is_single_line {
+                        if i > 0 || !IS_JSON {
+                            self.print_space();
+                        }
+                    } else {
+                        self.print_newline();
+                        self.print_indent();
+                    }
+                    let key = E::String::init(prop.key.slice());
+                    self.print_string_literal_e_string(&key, false);
+                    self.print(b":");
+                    self.print_space();
+                    self.print_json_value(&prop.value);
+                }
+                if e.is_single_line {
+                    if !IS_JSON {
+                        self.print_space();
+                    }
+                } else {
+                    self.unindent();
+                    self.print_newline();
+                    self.print_indent();
+                }
+            }
+            self.print(b"}");
+        }
+
+        /// `E::ArraySimple` (JSON-only).
+        pub fn print_array_simple(&mut self, e: &E::ArraySimple) {
+            self.print(b"[");
+            let items = e.items.as_slice();
+            if !items.is_empty() {
+                if !e.is_single_line {
+                    self.indent();
+                }
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        self.print(b",");
+                    }
+                    if e.is_single_line {
+                        if i > 0 {
+                            self.print_space();
+                        }
+                    } else {
+                        self.print_newline();
+                        self.print_indent();
+                    }
+                    self.print_json_value(item);
+                }
+                if !e.is_single_line {
+                    self.unindent();
+                    self.print_newline();
+                    self.print_indent();
+                }
+            }
+            self.print(b"]");
+        }
+
+        fn print_json_value(&mut self, value: &E::JsonValue) {
+            match value {
+                E::JsonValue::Null => self.print(b"null"),
+                E::JsonValue::Boolean(true) => self.print(b"true"),
+                E::JsonValue::Boolean(false) => self.print(b"false"),
+                E::JsonValue::Number(n) => self.print_number(n.value(), Level::Lowest),
+                E::JsonValue::String(s) => {
+                    let s = E::String::init(s.slice());
+                    self.print_string_literal_e_string(&s, false);
+                }
+                E::JsonValue::Object(o) => self.print_object_simple(o.get()),
+                E::JsonValue::Array(a) => self.print_array_simple(a.get()),
+            }
         }
 
         pub fn print_property(&mut self, item_in: &G::Property) {

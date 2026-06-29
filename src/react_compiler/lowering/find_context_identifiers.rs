@@ -383,6 +383,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
     )]
     fn walk_expr(&mut self, e: &Expr) {
         match &e.data {
+            // JSON-only nodes: their children are not `Expr`s and cannot
+            // reference identifiers.
+            Data::EObjectSimple(_) | Data::EArraySimple(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
             Data::EImportIdentifier(id) => self.check_captured_reference(id.ref_),
 

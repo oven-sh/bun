@@ -44,13 +44,22 @@ fn bench_json(c: &mut Criterion) {
         let contents = std::fs::read(path).unwrap();
         let name = path.file_stem().unwrap().to_string_lossy().into_owned();
         group.throughput(Throughput::Bytes(contents.len() as u64));
-        // Stage 1 alone: the structural index (SIMD kernel + scratch reuse).
+        // Stage 1 alone: drive the streaming structural index to the end of
+        // the document (SIMD kernel + window refills), like stage 2 does.
         group.bench_function(BenchmarkId::new("stage1", &name), |b| {
             b.iter(|| {
-                let r = bun_parsers::json_index::build(&contents).unwrap_or_else(|_| panic!());
-                let n = r.len();
-                r.release();
-                std::hint::black_box(n)
+                let mut x = bun_parsers::json_index::StructuralIndex::new(&contents);
+                let mut i = 0usize;
+                let mut sum = 0usize;
+                loop {
+                    let p = x.at(i);
+                    if p == contents.len() {
+                        break;
+                    }
+                    sum += p;
+                    i += 1;
+                }
+                std::hint::black_box((sum, i))
             })
         });
         // Like parse_utf8 but with duplicate-key warnings off (what a registry
@@ -64,6 +73,26 @@ fn bench_json(c: &mut Criterion) {
                 let opts = json::JSONOptions {
                     is_json: true,
                     json_warn_duplicate_keys: false,
+                    ..json::JSONOptions::DEFAULT
+                };
+                let e = json::parse_package_json_utf8_with_opts_rt(opts, &source, &mut log, &bump)
+                    .expect("parse failed");
+                std::hint::black_box(&e);
+            })
+        });
+        // The compact-AST form (`JSONOptions::simple_objects` →
+        // `E::ObjectSimple`): what JSON-data consumers (registry manifests,
+        // `Bun.JSONC.parse`) get. Same options as parse_nowarn otherwise.
+        group.bench_function(BenchmarkId::new("parse_simple", &name), |b| {
+            b.iter(|| {
+                let _store_scope = js_ast::StoreResetGuard::new();
+                let mut log = js_ast::Log::init();
+                let bump = Bump::new();
+                let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
+                let opts = json::JSONOptions {
+                    is_json: true,
+                    json_warn_duplicate_keys: false,
+                    simple_objects: true,
                     ..json::JSONOptions::DEFAULT
                 };
                 let e = json::parse_package_json_utf8_with_opts_rt(opts, &source, &mut log, &bump)

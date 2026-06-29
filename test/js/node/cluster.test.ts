@@ -328,6 +328,203 @@ test("worker.disconnect closes a net server opened in the worker", async () => {
   }
 });
 
+// A worker commonly reports its own port over IPC from the listen() callback,
+// which the primary receives before the internal "listening" act. Connections
+// made at that moment must never land on the primary's port-0 reservation
+// (its only job is to hold the port until a worker really binds it).
+test.skipIf(isWindows)("every connection made as soon as a worker announces its port is served", async () => {
+  using dir = tempDir("cluster-net-announce", {
+    "server.js": `
+      const cluster = require("node:cluster");
+      const net = require("node:net");
+      const N = 50;
+
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("message", async message => {
+          const counts = { ok: 0, reset: 0, other: 0, empty: 0 };
+          await Promise.all(
+            Array.from({ length: N }, () =>
+              new Promise(resolve => {
+                const socket = net.connect(message.port, "127.0.0.1");
+                let data = "";
+                socket.on("data", chunk => (data += chunk));
+                socket.on("end", () => {
+                  if (data === "served") counts.ok++;
+                  else counts.empty++;
+                  resolve();
+                });
+                socket.on("error", error => {
+                  if (error.code === "ECONNRESET") counts.reset++;
+                  else counts.other++;
+                  resolve();
+                });
+              }),
+            ),
+          );
+          console.log(JSON.stringify(counts));
+          worker.kill();
+          process.exit(0);
+        });
+      } else {
+        const server = net.createServer(socket => socket.end("served"));
+        server.listen(0, () => process.send({ port: server.address().port }));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({ ok: 50, reset: 0, other: 0, empty: 0 });
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/17762
+// The issue's actual shape: an explicit, already-known port. The primary of
+// the fixture keeps its own SO_REUSEPORT socket on that port, so the workers
+// can only succeed by really sharing it.
+test.skipIf(isWindows)("workers share an explicitly named port", async () => {
+  using dir = tempDir("cluster-net-explicit-port", {
+    "server.js": `
+      const cluster = require("node:cluster");
+      const net = require("node:net");
+
+      if (cluster.isPrimary) {
+        const holder = net.createServer(() => {});
+        holder.listen({ port: 0, host: "127.0.0.1", reusePort: true }, () => {
+          const port = holder.address().port;
+          const results = [];
+          for (let i = 0; i < 2; i++) {
+            const worker = cluster.fork({ PORT: port });
+            worker.on("message", message => {
+              results.push(message);
+              if (results.length === 2) {
+                console.log(JSON.stringify({ port, results }));
+                for (const id in cluster.workers) cluster.workers[id].kill();
+                process.exit(0);
+              }
+            });
+            worker.on("exit", code => {
+              console.log(JSON.stringify({ earlyExit: { id: worker.id, code }, results }));
+              process.exit(1);
+            });
+          }
+        });
+      } else {
+        const server = net.createServer(() => {});
+        server.on("error", error => process.send({ error: error.code }));
+        server.listen(+process.env.PORT, "127.0.0.1", () => process.send({ listening: server.address().port }));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { port, results, ...failure } = JSON.parse(stdout.trim());
+  expect(failure).toEqual({});
+  expect(results).toEqual([{ listening: port }, { listening: port }]);
+  expect(exitCode).toBe(0);
+});
+
+// A port that is genuinely taken by someone else has to surface as an 'error'
+// event on the worker's server (Node's behavior), not as an uncaught
+// exception thrown from the cluster IPC callback.
+test.skipIf(isWindows)("a cluster worker's failed listen emits 'error' on the server", async () => {
+  using dir = tempDir("cluster-net-eaddrinuse", {
+    "server.js": `
+      const cluster = require("node:cluster");
+      const net = require("node:net");
+
+      if (cluster.isPrimary) {
+        // The exclusive holder never shares, so the worker's bind must fail.
+        const holder = net.createServer(() => {});
+        holder.listen({ port: 0, host: "127.0.0.1", exclusive: true }, () => {
+          const worker = cluster.fork({ PORT: holder.address().port });
+          worker.on("message", message => {
+            console.log(JSON.stringify({ ...message, port: holder.address().port }));
+            worker.kill();
+            process.exit(0);
+          });
+          worker.on("exit", code => {
+            console.log(JSON.stringify({ workerDiedWithoutReporting: code }));
+            process.exit(1);
+          });
+        });
+      } else {
+        const server = net.createServer(() => {});
+        server.on("error", error => {
+          process.send({ code: error.code, syscall: error.syscall, errorPort: error.port });
+        });
+        server.listen(+process.env.PORT, "127.0.0.1", () => process.send({ unexpectedlyListening: true }));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim());
+  expect(result).toEqual({ code: "EADDRINUSE", syscall: "listen", errorPort: result.port, port: result.port });
+  expect(exitCode).toBe(0);
+});
+
+// A close() issued while the primary's listen reply is still in flight has to
+// win: the stale reply used to call Bun.listen anyway, leaving a closed
+// server secretly listening (Node guards this with its listen generation id).
+test("closing a cluster server while its listen is in flight does not resurrect it", async () => {
+  using dir = tempDir("cluster-net-close-inflight", {
+    "server.js": `
+      const cluster = require("node:cluster");
+      const net = require("node:net");
+
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("message", message => {
+          console.log(JSON.stringify(message));
+          worker.kill();
+          process.exit(0);
+        });
+        worker.on("exit", code => {
+          console.log(JSON.stringify({ workerDiedWithoutReporting: code }));
+          process.exit(1);
+        });
+      } else {
+        const first = net.createServer(() => {});
+        first.listen(0);
+        first.close();
+        // The primary answers the two listen queries in order, so by the time
+        // the second server is listening, the first server's (stale) reply
+        // has already been processed.
+        const second = net.createServer(() => {});
+        second.listen(0, () => {
+          process.send({ firstListening: first.listening });
+          second.close();
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({ firstListening: false });
+  expect(exitCode).toBe(0);
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

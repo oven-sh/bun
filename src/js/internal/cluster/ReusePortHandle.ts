@@ -40,9 +40,10 @@ export default class ReusePortHandle {
 
     net ??= require("node:net");
     this.pending = [];
-    // A connection can only reach the reservation if something races a
-    // port scan against us: the resolved port is not observable outside the
-    // primary until a worker reports 'listening', which releases it first.
+    // A connection can only reach the reservation if something races a port
+    // scan against us: the first worker to bind the port reports that (the
+    // "bound" act) before its 'listening' event can run any code that could
+    // advertise the port, and that report releases the reservation.
     const server = (this.server = net.createServer(socket => socket.destroy()));
 
     server.once("listening", () => {
@@ -94,13 +95,10 @@ export default class ReusePortHandle {
     return true;
   }
 
-  // Called for every 'listening' a worker reports: once any worker is bound to
-  // our reserved port, the reservation has done its job. Nothing can be bound
-  // to it before the reservation resolves (`sockname` still null) and a server
-  // that was closed inside its own 'listening' callback reports port 0, so
-  // neither may release it.
-  onWorkerListening(port) {
-    if (this.server !== null && this.sockname !== null && port === this.port) this.release();
+  // A worker really holds the reserved port now, so the reservation has done
+  // its job (keeping it longer would hand that worker's connections to us).
+  onWorkerBound() {
+    this.release();
   }
 
   release() {

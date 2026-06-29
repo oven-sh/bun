@@ -172,9 +172,19 @@ function rr(message, { indexesKey, index }, cb) {
     return 0;
   }
 
+  // Sent by net.Server the moment it really binds (before its 'listening'
+  // event) so the primary can release the port it reserved for this key.
+  function bound() {
+    if (key === undefined) return;
+    send({ act: "bound", key });
+  }
+
   const handle = { close, listen, ref: noop, unref: noop };
   if (message.sockname) {
-    handle.getsockname = getsockname; // TCP handles only.
+    // TCP handles only; sockname is present exactly when the primary holds a
+    // port-0 reservation for this key.
+    handle.getsockname = getsockname;
+    handle.bound = bound;
   }
 
   $assert(handles.has(key) === false);

@@ -201,6 +201,7 @@ cluster.disconnect = function (cb) {
 };
 
 const methodMessageMapping = {
+  bound,
   close,
   exitedAfterDisconnect,
   listening,
@@ -279,6 +280,13 @@ function queryServer(worker, message) {
   });
 }
 
+// A worker bound the port a ReusePortHandle reserved for its key (reported
+// before the worker's own 'listening' event, so before anything could have
+// learned the port and connected to the reservation).
+function bound(worker, message) {
+  handles.get(message.key)?.onWorkerBound();
+}
+
 function listening(worker, message) {
   const info = {
     addressType: message.addressType,
@@ -286,10 +294,6 @@ function listening(worker, message) {
     port: message.port,
     fd: message.fd,
   };
-
-  // A worker holds `message.port` now: release the primary's matching port-0
-  // reservation before anything can learn the port from the events below.
-  handles.forEach(handle => handle.onWorkerListening(message.port));
 
   worker.state = "listening";
   worker.emit("listening", info);

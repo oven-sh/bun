@@ -3146,6 +3146,9 @@ Server.prototype.close = function close(callback) {
     }
   }
 
+  // Invalidates an in-flight cluster listen (see listenInCluster).
+  this.listeningId++;
+
   if (this._handle) {
     this._handle.stop(false);
     this._handle = null;
@@ -3616,11 +3619,18 @@ function listenInCluster(
     backlog,
     ...options,
   };
+  // The primary's reply arrives asynchronously: a close() (or a newer
+  // listen()) issued in the meantime must win, like Node's `_listeningId`.
+  const listeningId = ++server.listeningId;
   // `handle` is node:cluster's bookkeeping object for this server, not a
   // listening socket: the primary cannot hand its accepted sockets to workers
   // (Bun's IPC does not pass fds), so each worker really binds the port with
   // SO_REUSEPORT and the kernel distributes connections across them.
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+    if (listeningId !== server.listeningId) {
+      handle?.close();
+      return;
+    }
     err = checkBindError(err, port, handle);
     if (err) {
       const ex = new ExceptionWithHostPort(err, "bind", address, port);
@@ -3651,6 +3661,9 @@ function listenInCluster(
         onListen,
         fd,
       );
+      // Really bound now. Reported before the 'listening' event so the primary
+      // drops its port-0 reservation before anything can learn the port.
+      handle.bound?.();
     } catch (err) {
       // This callback runs from the primary's reply, outside listen()'s
       // try/catch, so surface bind failures the same way it does.

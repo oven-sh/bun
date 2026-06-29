@@ -169,10 +169,9 @@ private:
     bool m_waitingForBackupBufferToBeProcessed { false };
     bool m_hasScheduledTimingBufferDeliveryTask { false };
 
-    // The async context that was active when the pending delivery task was
-    // scheduled. Node runs PerformanceObserver callbacks in the context of the
-    // entry that triggered the batch, so observer callbacks can attribute
-    // entries with AsyncLocalStorage.getStore().
+    // The async context active when the pending delivery task was scheduled.
+    // Node runs PerformanceObserver callbacks in the context of the entry that
+    // triggered the batch, so AsyncLocalStorage.getStore() works inside them.
     JSC::Strong<JSC::Unknown> m_timingBufferDeliveryAsyncContext;
 
     MonotonicTime m_timeOrigin;

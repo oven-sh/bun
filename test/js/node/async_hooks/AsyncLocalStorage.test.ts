@@ -605,8 +605,9 @@ describe("async context passes through", () => {
       expect(await batches[1].promise).toStrictEqual({ store: undefined, names: ["m3"] });
     } finally {
       observer.disconnect();
-      performance.clearMarks();
-      performance.clearMeasures();
+      // Only remove this test's entries; the timeline is process-wide.
+      for (const name of ["a", "b", "c"]) performance.clearMarks(name);
+      for (const name of ["m1", "m2", "m3"]) performance.clearMeasures(name);
     }
   });
   // Signal handlers mutate process-global state, so run them in a subprocess.
@@ -620,6 +621,7 @@ describe("async context passes through", () => {
         const seen = [];
         const firstBatch = Promise.withResolvers();
         const rearmed = Promise.withResolvers();
+        const rearmedAgain = Promise.withResolvers();
 
         // All listeners for a signal run in the context captured when the
         // first one was registered, matching Node's Signal async resource.
@@ -638,17 +640,27 @@ describe("async context passes through", () => {
         process.kill(process.pid, "SIGUSR2");
         await firstBatch.promise;
 
-        // Removing the last listener drops the captured context; a fresh
+        // removeAllListeners releases the captured context; a fresh
         // registration captures the new one.
         process.removeAllListeners("SIGUSR2");
-        als.run("third", () => {
+        const third = () => {
+          seen.push("c:" + als.getStore());
+          rearmed.resolve();
+        };
+        als.run("third", () => process.on("SIGUSR2", third));
+        process.kill(process.pid, "SIGUSR2");
+        await rearmed.promise;
+
+        // removeListener of the last listener releases it too.
+        process.removeListener("SIGUSR2", third);
+        als.run("fourth", () => {
           process.on("SIGUSR2", () => {
-            seen.push("c:" + als.getStore());
-            rearmed.resolve();
+            seen.push("d:" + als.getStore());
+            rearmedAgain.resolve();
           });
         });
         process.kill(process.pid, "SIGUSR2");
-        await rearmed.promise;
+        await rearmedAgain.promise;
 
         console.log(JSON.stringify(seen));`,
       ],
@@ -657,7 +669,7 @@ describe("async context passes through", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({
-      stdout: JSON.stringify(["a:first", "b:first", "c:third"]),
+      stdout: JSON.stringify(["a:first", "b:first", "c:third", "d:fourth"]),
       exitCode: 0,
     });
   });

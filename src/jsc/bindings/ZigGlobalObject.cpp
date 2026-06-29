@@ -626,6 +626,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     globalObject->isThreadLocalDefaultGlobalObject = true;
     globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     Bun__setDefaultGlobalObject(globalObject);
+    // The per-VM onEachMicrotaskTick slot is whatever the previous global's nextTick bootstrap
+    // left it (often null, once that global handed off). This global starts over, so re-arm
+    // the hook for it the same way Zig__GlobalObject__create does for the first global.
+    globalObject->resetOnEachMicrotaskTick();
     JSC::gcProtect(globalObject);
 
     // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for

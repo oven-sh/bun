@@ -1135,4 +1135,36 @@ describe.concurrent("process.nextTick interleaving with the microtask queue", ()
     );
     expect(result).toEqual({ order: ["p1", "p2", "tick"], stderr: "", exitCode: 0 });
   });
+
+  // bun test --isolate swaps in a fresh default global on the same VM for each file. Each one
+  // starts its nextTick bootstrap over, so the per-VM onEachMicrotaskTick slot (nulled once the
+  // previous file's bootstrap handed off) must be re-armed, or b's checkpoint flag goes stale.
+  it("bun test --isolate gives each file its own nextTick bootstrap", async () => {
+    using dir = tempDir("nexttick-isolate", {
+      "a.test.js": `import { test } from "bun:test";
+         test("a completes a nextTick handoff", async () => {
+           process.nextTick(() => {});
+           await new Promise(r => setImmediate(r));
+         });`,
+      "b.test.js": `import { test, expect } from "bun:test";
+         import { AsyncLocalStorage } from "async_hooks";
+         const als = new AsyncLocalStorage();
+         test("enterWith in a microtask does not preempt its siblings", async () => {
+           const L = [];
+           await new Promise(r => setImmediate(r));
+           Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick")); als.enterWith({}); });
+           Promise.resolve().then(() => L.push("p2"));
+           await new Promise(r => setImmediate(r));
+           expect(L).toEqual(["p1", "p2", "tick"]);
+         });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "a.test.js", "b.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.stringContaining(" 2 pass"), exitCode: 0 });
+  });
 });

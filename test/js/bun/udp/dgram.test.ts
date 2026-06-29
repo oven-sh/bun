@@ -418,7 +418,7 @@ describe("membership on an unbound socket", () => {
 
 // "listening" is now emitted from inside dns.lookup's callback when bind()
 // gets a hostname. A throw from a listener must not re-enter that callback
-// as a lookup error and reset the bind state (see node-dns.test.js).
+// as a lookup error and reset the bind state (see dns-lookup-keepalive.test.ts).
 test("a throwing 'listening' listener on a hostname bind() does not corrupt the socket", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -442,6 +442,10 @@ test("a throwing 'listening' listener on a hostname bind() does not corrupt the 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "same-port\n", exitCode: 0 });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = rawStderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "same-port\n", stderr: "", exitCode: 0 });
 });

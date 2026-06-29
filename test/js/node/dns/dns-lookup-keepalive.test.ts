@@ -30,6 +30,10 @@ test("dns.lookup invokes its callback exactly once when the callback throws", as
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "calls=1\n", exitCode: 0 });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = rawStderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "calls=1\n", stderr: "", exitCode: 0 });
 });

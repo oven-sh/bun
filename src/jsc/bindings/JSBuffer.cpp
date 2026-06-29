@@ -274,11 +274,11 @@ static int normalizeCompareVal(int val, size_t a_length, size_t b_length)
     return val;
 }
 
-static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg, bool validateUnknown)
+// `arg` is the original, uncoerced encoding argument; it only shapes the
+// ERR_INVALID_ARG_TYPE message. `argString` is its resolved JSString.
+static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSString* argString, JSValue arg, bool validateUnknown)
 {
-    auto arg_ = arg.toStringOrNull(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    const auto& view = arg_->view(lexicalGlobalObject);
+    const auto& view = argString->view(lexicalGlobalObject);
 
     std::optional<BufferEncodingType> encoded = parseEnumerationFromView<BufferEncodingType>(view);
     if (!encoded) [[unlikely]] {
@@ -293,12 +293,29 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
     return encoded.value();
 }
 
-// Node's normalizeEncoding (lib/internal/util.js) treats undefined, null, and
-// the empty string as an absent encoding (utf8). buf.toString rejects all three
-// (getEncodingOps), so this lives at the fill/alloc gates, not in parseEncoding.
-static bool isAbsentEncoding(JSC::JSValue value)
+static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg, bool validateUnknown)
 {
-    return value.isUndefinedOrNull() || (value.isString() && asString(value)->length() == 0);
+    auto arg_ = arg.toStringOrNull(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return parseEncoding(scope, lexicalGlobalObject, arg_, arg, validateUnknown);
+}
+
+// Node's normalizeEncoding treats undefined, null, and the primitive empty string
+// as an absent encoding (utf8); buf.toString (Node's getEncodingOps) rejects all
+// three, so this lives at the fill/alloc gates and hands back the resolved JSString.
+static std::optional<JSString*> resolveEncodingString(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue value)
+{
+    if (value.isUndefinedOrNull())
+        return std::nullopt;
+    if (value.isString()) {
+        auto* str = asString(value);
+        if (!str->length())
+            return std::nullopt;
+        return str;
+    }
+    auto* str = value.toStringOrNull(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return str;
 }
 
 // Matches Node's validateOffset (lib/buffer.js), which is validateInteger and
@@ -670,8 +687,10 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
             WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope arg2 = callFrame->uncheckedArgument(2);
-                if (!isAbsentEncoding(arg2.value())) {
-                    encoding = parseEncoding(scope, lexicalGlobalObject, arg2.value(), true);
+                std::optional<JSString*> encodingString = resolveEncodingString(scope, lexicalGlobalObject, arg2.value());
+                RETURN_IF_EXCEPTION(scope, {});
+                if (encodingString) {
+                    encoding = parseEncoding(scope, lexicalGlobalObject, *encodingString, arg2.value(), true);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
             }
@@ -1366,13 +1385,17 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     // Node validates encoding before either `validateInteger` call, so
     // `fill("a", 0, buf.length + 1, "bogus")` and `fill("a", -1, 0,
     // "bogus")` throw ERR_UNKNOWN_ENCODING (not ERR_OUT_OF_RANGE) — the
-    // encoding error wins. parseEncoding is also the first
+    // encoding error wins. Resolving the encoding is also the first
     // user-JS-visible call: `toString` on an object encoding can detach
     // or resize castedThis; the post-coercion clamp further down reads
     // byteLength() once more to catch any such effect.
-    if (!isAbsentEncoding(encodingValue) && value.isString()) {
-        encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, true);
+    if (value.isString()) {
+        std::optional<JSString*> encodingString = resolveEncodingString(scope, lexicalGlobalObject, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
+        if (encodingString) {
+            encoding = parseEncoding(scope, lexicalGlobalObject, *encodingString, encodingValue, true);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
     // ── 2. Pure offset / end coercion (no user JS) ──────────────────────

@@ -35,7 +35,7 @@ pub struct ExtractTarball {
     /// story as `cache_dir`).
     pub temp_dir: Fd,
     pub dependency_id: DependencyID,
-    pub skip_verify: bool,    // = false
+    pub skip_verify: bool, // = false
     pub in_trusted_dependencies: bool,
     pub integrity: Integrity, // = Integrity::default()
     pub url: StringOrTinyString,

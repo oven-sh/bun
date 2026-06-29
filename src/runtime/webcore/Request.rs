@@ -854,8 +854,9 @@ impl Request {
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) =
-                    req.header(b"host").filter(|host| Self::is_valid_host_header(host))
+                if let Some(host) = req
+                    .header(b"host")
+                    .filter(|host| Self::is_valid_host_header(host))
                 {
                     // With `port: None`, HostFormatter always emits exactly `host`, so the
                     // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
@@ -942,8 +943,9 @@ impl Request {
             let req = bun_opaque::opaque_deref(req);
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) =
-                    req.header(b"host").filter(|host| Self::is_valid_host_header(host))
+                if let Some(host) = req
+                    .header(b"host")
+                    .filter(|host| Self::is_valid_host_header(host))
                 {
                     // With `port: None`, HostFormatter always emits exactly `host`. Compute the
                     // length and assemble the URL with straight slice copies instead of going

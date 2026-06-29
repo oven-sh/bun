@@ -1804,12 +1804,7 @@ impl<'a> Linker<'a> {
                                 // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
                                 let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
-                                self.link_bin_or_create_shim(
-                                    abs_target,
-                                    abs_dest,
-                                    global,
-                                    true,
-                                );
+                                self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
                             }
                             _ => {}
                         }

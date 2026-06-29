@@ -40,8 +40,7 @@ impl Decompressor {
                 *self = Decompressor::Zlib(decoder);
             }
             Encoding::Brotli => {
-                let mut decoder =
-                    Box::new(bun_brotli::StreamingDecoder::new(&Default::default())?);
+                let mut decoder = Box::new(bun_brotli::StreamingDecoder::new(&Default::default())?);
                 decoder.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
                 *self = Decompressor::Brotli(decoder);
             }

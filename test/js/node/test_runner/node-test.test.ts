@@ -77,10 +77,10 @@ describe("node:test", () => {
   });
 
   test("should give each retry attempt a fresh t.signal", async () => {
-    const { exitCode, stderr } = await runTests(["09-retry-signal.js"], ["--retry", "2"]);
     // The TestContext is reused across attempts; a retried test must not
-    // start with the previous attempt's aborted signal. Attempt 1's
-    // "transient" failure still prints the fixture source, so match only
+    // start with the previous attempt's aborted signal.
+    const { exitCode, stderr } = await runTests(["09-retry-signal.js"], ["--retry", "2"]);
+    // Attempt 1's "transient" failure prints the fixture source, so match
     // the thrown form, not the source line that constructs the error.
     expect(stderr).not.toContain("error: SIGNAL_ALREADY_ABORTED_ON_ENTRY");
     expect(stderr).toContain(" 1 pass\n 0 fail\n");

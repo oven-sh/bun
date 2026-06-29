@@ -1353,12 +1353,18 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
         break;
     }
 
-    if (offsetValue.isUndefined() || offsetValue.isString()) {
-        encodingValue = offsetValue;
-        offsetValue = jsUndefined();
-    } else if (endValue.isString()) {
-        encodingValue = endValue;
-        endValue = jsUndefined();
+    // Node's _fill only reinterprets a string offset/end as the encoding when the
+    // fill value is itself a string; otherwise validateInteger below rejects them.
+    // The offset-slot branch also discards end: fill("a", "hex", 3) fills everything.
+    if (value.isString()) {
+        if (offsetValue.isUndefined() || offsetValue.isString()) {
+            encodingValue = offsetValue;
+            offsetValue = jsUndefined();
+            endValue = jsUndefined();
+        } else if (endValue.isString()) {
+            encodingValue = endValue;
+            endValue = jsUndefined();
+        }
     }
 
     // ── 1. Encoding parse (FIRST validation) ────────────────────────────
@@ -1386,10 +1392,12 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     if (!offsetValue.isUndefined()) {
         Bun::V::validateInteger(scope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &offset);
         RETURN_IF_EXCEPTION(scope, {});
-    }
-    if (!endValue.isUndefined()) {
-        Bun::V::validateInteger(scope, lexicalGlobalObject, endValue, "end"_s, jsNumber(0), jsNumber(limit), &end);
-        RETURN_IF_EXCEPTION(scope, {});
+        // Node only reads `end` once `offset` is present: fill(v, undefined, end)
+        // ignores end (it is never validated) and fills the whole buffer.
+        if (!endValue.isUndefined()) {
+            Bun::V::validateInteger(scope, lexicalGlobalObject, endValue, "end"_s, jsNumber(0), jsNumber(limit), &end);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
     // Node short-circuits empty/inverted ranges before coercing `value`,

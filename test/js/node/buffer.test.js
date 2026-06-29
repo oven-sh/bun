@@ -3768,6 +3768,85 @@ describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
   }
 });
 
+// Node's _fill (lib/buffer.js) only reinterprets a string `offset`/`end` as
+// the encoding when the fill value is itself a string; otherwise they reach
+// validateOffset and a non-number throws ERR_INVALID_ARG_TYPE. And `end` is
+// only read at all once `offset` is present.
+describe("Buffer.fill offset/end argument handling", () => {
+  it("rejects a string offset when the fill value is not a string", () => {
+    for (const value of [0, true, new Uint8Array([1])]) {
+      expect(() => Buffer.alloc(5).fill(value, "1", 3)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "offset" argument must be of type number. Received type string ('1')`,
+        }),
+      );
+      // Two-argument form: a string in the offset slot is not an encoding either.
+      expect(() => Buffer.alloc(5).fill(value, "hex")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "offset" argument must be of type number. Received type string ('hex')`,
+        }),
+      );
+    }
+    expect(() => Buffer.alloc(5).fill(0, null, 3)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "offset" argument must be of type number. Received null',
+      }),
+    );
+  });
+
+  it("rejects a string end when the fill value is not a string", () => {
+    for (const value of [0, true, new Uint8Array([1])]) {
+      expect(() => Buffer.alloc(5).fill(value, 1, "3")).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "end" argument must be of type number. Received type string ('3')`,
+        }),
+      );
+    }
+    expect(() => Buffer.alloc(5).fill(0, 1, null)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "end" argument must be of type number. Received null',
+      }),
+    );
+  });
+
+  it("ignores end entirely when offset is undefined", () => {
+    // Node resets end = buf.length when offset === undefined; end is never
+    // validated, so even an otherwise invalid value there is accepted.
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, 3))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, "3"))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, -1))).toEqual([0, 0, 0, 0, 0]);
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, undefined, null))).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it("discards end when a string value's offset slot holds the encoding", () => {
+    // fill(value, encoding) has no end slot, so anything there is ignored.
+    expect(Buffer.alloc(5, 0xaa).fill("b", "utf8", 3).toString()).toBe("bbbbb");
+    expect(Buffer.alloc(5, 0xaa).fill("b", undefined, 3).toString()).toBe("bbbbb");
+    // An explicit numeric offset keeps end meaningful.
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill("b", 1, 3))).toEqual([0xaa, 0x62, 0x62, 0xaa, 0xaa]);
+  });
+
+  it("still treats a string offset/end as the encoding when the value is a string", () => {
+    expect(Buffer.alloc(4, 0xaa).fill("ab", "utf16le").toString("hex")).toBe("61006200");
+    expect(Buffer.alloc(4, 0xaa).fill("ab", 0, "utf16le").toString("hex")).toBe("61006200");
+    expect(() => Buffer.alloc(4).fill("a", "bogus")).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    expect(() => Buffer.alloc(4).fill("a", 0, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+  });
+
+  it("never treats the 4-argument encoding as meaningful for a non-string value", () => {
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, 1, 3, "bogus"))).toEqual([0xaa, 0, 0, 0xaa, 0xaa]);
+  });
+});
+
 describe("*Write methods with NaN/invalid offset and length", () => {
   // Regression test: NaN offset/length values must be handled safely.
   // NaN offset should be treated as 0, and length should be clamped to buffer size.

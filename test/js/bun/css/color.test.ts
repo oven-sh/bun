@@ -220,6 +220,7 @@ describe("number inputs are opaque", () => {
   test("values wider than 24 bits keep the explicit alpha byte", () => {
     expect(color(0x80ff0000, "[rgba]")).toEqual([255, 0, 0, 128]);
     expect(color(0xffff0000, "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+    expect(color(0xffffffff, "{rgba}")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
   });
 });
 

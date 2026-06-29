@@ -1061,6 +1061,9 @@ describe("request-target normalization before route matching", () => {
     { target: "/..", route: "fallback", pathname: "/" },
     // a trailing dot-segment keeps the trailing slash, which is a different path
     { target: "/admin/x/y/..", route: "fallback", pathname: "/admin/x/" },
+    // dotfile segments are not dot-segments
+    { target: "/.well-known/x", route: "fallback", pathname: "/.well-known/x" },
+    { target: "/w/.hidden", route: "/w/*", pathname: "/w/.hidden" },
     // an encoded "/" is not a path separator and does not split the parameter
     { target: "/p/..%2fadmin", route: "/p/:v", pathname: "/p/..%2fadmin", param: "../admin" },
     // matching stays percent-encoded: no decoding is applied to the path

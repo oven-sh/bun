@@ -163,9 +163,13 @@ private:
             if (c == '\\' || c == '#' || c == '?') {
                 return true;
             }
-            /* Dot-segments can only start right after a '/' */
+            /* Dot-segments can only start right after a '/'; dotfile segments (".well-known") are not dot-segments */
             if (c == '/' && i + 1 < url.length() && (url[i + 1] == '.' || isEncodedDotAt(url, i + 1))) {
-                return true;
+                size_t segmentEnd = url.find_first_of("/\\?#", i + 1);
+                std::string_view segment = url.substr(i + 1, (segmentEnd == std::string_view::npos ? url.length() : segmentEnd) - i - 1);
+                if (isSingleDotSegment(segment) || isDoubleDotSegment(segment)) {
+                    return true;
+                }
             }
         }
         return false;

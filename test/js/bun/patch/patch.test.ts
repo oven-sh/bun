@@ -1094,6 +1094,40 @@ describe("apply", () => {
     });
   });
 
+  // A drive-relative component (`Z:..`) is not byte-equal to `..`, but the
+  // Windows openat normalizer strips the `Z:` prefix from a relative component
+  // and then resolves a real `..`, which would ascend out of the patch dir.
+  describe.if(process.platform === "win32")("rejects drive-relative components on Windows", () => {
+    test("a `X:..` component cannot escape the patch dir", async () => {
+      const root = tempDirWithFiles("patch-drive-rel", {
+        "pkg/.keep": "",
+        "keep.txt": "SAFE\n",
+      });
+      const pkgDir = join(root, "pkg");
+
+      const patch =
+        "diff --git a/Z:../escaped.txt b/Z:../escaped.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/Z:../escaped.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      let err: any;
+      try {
+        apply(patch, pkgDir);
+      } catch (e) {
+        err = e;
+      }
+      const escaped = await fs.access(join(root, "escaped.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, escaped }).toEqual({ code: "EINVAL", escaped: false });
+    });
+  });
+
   // A `..` component with a trailing NUL byte is not byte-equal to `..`, but the
   // kernel reads each component as a NUL-terminated C string and resolves a real
   // `..`. Run in a child process: the unfixed failure mode is a process abort.

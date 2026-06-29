@@ -430,10 +430,13 @@ fn open_parent_beneath(
         if component.is_empty() || component == b"." {
             continue;
         }
-        // `is_safe_patch_path` already rejected `..` and NUL bytes; refuse
-        // both here too so this helper cannot ascend regardless of its
-        // caller (a NUL makes the kernel see the component only up to it).
-        if component == b".." || component.contains(&0) {
+        // `is_safe_patch_path` already rejected `..`, NUL, and (Windows) `:`;
+        // refuse them here too so this helper cannot ascend regardless of its
+        // caller (NUL truncates the C string; Windows strips a `C:` prefix).
+        if component == b".."
+            || component.contains(&0)
+            || (cfg!(windows) && component.contains(&b':'))
+        {
             return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).with_path(path));
         }
         let component_z = ZBox::from_vec_with_nul(component.to_vec());
@@ -1164,6 +1167,10 @@ fn is_safe_patch_path(path: &[u8]) -> bool {
         // interior NUL would turn e.g. `"..\0x"` (which is not byte-equal to
         // `..` below) back into a real `..` traversal.
         && !path.contains(&0)
+        // On Windows, openat strips a drive prefix from a relative component,
+        // so `"C:.."` (again not byte-equal to `..`) resolves a real `..`.
+        // `:` never occurs in a legitimate NTFS file name.
+        && !(cfg!(windows) && path.contains(&b':'))
         && !path
             .split(|&c| c == b'/' || c == b'\\')
             .any(|part| part == b"..")

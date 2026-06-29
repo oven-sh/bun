@@ -55,6 +55,7 @@ test("node:dns operations are observable as 'dns' performance entries", async ()
       "dns:lookupService", // dns.promises.lookupService()
       "dns:queryA", // dns.resolve4()
       "dns:queryA", // dns.promises.resolve4()
+      "dns:queryA", // dns.promises.resolve4(hostname, { ttl: true })
       "dns:queryTxt", // dns.resolve(hostname, "TXT")
       "dns:queryTxt", // dns.promises.resolve(hostname, "TXT")
       "dns:queryTxt", // new dns.Resolver().resolveTxt()
@@ -70,7 +71,9 @@ test("node:dns operations are observable as 'dns' performance entries", async ()
     previousStartTime = entry.startTime;
   }
 
-  // detail carries the same fields Node records for each operation kind.
+  // detail carries the same fields and values Node records for each operation
+  // kind, including the caller-visible result (strings without {ttl: true},
+  // {address, ttl} objects with it).
   expect(entries[0].detail).toEqual({
     hostname: "localhost",
     family: 0,
@@ -86,9 +89,7 @@ test("node:dns operations are observable as 'dns' performance entries", async ()
     hostname: expect.any(String),
     service: expect.any(String),
   });
-  expect(entries[4].detail).toEqual({
-    host: "a.test",
-    ttl: false,
-    result: expect.any(Array),
-  });
+  expect(entries[4].detail).toEqual({ host: "a.test", ttl: false, result: ["127.0.0.1"] });
+  expect(entries[6].detail).toEqual({ host: "a.test", ttl: true, result: [{ address: "127.0.0.1", ttl: 60 }] });
+  expect(entries[7].detail).toEqual({ host: "a.test", ttl: false, result: [["hello"]] });
 });

@@ -63,6 +63,7 @@ await new Promise((resolve, reject) =>
 await dns.promises.lookupService("127.0.0.1", 80);
 await new Promise((resolve, reject) => dns.resolve4("a.test", error => (error ? reject(error) : resolve(undefined))));
 await dns.promises.resolve4("a.test");
+await dns.promises.resolve4("a.test", { ttl: true });
 await new Promise((resolve, reject) =>
   dns.resolve("a.test", "TXT", error => (error ? reject(error) : resolve(undefined))),
 );

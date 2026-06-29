@@ -287,7 +287,9 @@ function observeLookup(hostname, options, promise) {
     },
   });
   return promise.then(res => {
-    stopPerf(ctx, kPerfEntry, { detail: { addresses: res.map(mapResolveX) } });
+    // An empty result reaches the caller as ENODATA (see throwIfEmpty), so it
+    // records nothing, like every other failed lookup.
+    if (res.length) stopPerf(ctx, kPerfEntry, { detail: { addresses: res.map(mapResolveX) } });
     return res;
   });
 }
@@ -304,9 +306,10 @@ function observeLookupService(host, port, promise) {
   });
 }
 
-// `name` is the c-ares binding Node uses for the operation, which is also the
-// entry name Node reports: resolve4 -> "queryA", reverse -> "getHostByAddr".
-// https://github.com/nodejs/node/blob/v25.2.1/lib/internal/dns/promises.js#L306-L330
+// `name` is Node's c-ares binding (and entry) name for the operation, e.g.
+// resolve4 -> "queryA", reverse -> "getHostByAddr". `detail.result` records
+// the promise's value, so callers pass the promise the user will observe:
+// https://github.com/nodejs/node/blob/v25.2.1/lib/internal/dns/promises.js#L288-L330
 function observeQuery(name, host, promise, ttl?) {
   if (!hasObserver("dns")) return promise;
   const ctx = {};
@@ -470,17 +473,16 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    observeQuery(queryNameFor(rrtype), hostname, Resolver.#getResolver(this).resolve(hostname, rrtype)).then(
+    let query = Resolver.#getResolver(this).resolve(hostname, rrtype);
+    switch (rrtype?.toLowerCase()) {
+      case "a":
+      case "aaaa":
+        query = query.then(promisifyResolveX(false));
+        break;
+    }
+    observeQuery(queryNameFor(rrtype), hostname, query).then(
       results => {
-        switch (rrtype?.toLowerCase()) {
-          case "a":
-          case "aaaa":
-            callback(null, results.map(mapResolveX));
-            break;
-          default:
-            callback(null, results);
-            break;
-        }
+        callback(null, results);
       },
       error => {
         callback(withTranslatedError(error));
@@ -496,9 +498,14 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    observeQuery("queryA", hostname, Resolver.#getResolver(this).resolve(hostname, "A"), options?.ttl).then(
+    observeQuery(
+      "queryA",
+      hostname,
+      Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+      options?.ttl,
+    ).then(
       addresses => {
-        callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+        callback(null, addresses);
       },
       error => {
         callback(withTranslatedError(error));
@@ -514,9 +521,14 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    observeQuery("queryAaaa", hostname, Resolver.#getResolver(this).resolve(hostname, "AAAA"), options?.ttl).then(
+    observeQuery(
+      "queryAaaa",
+      hostname,
+      Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+      options?.ttl,
+    ).then(
       addresses => {
-        callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+        callback(null, addresses);
       },
       error => {
         callback(withTranslatedError(error));
@@ -834,26 +846,29 @@ const promises = {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    const res = observeQuery(queryNameFor(rrtype), hostname, dns.resolve(hostname, rrtype));
+    let query = dns.resolve(hostname, rrtype);
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(res.then(promisifyResolveX(false)));
-      default:
-        return translateErrorCode(res);
+        query = query.then(promisifyResolveX(false));
+        break;
     }
+    return translateErrorCode(observeQuery(queryNameFor(rrtype), hostname, query));
   },
 
   resolve4(hostname, options) {
     return translateErrorCode(
-      observeQuery("queryA", hostname, dns.resolve(hostname, "A"), options?.ttl).then(promisifyResolveX(options?.ttl)),
+      observeQuery("queryA", hostname, dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl)), options?.ttl),
     );
   },
 
   resolve6(hostname, options) {
     return translateErrorCode(
-      observeQuery("queryAaaa", hostname, dns.resolve(hostname, "AAAA"), options?.ttl).then(
-        promisifyResolveX(options?.ttl),
+      observeQuery(
+        "queryAaaa",
+        hostname,
+        dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+        options?.ttl,
       ),
     );
   },
@@ -918,28 +933,34 @@ const promises = {
       } else if (typeof rrtype !== "string") {
         rrtype = null;
       }
-      const res = observeQuery(queryNameFor(rrtype), hostname, Resolver.#getResolver(this).resolve(hostname, rrtype));
+      let query = Resolver.#getResolver(this).resolve(hostname, rrtype);
       switch (rrtype?.toLowerCase()) {
         case "a":
         case "aaaa":
-          return translateErrorCode(res.then(promisifyResolveX(false)));
-        default:
-          return translateErrorCode(res);
+          query = query.then(promisifyResolveX(false));
+          break;
       }
+      return translateErrorCode(observeQuery(queryNameFor(rrtype), hostname, query));
     }
 
     resolve4(hostname, options) {
       return translateErrorCode(
-        observeQuery("queryA", hostname, Resolver.#getResolver(this).resolve(hostname, "A"), options?.ttl).then(
-          promisifyResolveX(options?.ttl),
+        observeQuery(
+          "queryA",
+          hostname,
+          Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+          options?.ttl,
         ),
       );
     }
 
     resolve6(hostname, options) {
       return translateErrorCode(
-        observeQuery("queryAaaa", hostname, Resolver.#getResolver(this).resolve(hostname, "AAAA"), options?.ttl).then(
-          promisifyResolveX(options?.ttl),
+        observeQuery(
+          "queryAaaa",
+          hostname,
+          Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+          options?.ttl,
         ),
       );
     }

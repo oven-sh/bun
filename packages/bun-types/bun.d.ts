@@ -4933,14 +4933,14 @@ declare module "bun" {
      * Create a new hasher
      *
      * @param algorithm The algorithm to use. See {@link algorithms} for a list of supported algorithms
-     * @param hmacKey Optional key for HMAC. Must be a string or `TypedArray`. If not provided, the hasher will be a non-HMAC hasher.
+     * @param hmacKey Optional key for HMAC. If not provided, the hasher is a regular (non-HMAC) hasher.
      */
     constructor(algorithm: SupportedCryptoAlgorithms, hmacKey?: string | NodeJS.TypedArray);
 
     /**
      * Update the hash with data
      *
-     * @param input
+     * @param input Data to add to the hash. `Uint8Array` or `ArrayBuffer` is faster than a string
      */
     update(input: Bun.BlobOrStringOrBuffer, inputEncoding?: import("crypto").Encoding): CryptoHasher;
 
@@ -4952,7 +4952,7 @@ declare module "bun" {
     /**
      * Finalize the hash. Resets the CryptoHasher so it can be reused.
      *
-     * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
+     * @param encoding `DigestEncoding` to return the hash in
      */
     digest(encoding: DigestEncoding): string;
 
@@ -5010,14 +5010,15 @@ declare module "bun" {
   }
 
   /**
-   * Resolve a `Promise` after milliseconds. This is like
-   * {@link setTimeout} except it returns a `Promise`.
+   * Returns a `Promise` that resolves after the given number of milliseconds,
+   * or at the given {@link Date}. Like {@link setTimeout}, except it returns a
+   * `Promise`.
    *
    * @category Utilities
    *
-   * @param ms milliseconds to delay resolving the promise. This is a minimum
-   * number. It may take longer. If a {@link Date} is passed, it will sleep until the
-   * {@link Date} is reached.
+   * @param ms milliseconds to wait before resolving the promise. This is a
+   * minimum; it may take longer. Pass a {@link Date} to sleep until that time
+   * is reached.
    *
    * @example
    * ## Sleep for 1 second
@@ -5041,14 +5042,12 @@ declare module "bun" {
    * ```ts
    * await new Promise((resolve) => setTimeout(resolve, ms));
    * ```
-   * As always, you can use `Bun.sleep` or the imported `sleep` function interchangeably.
+   * `Bun.sleep` and the imported `sleep` function are interchangeable.
    */
   function sleep(ms: number | Date): Promise<void>;
 
   /**
-   * Sleep the thread for a given number of milliseconds
-   *
-   * This is a blocking function.
+   * Block the thread for a given number of milliseconds.
    *
    * Internally, it calls [nanosleep(2)](https://man7.org/linux/man-pages/man2/nanosleep.2.html)
    */
@@ -5057,12 +5056,7 @@ declare module "bun" {
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
-   * @category Utilities
-   *
-   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
-   * @param hashInto optional `Uint8Array` to write the hash to. 32 bytes minimum.
-   *
-   * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
+   * This hashing function balances speed with cryptographic strength. It does not encrypt or decrypt data.
    *
    * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
    *
@@ -5072,18 +5066,18 @@ declare module "bun" {
    * # You will need OpenSSL 3 or later
    * openssl sha512-256 /path/to/file
    * ```
+   *
+   * @category Utilities
+   *
+   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster
+   * @param hashInto optional `Uint8Array` to write the hash to. 32 bytes minimum.
    */
   function sha(input: Bun.StringOrBuffer, hashInto?: NodeJS.TypedArray): NodeJS.TypedArray;
 
   /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
-   * @category Utilities
-   *
-   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
-   * @param encoding `DigestEncoding` to return the hash in
-   *
-   * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
+   * This hashing function balances speed with cryptographic strength. It does not encrypt or decrypt data.
    *
    * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
    *
@@ -5093,19 +5087,24 @@ declare module "bun" {
    * # You will need OpenSSL 3 or later
    * openssl sha512-256 /path/to/file
    * ```
+   *
+   * @category Utilities
+   *
+   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster
+   * @param encoding `DigestEncoding` to return the hash in
    */
   function sha(input: Bun.StringOrBuffer, encoding: DigestEncoding): string;
 
   /**
    * This is not the default because it's not cryptographically secure and it's slower than {@link SHA512}
    *
-   * Consider using the ugly-named {@link SHA512_256} instead
+   * Consider {@link SHA512_256} instead
    */
   class SHA1 extends CryptoHashInterface<SHA1> {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 20;
   }
@@ -5113,7 +5112,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 16;
   }
@@ -5121,7 +5120,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 16;
   }
@@ -5129,7 +5128,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 28;
   }
@@ -5137,7 +5136,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 64;
   }
@@ -5145,7 +5144,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 48;
   }
@@ -5153,7 +5152,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 32;
   }
@@ -5164,7 +5163,7 @@ declare module "bun" {
     constructor();
 
     /**
-     * The number of bytes the hash will produce
+     * The number of bytes the hash produces
      */
     static readonly byteLength: 32;
   }
@@ -5176,14 +5175,14 @@ declare module "bun" {
   interface ZlibCompressionOptions {
     /**
      * The compression level to use. Must be between `-1` and `9`.
-     * - A value of `-1` uses the default compression level (Currently `6`)
-     * - A value of `0` gives no compression
-     * - A value of `1` gives least compression, fastest speed
-     * - A value of `9` gives best compression, slowest speed
+     * - `-1` uses the default compression level (`6`)
+     * - `0` gives no compression
+     * - `1` gives least compression, fastest speed
+     * - `9` gives best compression, slowest speed
      */
     level?: -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     /**
-     * How much memory should be allocated for the internal compression state.
+     * How much memory to allocate for the internal compression state.
      *
      * A value of `1` uses minimum memory but is slow and reduces compression ratio.
      *
@@ -5196,11 +5195,11 @@ declare module "bun" {
      * Larger values of this parameter result in better compression at the expense of memory usage.
      *
      * The following value ranges are supported:
-     * - `9..15`: The output will have a zlib header and footer (Deflate)
-     * - `-9..-15`: The output will **not** have a zlib header or footer (Raw Deflate)
-     * - `25..31` (16+`9..15`): The output will have a gzip header and footer (gzip)
+     * - `9..15`: The output has a zlib header and footer (Deflate)
+     * - `-9..-15`: The output does **not** have a zlib header or footer (Raw Deflate)
+     * - `25..31` (16+`9..15`): The output has a gzip header and footer (gzip)
      *
-     * The gzip header will have no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
+     * The gzip header has no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
       | -9
@@ -5235,7 +5234,7 @@ declare module "bun" {
      *
      * `Z_RLE` is designed to be almost as fast as `Z_HUFFMAN_ONLY`, but give better compression for PNG image data.
      *
-     * `Z_FILTERED` forces more Huffman coding and less string matching, it is
+     * `Z_FILTERED` forces more Huffman coding and less string matching; it is
      * somewhat intermediate between `Z_DEFAULT_STRATEGY` and `Z_HUFFMAN_ONLY`.
      * Filtered data consists mostly of small values with a somewhat random distribution.
      */
@@ -5250,7 +5249,7 @@ declare module "bun" {
   }
 
   /**
-   * Compresses a chunk of data with `zlib` DEFLATE algorithm.
+   * Compresses a chunk of data with the `zlib` DEFLATE algorithm.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
@@ -5260,7 +5259,7 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array<ArrayBuffer>;
   /**
-   * Compresses a chunk of data with `zlib` GZIP algorithm.
+   * Compresses a chunk of data with the `zlib` GZIP algorithm.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
@@ -5270,7 +5269,7 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array<ArrayBuffer>;
   /**
-   * Decompresses a chunk of data with `zlib` INFLATE algorithm.
+   * Decompresses a chunk of data with the `zlib` INFLATE algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
@@ -5279,7 +5278,7 @@ declare module "bun" {
     options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
   ): Uint8Array<ArrayBuffer>;
   /**
-   * Decompresses a chunk of data with `zlib` GUNZIP algorithm.
+   * Decompresses a chunk of data with the `zlib` GUNZIP algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
@@ -5326,21 +5325,20 @@ declare module "bun" {
 
   type Target =
     /**
-     * For generating bundles that are intended to be run by the Bun runtime. In many cases,
-     * it isn't necessary to bundle server-side code; you can directly execute the source code
-     * without modification. However, bundling your server code can reduce startup times and
-     * improve running performance.
+     * For bundles that run in the Bun runtime. Bundling server-side code is
+     * often unnecessary, since Bun can run the source directly, but it can
+     * reduce startup time and improve performance.
      *
      * All bundles generated with `target: "bun"` are marked with a special `// @bun` pragma, which
-     * indicates to the Bun runtime that there's no need to re-transpile the file before execution.
+     * tells the Bun runtime that there's no need to re-transpile the file before execution.
      */
     | "bun"
     /**
-     * The plugin will be applied to Node.js builds
+     * The plugin is applied to Node.js builds
      */
     | "node"
     /**
-     * The plugin will be applied to browser builds
+     * The plugin is applied to browser builds
      */
     | "browser";
 
@@ -5399,8 +5397,6 @@ declare module "bun" {
     contents: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
     /**
      * The loader to use for this file
-     *
-     * "css" will be added in a future version of Bun.
      */
     loader?: Loader;
   }
@@ -5450,7 +5446,7 @@ declare module "bun" {
     /**
      * Defer the execution of this callback until all other modules have been parsed.
      *
-     * @returns Promise which will be resolved when all modules have been parsed
+     * @returns Promise that resolves when all modules have been parsed
      */
     defer: () => Promise<void>;
   }
@@ -5497,7 +5493,7 @@ declare module "bun" {
     path: string;
     /**
      * The namespace of the destination
-     * It will be concatenated with `path` to form the final import specifier
+     * It is concatenated with `path` to form the final import specifier
      * @example
      * ```ts
      * "foo" // "foo:bar"
@@ -5523,9 +5519,8 @@ declare module "bun" {
    */
   interface PluginBuilder {
     /**
-     * Register a callback which will be invoked when bundling starts. When
-     * using hot module reloading, this is called at the start of each
-     * incremental rebuild.
+     * Register a callback that runs when bundling starts. With hot module
+     * reloading, it runs at the start of each incremental rebuild.
      *
      * @example
      * ```ts
@@ -5542,8 +5537,8 @@ declare module "bun" {
      */
     onStart(callback: OnStartCallback): this;
     /**
-     * Register a callback which will be invoked when bundling ends. This is
-     * called after all modules have been bundled and the build is complete.
+     * Register a callback that runs when bundling ends, after all modules
+     * have been bundled and the build is complete.
      *
      * @example
      * ```ts
@@ -5648,25 +5643,25 @@ declare module "bun" {
     /**
      * The target JavaScript environment the plugin should be applied to.
      * - `bun`: The default environment when using `bun run` or `bun` to load a script
-     * - `browser`: The plugin will be applied to browser builds
-     * - `node`: The plugin will be applied to Node.js builds
+     * - `browser`: The plugin is applied to browser builds
+     * - `node`: The plugin is applied to Node.js builds
      *
-     * If unspecified, it is assumed that the plugin is compatible with all targets.
+     * If unspecified, the plugin is assumed to be compatible with all targets.
      *
      * This field is not read by {@link Bun.plugin}, only {@link Bun.build} and `bun build`
      */
     target?: Target;
 
     /**
-     * A function that will be called when the plugin is loaded.
+     * Called when the plugin is loaded.
      *
      * This function may be called in the same tick that it is registered, or it
-     * may be called later. It could potentially be called multiple times for
-     * different targets.
+     * may be called later. It may be called multiple times for different
+     * targets.
      */
     setup(
       /**
-       * A builder object that can be used to register plugin hooks
+       * The builder object for registering plugin hooks
        * @example
        * ```ts
        * builder.onLoad({ filter: /\.yaml$/ }, ({ path }) => ({
@@ -5684,18 +5679,18 @@ declare module "bun" {
    *
    * Plugins are applied in the order they are defined.
    *
-   * Today, there are two kinds of hooks:
-   * - `onLoad` lets you return source code or an object that will become the module's exports
-   * - `onResolve` lets you redirect a module specifier to another module specifier. It does not chain.
+   * There are two kinds of hooks:
+   * - `onLoad` returns source code or an object that becomes the module's exports
+   * - `onResolve` redirects a module specifier to another module specifier. It does not chain.
    *
-   * Plugin hooks must define a `filter` RegExp and will only be matched if the
+   * Plugin hooks must define a `filter` RegExp and only match when the
    * import specifier contains a "." or a ":".
    *
    * ES Module resolution semantics mean that plugins may be initialized _after_
    * a module is resolved. You might need to load plugins at the very beginning
    * of the application and then use a dynamic import to load the rest of the
    * application. A future version of Bun may also support specifying plugins
-   * via `bunfig.toml`.
+   * in `bunfig.toml`.
    *
    * @example
    * A YAML loader plugin
@@ -5707,6 +5702,7 @@ declare module "bun" {
    *     loader: "object",
    *     exports: require("js-yaml").load(fs.readFileSync(path, "utf8"))
    *   }));
+   *  }
    * });
    *
    * // You can use require()
@@ -5731,12 +5727,12 @@ declare module "bun" {
   const plugin: BunRegisterPlugin;
 
   /**
-   * Is the current global scope the main thread?
+   * Whether the current global scope is the main thread
    */
   const isMainThread: boolean;
 
   /**
-   * Used when importing an HTML file at runtime or at build time.
+   * The result of importing an HTML file, at runtime or at build time.
    *
    * @example
    *
@@ -5755,7 +5751,7 @@ declare module "bun" {
       input?: string;
       /** Generated output file path (with content hash, if included in naming) */
       path: string;
-      /** File type/loader used (js, css, html, file, etc.) */
+      /** The loader used for this file, such as `js`, `css`, or `html` */
       loader: Loader;
       /** Whether this file is an entry point */
       isEntry: boolean;
@@ -5775,20 +5771,18 @@ declare module "bun" {
   }
 
   /**
-   * Represents a TCP or TLS socket connection used for network communication.
-   * This interface provides methods for reading, writing, managing the connection state,
-   * and handling TLS-specific features if applicable.
+   * A TCP or TLS socket connection.
    *
-   * Sockets are created using `Bun.connect()` or accepted by a `Bun.listen()` server.
+   * Sockets are created with `Bun.connect()` or accepted by a `Bun.listen()` server.
    *
    * @category HTTP & Networking
    */
   interface Socket<Data = undefined> extends Disposable {
     /**
-     * Writes `data` to the socket. This method is unbuffered and non-blocking. This uses the `sendto(2)` syscall internally.
+     * Writes `data` to the socket. This method is unbuffered and non-blocking. It uses the `sendto(2)` syscall internally.
      *
-     * For optimal performance with multiple small writes, consider batching multiple
-     * writes together into a single `socket.write()` call.
+     * For best performance with many small writes, batch them into a single
+     * `socket.write()` call.
      *
      * @param data The data to write. Can be a string (encoded as UTF-8), `ArrayBuffer`, `TypedArray`, or `DataView`.
      * @param byteOffset The offset in bytes within the buffer to start writing from. Defaults to 0. Ignored for strings.
@@ -5813,7 +5807,7 @@ declare module "bun" {
 
     /**
      * The user-defined data associated with this socket instance.
-     * This can be set when the socket is created via `Bun.connect({ data: ... })`.
+     * Set it when the socket is created with `Bun.connect({ data: ... })`.
      * It can be read or updated at any time.
      *
      * @example
@@ -5886,7 +5880,7 @@ declare module "bun" {
      * This allows the socket to enter a half-closed state where it can still receive data
      * but can no longer send data (`halfClose = true`), or close both read and write
      * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
-     * Calls `shutdown(2)` syscall internally.
+     * Calls the `shutdown(2)` syscall internally.
      *
      * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
      * @example
@@ -5903,7 +5897,7 @@ declare module "bun" {
     /**
      * The ready state of the socket.
      *
-     * You can assume that a positive value means the socket is open and usable
+     * A positive value means the socket is open and usable
      *
      * - `-2` = Shutdown
      * - `-1` = Detached
@@ -5922,28 +5916,33 @@ declare module "bun" {
 
     /**
      * Flush any buffered data to the socket
+     *
      * This attempts to send the data immediately, but success depends on the network conditions
      * and the receiving end.
      * It might be necessary after several `write` calls if immediate sending is critical,
-     * though often the OS handles flushing efficiently. Note that `write` calls outside
+     * though the OS often handles flushing efficiently. `write` calls outside
      * `open`/`data`/`drain` might benefit from manual `cork`/`flush`.
      */
     flush(): void;
 
     /**
-     * Reset the socket's callbacks. This is useful with `bun --hot` to facilitate hot reloading.
+     * Reset the socket's callbacks. This is useful with `bun --hot` for hot reloading.
      *
-     * This will apply to all sockets from the same {@link Listener}. it is per socket only for {@link Bun.connect}.
+     * This applies to all sockets from the same {@link Listener}. It is per socket only for {@link Bun.connect}.
      */
     reload(options: Pick<SocketOptions<Data>, "socket">): void;
 
     /**
-     * Get the server that created this socket
+     * The server that created this socket
      *
-     * This will return undefined if the socket was created by {@link Bun.connect} or if the listener has already closed.
+     * This is `undefined` if the socket was created by {@link Bun.connect} or if the listener has already closed.
      */
     readonly listener?: SocketListener;
 
+    /**
+     * IP protocol family used for the remote endpoint of the socket
+     * @example "IPv4" | "IPv6"
+     */
     readonly remoteFamily: "IPv4" | "IPv6";
 
     /**
@@ -5971,21 +5970,22 @@ declare module "bun" {
     readonly localAddress: string;
 
     /**
-     * local port connected to the socket
+     * Local port connected to the socket
      * @example 8080
      */
     readonly localPort: number;
 
     /**
-     * This property is `true` if the peer certificate was signed by one of the CAs
-     * specified when creating the `Socket` instance, otherwise `false`.
+     * `true` if the peer certificate was signed by one of the CAs
+     * specified when creating the `Socket` instance, otherwise `false`
      */
     readonly authorized: boolean;
 
     /**
-     * String containing the selected ALPN protocol.
-     * Before a handshake has completed, this value is always null.
-     * When a handshake is completed but not ALPN protocol was selected, socket.alpnProtocol equals false.
+     * The selected ALPN protocol.
+     *
+     * Before a handshake has completed, this value is always `null`.
+     * When a handshake has completed but no ALPN protocol was selected, this is `false`.
      */
     readonly alpnProtocol: string | false | null;
 
@@ -5993,27 +5993,24 @@ declare module "bun" {
      * Disables TLS renegotiation for this `Socket` instance. Once called, attempts
      * to renegotiate will trigger an `error` handler on the `Socket`.
      *
-     * There is no support for renegotiation as a server. (Attempts by clients will result in a fatal alert so that ClientHello messages cannot be used to flood a server and escape higher-level limits.)
+     * Bun does not support renegotiation as a server. (Attempts by clients result in a fatal alert so that ClientHello messages cannot be used to flood a server and escape higher-level limits.)
      */
     disableRenegotiation(): void;
 
     /**
-     * Keying material is used for validations to prevent different kind of attacks in
+     * Keying material is used for validations to prevent different kinds of attacks in
      * network protocols, for example in the specifications of IEEE 802.1X.
      *
-     * Example
-     *
+     * @example
      * ```js
      * const keyingMaterial = socket.exportKeyingMaterial(
      *   128,
      *   'client finished');
      *
-     * /*
-     *  Example return value of keyingMaterial:
-     *  <Buffer 76 26 af 99 c5 56 8e 42 09 91 ef 9f 93 cb ad 6c 7b 65 f8 53 f1 d8 d9
-     *     12 5a 33 b8 b5 25 df 7b 37 9f e0 e2 4f b8 67 83 a3 2f cd 5d 41 42 4c 91
-     *     74 ef 2c ... 78 more bytes>
-     *
+     * // Example return value of keyingMaterial:
+     * // <Buffer 76 26 af 99 c5 56 8e 42 09 91 ef 9f 93 cb ad 6c 7b 65 f8 53 f1 d8 d9
+     * //    12 5a 33 b8 b5 25 df 7b 37 9f e0 e2 4f b8 67 83 a3 2f cd 5d 41 42 4c 91
+     * //    74 ef 2c ... 78 more bytes>
      * ```
      *
      * @param length number of bytes to retrieve from keying material
@@ -6025,8 +6022,8 @@ declare module "bun" {
     exportKeyingMaterial(length: number, label: string, context: Buffer): Buffer;
 
     /**
-     * Returns the reason why the peer's certificate was not been verified. This
-     * property is set only when `socket.authorized === false`.
+     * Returns the reason why the peer's certificate was not verified. This is
+     * only set when `socket.authorized === false`.
      */
     getAuthorizationError(): Error | null;
 
@@ -6034,8 +6031,8 @@ declare module "bun" {
      * Returns an object representing the local certificate. The returned object has
      * some properties corresponding to the fields of the certificate.
      *
-     * If there is no local certificate, an empty object will be returned. If the
-     * socket has been destroyed, `null` will be returned.
+     * If there is no local certificate, an empty object is returned. If the
+     * socket has been destroyed, `null` is returned.
      */
     getCertificate(): import("tls").PeerCertificate | object | null;
     getX509Certificate(): import("node:crypto").X509Certificate | undefined;
@@ -6060,8 +6057,8 @@ declare module "bun" {
      * Returns an object representing the type, name, and size of parameter of
      * an ephemeral key exchange in `perfect forward secrecy` on a client
      * connection. It returns an empty object when the key exchange is not
-     * ephemeral. As this is only supported on a client socket; `null` is returned
-     * if called on a server socket. The supported types are `'DH'` and `'ECDH'`. The`name` property is available only when type is `'ECDH'`.
+     * ephemeral. This is only supported on a client socket; `null` is returned
+     * if called on a server socket. The supported types are `'DH'` and `'ECDH'`. The `name` property is available only when type is `'ECDH'`.
      *
      * For example: `{ type: 'ECDH', name: 'prime256v1', size: 256 }`.
      */
@@ -6069,10 +6066,10 @@ declare module "bun" {
 
     /**
      * Returns an object representing the peer's certificate. If the peer does not
-     * provide a certificate, an empty object will be returned. If the socket has been
-     * destroyed, `null` will be returned.
+     * provide a certificate, an empty object is returned. If the socket has been
+     * destroyed, `null` is returned.
      *
-     * If the full certificate chain was requested, each certificate will include an`issuerCertificate` property containing an object representing its issuer's
+     * If the full certificate chain was requested, each certificate includes an `issuerCertificate` property containing an object representing its issuer's
      * certificate.
      * @return A certificate object.
      */
@@ -6081,7 +6078,6 @@ declare module "bun" {
 
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
-     * @since v12.11.0
      * @return List of signature algorithms shared between the server and the client in the order of decreasing preference.
      */
     getSharedSigalgs(): string[];
@@ -6108,7 +6104,7 @@ declare module "bun" {
     getTLSPeerFinishedMessage(): Buffer | undefined;
 
     /**
-     * For a client, returns the TLS session ticket if one is available, or`undefined`. For a server, always returns `undefined`.
+     * For a client, returns the TLS session ticket if one is available, or `undefined`. For a server, always returns `undefined`.
      *
      * It may be useful for debugging.
      *
@@ -6118,9 +6114,9 @@ declare module "bun" {
 
     /**
      * Returns a string containing the negotiated SSL/TLS protocol version of the
-     * current connection. The value `'unknown'` will be returned for connected
-     * sockets that have not completed the handshaking process. The value `null` will
-     * be returned for server sockets or disconnected client sockets.
+     * current connection. The value `'unknown'` is returned for connected
+     * sockets that have not completed the handshaking process. The value `null` is
+     * returned for server sockets or disconnected client sockets.
      *
      * Protocol versions are:
      *
@@ -6134,15 +6130,15 @@ declare module "bun" {
     getTLSVersion(): string;
 
     /**
+     * **TLS only:** Checks if the current TLS session was resumed from a previous session.
+     *
      * See `Session Resumption` for more information.
-     * @return `true` if the session was reused, `false` otherwise.
-     * **TLS Only:** Checks if the current TLS session was resumed from a previous session.
-     * Returns `true` if the session was resumed, `false` otherwise.
+     * @return `true` if the session was reused, `false` otherwise
      */
     isSessionReused(): boolean;
 
     /**
-     * The `socket.setMaxSendFragment()` method sets the maximum TLS fragment size.
+     * Sets the maximum TLS fragment size.
      * Returns `true` if setting the limit succeeded; `false` otherwise.
      *
      * Smaller fragment sizes decrease the buffering latency on the client: larger
@@ -6157,25 +6153,25 @@ declare module "bun" {
 
     /**
      * Enable/disable the use of Nagle's algorithm.
-     * Only available for already connected sockets, will return false otherwise
+     * Only available for already connected sockets; returns `false` otherwise
      * @param noDelay Default: `true`
-     * @returns true if is able to setNoDelay and false if it fails.
+     * @returns `true` if it succeeds, `false` if it fails
      */
     setNoDelay(noDelay?: boolean): boolean;
 
     /**
      * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
      * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
-     * Only available for already connected sockets, will return false otherwise.
+     * Only available for already connected sockets; returns `false` otherwise.
      *
-     * Enabling the keep-alive functionality will set the following socket options:
+     * Enabling the keep-alive functionality sets the following socket options:
      * SO_KEEPALIVE=1
      * TCP_KEEPIDLE=initialDelay
      * TCP_KEEPCNT=10
      * TCP_KEEPINTVL=1
      * @param enable Default: `false`
      * @param initialDelay Default: `0`
-     * @returns true if is able to setNoDelay and false if it fails.
+     * @returns `true` if it succeeds, `false` if it fails
      */
     setKeepAlive(enable?: boolean, initialDelay?: number): boolean;
 

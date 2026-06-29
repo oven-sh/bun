@@ -96,14 +96,14 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
                     }
                     let mode = file_creation.mode;
-                    let parent = match open_parent_beneath(
-                        patch_dir,
-                        file_creation.path,
-                        Some(mode.to_bun_mode()),
-                    ) {
-                        Ok(p) => p,
-                        Err(e) => return Some(e.without_path()),
-                    };
+                    // `mode` describes the created file, not its directories: a
+                    // 0o644 directory is not traversable even by its owner, so
+                    // create missing parents 0o755, as the rename arm does.
+                    let parent =
+                        match open_parent_beneath(patch_dir, file_creation.path, Some(0o755)) {
+                            Ok(p) => p,
+                            Err(e) => return Some(e.without_path()),
+                        };
                     let base =
                         ZBox::from_vec_with_nul(basename_simple(file_creation.path).to_vec());
 

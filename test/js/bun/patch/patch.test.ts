@@ -876,9 +876,12 @@ describe("apply", () => {
     test("still creates new files in a directory the patch itself creates", async () => {
       const { pkgDir } = setup();
 
+      // `new file mode 100644` is what git emits for every non-executable file;
+      // the directories the patch forces into existence must still be traversable
+      // (0o755) rather than inheriting the file's own mode.
       const patch =
         "diff --git a/newdir/sub/new.txt b/newdir/sub/new.txt\n" +
-        "new file mode 100755\n" +
+        "new file mode 100644\n" +
         "index 0000000..e69de29\n" +
         "--- /dev/null\n" +
         "+++ b/newdir/sub/new.txt\n" +
@@ -886,7 +889,13 @@ describe("apply", () => {
         "+hello\n";
 
       await apply(patch, pkgDir);
-      expect(await fs.readFile(join(pkgDir, "newdir", "sub", "new.txt"), "utf8")).toBe("hello\n");
+      const dirMode = (await fs.stat(join(pkgDir, "newdir"))).mode;
+      const fileMode = (await fs.stat(join(pkgDir, "newdir", "sub", "new.txt"))).mode;
+      expect({
+        contents: await fs.readFile(join(pkgDir, "newdir", "sub", "new.txt"), "utf8"),
+        dirOwnerExec: (dirMode & 0o100) !== 0,
+        fileOwnerExec: (fileMode & 0o100) !== 0,
+      }).toEqual({ contents: "hello\n", dirOwnerExec: true, fileOwnerExec: false });
     });
   });
 

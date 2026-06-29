@@ -1,17 +1,6 @@
-// NTFS allows file names that end in a dot or a space, but the Win32 path
-// normalizer (everything reached through CreateFileW and friends) silently
-// strips those characters from the final component unless the path carries
-// the `\\?\` prefix. Bun's `writeFile` opens through NtCreateFile, which does
-// no such normalization, so `writeFile(" a.txt ")` created the literal name
-// while `readFile(" a.txt ")`, `stat`, `unlink`, `rename`, and `existsSync`
-// looked up the stripped one and failed with ENOENT.
-//
-// Absolute drive paths were already resolved to `\\?\C:\...` internally;
-// these tests pin the same treatment for relative paths (resolved against
-// the cwd first), which is what Node does by passing every fs path through
-// `path.toNamespacedPath()`.
-//
-// https://github.com/oven-sh/bun/issues/8836
+// Win32 strips trailing dots and spaces from a path's final component unless
+// it carries the `\\?\` prefix; these tests pin the namespaced handling of
+// relative node:fs paths. https://github.com/oven-sh/bun/issues/8836
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";

@@ -789,6 +789,47 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
     expect(() => db.prepare("SELECT 1")).toThrow(RangeError);
     db.close();
   });
+
+  test("is not carried across close() + open()", () => {
+    const db = new DatabaseSync(":memory:");
+    db.setAuthorizer(() => constants.SQLITE_DENY);
+    expect(() => db.prepare("SELECT 1 AS x")).toThrow(/not authorized/);
+    db.close();
+    // open() does not re-register the authorizer (matches Node): the fresh
+    // connection runs unauthorized until setAuthorizer() is called again.
+    db.open();
+    expect(db.prepare("SELECT 1 AS x").get()).toEqual({ x: 1 });
+    db.setAuthorizer(() => constants.SQLITE_DENY);
+    expect(() => db.prepare("SELECT 1 AS x")).toThrow(/not authorized/);
+    db.close();
+  });
+
+  test("close() releases the authorizer callback for GC", async () => {
+    const N = 50;
+    const dbs: InstanceType<typeof DatabaseSync>[] = [];
+    const refs: WeakRef<object>[] = [];
+    for (let i = 0; i < N; i++) {
+      const db = new DatabaseSync(":memory:");
+      const cb = () => constants.SQLITE_OK;
+      db.setAuthorizer(cb);
+      // Fires the authorizer, proving cb is installed before close() drops it.
+      db.prepare("SELECT 1 AS x");
+      refs.push(new WeakRef(cb));
+      db.close();
+      dbs.push(db);
+    }
+    // WeakRef targets created in a Job survive that Job (the kept-objects
+    // list); cross the boundary before collecting.
+    await Bun.sleep(0);
+    Bun.gc(true);
+    Bun.gc(true);
+    // Load-bearing root: a collected db releases its authorizer regardless,
+    // which would make this test pass without the fix.
+    expect(dbs.length).toBe(N);
+    // A few may be pinned by conservative stack scanning; without the fix
+    // every callback stays rooted by its (still reachable) db.
+    expect(refs.filter(r => r.deref() !== undefined).length).toBeLessThan(N / 2);
+  });
 });
 
 describe("db.limits", () => {

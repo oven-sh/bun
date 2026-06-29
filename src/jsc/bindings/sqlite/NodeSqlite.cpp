@@ -746,6 +746,10 @@ void JSDatabaseSync::closeInternal()
         sqlite3_close_v2(m_db);
         m_db = nullptr;
     }
+    // The authorizer registration dies with the sqlite3* (open() does not
+    // re-register it, matching Node); drop the GC root so the callback and
+    // whatever it closes over can be collected.
+    m_authorizer.clear();
 }
 
 void JSDatabaseSync::deleteTrackedSessions()

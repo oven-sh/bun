@@ -400,6 +400,20 @@ describe.concurrent("import defer", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test("import defer from 'bun:bundle' is an error", async () => {
+      // The `bun:bundle` fast path drops the statement before the phase is
+      // consulted; reject rather than leave the namespace binding
+      // undeclared.
+      const { stderr, exitCode } = await run({
+        "main.js": `
+          import defer * as ns from "bun:bundle";
+          console.log(ns);
+        `,
+      });
+      expect(stderr).toContain('"import defer" cannot be used with "bun:bundle"');
+      expect(exitCode).not.toBe(0);
+    });
+
     test("'export import defer * as ns' is a syntax error", async () => {
       // `export import` in TypeScript is the import-equals form
       // (`export import X = ...`); `export import defer * as` matches no

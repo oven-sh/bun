@@ -616,6 +616,21 @@ describe.concurrent("import source (source phase imports)", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test("import source from 'bun:bundle' is an error", async () => {
+      // The `bun:bundle` fast path in process_import_statement drops the
+      // statement to S::Empty before the phase is consulted; it must
+      // reject rather than leave the source-phase binding undeclared.
+      const { stdout, stderr, exitCode } = await run({
+        "main.js": `
+          import source mod from "bun:bundle";
+          console.log("unreachable", mod);
+        `,
+      });
+      expect(stdout).not.toContain("unreachable");
+      expect(stderr).toContain('"import source" cannot be used with "bun:bundle"');
+      expect(exitCode).not.toBe(0);
+    });
+
     test("import source of a specifier remapped via bunfig [macros] is an error", async () => {
       // The third macro trigger: bunfig `[macros]` per-specifier remapping
       // is read by process_import_statement after the `with { type:

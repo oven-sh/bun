@@ -4097,6 +4097,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // that provides static feature flag checking at bundle time.
         // We handle it here at parse time (similar to macros) rather than at visit time.
         if path.text == b"bun:bundle" {
+            // This fast path also returns `S::Empty` before `stmt.phase` is
+            // read, and `bun:bundle` is a compile-time pseudo-module with
+            // neither a module source nor anything to defer, so reject the
+            // phase forms rather than silently dropping their bindings.
+            if stmt.phase != bun_ast::ImportPhase::Evaluation {
+                let phase_name: &[u8] = match stmt.phase {
+                    bun_ast::ImportPhase::Source => b"\"import source\"",
+                    bun_ast::ImportPhase::Defer => b"\"import defer\"",
+                    bun_ast::ImportPhase::Evaluation => unreachable!(),
+                };
+                self.log().add_range_error_fmt(
+                    Some(self.source),
+                    js_lexer::range_of_identifier(self.source, loc),
+                    format_args!(
+                        "{} cannot be used with \"bun:bundle\"",
+                        bstr::BStr::new(phase_name),
+                    ),
+                );
+                return Err(bun_core::err!("SyntaxError"));
+            }
             // Look for the "feature" import and validate specifiers
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a;
             // loop body only reads from `item`, so a shared borrow suffices and

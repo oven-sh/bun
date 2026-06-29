@@ -99,8 +99,13 @@ fn lower_block_statement_inner(
     }
 
     // Phase 2: for each statement preceding (or equal to) a decl's index,
-    // scan its subtree for a reference to that decl. Passing depth=1 to the
-    // `ref_in_nested_fn_*` walkers makes them match at any nesting level.
+    // scan its subtree for a reference to that decl. Upstream only hoists a
+    // reference when it sits inside a nested function (`fnDepth > 0`) or the
+    // target is a function declaration (`binding.kind === 'hoisted'`), so a
+    // plain forward reference to a let/const is left for EnterSSA to reject.
+    // The `ref_in_nested_fn_*` walkers match at `depth > 0` and increment on
+    // function entry, so the nested-function filter is a start depth of 0;
+    // HoistedFunction targets start at 1 to match at any nesting level.
     // Record the statement index of the first reference so DeclareContext is
     // emitted immediately before that statement (matching upstream); emitting
     // it any earlier would extend the variable's mutable range across
@@ -111,8 +116,9 @@ fn lower_block_statement_inner(
         let mut k = 0;
         while k < decls.len() {
             let (decl_i, target, loc, kind) = decls[k];
+            let depth = u32::from(kind == InstructionKind::HoistedFunction);
             let found = if decl_i > i {
-                ref_in_nested_fn_stmt(builder, target, stmt, 1)
+                ref_in_nested_fn_stmt(builder, target, stmt, depth)
             } else if decl_i == i {
                 // Self-reference: only the initializer expressions of this
                 // statement count (the binding pattern itself is the def).
@@ -120,9 +126,9 @@ fn lower_block_statement_inner(
                     Data::SLocal(local) => local.decls.iter().any(|d| {
                         d.value
                             .as_ref()
-                            .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, 1))
+                            .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
                     }),
-                    Data::SFunction(f) => ref_in_nested_fn_func(builder, target, &f.func, 1),
+                    Data::SFunction(f) => ref_in_nested_fn_func(builder, target, &f.func, depth),
                     _ => false,
                 }
             } else {

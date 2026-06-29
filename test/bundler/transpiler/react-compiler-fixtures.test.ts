@@ -205,6 +205,42 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // `__proto__: null`: a fixture named "constructor" exists.
 const TODO: Record<string, string> = Object.assign(Object.create(null), {});
 
+// `minify: { syntax: true }` runs the parser's visit-phase folding and the
+// nested-block statement mangler before the React Compiler sees the function
+// body, so the compiler is handed a different (but equivalent) AST. Per-function
+// memo SLOT counts are allowed to differ between the two passes: the different
+// shape can merge or split reactive scopes. What must never change is the NUMBER
+// of memoized functions — a function the compiler memoizes without minify but
+// bails out of with minify has silently lost memoization.
+//
+// Fixtures where minify legitimately (or known-divergently) changes the number
+// of compiled functions are recorded here with the expected minified count and
+// the reason; a compiler change that alters one of these fails the test and
+// forces this record to be re-derived.
+// `__proto__: null`: a fixture named "constructor" exists.
+const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buildError?: true; reason: string }> =
+  Object.assign(Object.create(null), {
+    // minify.syntax drops the unreferenced name from `function formatWithUnit() {}`,
+    // making it eligible for the compiler's function-outlining pass (upstream only
+    // outlines anonymous function expressions). The outlined module-level function
+    // is referentially stable with no memo slot, so `_c(1)` is legitimately gone.
+    // This is better output, not a bailout.
+    "new-mutability/repro-destructure-from-prop-with-default-value": {
+      compiledFunctions: 0,
+      reason: "anonymized function expression becomes outlineable; 0 slots needed",
+    },
+    // minify.syntax constant-folds `const x = 0` into the `useMemo` dependency
+    // array, turning `[x]` into `[0]`; the manual-memoization parser only accepts
+    // identifier / member expressions as dependencies, so it errors. This is a
+    // real minify-vs-compiler ordering gap, but it lives in the parser's
+    // visit-phase constant folding, not the compiler.
+    "exhaustive-deps/exhaustive-deps-allow-constant-folded-values": {
+      compiledFunctions: 0,
+      buildError: true,
+      reason: "constant folding rewrites the useMemo deps array entry `x` to the literal `0`",
+    },
+  });
+
 type Fixture = {
   name: string;
   inputPath: string;
@@ -277,15 +313,18 @@ const filtered = FILTER ? fixtures.filter(f => f.name.includes(FILTER)) : fixtur
 // included so a fix flips them to "passing" without a harness change.
 const compilable = filtered.filter(f => f.skip == null);
 
+type Compiled = Map<string, { output: string } | { error: string }>;
 // fixture name -> compiled JS text, or a build-error message.
-const compiled = new Map<string, { output: string } | { error: string }>();
+const compiled: Compiled = new Map();
+// Same corpus, built a second time with `minify: { syntax: true }`.
+const compiledMinify: Compiled = new Map();
 
 // Bun.build aborts the print stage when ANY entrypoint errors, so we can't get
 // per-file output from a partially-failing batch. Instead: build, record the
 // erroring files from `result.logs`, drop them, and rebuild until the batch is
 // clean. In practice this converges in 1-2 rounds (only a handful of fixtures
 // are genuine parse errors).
-async function compileAll(): Promise<void> {
+async function compileInto(into: Compiled, minify: false | { syntax: true }): Promise<void> {
   const byInput = new Map<string, Fixture>();
   for (const f of compilable) byInput.set(f.inputPath, f);
   let pending = new Set(byInput.keys());
@@ -301,6 +340,7 @@ async function compileAll(): Promise<void> {
       splitting: false,
       external: ["*"],
       treeShaking: false,
+      minify,
       // @ts-expect-error — wired in JSBundler.rs but not yet in bun-types
       reactCompiler: true,
       reactCompilerParseTestPragmas: true,
@@ -316,7 +356,7 @@ async function compileAll(): Promise<void> {
         // Output path is relative to `root` with a `.js` extension; strip both
         // to recover the fixture stem.
         let stem = artifact.path.replace(/^\.\//, "").replace(/\.js$/, "");
-        compiled.set(stem, { output: await artifact.text() });
+        into.set(stem, { output: await artifact.text() });
       }
       return;
     }
@@ -328,9 +368,9 @@ async function compileAll(): Promise<void> {
       const file = (log as any).position?.file as string | undefined;
       if (!file || !pending.has(file)) continue;
       const f = byInput.get(file)!;
-      const prev = compiled.get(f.name);
+      const prev = into.get(f.name);
       const msg = String(log.message ?? log);
-      compiled.set(f.name, { error: prev && "error" in prev ? prev.error + "\n" + msg : msg });
+      into.set(f.name, { error: prev && "error" in prev ? prev.error + "\n" + msg : msg });
       pending.delete(file);
       removed++;
     }
@@ -341,8 +381,15 @@ async function compileAll(): Promise<void> {
   }
 }
 
+async function compileAll(): Promise<void> {
+  await compileInto(compiled, false);
+  await compileInto(compiledMinify, { syntax: true });
+}
+
 describe("react-compiler upstream fixtures", () => {
-  beforeAll(compileAll);
+  // Two full-corpus `Bun.build()` passes; the default 5s hook timeout is tight
+  // on a cold debug binary.
+  beforeAll(compileAll, { timeout: 120_000 });
 
   test("fixture corpus is present", () => {
     // Guards against an accidentally-empty sync.
@@ -434,6 +481,47 @@ describe("react-compiler upstream fixtures", () => {
         fixture: name,
         slotCounts: want,
         importsCompilerRuntime: wantRuntime,
+      });
+    });
+
+    // Running the same corpus with `minify: { syntax: true }` must not change
+    // which functions the React Compiler accepts. Each `_c(N)` call in the
+    // output is one memoized function; that count must match the non-minified
+    // pass. A function that is memoized without minify but not with it has
+    // silently lost memoization — exactly the failure mode `minify.syntax` is
+    // never allowed to introduce.
+    fn(skip ? `minify.syntax SKIP (${skip})` : todo ? `minify.syntax TODO (${todo})` : "minify.syntax", async () => {
+      const plain = compiled.get(name);
+      if (plain == null) throw new Error(`no Bun.build result recorded for fixture "${name}"`);
+      // The non-minified build already errored: the `compile` test owns that
+      // assertion and there is no baseline to compare the minified pass to.
+      if ("error" in plain) return;
+
+      const min = compiledMinify.get(name);
+      if (min == null) throw new Error(`no minify Bun.build result recorded for fixture "${name}"`);
+      const minOutput = "output" in min ? min.output : "";
+      const minBuildError = "error" in min ? min.error : null;
+      const divergence = MINIFY_SYNTAX_DIVERGENCE[name];
+
+      if (divergence?.buildError) {
+        // A known case where minify.syntax turns a clean build into a build
+        // error. Assert it still errors so the entry is removed once fixed.
+        expect({ fixture: name, reason: divergence.reason, minifyBuildErrored: minBuildError != null }).toEqual({
+          fixture: name,
+          reason: divergence.reason,
+          minifyBuildErrored: true,
+        });
+        return;
+      }
+
+      expect({
+        fixture: name,
+        minifyBuildError: minBuildError,
+        minifyCompiledFunctions: slotCounts(minOutput).length,
+      }).toEqual({
+        fixture: name,
+        minifyBuildError: null,
+        minifyCompiledFunctions: divergence ? divergence.compiledFunctions : slotCounts(plain.output).length,
       });
     });
   });

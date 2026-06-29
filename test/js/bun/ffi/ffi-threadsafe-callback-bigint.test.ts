@@ -40,7 +40,7 @@ test.skipIf(!canRun)(
       const cmd = ["cc", "-shared", "-fPIC", "-o", libPath];
       if (!isMacOS) cmd.push("-pthread");
       cmd.push(path.join(srcDir, "threadsafe-callback-bigint.c"));
-      await using cc = Bun.spawn({ cmd, stderr: "pipe", stdout: "pipe" });
+      await using cc = Bun.spawn({ cmd, stderr: "pipe", stdout: "ignore" });
       const [stderr, exitCode] = await Promise.all([cc.stderr.text(), cc.exited]);
       if (exitCode !== 0) {
         throw new Error("failed to compile threadsafe-callback-bigint.c: " + stderr);

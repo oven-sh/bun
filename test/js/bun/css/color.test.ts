@@ -1,6 +1,6 @@
 import { color } from "bun";
 import { describe, expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { isDebug, withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];
 
@@ -237,7 +237,8 @@ test("0 args", () => {
   );
 });
 
-test("fuzz ansi256", () => {
+// 2^24 color() calls take minutes on debug builds, past the per-test timeout.
+test.skipIf(isDebug)("fuzz ansi256", () => {
   withoutAggressiveGC(() => {
     for (let i = 0; i < 256; i++) {
       const iShifted = i << 16;

@@ -2678,8 +2678,13 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     // already-closed state — throwing here would turn a benign
     // `for (r of stmt.iterate()) { db.close(); break; }` into an exception.
     // Matches Node, and this PR's own [Symbol.dispose]() convention.
+    // A generation-stale iterator's cursor belongs to a newer
+    // run/get/all/iterate, so it has nothing of its own to reset; resetting
+    // anyway would silently rewind the live iterator back to the first row.
+    // (Node's return() misses this check and duplicates rows; not ported.)
     JSStatementSync* stmt = self->statement();
-    if (!self->done() && stmt && !stmt->isFinalized()) {
+    if (!self->done() && stmt && !stmt->isFinalized()
+        && self->capturedGeneration() == stmt->resetGeneration()) {
         sqlite3_reset(stmt->statement());
     }
     self->setDone();

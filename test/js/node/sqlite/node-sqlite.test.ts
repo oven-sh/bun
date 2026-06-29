@@ -533,6 +533,28 @@ describe("StatementSync.prototype.iterate()", () => {
     // Explicit return() on the now-finalized iterator likewise succeeds.
     expect(iter.return()).toEqual({ __proto__: null, done: true, value: null });
   });
+
+  test("a generation-stale iterator's return() does not rewind the live iterator", () => {
+    const db = setup();
+    const stmt = db.prepare("SELECT n FROM t ORDER BY n");
+    let it2!: ReturnType<typeof stmt.iterate>;
+    // `break` fires IteratorClose, which calls it1.return(). By then it1 is
+    // generation-stale (it2's iterate() reset the statement), so it must not
+    // sqlite3_reset() the cursor it2 now owns.
+    for (const _row of stmt.iterate()) {
+      it2 = stmt.iterate();
+      expect(it2.next().value.n).toBe(1);
+      break;
+    }
+    // Node v26 re-yields row 1 here (its return() lacks the generation
+    // guard); that is silent data corruption, not a semantic, so we do not
+    // port it.
+    expect(it2.next().value.n).toBe(2);
+    expect(it2.next().value.n).toBe(3);
+    expect(it2.next().value.n).toBe(4);
+    expect(it2.next().done).toBe(true);
+    db.close();
+  });
 });
 
 describe("Session / changeset", () => {

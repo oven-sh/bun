@@ -40,7 +40,7 @@ const sqliteResults = await sqlite`
 - SASL (SCRAM-SHA-256), MD5, and Clear Text authentication
 - Connection timeouts
 - Returning rows as data objects, arrays of arrays, or Buffer
-- Binary protocol support
+- Binary protocol support makes it faster
 - TLS support (and auth mode)
 - Automatic configuration with environment variables
 
@@ -392,7 +392,7 @@ await sql`SELECT * FROM products WHERE ids = ANY(${sql.array([1, 2, 3])})`;
 // Generates: SELECT * FROM products WHERE ids = ANY(ARRAY[1, 2, 3])
 ```
 
-<Note>`sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements are not supported.</Note>
+<Note>`sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported yet.</Note>
 
 ---
 
@@ -569,7 +569,7 @@ DATABASE_URL="sqlite://./app.db"
 DATABASE_URL="file:///absolute/path/to/db.sqlite"
 ```
 
-**Note:** PostgreSQL-specific environment variables (`POSTGRES_URL`, `PGHOST`, etc.) are ignored when using SQLite.
+**Note:** PostgreSQL-specific environment variables such as `POSTGRES_URL` and `PGHOST` are ignored when using SQLite.
 
 ---
 
@@ -991,14 +991,14 @@ Queries still use the "extended" protocol, but run as [unnamed prepared statemen
 
 - Parameter binding is still safe against SQL injection
 - Each query is parsed and planned from scratch by the server
-- Queries will not be [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
+- Queries are not [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
 
 You might want to use `prepare: false` when:
 
 - Using PGBouncer in transaction mode (though since PGBouncer 1.21.0, protocol-level named prepared statements are supported when configured properly)
 - Debugging query execution plans
 - Working with dynamic SQL where query plans need to be regenerated frequently
-- More than one command per query will not be supported (unless you use `sql``.simple()`)
+- Only one command per query is supported (unless you use `sql``.simple()`)
 
 Disabling prepared statements can slow down queries that run frequently with different parameters, since the server parses and plans each one from scratch.
 
@@ -1257,28 +1257,28 @@ Bun sends client information to MySQL for monitoring:
 
 MySQL types are converted to JavaScript types:
 
-| MySQL Type                              | JavaScript Type          | Notes                                                                                                |
-| --------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
-| INT, TINYINT, MEDIUMINT                 | number                   | Within safe integer range                                                                            |
-| BIGINT                                  | string, number or BigInt | If the value fits in i32/u32 size will be number otherwise string or BigInt Based on `bigint` option |
-| DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                                |
-| FLOAT, DOUBLE                           | number                   |                                                                                                      |
-| DATE                                    | Date                     | JavaScript Date object                                                                               |
-| DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                                |
-| TIME                                    | number                   | Total of microseconds                                                                                |
-| YEAR                                    | number                   |                                                                                                      |
-| CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                      |
-| TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                      |
-| TINY BLOB, MEDIUM BLOB, BLOG, LONG BLOB | string                   | BLOB Types are alias for TEXT types                                                                  |
-| JSON                                    | object/array             | Automatically parsed                                                                                 |
-| BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                      |
-| GEOMETRY                                | string                   | Geometry data                                                                                        |
+| MySQL Type                              | JavaScript Type          | Notes                                                                                            |
+| --------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
+| INT, TINYINT, MEDIUMINT                 | number                   | Within safe integer range                                                                        |
+| BIGINT                                  | string, number or BigInt | number if the value fits in i32/u32, otherwise string or BigInt depending on the `bigint` option |
+| DECIMAL, NUMERIC                        | string                   | To preserve precision                                                                            |
+| FLOAT, DOUBLE                           | number                   |                                                                                                  |
+| DATE                                    | Date                     | JavaScript Date object                                                                           |
+| DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                            |
+| TIME                                    | number                   | Total of microseconds                                                                            |
+| YEAR                                    | number                   |                                                                                                  |
+| CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                  |
+| TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                  |
+| TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | string                   | BLOB types are aliases for the TEXT types                                                        |
+| JSON                                    | object/array             | Automatically parsed                                                                             |
+| BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
+| GEOMETRY                                | string                   | Geometry data                                                                                    |
 
 `DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC** — the `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. This matches how values are written (a bound `Date` stores its UTC components). The same applies to PostgreSQL's `timestamp` (without time zone); `timestamptz` carries an explicit offset and is unaffected.
 
 #### Differences from PostgreSQL
 
-While the API is unified, there are some behavioral differences:
+The API is unified, but behavior differs:
 
 1. **Parameter placeholders**: MySQL uses `?` internally but Bun converts `$1, $2` style automatically
 2. **RETURNING clause**: MySQL doesn't support RETURNING; use `result.lastInsertRowid` or a separate SELECT
@@ -1392,7 +1392,7 @@ try {
 
 ## Why not just use an existing library?
 
-npm packages like postgres.js, pg, and node-postgres can be used in Bun too. They're great options.
+You can use npm packages like postgres.js, pg, and node-postgres in Bun too. They're great options.
 
 Two reasons why:
 

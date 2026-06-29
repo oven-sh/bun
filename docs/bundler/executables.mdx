@@ -243,7 +243,7 @@ The segments of the `--target` value can appear in any order, as long as they're
   On x64 platforms, Bun uses SIMD optimizations that require a CPU with AVX2 instructions. The `-baseline` build of Bun
   is for older CPUs without them. The Bun installer detects which version to use, but when cross-compiling you might not
   know the target CPU. This mostly matters on Windows x64 and Linux x64, rarely on Darwin x64. If you or your users see
-  `"Illegal instruction"` errors, use the baseline version.
+  `"Illegal instruction"` errors, you might need to use the baseline version.
 </Warning>
 
 ---

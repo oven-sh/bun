@@ -2795,11 +2795,9 @@ server.listen(0, "127.0.0.1", () => {
 // carrying the "close" connection option, must not process anything pipelined
 // behind it, and should send a "close" connection option back.
 describe("Connection: close request header", () => {
-  /**
-   * Connects, writes `payload`, and reads until the server sends FIN or
-   * `step(raw, sock)` returns true (then the client half-closes first).
-   * `serverClosed` is true only when the server FIN'd before the client did.
-   */
+  /* Connects, writes `payload`, and reads until the server FINs or `step(raw,
+   * sock)` returns true (the client then half-closes first); `serverClosed` is
+   * true only when the server FIN'd before the client did. */
   function exchange(
     port: number,
     payload: string,
@@ -3075,6 +3073,54 @@ describe("Connection: close request header", () => {
     } finally {
       await new Promise<void>(resolve => nodeServer.close(() => resolve()));
     }
+  });
+
+  // An HTMLBundle route queues the first request while its bundle builds and
+  // resumes it from the completion task: outside any onData frame and uncorked,
+  // so uws_res_end_without_body must perform the close itself.
+  it("closes after an async, uncorked end (HTMLBundle build failure)", async () => {
+    using dir = tempDir("serve-close-htmlbundle", {
+      "index.html": `<!doctype html><html><head><script type="module" src="./app.ts"></script></head><body>hi</body></html>`,
+      "app.ts": `this is a syntax error {{{ ]]]`,
+      "server.fixture.ts": `
+        import index from "./index.html";
+        const server = Bun.serve({
+          port: 0,
+          // Keep uWS's ~10s default idle timeout from masking a missing close.
+          idleTimeout: 60,
+          development: false,
+          routes: { "/": index },
+          fetch: () => new Response("fallback"),
+        });
+        console.log(server.port);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Drain stderr concurrently; it carries the (expected) bundle build errors.
+    const stderrText = proc.stderr.text();
+    let portLine = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stdout) {
+      portLine += decoder.decode(chunk);
+      if (portLine.includes("\n")) break;
+    }
+    const port = Number(portLine.trim());
+    if (!(port > 0)) throw new Error(`fixture printed no port: ${JSON.stringify(portLine)}\n${await stderrText}`);
+    const { raw, serverClosed } = await exchange(
+      port,
+      `GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+    );
+    expect({ status: raw.split("\r\n")[0], closeHeader: hasCloseHeader(raw), serverClosed }).toEqual({
+      status: "HTTP/1.1 500 Build Failed",
+      closeHeader: true,
+      serverClosed: true,
+    });
   });
 });
 

@@ -1356,6 +1356,8 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      /* Like internalEnd(): the final close-flagged response must close the socket. */
+      uwsRes->uncorkAndCloseIfNeeded(data, false);
     }
     else
     {
@@ -1381,6 +1383,8 @@ extern "C"
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      /* Like internalEnd(): the final close-flagged response must close the socket. */
+      uwsRes->uncorkAndCloseIfNeeded(data, false);
     }
   }
 

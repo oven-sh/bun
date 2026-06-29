@@ -77,16 +77,19 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   hostnameMaxLen = 255,
   // protocols that can allow "unsafe" and "unwise" chars.
   unsafeProtocol = {
+    __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that never have a hostname.
   hostlessProtocol = {
+    __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that always contain a // bit.
   slashedProtocol = {
+    __proto__: null,
     http: true,
     https: true,
     ftp: true,

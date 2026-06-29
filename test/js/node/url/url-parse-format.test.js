@@ -1076,6 +1076,45 @@ describe("url.parse then url.format", () => {
     );
   });
 
+  test("resolveObject treats 'constructor' as an unknown protocol", () => {
+    const base = url.parse("constructor://user@h0st:81/aa/bb?q#f");
+    base.protocol = "constructor";
+    const actual = base.resolveObject("../cc");
+    const expected = Object.assign(new url.Url(), {
+      protocol: "constructor",
+      slashes: true,
+      auth: "user",
+      host: "h0st:81",
+      port: null,
+      hostname: "h0st:81",
+      hash: null,
+      search: null,
+      query: null,
+      pathname: "/cc",
+      path: "/cc",
+      href: "constructor://user@h0st:81/cc",
+    });
+    assert.deepStrictEqual(actual, expected);
+  });
+
+  test("url.parse is unaffected by Object.prototype pollution", () => {
+    Object.prototype["evil:"] = true;
+    Object.prototype["evil"] = true;
+    Object.prototype["weird:"] = true;
+    try {
+      const slashed = url.parse("evil://host/p");
+      assert.strictEqual(slashed.slashes, true);
+      assert.strictEqual(slashed.host, "host");
+      assert.strictEqual(slashed.pathname, "/p");
+      assert.strictEqual(slashed.href, "evil://host/p");
+      assert.strictEqual(url.parse("weird:ja vasc'ript:").href, "weird:ja%20vasc%27ript:");
+    } finally {
+      delete Object.prototype["evil:"];
+      delete Object.prototype["evil"];
+      delete Object.prototype["weird:"];
+    }
+  });
+
   // TODO: Support parsing this.
   test.todo("xss", () => {
     const parsed = url.parse("http://nodejs.org/").resolveObject("jAvascript:alert(1);a=\x27@white-listed.com\x27");

@@ -175,7 +175,8 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
     // Per-platform truth used by both `read()` and `write()`. The spec's
     // "web "-prefixed custom formats are not supported.
     static supports(type): boolean {
-      return isSupported(type);
+      // WebIDL `DOMString` argument conversion (Symbols throw).
+      return isSupported(`${type}`);
     }
   }
 
@@ -319,8 +320,11 @@ export function createClipboard(EventTargetConstructor, EventConstructor) {
           throw notAllowed("The system clipboard is not available.");
         }
       } else {
-        // The helpers can only own one representation at a time, so only the
-        // first one is written (a documented platform limitation).
+        // The one-shot helpers can only own a single representation, so a
+        // multi-type item rejects instead of silently dropping the rest.
+        if (types.length > 1) {
+          throw notAllowed("Writing more than one representation per item is not supported on this platform.");
+        }
         await helperRun(true, new Uint8Array(await blobs[0].arrayBuffer()), types[0], false);
       }
       fireClipboardEvent("copy");

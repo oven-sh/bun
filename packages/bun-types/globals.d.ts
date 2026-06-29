@@ -1532,9 +1532,10 @@ interface Clipboard extends EventTarget {
    * Replace the system clipboard with the representations of one
    * `ClipboardItem` (every type `ClipboardItem.supports()` reports).
    *
-   * Rejects with a `"NotAllowedError"` `DOMException` if the item has no
-   * supported representation, if more than one item is passed, or when the
-   * platform clipboard cannot be reached.
+   * Rejects with a `"NotAllowedError"` `DOMException` if any representation
+   * is unsupported, if more than one item is passed, on Linux/BSD if the
+   * item has more than one representation (the helper programs can only own
+   * one), or when the platform clipboard cannot be reached.
    */
   write(data: ClipboardItem[]): Promise<void>;
 }
@@ -1595,6 +1596,13 @@ declare var ClipboardItem: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 /**
+ * Bun does not implement `DataTransfer`. This empty declaration only gives
+ * the name a type, so `ClipboardEvent["clipboardData"]` has the same
+ * declared type (`DataTransfer | null`) with and without `lib.dom`.
+ */
+interface DataTransfer {}
+
+/**
  * The `copy`/`cut`/`paste` event type.
  * [MDN](https://developer.mozilla.org/en-US/docs/Web/API/ClipboardEvent)
  *
@@ -1602,11 +1610,12 @@ declare var ClipboardItem: Bun.__internal.UseLibDomIfAvailable<
  * successful write/read operations (there is no document, focused element,
  * or user gesture in a runtime), and never fires `"cut"`. The class is also
  * constructible, so synthetic events can be dispatched through any
- * `EventTarget`. `clipboardData` is always `null` because Bun does not
- * implement `DataTransfer`.
+ * `EventTarget`. `clipboardData` is always `null` at runtime because Bun
+ * does not implement `DataTransfer`.
  */
 interface ClipboardEvent extends Event {
-  readonly clipboardData: null;
+  /** Always `null` in Bun (no `DataTransfer` implementation). */
+  readonly clipboardData: DataTransfer | null;
 }
 declare var ClipboardEvent: Bun.__internal.UseLibDomIfAvailable<
   "ClipboardEvent",
@@ -1614,7 +1623,12 @@ declare var ClipboardEvent: Bun.__internal.UseLibDomIfAvailable<
     prototype: ClipboardEvent;
     new (
       type: string,
-      eventInitDict?: { bubbles?: boolean; cancelable?: boolean; composed?: boolean; clipboardData?: null },
+      eventInitDict?: {
+        bubbles?: boolean;
+        cancelable?: boolean;
+        composed?: boolean;
+        clipboardData?: DataTransfer | null;
+      },
     ): ClipboardEvent;
   }
 >;

@@ -96,7 +96,13 @@ describe("interface shape", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "true", exitCode: 0 });
+    // `stderr` is unconstrained (debug builds emit benign warnings) but is
+    // part of the asserted object so a failure diff shows it.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "true",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 
   // WebIDL: the interface objects are writable globals, so polyfills and test
@@ -167,11 +173,14 @@ describe("ClipboardItem", () => {
     await expectDOMException(item.getType("image/png"), "NotFoundError");
   });
 
-  test("supports() tells the per-platform truth", () => {
+  test("supports() tells the per-platform truth and coerces per WebIDL", () => {
     expect(ClipboardItem.supports("text/plain")).toBe(true);
     expect(ClipboardItem.supports("image/png")).toBe(true);
     expect(ClipboardItem.supports("text/html")).toBe(process.platform !== "win32");
     expect(ClipboardItem.supports("application/x-bun-custom")).toBe(false);
+    // WebIDL DOMString conversion: stringifiable objects work, Symbols throw.
+    expect(ClipboardItem.supports({ toString: () => "text/plain" } as unknown as string)).toBe(true);
+    expect(() => ClipboardItem.supports(Symbol("x") as unknown as string)).toThrow(TypeError);
   });
 
   test("accessors brand-check their receiver", () => {
@@ -257,10 +266,12 @@ describe("read / write", () => {
     }
     try {
       // A unique token makes an unrelated process racing the clipboard a
-      // visible mismatch instead of a false pass.
+      // visible mismatch instead of a false pass. Multi-representation items
+      // are native-only: the POSIX helpers can hold one representation.
       const token = `bun clipboard read/write ${Date.now()} ${Math.random()}`;
       const types: Record<string, string | Blob> = { "text/plain": token };
-      const withHtml = ClipboardItem.supports("text/html");
+      const multiRep = process.platform === "darwin" || process.platform === "win32";
+      const withHtml = multiRep && ClipboardItem.supports("text/html");
       if (withHtml) types["text/html"] = `<b>${token}</b>`;
       await navigator.clipboard.write([new ClipboardItem(types)]);
 
@@ -370,8 +381,13 @@ describe("readText / writeText", () => {
   // `process.platform` is inlined at build time, so the helper branch does
   // not exist in macOS/Windows builds (they use the in-process pasteboard).
   test.skipIf(!isLinux)("the helper path round-trips through a PATH-shimmed xclip", async () => {
+    // `xsel`/`wl-*` are shadowed by always-failing stubs so a real helper on
+    // the host can never serve (or pollute) the round-trip.
     using dir = tempDir("clipboard-helper", {
       "xclip": `#!/bin/sh\nif [ -z "$CLIP_STATE_FILE" ]; then exit 2; fi\ncase "$*" in\n  *-out*) if [ -f "$CLIP_STATE_FILE" ]; then cat "$CLIP_STATE_FILE"; fi ;;\n  *) cat > "$CLIP_STATE_FILE" ;;\nesac\n`,
+      "xsel": `#!/bin/sh\nexit 7\n`,
+      "wl-paste": `#!/bin/sh\nexit 7\n`,
+      "wl-copy": `#!/bin/sh\nexit 7\n`,
       "main.js": `
         const { existsSync } = require("node:fs");
         const events = [];
@@ -380,10 +396,14 @@ describe("readText / writeText", () => {
         const token = "helper-path \\u2702 " + Date.now();
         await navigator.clipboard.writeText(token);
         const back = await navigator.clipboard.readText();
-        console.log(JSON.stringify({ ok: back === token, helperRan: existsSync(process.env.CLIP_STATE_FILE), events }));
+        // The one-shot helpers hold one representation: multi-type items reject.
+        const multi = await navigator.clipboard
+          .write([new ClipboardItem({ "text/plain": "a", "text/html": "<b>a</b>" })])
+          .then(() => null, e => e.name);
+        console.log(JSON.stringify({ ok: back === token, helperRan: existsSync(process.env.CLIP_STATE_FILE), events, multi }));
       `,
     });
-    chmodSync(join(String(dir), "xclip"), 0o755);
+    for (const helper of ["xclip", "xsel", "wl-paste", "wl-copy"]) chmodSync(join(String(dir), helper), 0o755);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       cwd: String(dir),
@@ -397,8 +417,9 @@ describe("readText / writeText", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({
-      stdout: JSON.stringify({ ok: true, helperRan: true, events: ["copy", "paste"] }),
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ ok: true, helperRan: true, events: ["copy", "paste"], multi: "NotAllowedError" }),
+      stderr: expect.any(String),
       exitCode: 0,
     });
   });

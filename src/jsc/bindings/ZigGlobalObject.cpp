@@ -1662,8 +1662,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobal
 
 // Calls the `Clipboard.ts` builtin to build `{ Clipboard, ClipboardItem,
 // ClipboardEvent, instance }`, handing it the real `EventTarget` and `Event`
-// constructors so reassigning those globals can't change what the classes
-// extend. nullptr ⇔ the builtin threw.
+// constructors (so reassigned globals are moot). nullptr ⇔ the builtin threw.
 static JSC::JSObject* createClipboardObjects(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

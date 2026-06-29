@@ -551,10 +551,9 @@ int64_t bun_coregraphics_clipboard_change_count()
 }
 
 // ── NSPasteboard reader / writer for `navigator.clipboard` ─────────────────
-// Same two-phase out=nullptr probe protocol as the image reader above, but
-// parameterised over the UTI (the Rust caller owns the MIME → UTI map); the
-// pasteboard server auto-promotes legacy text flavours and converts images to
-// `public.png` on demand, so one `dataForType:` per UTI covers any source app.
+// Same two-phase out=nullptr probe as the image reader above, parameterised
+// over the UTI; the pasteboard server promotes legacy flavours and converts
+// images to `public.png` on demand, so one `dataForType:` per UTI suffices.
 int32_t bun_coregraphics_clipboard_read_type(const char* uti, uint8_t* out, size_t* out_len)
 {
     auto s = load();

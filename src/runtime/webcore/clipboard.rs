@@ -391,10 +391,9 @@ mod platform {
         false
     }
 
-    /// Copies a locked HGLOBAL's contents; `text` trims to the first NUL of a
-    /// UTF-16 payload and converts. Binary payloads keep `GlobalSize`'s length
-    /// (it can over-report by allocation granularity — the Win32 clipboard has
-    /// no exact-length channel, and PNG consumers tolerate trailing slack).
+    /// Copies a locked HGLOBAL: `text` trims at the first NUL and converts
+    /// from UTF-16; binary payloads keep `GlobalSize`'s length, which can
+    /// over-report by allocation slack (Win32 has no exact-length channel).
     fn copy_global(h: *mut c_void, text: bool) -> Result<Option<Vec<u8>>, Unavailable> {
         // SAFETY: `h` is owned by the clipboard for as long as it stays open;
         // we only read it before `CloseClipboard`.

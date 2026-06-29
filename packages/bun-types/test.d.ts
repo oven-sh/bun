@@ -1899,7 +1899,7 @@ declare module "bun:test" {
   }
 
   /**
-   * Object representing an asymmetric matcher obtained by an static call to expect like `expect.anything()`, `expect.stringContaining("...")`, etc.
+   * An asymmetric matcher returned by a static `expect` method such as `expect.anything()` or `expect.stringContaining("...")`.
    */
   // Defined as an alias of `any` so that it does not trigger any type mismatch
   export type AsymmetricMatcher = any;
@@ -1920,8 +1920,8 @@ declare module "bun:test" {
     Omit<AsymmetricMatchers, keyof AsymmetricMatchersBuiltin>;
 
   /**
-   * If the types has been defined through declaration merging, enforce it.
-   * Otherwise enforce the generic custom matcher signature.
+   * If a matcher's type has been defined through declaration merging, enforces it.
+   * Otherwise enforces the generic custom matcher signature.
    */
   export type ExpectExtendMatchers<M> = {
     [k in keyof M]: k extends keyof CustomMatchersDetected
@@ -2148,13 +2148,13 @@ declare module "bun:test" {
        */
       contexts: Array<ThisParameterType<T>>;
       /**
-       * List of the call order indexes of the mock. Jest is indexing the order of
-       * invocations of all mocks in a test file. The index is starting with `1`.
+       * List of the call order indexes of the mock. Invocation order is indexed
+       * across all mocks in a test file, starting at `1`.
        */
       invocationCallOrder: number[];
       /**
-       * List of the call arguments of the last call that was made to the mock.
-       * If the function was not called, it will return `undefined`.
+       * Call arguments of the last call made to the mock, or `undefined` if the
+       * mock has not been called.
        */
       lastCall?: Parameters<T>;
       /**
@@ -2306,11 +2306,11 @@ declare module "bun:test" {
 
     export interface Replaced<T = unknown> {
       /**
-       * Restore property to its original value known at the time of mocking.
+       * Restores the property to the value it had when it was mocked.
        */
       restore(): void;
       /**
-       * Change the value of the property.
+       * Changes the value of the property.
        */
       replaceValue(value: T): this;
     }

@@ -844,6 +844,28 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
+  // https://github.com/oven-sh/bun/issues/30084
+  itBundled("compile/ImportMetaMainOptionalChain", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        import { isModuleMain } from './sub/mod';
+        // Use toString on an arrow so we can observe what the transpiler folded.
+        // With --compile, optional chain now folds to 'true' for the entry and
+        // 'false' for any other module.
+        console.log((() => import.meta?.main).toString().includes('true'));
+        console.log((() => !import.meta?.main).toString().includes('false'));
+        console.log((() => import.meta?.main).toString().includes('import.meta'));
+        console.log(isModuleMain);
+      `,
+      "/sub/mod.ts": /* js */ `
+        // Non-entry module: import.meta?.main must fold to false here.
+        export const isModuleMain = (() => import.meta?.main).toString().includes('false');
+      `,
+    },
+    run: { stdout: "true\ntrue\nfalse\ntrue" },
+  });
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

@@ -1434,7 +1434,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        if e_.optional_chain.is_none() {
+        // `import.meta` is never nullish, so `import.meta?.x` is equivalent to
+        // `import.meta.x`; the optional chain is a no-op and the rewrite is safe.
+        let target_is_always_object = matches!(e_.target.data, Data::EImportMeta(..));
+
+        if e_.optional_chain.is_none() || target_is_always_object {
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createServer } from "node:http";
 import net from "net";
 
 // CVE-2020-8287 style request smuggling tests
@@ -1489,5 +1490,31 @@ describe("Host header field value validation", () => {
     const rejected = await sendRawRequest(server, "GET / HTTP/1.1\r\nHost: [::1]:3000?q\r\n\r\n");
     expect(rejected).toContain("HTTP/1.1 400");
     expect(rejected).not.toContain("HTTP/1.1 200");
+  });
+
+  test.each([
+    [" \t foo\tcom\t", "foo\tcom"],
+    [" example com ", "example com"],
+  ])("a node:http server serves a request whose raw Host header value is %j", async (raw, received) => {
+    const server = createServer((req, res) => {
+      res.end(String(req.headers.host));
+    });
+    try {
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { port } = server.address() as { port: number };
+      const response = await new Promise<string>((resolve, reject) => {
+        const client = net.connect(port, "127.0.0.1");
+        const chunks: Buffer[] = [];
+        client.on("error", reject);
+        client.on("data", chunk => chunks.push(chunk));
+        client.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+        client.write(`GET / HTTP/1.1\r\nHost:${raw}\r\nConnection: close\r\n\r\n`);
+      });
+      expect(response).toContain("HTTP/1.1 200");
+      const body = response.slice(response.indexOf("\r\n\r\n") + 4);
+      expect(body).toBe(received);
+    } finally {
+      server.close();
+    }
   });
 });

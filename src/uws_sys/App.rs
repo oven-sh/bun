@@ -123,12 +123,18 @@ impl<const SSL: bool> App<SSL> {
         unsafe { c::uws_app_destroy(Self::SSL_FLAG, this.cast::<uws_app_t>()) }
     }
 
-    pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
+    pub fn set_flags(
+        &mut self,
+        require_host_header: bool,
+        use_strict_method_validation: bool,
+        validate_host_header_value: bool,
+    ) {
         c::uws_app_set_flags(
             Self::SSL_FLAG,
             self.as_raw(),
             require_host_header,
             use_strict_method_validation,
+            validate_host_header_value,
         )
     }
 
@@ -513,6 +519,7 @@ pub mod c {
             app: &mut uws_app_t,
             require_host_header: bool,
             use_strict_method_validation: bool,
+            validate_host_header_value: bool,
         );
         pub(crate) safe fn uws_app_set_max_http_header_size(
             ssl: i32,

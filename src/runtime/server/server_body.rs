@@ -3681,18 +3681,36 @@ pub(super) fn server_set_app_flags_(
         )));
     }
 
+    let node_http_validates_host_header_value = false;
+
     if let Some(this) = server.as_::<HTTPServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            node_http_validates_host_header_value,
+        );
     } else if let Some(this) = server.as_::<HTTPSServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            node_http_validates_host_header_value,
+        );
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            node_http_validates_host_header_value,
+        );
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            node_http_validates_host_header_value,
+        );
     } else {
         return Err(global.throw(format_args!(
             "Failed to set timeout: The 'this' value is not a Server."

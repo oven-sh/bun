@@ -30,10 +30,9 @@ pub enum ImportWatcher {
     Watch(Box<Watcher>),
 }
 
-// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its constants
-// must mirror `bun_ast::Loader` (`File` for auto-watched directories, `Json`
-// for resolved package.json files). This crate sees both types, so the
-// compile-time check lives here.
+// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File` and
+// `Json` constants must mirror `bun_ast::Loader`. This crate sees both types,
+// so the compile-time check lives here.
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 const _: () = assert!(bun_watcher::Loader::Json.0 == bun_ast::Loader::Json as u8);
 

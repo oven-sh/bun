@@ -812,10 +812,8 @@ impl Watcher {
     }
 
     /// [`Self::add_file_by_path_slow`] with an explicit macOS/FreeBSD open
-    /// mode. `snapshot_fd_and_package_json` hands the stored fd back to the
-    /// transpiler whenever the same path is later fetched as a module, so a
-    /// caller registering a path before it is loaded must pass a readable
-    /// mode: `read()` on a macOS `O_EVTONLY` descriptor fails with `EBADF`.
+    /// mode. The stored fd is handed to the transpiler if the same path is
+    /// later fetched as a module, so pre-load callers need a readable mode.
     pub fn add_file_by_path(&mut self, file_path: &[u8], loader: Loader, open_flags: i32) -> bool {
         if file_path.is_empty() {
             return false;

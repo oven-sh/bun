@@ -791,13 +791,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   longTimeout,
 );
 
-/**
- * Buffers a --hot runner's stdout into lines and returns the next line
- * starting with `prefix`, skipping unrelated ones. If the process exits
- * first, resolves to a marker the caller's assertion surfaces; resolving
- * (instead of throwing) keeps a timed-out test from leaving an unhandled
- * rejection behind when the runner's pipe is torn down.
- */
+// Buffers a --hot runner's stdout and returns the next line starting with
+// `prefix`. On exit it resolves to a marker (rather than throwing) so a
+// timed-out test does not leave an unhandled rejection behind.
 function stdoutLineReader(runner: ReturnType<typeof spawn>) {
   const reader = (runner.stdout as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
@@ -857,10 +853,9 @@ it(
 it.skipIf(isWindows)(
   'should hot reload when a linked dependency\'s "exports" map changes',
   async () => {
-    // The `./package.json` import is load-bearing on macOS: resolving any
-    // sibling import registers the root manifest in the watch set first, so
-    // the manifest's own fetch reuses the watcher's cached fd, which must
-    // therefore be readable (`O_EVTONLY` descriptors cannot be `read()`).
+    // The `./package.json` import is load-bearing on macOS: resolving "dep"
+    // registers the root manifest first, so the manifest's own fetch reuses
+    // the watcher's cached fd, which must therefore be readable.
     const entry = (gen: number) =>
       `import v from "dep";\nimport pkg from "./package.json";\nconsole.log("gen${gen} " + v + " " + pkg.name);\n`;
     using dir = tempDir("hot-exports-map", {
@@ -893,9 +888,8 @@ it.skipIf(isWindows)(
     );
 
     // Force reloads via the (always-watched) entry until one resolves "dep"
-    // through the rewritten exports map. A stale resolver cache never reaches
-    // FROM-B no matter how many reloads happen, so the loop is bounded and the
-    // final assertion fails with the stale value instead of hanging.
+    // through the rewritten exports map: a stale resolver cache never reaches
+    // FROM-B, so the bounded loop fails with the stale value, not a hang.
     let gen = 1;
     let line = "";
     while (gen < 6 && !line.endsWith(" FROM-B app")) {

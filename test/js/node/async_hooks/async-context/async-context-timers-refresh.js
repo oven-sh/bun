@@ -13,8 +13,16 @@ async function main() {
   const fired = () => new Promise(resolve => (onFire = resolve));
 
   let t;
+  let refreshFromInsideCallback = false;
   const callback = () => {
     seen.push(als.getStore() ?? null);
+    if (refreshFromInsideCallback) {
+      refreshFromInsideCallback = false;
+      // The callback is still running, so the timer is not destroyed yet and
+      // this refresh() must not re-bind it (Node keeps the existing context too).
+      assert.strictEqual(t._destroyed, false);
+      als.run("inside", () => t.refresh());
+    }
     onFire();
   };
 
@@ -38,13 +46,18 @@ async function main() {
   t.refresh();
   await wait;
 
-  // And a later refresh() binds the (previously unbound) callback again.
+  // And a later refresh() binds the (previously unbound) callback again. That fire
+  // refreshes itself from inside its own callback, which must keep the same context.
   assert.strictEqual(t._destroyed, true);
+  refreshFromInsideCallback = true;
   wait = fired();
   als.run("again", () => t.refresh());
   await wait;
 
-  assert.deepStrictEqual(seen, ["creator", "refresher", null, "again"]);
+  wait = fired();
+  await wait;
+
+  assert.deepStrictEqual(seen, ["creator", "refresher", null, "again", "again"]);
 }
 
 main().then(

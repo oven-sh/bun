@@ -133,8 +133,15 @@ describe("async context passes through", () => {
     const fired = () => new Promise<void>(r => (onFire = r));
 
     let t!: ReturnType<typeof setTimeout>;
+    let refreshFromInsideCallback = false;
     const callback = () => {
       seen.push(s.getStore() ?? null);
+      if (refreshFromInsideCallback) {
+        refreshFromInsideCallback = false;
+        // The callback is still running, so the timer is not destroyed yet and
+        // this refresh() must not re-bind it (Node keeps the existing context too).
+        s.run("inside", () => t.refresh());
+      }
       onFire();
     };
 
@@ -157,12 +164,17 @@ describe("async context passes through", () => {
     t.refresh();
     await wait;
 
-    // And a later refresh() binds the (previously unbound) callback again.
+    // And a later refresh() binds the (previously unbound) callback again. That fire
+    // refreshes itself from inside its own callback, which must keep the same context.
+    refreshFromInsideCallback = true;
     wait = fired();
     s.run("again", () => t.refresh());
     await wait;
 
-    expect(seen).toEqual(["creator", "refresher", null, "again"]);
+    wait = fired();
+    await wait;
+
+    expect(seen).toEqual(["creator", "refresher", null, "again", "again"]);
   });
   test("setInterval", async () => {
     let resolve: (x: string[]) => void;

@@ -3775,6 +3775,43 @@ fn lowbox_dos_name_fallback(
     Err(GetFinalPathNameByHandleError::FileNotFound)
 }
 
+/// Drop-in for raw `GetFinalPathNameByHandleW(h, buf, len, flags)` call sites
+/// (returns the length, or 0 with the thread's last error set), adding the
+/// same lowbox fallback as [`GetFinalPathNameByHandle`]. The fallback output
+/// keeps the `\\?\` prefix the raw API produces for `VOLUME_NAME_DOS`.
+///
+/// # Safety
+/// `buf` must be valid for writes of `len` u16s.
+pub unsafe fn GetFinalPathNameByHandleWLowbox(
+    hFile: HANDLE,
+    buf: *mut u16,
+    len: u32,
+    flags: DWORD,
+) -> u32 {
+    // SAFETY: caller contract.
+    let n = unsafe { externs::GetFinalPathNameByHandleW(hFile, buf, len, flags) };
+    let volume_kind =
+        flags & (win32::VOLUME_NAME_GUID | win32::VOLUME_NAME_NT | win32::VOLUME_NAME_NONE);
+    if n != 0
+        || volume_kind != win32::VOLUME_NAME_DOS
+        || GetLastError() != u32::from(Win32Error::ACCESS_DENIED.0)
+    {
+        return n;
+    }
+    // SAFETY: caller contract.
+    let out = unsafe { core::slice::from_raw_parts_mut(buf, len as usize) };
+    const PFX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    if out.len() <= PFX.len() {
+        return 0;
+    }
+    let rest_len = match lowbox_dos_name_fallback(hFile, &mut out[PFX.len()..]) {
+        Ok(rest) => rest.len(),
+        Err(_) => return 0,
+    };
+    out[..PFX.len()].copy_from_slice(&PFX);
+    (PFX.len() + rest_len) as u32
+}
+
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
     fmt: win32::GetFinalPathNameByHandleFormat,

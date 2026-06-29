@@ -44,11 +44,13 @@ describe.skipIf(!isElevatedWindows)("bun install on a non-NTFS Windows volume", 
       `assign mount="${mount}"`,
     ]);
     try {
-      expect(created).toEqual({ exitCode: 0, output: expect.stringContaining("successfully") });
+      // diskpart's text is localized, so only the exit code is asserted here;
+      // `output` rides along to make a setup failure's diff readable.
+      expect(created).toEqual({ exitCode: 0, output: expect.any(String) });
 
-      // The bug is filesystem-dependent, so prove the mounted volume really is
-      // FAT32 rather than trusting that diskpart honored `fs=fat32`. The path
-      // rides in an env var so it never has to be quoted into the command.
+      // Locale-independent proof that diskpart created, formatted (FAT32, not
+      // NTFS), and mounted the volume; `FileSystemType` would be the parent's
+      // `NTFS` if any step silently failed. The path rides in an env var.
       const fsinfo = Bun.spawnSync({
         cmd: [
           "powershell.exe",

@@ -1,4 +1,4 @@
-import value from "./hot-plugin-loader.graphql";
+import value from "./hot-plugin-loader.code.graphql";
 
 globalThis.pluginReloadCounter ??= 0;
 

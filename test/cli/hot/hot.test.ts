@@ -241,11 +241,12 @@ it.each(["hot-file-loader.file", "hot-file-loader.css"])(
 );
 
 // https://github.com/oven-sh/bun/issues/4790
-it(
-  "should hot reload when a file loaded through a Bun.plugin onLoad callback is overwritten",
-  async () => {
-    const root = join(cwd, "hot-plugin-root.js");
-    const target = join(cwd, "hot-plugin-loader.graphql");
+// https://github.com/oven-sh/bun/issues/5844 ("object" is a separate code path)
+it.each(["code", "object"])(
+  "should hot reload when a file loaded through a Bun.plugin onLoad callback (loader: %s) is overwritten",
+  async (kind: string) => {
+    const root = join(cwd, `hot-plugin-${kind}-root.js`);
+    const target = join(cwd, `hot-plugin-loader.${kind}.graphql`);
     try {
       var runner = spawn({
         cmd: [bunExe(), "--hot", `--preload=${join(cwd, "hot-plugin-preload.js")}`, "run", root],

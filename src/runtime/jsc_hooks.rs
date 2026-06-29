@@ -3338,23 +3338,19 @@ fn maybe_watch_file(
     if !unsafe { &*jsc_vm }.is_watcher_enabled() {
         return;
     }
+    if !input_file_fd.is_valid() {
+        return;
+    }
     if is_node_override
         || !bun_paths::is_absolute(path.text)
         || bun_core::strings::contains(path.text, b"node_modules")
     {
         return;
     }
+    *should_close_input_file_fd = false;
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-    if !input_file_fd.is_valid() {
-        // When a plugin `onLoad` supplied the source (a virtual source), the
-        // parser never opened the file. It's still a real on-disk module:
-        // watch it by path so editing it triggers a reload.
-        let _ = watcher.add_file_by_path_slow(path.text, loader);
-        return;
-    }
-    *should_close_input_file_fd = false;
     let _ = watcher.add_file::<true>(
         input_file_fd,
         path.text,

@@ -1,0 +1,158 @@
+--- a/crypto/x509/internal.h
++++ b/crypto/x509/internal.h
+@@ -474,6 +474,15 @@
+ int x509_check_issued_with_callback(X509_STORE_CTX *ctx, const X509 *x,
+                                     const X509 *issuer);
+ 
++// x509_check_cert_time_valid returns one if |x| is valid at |ctx|'s
++// verification time (|X509_V_FLAG_USE_CHECK_TIME| / |X509_V_FLAG_NO_CHECK_TIME|
++// are honored) and zero otherwise. Unlike |check_cert_time| in x509_vfy.cc, it
++// never sets an error on |ctx| and never invokes the verify callback. It is
++// used to prefer time-valid candidates while building the chain, so that an
++// expired copy of an issuer (sent by the peer or installed in the trust store
++// next to its reissued replacement) does not mask a valid path.
++int x509_check_cert_time_valid(const X509_STORE_CTX *ctx, const X509 *x);
++
+ // x509v3_bytes_to_hex encodes `len` bytes from `in` to hex and returns a
+ // newly-allocated NUL-terminated string containing the result, or NULL on
+ // allocation error.
+--- a/crypto/x509/x509_vfy.cc
++++ b/crypto/x509/x509_vfy.cc
+@@ -411,18 +411,28 @@
+   return ok;
+ }
+ 
+-// Given a STACK_OF(X509) find the issuer of cert (if any)
++// Given a STACK_OF(X509) find the issuer of cert (if any). Prefer a
++// time-valid issuer: TLS peers may send both a current and an expired copy of
++// an intermediate (RFC 8446, section 4.4.2, explicitly permits extraneous
++// certificates), and picking the expired copy would fail the chain even though
++// a valid one was available. An expired candidate is only returned when no
++// time-valid candidate exists, matching OpenSSL.
+ 
+ static X509 *find_issuer(X509_STORE_CTX *ctx, STACK_OF(X509) *sk, X509 *x) {
+   size_t i;
+-  X509 *issuer;
++  X509 *issuer, *rv = nullptr;
+   for (i = 0; i < sk_X509_num(sk); i++) {
+     issuer = sk_X509_value(sk, i);
+     if (x509_check_issued_with_callback(ctx, x, issuer)) {
+-      return issuer;
++      if (x509_check_cert_time_valid(ctx, issuer)) {
++        return issuer;
++      }
++      if (rv == nullptr) {
++        rv = issuer;
++      }
+     }
+   }
+-  return nullptr;
++  return rv;
+ }
+ 
+ // Given a possible certificate and issuer check them
+@@ -444,6 +454,25 @@
+   return call_verify_cb(0, ctx);
+ }
+ 
++int bssl::x509_check_cert_time_valid(const X509_STORE_CTX *ctx, const X509 *x) {
++  if (ctx->param->flags & X509_V_FLAG_NO_CHECK_TIME) {
++    return 1;
++  }
++
++  int64_t ptime;
++  if (ctx->param->flags & X509_V_FLAG_USE_CHECK_TIME) {
++    ptime = ctx->param->check_time;
++  } else {
++    ptime = time(nullptr);
++  }
++
++  // notBefore must be in the past and notAfter in the future. A zero return
++  // from |X509_cmp_time_posix| indicates an invalid time field, which is not
++  // "valid" for the purposes of preferring a candidate.
++  return X509_cmp_time_posix(X509_get0_notBefore(x), ptime) < 0 &&
++         X509_cmp_time_posix(X509_get0_notAfter(x), ptime) > 0;
++}
++
+ static X509 *get_trusted_issuer(X509_STORE_CTX *ctx, X509 *x) {
+   X509 *issuer;
+   if (ctx->trusted_stack != nullptr) {
+--- a/crypto/x509/x509_lu.cc
++++ b/crypto/x509/x509_lu.cc
+@@ -493,39 +493,57 @@
+   if (!X509_STORE_CTX_get_by_subject(ctx, X509_LU_X509, xn, &obj)) {
+     return 0;
+   }
+-  // If certificate matches all OK
+-  if (x509_check_issued_with_callback(ctx, x, obj.data.x509)) {
++  // If the certificate matches and is time-valid, return it. An expired match
++  // is kept only as a fallback: the store may also hold a time-valid
++  // certificate with the same subject (e.g. a reissued intermediate or root),
++  // and that one can complete a chain that actually verifies.
++  if (x509_check_issued_with_callback(ctx, x, obj.data.x509) &&
++      x509_check_cert_time_valid(ctx, obj.data.x509)) {
+     *out_issuer = obj.data.x509;
+     return 1;
+   }
+   X509_OBJECT_free_contents(&obj);
+ 
+-  // Else find index of first cert accepted by
+-  // `x509_check_issued_with_callback`.
++  // Else look through all the certificates matching the subject for one
++  // accepted by `x509_check_issued_with_callback`, preferring a time-valid
++  // one. An expired issuer is returned only if no time-valid one exists, so
++  // the error is reported against a complete chain instead of hiding a valid
++  // alternative.
+   X509Store *store = FromOpaque(ctx->ctx);
+   MutexWriteLock lock(&store->objs_lock);
+   int idx = X509_OBJECT_idx_by_subject(store->objs.get(), X509_LU_X509, xn);
+-  if (idx != -1) {  // should be true as we've had at least one match
+-    // Look through all matching certs for suitable issuer
+-    for (size_t i = idx; i < sk_X509_OBJECT_num(store->objs.get()); i++) {
+-      X509_OBJECT *pobj = sk_X509_OBJECT_value(store->objs.get(), i);
+-      // See if we've run past the matches.
+-      //
+-      // This works because the objects are sorted by type, then subject
+-      // name, using `x509_object_cmp`.
+-      if (pobj->type != X509_LU_X509) {
+-        return 0;
+-      }
+-      if (X509_NAME_cmp(xn, X509_get_subject_name(pobj->data.x509))) {
+-        return 0;
+-      }
+-      if (x509_check_issued_with_callback(ctx, x, pobj->data.x509)) {
++  if (idx == -1) {
++    return 0;
++  }
++  X509_OBJECT *fallback = nullptr;
++  for (size_t i = idx; i < sk_X509_OBJECT_num(store->objs.get()); i++) {
++    X509_OBJECT *pobj = sk_X509_OBJECT_value(store->objs.get(), i);
++    // See if we've run past the matches.
++    //
++    // This works because the objects are sorted by type, then subject
++    // name, using `x509_object_cmp`.
++    if (pobj->type != X509_LU_X509) {
++      break;
++    }
++    if (X509_NAME_cmp(xn, X509_get_subject_name(pobj->data.x509))) {
++      break;
++    }
++    if (x509_check_issued_with_callback(ctx, x, pobj->data.x509)) {
++      if (x509_check_cert_time_valid(ctx, pobj->data.x509)) {
+         *out_issuer = pobj->data.x509;
+         X509_OBJECT_up_ref_count(pobj);
+         return 1;
+       }
++      if (fallback == nullptr) {
++        fallback = pobj;
++      }
+     }
+   }
++  if (fallback != nullptr) {
++    *out_issuer = fallback->data.x509;
++    X509_OBJECT_up_ref_count(fallback);
++    return 1;
++  }
+   return 0;
+ }
+ 

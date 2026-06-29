@@ -36,6 +36,17 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // prefer-time-valid-issuer: when several certificates match an issuer
+  // lookup (same subject/key, e.g. a reissued intermediate next to its
+  // expired predecessor, in the peer chain or in the trust store), prefer a
+  // time-valid one instead of the first match. BoringSSL's legacy X.509 path
+  // builder otherwise commits to whichever candidate it sees first and
+  // reports CERT_HAS_EXPIRED even though a valid chain was buildable, which
+  // OpenSSL (and therefore Node) has handled since 1.0.2. Drop once
+  // upstream's path builder handles alternate chains (see the TrustedFirst
+  // test comment in crypto/x509/x509_test.cc).
+  patches: ["patches/boringssl/prefer-time-valid-issuer.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

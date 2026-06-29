@@ -314,3 +314,36 @@ it.todo('Confirm server support for "BEGIN X509 CERTIFICATE".', async () => {
     },
   });
 });
+
+// The altchain-* fixtures model a reissued intermediate: two CA certificates
+// with the same subject and key, one expired and one valid (fixtures/altchain-gen.sh).
+// fetch() must not let the expired copy mask a valid chain (RFC 8446, section 4.4.2).
+const altchain = (name: string) => readFileSync(join(import.meta.dir, "fixtures", `altchain-${name}.pem`), "utf8");
+
+async function fetchWithChain(chain: string[], ca: string[]) {
+  using altServer = Bun.serve({
+    port: 0,
+    tls: { key: altchain("leaf-key"), cert: chain.join("\n") },
+    fetch() {
+      return new Response("ok");
+    },
+  });
+  const res = await fetch(`https://localhost:${altServer.port}/`, { tls: { ca, rejectUnauthorized: true } });
+  return await res.text();
+}
+
+it("fetch builds the chain through the time-valid intermediate when an expired copy is also sent", async () => {
+  const chain = [altchain("leaf-cert"), altchain("int-expired-cert"), altchain("int-valid-cert")];
+  expect(await fetchWithChain(chain, [altchain("root-cert")])).toBe("ok");
+});
+
+it("fetch prefers a time-valid trust store entry over an expired duplicate", async () => {
+  const pool = [altchain("root-cert"), altchain("int-expired-cert"), altchain("int-valid-cert")];
+  expect(await fetchWithChain([altchain("leaf-cert")], pool)).toBe("ok");
+});
+
+it("fetch still rejects a chain whose only intermediate is expired", async () => {
+  await expect(
+    fetchWithChain([altchain("leaf-cert"), altchain("int-expired-cert")], [altchain("root-cert")]),
+  ).rejects.toMatchObject({ code: "CERT_HAS_EXPIRED" });
+});

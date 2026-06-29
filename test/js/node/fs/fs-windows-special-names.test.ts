@@ -17,7 +17,11 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Relative paths only mean something relative to a cwd, so each fixture runs
-// in a child process whose cwd is a fresh temp directory.
+// in a child process whose cwd is a fresh temp directory. On success the
+// child's JSON is returned for a single toEqual; any failure (nonzero exit,
+// unparseable stdout) returns the raw { stdout, stderr, exitCode } instead,
+// so the caller's toEqual mismatch shows the child's actual output. stderr
+// is never asserted to be empty: debug builds write benign warnings there.
 async function runInChild(cwd: string, fixture: string): Promise<unknown> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
@@ -27,16 +31,14 @@ async function runInChild(cwd: string, fixture: string): Promise<unknown> {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // stderr is not asserted to be empty (debug builds may write warnings);
-  // it is folded into the result so assertion failures show the real error.
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    parsed = { stdout, stderr, exitCode };
+  if (exitCode !== 0) {
+    return { stdout, stderr, exitCode };
   }
-  expect(exitCode).toBe(0);
-  return parsed;
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    return { stdout, stderr, exitCode };
+  }
 }
 
 for (const name of [" spaces.txt ", ".dots.txt."]) {

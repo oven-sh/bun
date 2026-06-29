@@ -16,7 +16,7 @@ To implement an SSE endpoint in Bun, return a `Response` whose body is a streami
 
 ## Using an async generator
 
-In Bun, `new Response` accepts an async generator function directly. Each `yield` flushes a chunk to the client, and if the client disconnects, the generator's `finally` block runs so you can clean up.
+In Bun, `new Response` accepts an async generator function directly; this is usually the simplest way to write an SSE endpoint. Each `yield` flushes a chunk to the client, and if the client disconnects, the generator's `finally` block runs so you can clean up.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({

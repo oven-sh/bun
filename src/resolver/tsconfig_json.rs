@@ -631,15 +631,19 @@ impl TSConfigJSON {
                                     let array_loc =
                                         json_parser::property_value_loc(&source.contents, key_loc)
                                             .unwrap_or(key_loc);
+                                    // One forward sweep recovers every item's
+                                    // location (per-index recovery would
+                                    // re-scan the array for each item).
+                                    let mut item_cursor =
+                                        json_parser::array_item_loc(&source.contents, array_loc, 0);
                                     // errdefer allocator.free(values) — handled by Drop.
-                                    for (index, item) in array.iter().enumerate() {
+                                    for item in array.iter() {
+                                        let this_item_loc = item_cursor.unwrap_or(key_loc);
+                                        item_cursor = item_cursor.and_then(|cur| {
+                                            json_parser::array_next_item_loc(&source.contents, cur)
+                                        });
                                         if let Some(str_) = item.as_str() {
-                                            let item_loc = json_parser::array_item_loc(
-                                                &source.contents,
-                                                array_loc,
-                                                index,
-                                            )
-                                            .unwrap_or(key_loc);
+                                            let item_loc = this_item_loc;
                                             let str = match Self::str_replacing_templates(
                                                 Box::from(str_),
                                                 source,

@@ -509,7 +509,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     };
 
                     // Parse the JSON source map
-                    match parse_json(&arena, json_slice, result) {
+                    match parse_json(json_slice, result) {
                         Ok(parsed) => {
                             break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                         }
@@ -534,7 +534,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                         let Some(data) = provider.get_external_data(source_filename) else {
                             break 'fallback_to_normal;
                         };
-                        match parse_json(&arena, data, result) {
+                        match parse_json(data, result) {
                             Ok(parsed) => {
                                 break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                             }
@@ -579,7 +579,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     Err(_) => break 'try_external,
                 };
 
-                match parse_json(&arena, &data, result) {
+                match parse_json(&data, result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
                     Err(err) => {
                         // Print warning even if this came from non-visible code like
@@ -922,18 +922,14 @@ pub fn parse_url(
         return Err(bun_core::err!("UnsupportedFormat"));
     };
 
-    parse_json(arena, json_bytes, hint)
+    parse_json(json_bytes, hint)
 }
 
 /// Parses a JSON source-map
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-pub fn parse_json(
-    _arena: &bun_alloc::Arena,
-    source: &[u8],
-    hint: ParseUrlResultHint,
-) -> Result<ParseUrl, bun_core::Error> {
+pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> Result<ParseUrl, bun_core::Error> {
     use crate::mapping::SourceMap as SourceMapLog;
     use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;

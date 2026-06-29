@@ -51,6 +51,13 @@ pub(crate) struct Parser<'a, 's, 'i> {
     /// direct children are appended to the tape as one contiguous block.
     scratch_props: Vec<E::PropertyJSON>,
     scratch_json_items: Vec<E::JsonValue>,
+    /// Parallel to the two stacks above when `opts.record_value_locs`: each
+    /// property value's / item's start location, block-appended to the tape
+    /// with its row. Empty otherwise.
+    scratch_prop_value_locs: Vec<Loc>,
+    scratch_item_locs: Vec<Loc>,
+    /// Reused escape-decode buffer (`parse_string_slow`), cleared per string.
+    scratch_str: Vec<u8>,
     /// The document's [`E::JsonTape`]. With [`E::TapeAlloc::Global`] it is
     /// heap-allocated and owned by the parser (raw, from `Box::leak`) until
     /// [`Self::take_tape`] hands it to the caller, and [`Drop`] reclaims it
@@ -170,6 +177,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             stack_check: StackCheck::init(),
             scratch_props: Vec::new(),
             scratch_json_items: Vec::new(),
+            scratch_prop_value_locs: Vec::new(),
+            scratch_item_locs: Vec::new(),
+            scratch_str: Vec::new(),
             tape: Some(tape),
             tape_owned,
             dup_hashes: Vec::new(),
@@ -478,8 +488,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         // `self`, so the (disjoint, parser-owned) scratch stack can be read
         // alongside it.
         let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
-        let span = tape.append_props(&self.scratch_props[mark..]);
+        let locs: &[Loc] = if self.opts.record_value_locs {
+            &self.scratch_prop_value_locs[mark..]
+        } else {
+            &[]
+        };
+        let span = tape.append_props(&self.scratch_props[mark..], locs);
         self.scratch_props.truncate(mark);
+        self.scratch_prop_value_locs
+            .truncate(mark.min(self.scratch_prop_value_locs.len()));
         span
     }
 
@@ -487,8 +504,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     fn push_items_block(&mut self, mark: usize) -> (u32, u32) {
         // SAFETY: see `push_props_block`.
         let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
-        let span = tape.append_items(&self.scratch_json_items[mark..]);
+        let locs: &[Loc] = if self.opts.record_value_locs {
+            &self.scratch_item_locs[mark..]
+        } else {
+            &[]
+        };
+        let span = tape.append_items(&self.scratch_json_items[mark..], locs);
         self.scratch_json_items.truncate(mark);
+        self.scratch_item_locs
+            .truncate(mark.min(self.scratch_item_locs.len()));
         span
     }
 
@@ -497,8 +521,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// of token goes through the ordinary scalar path, whose `Expr` payload
     /// is inline in `Data` (numbers, booleans, null) — so the only Store
     /// traffic in a document is one node per container.
+    ///
+    /// Also returns the value's location (its first non-whitespace byte —
+    /// a scalar's index run can begin with exotic unicode whitespace),
+    /// recorded in the tape for [`crate::json::materialize`].
     #[inline(always)]
-    fn parse_json_value(&mut self) -> PResult<E::JsonValue> {
+    fn parse_json_value(&mut self) -> PResult<(E::JsonValue, Loc)> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
         if start >= self.contents.len() {
@@ -513,32 +541,36 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 let Data::EObjectJSON(r) = e.data else {
                     unreachable!()
                 };
-                Ok(E::JsonValue::Object(r))
+                Ok((E::JsonValue::Object(r), e.loc))
             }
             b'[' => {
                 let e = self.parse_array(loc)?;
                 let Data::EArrayJSON(r) = e.data else {
                     unreachable!()
                 };
-                Ok(E::JsonValue::Array(r))
+                Ok((E::JsonValue::Array(r), e.loc))
             }
-            b'"' | b'\'' => Ok(E::JsonValue::String(self.parse_string_utf8_at(start)?)),
+            b'"' | b'\'' => Ok((E::JsonValue::String(self.parse_string_utf8_at(start)?), loc)),
             _ => {
                 let e = self.parse_scalar(loc)?;
-                Ok(match e.data {
-                    Data::ENumber(n) => E::JsonValue::Number(n),
-                    Data::EBoolean(b) => E::JsonValue::Boolean(b.value),
-                    Data::ENull(_) => E::JsonValue::Null,
-                    // `.env` auto-quoting and `\uXXXX`-escaped identifiers
-                    // can produce a string from the scalar path.
-                    Data::EString(r) => E::JsonValue::String(r.get().data),
-                    // Exotic whitespace before the value re-dispatches
-                    // through `parse_value::<true>`, which can return a
-                    // container.
-                    Data::EObjectJSON(r) => E::JsonValue::Object(r),
-                    Data::EArrayJSON(r) => E::JsonValue::Array(r),
-                    _ => unreachable!("not a JSON leaf"),
-                })
+                let value_loc = e.loc;
+                Ok((
+                    match e.data {
+                        Data::ENumber(n) => E::JsonValue::Number(n),
+                        Data::EBoolean(b) => E::JsonValue::Boolean(b.value),
+                        Data::ENull(_) => E::JsonValue::Null,
+                        // `.env` auto-quoting and `\uXXXX`-escaped identifiers
+                        // can produce a string from the scalar path.
+                        Data::EString(r) => E::JsonValue::String(r.get().data),
+                        // Exotic whitespace before the value re-dispatches
+                        // through `parse_value::<true>`, which can return a
+                        // container.
+                        Data::EObjectJSON(r) => E::JsonValue::Object(r),
+                        Data::EArrayJSON(r) => E::JsonValue::Array(r),
+                        _ => unreachable!("not a JSON leaf"),
+                    },
+                    value_loc,
+                ))
             }
         }
     }
@@ -618,9 +650,14 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         // `\uXXXX` keep their 3-byte encoding, which the printer and
         // `to_js` both understand.
         self.is_ascii_only = false;
-        let mut buf: Vec<u8> = Vec::with_capacity(body.len());
+        // One reusable decode buffer per parser: this path runs once per
+        // escaped string, which large registry manifests hit thousands of
+        // times.
+        let mut buf = core::mem::take(&mut self.scratch_str);
+        buf.clear();
         self.decode_escapes(body, &mut buf)?;
         let owned = self.alloc_owned_str(&buf);
+        self.scratch_str = buf;
         Ok(E::EString::init(owned.slice()))
     }
 
@@ -762,13 +799,22 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     is_single_line = false;
                 }
             }
+            // See the object loop: the item's location is recorded in
+            // lockstep with the item itself.
             match self.parse_json_value() {
-                Ok(item) => self.scratch_json_items.push(item),
+                Ok((item, item_loc)) => {
+                    if self.opts.record_value_locs {
+                        self.scratch_item_locs.push(item_loc);
+                    }
+                    self.scratch_json_items.push(item)
+                }
                 Err(e) => break Err(e),
             }
         };
         if let Err(e) = result {
             self.scratch_json_items.truncate(mark);
+            self.scratch_item_locs
+                .truncate(mark.min(self.scratch_item_locs.len()));
             return Err(e);
         }
         let (first, count) = self.push_items_block(mark);
@@ -878,10 +924,17 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
 
             // ── value ──
-            let value = match self.parse_json_value() {
+            // The value and its location, recorded for `materialize` so it
+            // never re-scans the source. Pushed together with the row: a
+            // nested container inside this value pushes its own rows and
+            // locations in between.
+            let (value, value_loc) = match self.parse_json_value() {
                 Ok(v) => v,
                 Err(e) => break Err(e),
             };
+            if self.opts.record_value_locs {
+                self.scratch_prop_value_locs.push(value_loc);
+            }
             self.scratch_props.push(E::PropertyJSON {
                 key,
                 key_loc,
@@ -896,6 +949,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.dup_hashes.truncate(hmark);
         if let Err(e) = result {
             self.scratch_props.truncate(mark);
+            self.scratch_prop_value_locs
+                .truncate(mark.min(self.scratch_prop_value_locs.len()));
             return Err(e);
         }
 
@@ -941,6 +996,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 for &ph in &self.dup_hashes[hmark..] {
                     map.insert(ph, ());
                 }
+                // The current key goes in too: later keys only consult the
+                // map, so leaving it out would never warn on its duplicates.
+                map.insert(h, ());
             }
             match self.dup_hashes[hmark..].iter().position(|&ph| ph == h) {
                 None => false,
@@ -989,6 +1047,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         // A `-` run with nothing else defers to the next run.
         let (neg, num_off, num_run): (bool, usize, &[u8]) = if full_run[0] == b'-' {
             if full_run.len() > 1 && !self.rest_is_ws_cold(&full_run[1..]) {
+                if !matches!(full_run[1], b'0'..=b'9' | b'.') {
+                    self.expected(cursor, "number");
+                    return Err(self.unexpected(cursor));
+                }
                 (true, 1, &full_run[1..])
             } else {
                 // The digits are the next run (if any).
@@ -1281,7 +1343,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     // re-dispatch on the next token.
                     return self.parse_value();
                 }
-                return self.parse_scalar_tail(p, loc);
+                return self.parse_scalar_tail(p);
             }
         }
 
@@ -1305,11 +1367,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// whitespace): only numbers, keywords, escaped identifiers, or junk are
     /// possible (strings and containers always start their own index).
     #[cold]
-    fn parse_scalar_tail(&mut self, pos: usize, loc: Loc) -> PResult<Expr> {
+    fn parse_scalar_tail(&mut self, pos: usize) -> PResult<Expr> {
         let end = self.pos_at(self.cursor + 1);
         let tail = &self.contents[pos..end];
         let loc_tail = usize2loc(pos);
-        let _ = loc;
         self.token_start = pos;
         match tail[0] {
             b't' if tail.starts_with(b"true") && self.rest_is_ws_cold(&tail[4..]) => {
@@ -1325,11 +1386,23 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 Ok(Expr::init(E::Null {}, loc_tail))
             }
             b'0'..=b'9' | b'.' | b'-' => {
-                let (value, used) = self.parse_number_text(tail, pos)?;
-                if !self.rest_is_ws_cold(&tail[used..]) {
-                    return Err(self.number_trailing_junk(pos + used));
+                // `parse_number_text` takes no sign; strip a leading `-`,
+                // which must be followed by a digit or `.`.
+                let (neg, body, body_pos) = if tail[0] == b'-' {
+                    if tail.len() < 2 || !matches!(tail[1], b'0'..=b'9' | b'.') {
+                        self.expected(self.cursor, "number");
+                        return Err(self.unexpected(self.cursor));
+                    }
+                    (true, &tail[1..], pos + 1)
+                } else {
+                    (false, tail, pos)
+                };
+                let (value, used) = self.parse_number_text(body, body_pos)?;
+                if !self.rest_is_ws_cold(&body[used..]) {
+                    return Err(self.number_trailing_junk(body_pos + used));
                 }
                 self.cursor += 1;
+                let value = if neg { -value } else { value };
                 Ok(Expr::init(E::Number::new(value), loc_tail))
             }
             c if is_identifier_start(c) => {

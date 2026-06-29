@@ -3174,10 +3174,16 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
         let take = (width as usize).min(bytes.len() - i);
         let mut buf = [0u8; 4];
         buf[..take].copy_from_slice(&bytes[i..i + take]);
-        push_codepoint_utf16(
-            &mut out,
-            decode_wtf8_rune_t::<u32>(buf, width, UNICODE_REPLACEMENT),
-        );
+        let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
+        if cp < 0 {
+            // Malformed sequence: emit one U+FFFD and resync at the next
+            // byte (not at `width`), so a stray lead byte cannot swallow
+            // the valid characters after it.
+            out.push(UNICODE_REPLACEMENT as u16);
+            i += 1;
+            continue;
+        }
+        push_codepoint_utf16(&mut out, cp as u32);
         i += take;
     }
     Some(out)

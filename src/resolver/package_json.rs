@@ -1025,6 +1025,18 @@ impl PackageJSON {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
+                                    // `SemverString` and the map's hash
+                                    // context index into the source buffer.
+                                    // An escape-decoded key lives in the
+                                    // parse's tape instead; real dependency
+                                    // names never need escapes, so skip it
+                                    // rather than store a wild offset.
+                                    if !bun_alloc::is_slice_in_buffer(
+                                        name_str,
+                                        package_json.dependencies.source_buf,
+                                    ) {
+                                        continue;
+                                    }
                                     let name_hash =
                                         Semver::semver_string::Builder::string_hash(name_str);
                                     let name = SemverString::init(

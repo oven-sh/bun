@@ -76,6 +76,9 @@ pub enum IndexError {
     UnterminatedBlockComment,
     /// A `/` outside a string starting neither `//` nor `/*`.
     UnexpectedSlash { pos: usize },
+    /// The document is larger than a `Loc` (`i32`) can address. Rejected up
+    /// front: this must survive release builds (a panic on user input).
+    DocumentTooLarge,
 }
 
 /// The streaming structural index over one document. See the module docs.
@@ -123,16 +126,30 @@ impl<'c> StructuralIndex<'c> {
     }
 
     fn with_producer(contents: &'c [u8], use_scalar: bool) -> Self {
+        if contents.len() > i32::MAX as usize {
+            let mut idx = Self::empty(contents, use_scalar);
+            idx.index_error = Some(IndexError::DocumentTooLarge);
+            idx.done = true;
+            return idx;
+        }
         // Worst case for one refill: every input byte is an index, plus the
         // kernel's vector-width overshoot, the sentinels, and the look-behind
         // band that survives a slide.
         let win_cap = contents.len().min(REFILL_INPUT) + 66 + SENTINELS + LOOKBEHIND;
         let dirty_words = (contents.len().div_ceil(64)).div_ceil(64) + 1;
+        let mut idx = Self::empty(contents, use_scalar);
+        idx.win = Vec::with_capacity(win_cap);
+        idx.dirty = vec![0; dirty_words];
+        idx
+    }
+
+    /// A zeroed index over `contents`, allocating nothing.
+    fn empty(contents: &'c [u8], use_scalar: bool) -> Self {
         StructuralIndex {
             contents,
-            win: Vec::with_capacity(win_cap),
+            win: Vec::new(),
             base: 0,
-            dirty: vec![0; dirty_words],
+            dirty: Vec::new(),
             flags: 0,
             first_comment: None,
             index_error: None,

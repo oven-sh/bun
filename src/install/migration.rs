@@ -589,8 +589,8 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
         let pkg_name: &[u8] = if let Some(e) = workspace_entry {
             &e.name
-        } else if let Some(set_name) = pkg.get(b"name") {
-            set_name.as_str().expect("unreachable")
+        } else if let Some(set_name) = pkg.get(b"name").and_then(|v| v.as_str()) {
+            set_name
         } else {
             package_name_from_path(pkg_path)
         };

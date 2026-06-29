@@ -50,10 +50,6 @@ trait ExprStr {
     fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
 }
 impl ExprStr for Expr {
-    // Transparently transcodes UTF-16
-    // `EString`s. The earlier `is_utf8()` guard returned `None` for keys the
-    // lexer stored as UTF-16 (e.g. `\u`-escaped non-ASCII), tripping the
-    // `expect("unreachable")` callers below.
     #[inline]
     fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]> {
         if let ExprData::EString(s) = &self.data {
@@ -104,13 +100,15 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Classic(iter, bump) => {
+                // The cached/edited trees this arm walks always have string
+                // keys and a value, but a malformed node ends the iteration
+                // instead of panicking.
                 let prop = iter.next()?;
-                let key = prop.key.expect("infallible: prop has key");
-                let value = prop.value.expect("infallible: prop has value");
+                let key = prop.key?;
+                let key_bytes = key.as_utf8(*bump)?;
                 Some((
-                    key.as_utf8(*bump)
-                        .expect("infallible: JSON object keys are strings"),
-                    value.as_utf8(*bump),
+                    key_bytes,
+                    prop.value.as_ref().and_then(|v| v.as_utf8(*bump)),
                     key.loc,
                 ))
             }

@@ -2406,6 +2406,32 @@ impl Data {
     }
 }
 
+/// One immutable-JSON row value, deep-cloned into `bump` as a classic node
+/// (strings copy their bytes out of the tape/source; nested containers
+/// recurse through `Data::deep_clone_no_detach`).
+fn json_value_deep_clone(
+    value: &E::JsonValue,
+    loc: Loc,
+    bump: &Bump,
+) -> Result<Expr, bun_alloc::AllocError> {
+    Ok(match value {
+        E::JsonValue::String(s) => {
+            let bytes: &[u8] = bump.alloc_slice_copy(s.slice());
+            Expr::allocate(bump, E::EString::init(bytes), loc)
+        }
+        E::JsonValue::Object(o) => Expr {
+            loc,
+            data: Data::EObjectJSON(*o).deep_clone_no_detach(bump)?,
+        },
+        E::JsonValue::Array(a) => Expr {
+            loc,
+            data: Data::EArrayJSON(*a).deep_clone_no_detach(bump)?,
+        },
+        // Inline payloads (numbers, booleans, null): nothing to allocate.
+        _ => Expr::from_json_value(value, loc),
+    })
+}
+
 impl Data {
     /// Human-readable variant name for diagnostics (`"string"`, `"object"`, …).
     #[inline]
@@ -2466,6 +2492,8 @@ impl Data {
             Data::EArrow(el) => shallow!(EArrow, el),
             Data::EJsxElement(el) => shallow!(EJsxElement, el),
             Data::EObject(el) => shallow!(EObject, el),
+            Data::EObjectJSON(el) => shallow!(EObjectJSON, el),
+            Data::EArrayJSON(el) => shallow!(EArrayJSON, el),
             Data::ESpread(el) => shallow!(ESpread, el),
             Data::ETemplate(el) => shallow!(ETemplate, el),
             Data::ERegExp(el) => shallow!(ERegExp, el),
@@ -2510,6 +2538,57 @@ impl Data {
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
                     close_bracket_loc: el.close_bracket_loc,
+                });
+                Ok(Data::EArray(StoreRef::from_bump(item)))
+            }
+            // The immutable JSON containers deep-clone into the classic
+            // mutable tree: a deep clone is asked for precisely so the
+            // result outlives (and can be edited independently of) the
+            // parse that owns the row tape, which a row node cannot.
+            Data::EObjectJSON(el) => {
+                let el = el.get();
+                let rows = el.properties();
+                let value_locs = el.value_locs();
+                let mut properties: G::PropertyList =
+                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                for (i, row) in rows.iter().enumerate() {
+                    let key_bytes: &[u8] = bump.alloc_slice_copy(row.key.slice());
+                    let value_loc = value_locs.map_or(row.key_loc, |l| l[i]);
+                    properties.push(G::Property {
+                        key: Some(Expr::allocate(
+                            bump,
+                            E::EString::init(key_bytes),
+                            row.key_loc,
+                        )),
+                        value: Some(json_value_deep_clone(&row.value, value_loc, bump)?),
+                        kind: G::PropertyKind::Normal,
+                        initializer: None,
+                        ..Default::default()
+                    });
+                }
+                let item = bump.alloc(E::Object {
+                    properties,
+                    is_single_line: el.is_single_line,
+                    close_brace_loc: el.close_brace_loc,
+                    ..Default::default()
+                });
+                Ok(Data::EObject(StoreRef::from_bump(item)))
+            }
+            Data::EArrayJSON(el) => {
+                let el = el.get();
+                let rows = el.items();
+                let item_locs = el.item_locs();
+                let mut items: crate::ExprNodeList =
+                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                for (i, value) in rows.iter().enumerate() {
+                    let loc = item_locs.map_or(crate::Loc::EMPTY, |l| l[i]);
+                    items.push(json_value_deep_clone(value, loc, bump)?);
+                }
+                let item = bump.alloc(E::Array {
+                    items,
+                    is_single_line: el.is_single_line,
+                    close_bracket_loc: el.close_bracket_loc,
+                    ..Default::default()
                 });
                 Ok(Data::EArray(StoreRef::from_bump(item)))
             }

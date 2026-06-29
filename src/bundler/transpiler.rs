@@ -1915,14 +1915,17 @@ fn parse_data_loader<'a>(
     };
     let mut expr = value_expr;
 
-    // The named-exports rewrite below splices every top-level property's
-    // value `Expr` into the module's statements and rewrites the property in
-    // place, so an object root headed there (the bundler) needs the classic
-    // tree. Everything else — the runtime's lazy single-statement export
-    // (`to_js` understands the rows) and non-object roots (the printer
-    // does too) — stays on the rows the JSON parser produced.
+    // The bundler (everything but the runtime's lazy single-statement
+    // export, whose AST goes straight to `to_js`) gets a classic tree: its
+    // named-exports rewrite splices every top-level property's value `Expr`
+    // into the module's statements, and the linker's visit/clone/shake
+    // passes only know the classic shape. The materialized tree carries the
+    // parser-recorded location of every node.
     if !keep_json_and_toml_as_one_statement
-        && matches!(expr.data, bun_ast::ExprData::EObjectJSON(_))
+        && matches!(
+            expr.data,
+            bun_ast::ExprData::EObjectJSON(_) | bun_ast::ExprData::EArrayJSON(_)
+        )
     {
         expr = bun_parsers::json::materialize(&expr, source, arena);
     }

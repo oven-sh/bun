@@ -54,12 +54,12 @@ pub struct JSONOptions {
     /// Mark as originally for a macro to enable inlining.
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
-    /// Return the JSON-only compact containers the parser natively builds
-    /// (`E::ObjectJSON` / `E::ArrayJSON`: 32-byte property rows whose
-    /// leaves are inline `E::JsonValue`s, not `Expr` nodes) together with
-    /// the [`E::JsonTape`] that owns them, instead of [`materialize`]-ing
-    /// the classic `E::Object` / `E::Array` tree at the boundary.
-    pub immutable: bool,
+    /// Record each property value's / array item's start location into the
+    /// document's [`E::JsonTape`]. Only the classic-output driver asks for
+    /// this: [`materialize`] then carries every exact location into the
+    /// classic tree without re-scanning the source. The immutable AST
+    /// itself never stores per-value locations.
+    pub record_value_locs: bool,
 }
 
 impl JSONOptions {
@@ -72,7 +72,7 @@ impl JSONOptions {
         json_warn_duplicate_keys: true,
         was_originally_macro: false,
         guess_indentation: false,
-        immutable: false,
+        record_value_locs: false,
     };
 }
 
@@ -144,8 +144,7 @@ fn empty_object_expr() -> Expr {
 /// containers): the root expression plus the [`E::JsonTape`] that owns every
 /// row and decoded string of the document. Everything reachable from `root`
 /// borrows the tape and the source it was parsed from, so keep all three
-/// alive together. `tape` is `None` only for the empty-input fast path,
-/// whose root borrows nothing.
+/// alive together.
 pub struct ParsedJson {
     pub root: Expr,
     pub tape: Option<Box<E::JsonTape>>,
@@ -278,6 +277,16 @@ fn report_index_error(
                 },
             );
         }
+        IndexError::DocumentTooLarge => {
+            log.add_error_fmt_opts(
+                format_args!("JSON document is too large to parse (2 GiB maximum)"),
+                bun_ast::AddErrorOptions {
+                    source: Some(source),
+                    loc: bun_ast::Loc { start: 0 },
+                    ..Default::default()
+                },
+            );
+        }
     }
     bun_core::err!("SyntaxError")
 }
@@ -373,6 +382,12 @@ fn parse_classic(
     opts: JSONOptions,
     check_len: bool,
 ) -> Result<ParseOutput, bun_core::Error> {
+    // Record every value's start location in the tape so the classic tree
+    // gets exact locations without re-scanning the source.
+    let opts = JSONOptions {
+        record_value_locs: true,
+        ..opts
+    };
     let mut out = parse_impl(source, log, opts, check_len)?;
     out.root = materialize_impl(&out.root, source, bump, opts.was_originally_macro);
     // The classic tree borrows nothing from the row tape: drop it.
@@ -393,7 +408,6 @@ pub fn parse_utf8_registry(
     const REGISTRY_OPTS: JSONOptions = JSONOptions {
         is_json: true,
         json_warn_duplicate_keys: false,
-        immutable: true,
         ..JSONOptions::DEFAULT
     };
     parse_immutable(source, log, REGISTRY_OPTS)
@@ -405,11 +419,7 @@ pub fn parse_package_json_utf8_immutable(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) -> Result<ParsedJson, bun_core::Error> {
-    const OPTS: JSONOptions = JSONOptions {
-        immutable: true,
-        ..PACKAGE_JSON_OPTS
-    };
-    parse_immutable(source, log, OPTS)
+    parse_immutable(source, log, PACKAGE_JSON_OPTS)
 }
 
 /// Strict JSON, as the document's rows. See [`ParsedJson`].
@@ -417,11 +427,7 @@ pub fn parse_utf8_immutable(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) -> Result<ParsedJson, bun_core::Error> {
-    const OPTS: JSONOptions = JSONOptions {
-        immutable: true,
-        ..JSON_OPTS
-    };
-    parse_immutable(source, log, OPTS)
+    parse_immutable(source, log, JSON_OPTS)
 }
 
 /// The tsconfig/`.jsonc` dialect (comments, trailing commas), as the
@@ -430,11 +436,7 @@ pub fn parse_ts_config_immutable(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) -> Result<ParsedJson, bun_core::Error> {
-    const OPTS: JSONOptions = JSONOptions {
-        immutable: true,
-        ..TSCONFIG_OPTS
-    };
-    parse_immutable(source, log, OPTS)
+    parse_immutable(source, log, TSCONFIG_OPTS)
 }
 
 /// Strict JSON, as the document's rows, with the whole document — its
@@ -447,11 +449,7 @@ pub fn parse_utf8_immutable_in(
     log: &mut bun_ast::Log,
     arena: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    const OPTS: JSONOptions = JSONOptions {
-        immutable: true,
-        ..JSON_OPTS
-    };
-    parse_immutable_in(source, log, OPTS, arena)
+    parse_immutable_in(source, log, JSON_OPTS, arena)
 }
 
 /// [`parse_utf8_immutable_in`] for the tsconfig/`.jsonc` dialect (comments,
@@ -461,11 +459,7 @@ pub fn parse_ts_config_immutable_in(
     log: &mut bun_ast::Log,
     arena: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    const OPTS: JSONOptions = JSONOptions {
-        immutable: true,
-        ..TSCONFIG_OPTS
-    };
-    parse_immutable_in(source, log, OPTS, arena)
+    parse_immutable_in(source, log, TSCONFIG_OPTS, arena)
 }
 
 /// Shared driver for the immutable-AST entry points. No arena: the document's
@@ -476,7 +470,6 @@ fn parse_immutable(
     log: &mut bun_ast::Log,
     opts: JSONOptions,
 ) -> Result<ParsedJson, bun_core::Error> {
-    debug_assert!(opts.immutable);
     if source.contents.is_empty() {
         // Empty input parses as `{}`, like the classic entry points: a
         // rowless object backed by an empty tape, so consumers checking for
@@ -505,7 +498,6 @@ fn parse_immutable_in(
     opts: JSONOptions,
     arena: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    debug_assert!(opts.immutable);
     let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
     if source.contents.is_empty() {
         // See `parse_immutable`: an empty document is an empty object.
@@ -537,9 +529,6 @@ pub fn parse_package_json_utf8(
 pub struct JsonResult {
     pub root: Expr,
     pub indentation: Indentation,
-    /// `Some` only for `immutable` parses (see [`ParsedJson::tape`]):
-    /// the row tape `root` borrows. Keep it alive as long as the `Expr`.
-    pub tape: Option<Box<E::JsonTape>>,
 }
 
 /// Compile-time-options spelling kept for existing call sites; reifies the
@@ -567,9 +556,9 @@ pub fn parse_package_json_utf8_with_opts<
             ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
             ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
             json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
-            immutable: false,
             was_originally_macro: WAS_ORIGINALLY_MACRO,
             guess_indentation: GUESS_INDENTATION,
+            record_value_locs: false,
         },
         source,
         log,
@@ -591,17 +580,10 @@ pub fn parse_package_json_utf8_with_opts_rt(
             ..Default::default()
         });
     }
-    // Callers that ask for the immutable AST own its tape; everyone else gets
-    // the classic tree materialized out of it.
-    let out = if opts.immutable {
-        parse_impl(source, log, opts, false)?
-    } else {
-        parse_classic(source, log, bump, opts, false)?
-    };
+    let out = parse_classic(source, log, bump, opts, false)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
-        tape: out.tape,
     })
 }
 
@@ -679,11 +661,7 @@ pub fn parse_jsonc(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) -> Result<ParsedJson, bun_core::Error> {
-    const JSONC_OPTS: JSONOptions = JSONOptions {
-        immutable: true,
-        ..TSCONFIG_OPTS
-    };
-    parse_immutable(source, log, JSONC_OPTS)
+    parse_immutable(source, log, TSCONFIG_OPTS)
 }
 
 /// `.env` / `--define` values: JSON if it looks like JSON, `true/false/null/
@@ -701,6 +679,11 @@ pub fn parse_env_json(
 
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
+            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+        }
+        // `-1`, `.5`, `-.5`: a sign or dot starts JSON only when a number
+        // follows; `-foo` / `.foo` are implicitly quoted strings.
+        b'-' | b'.' if leads_a_number(contents) => {
             Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         _ => {
@@ -740,6 +723,22 @@ pub fn parse_env_json(
             // Auto-quote: the entire value is an implicitly-quoted string.
             parse_auto_quoted_string(source, log, bump)
         }
+    }
+}
+
+/// Does a `.env`/`--define` value starting with `-` or `.` begin a numeric
+/// literal (`-1`, `.5`, `-.5`)? Anything else is an implicitly quoted
+/// string, like every other non-JSON first byte.
+fn leads_a_number(contents: &[u8]) -> bool {
+    let after_sign = if contents[0] == b'-' {
+        &contents[1..]
+    } else {
+        contents
+    };
+    match after_sign.first() {
+        Some(b'0'..=b'9') => true,
+        Some(b'.') => matches!(after_sign.get(1), Some(b'0'..=b'9')),
+        _ => false,
     }
 }
 
@@ -868,11 +867,7 @@ impl<'a> PackageJSONVersionChecker<'a> {
     /// Parse the document and record its first top-level `name` and
     /// `version` properties whose values are strings.
     pub fn parse(&mut self) -> Result<(), bun_core::Error> {
-        const OPTS: JSONOptions = JSONOptions {
-            immutable: true,
-            ..PKG_JSON_CHECKER_OPTS
-        };
-        let parsed = parse_immutable(self.source, self.log, OPTS)?;
+        let parsed = parse_immutable(self.source, self.log, PKG_JSON_CHECKER_OPTS)?;
         let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
             return Ok(());
         };
@@ -1032,13 +1027,6 @@ impl ToAst for bun_core::Error {
     }
 }
 
-// The G import is used by stage 2 via this module's re-export surface; keep
-// the type mentioned so the import isn't flagged.
-#[allow(dead_code)]
-fn _g_property_size_assert(p: &G::Property) -> usize {
-    core::mem::size_of_val(p)
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Source-location recovery
 // ──────────────────────────────────────────────────────────────────────────
@@ -1073,6 +1061,15 @@ pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_
     Some(bun_ast::usize2loc(value))
 }
 
+/// [`property_value_loc`] with the key's location as the fallback: the
+/// diagnostic-site spelling every consumer of the immutable AST wants
+/// (`None` only means the bytes don't match, where the key is the best
+/// location available).
+#[inline]
+pub fn property_value_loc_or_key(contents: &[u8], key_loc: bun_ast::Loc) -> bun_ast::Loc {
+    property_value_loc(contents, key_loc).unwrap_or(key_loc)
+}
+
 /// Sibling of [`property_value_loc`] for array items: the location of the
 /// first byte of item `index` of the array whose `[` is at `array_loc`
 /// (= the `E::ArrayJSON` expression's `loc`). `None` if the array's source
@@ -1089,6 +1086,14 @@ pub fn array_item_loc(
     for _ in 0..index {
         p = array_next_item(contents, p)?;
     }
+    Some(bun_ast::usize2loc(p))
+}
+
+/// Sibling of [`array_item_loc`] for visiting every item: the location of
+/// the item after the one starting at `item_loc`, in one forward step.
+/// `None` past the last item (or when the bytes don't match).
+pub fn array_next_item_loc(contents: &[u8], item_loc: bun_ast::Loc) -> Option<bun_ast::Loc> {
+    let p = array_next_item(contents, usize::try_from(item_loc.start).ok()?)?;
     Some(bun_ast::usize2loc(p))
 }
 
@@ -1298,7 +1303,11 @@ impl Materializer<'_> {
         let rows = o.properties();
         let mut properties: G::PropertyList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
-        for row in rows {
+        // Exact value locations: recorded by the parse when the entry point
+        // asked for them (`record_value_locs`); recovered from the source
+        // otherwise (an immutable parse materialized after the fact).
+        let value_locs = o.value_locs();
+        for (i, row) in rows.iter().enumerate() {
             let key = Expr::init(
                 E::String {
                     data: self.rehome(row.key),
@@ -1306,8 +1315,10 @@ impl Materializer<'_> {
                 },
                 row.key_loc,
             );
-            // Exact value location: re-scan past the key token and the `:`.
-            let value_loc = property_value_loc(self.contents, row.key_loc).unwrap_or(row.key_loc);
+            let value_loc = match value_locs {
+                Some(locs) => locs[i],
+                None => property_value_loc_or_key(self.contents, row.key_loc),
+            };
             properties.push(G::Property {
                 key: Some(key),
                 value: Some(self.json_value(&row.value, value_loc)),
@@ -1329,15 +1340,25 @@ impl Materializer<'_> {
         let rows = a.items();
         let mut items: js_ast::ExprNodeList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
-        // One forward sweep over the array's source recovers every item's
-        // exact start; a desync falls back to the array's own location.
-        let mut cursor = usize::try_from(loc.start)
-            .ok()
-            .and_then(|start| array_first_item(self.contents, start));
-        for item in rows {
-            let item_loc = cursor.map_or(loc, bun_ast::usize2loc);
+        // Exact item locations: recorded by the parse when asked for
+        // (`record_value_locs`); otherwise one forward sweep over the
+        // array's source, falling back to the array's own location.
+        let item_locs = a.item_locs();
+        let mut cursor = match item_locs {
+            Some(_) => None,
+            None => usize::try_from(loc.start)
+                .ok()
+                .and_then(|start| array_first_item(self.contents, start)),
+        };
+        for (i, item) in rows.iter().enumerate() {
+            let item_loc = match item_locs {
+                Some(locs) => locs[i],
+                None => cursor.map_or(loc, bun_ast::usize2loc),
+            };
             items.push(self.json_value(item, item_loc));
-            cursor = cursor.and_then(|p| array_next_item(self.contents, p));
+            if item_locs.is_none() {
+                cursor = cursor.and_then(|p| array_next_item(self.contents, p));
+            }
         }
         E::Array {
             items,
@@ -1409,19 +1430,17 @@ mod tests {
                 tape = p.tape;
                 p.root
             }),
-            Which::Immutable => parse_package_json_utf8_with_opts_rt(
-                JSONOptions {
-                    is_json: true,
-                    immutable: true,
-                    ..JSONOptions::DEFAULT
-                },
+            Which::Immutable => parse_immutable(
                 &source,
                 &mut log,
-                &bump,
+                JSONOptions {
+                    is_json: true,
+                    ..JSONOptions::DEFAULT
+                },
             )
-            .map(|mut r| {
-                tape = r.tape.take();
-                r.root
+            .map(|mut p| {
+                tape = p.tape.take();
+                p.root
             }),
         };
         let first_msg = log
@@ -1776,7 +1795,7 @@ mod tests {
     fn escaped_keyword_identifiers() {
         // Keywords, including the `\uXXXX`-escaped spelling that
         // `parse_escaped_identifier` accepts.
-        let p = run(br#"[true, false, null]"#, Which::Utf8);
+        let p = run(br"[\u0074rue, \u0066alse, \u006eull]", Which::Utf8);
         assert_eq!(p.errors, 0, "{}", p.first_msg);
         let mut got = String::new();
         to_json_string(p.root.as_ref().unwrap(), &mut got);

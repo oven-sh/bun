@@ -1054,6 +1054,13 @@ unsafe impl core::alloc::Allocator for TapeAlloc {
 pub struct JsonTape {
     props: Vec<PropertyJSON, TapeAlloc>,
     items: Vec<JsonValue, TapeAlloc>,
+    /// Each property value's / array item's start location, parallel to
+    /// `props` / `items`. Filled only for a parse that will be
+    /// [`materialize`](crate::Expr)d (`JSONOptions::record_value_locs`), so
+    /// the classic tree gets every exact location without re-scanning the
+    /// source; empty otherwise.
+    prop_value_locs: Vec<crate::Loc, TapeAlloc>,
+    item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
     /// Bytes of the last chunk already handed out.
     str_used: usize,
@@ -1081,6 +1088,8 @@ impl JsonTape {
         JsonTape {
             props: Vec::new_in(alloc),
             items: Vec::new_in(alloc),
+            prop_value_locs: Vec::new_in(alloc),
+            item_locs: Vec::new_in(alloc),
             str_chunks: Vec::new_in(alloc),
             str_used: 0,
         }
@@ -1095,17 +1104,19 @@ impl JsonTape {
     /// Append one closing object's direct children as a contiguous block and
     /// return its `(first, count)` span in the property tape.
     #[inline]
-    pub fn append_props(&mut self, rows: &[PropertyJSON]) -> (u32, u32) {
+    pub fn append_props(&mut self, rows: &[PropertyJSON], value_locs: &[crate::Loc]) -> (u32, u32) {
         let first = self.props.len() as u32;
         self.props.extend_from_slice(rows);
+        self.prop_value_locs.extend_from_slice(value_locs);
         (first, rows.len() as u32)
     }
 
     /// See [`Self::append_props`]; the array-item tape.
     #[inline]
-    pub fn append_items(&mut self, rows: &[JsonValue]) -> (u32, u32) {
+    pub fn append_items(&mut self, rows: &[JsonValue], item_locs: &[crate::Loc]) -> (u32, u32) {
         let first = self.items.len() as u32;
         self.items.extend_from_slice(rows);
+        self.item_locs.extend_from_slice(item_locs);
         (first, rows.len() as u32)
     }
 
@@ -1129,6 +1140,21 @@ impl JsonTape {
         out.copy_from_slice(bytes);
         self.str_used += bytes.len();
         Str::new(out)
+    }
+
+    /// `[first, first + count)` of the recorded property-value locations,
+    /// `None` unless this document recorded them (see `prop_value_locs`).
+    #[inline]
+    fn prop_value_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
+        self.prop_value_locs
+            .get(first as usize..first as usize + count as usize)
+    }
+
+    /// See [`Self::prop_value_locs_span`]; the array-item locations.
+    #[inline]
+    fn item_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
+        self.item_locs
+            .get(first as usize..first as usize + count as usize)
     }
 
     /// `[first, first + count)` of the property tape.
@@ -1193,6 +1219,18 @@ impl ObjectJSON {
         unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
     }
 
+    /// The recorded start location of each property's value, parallel to
+    /// [`Self::properties`]; `None` unless the parse recorded them (only
+    /// materializing entry points ask for that).
+    #[inline]
+    pub fn value_locs(&self) -> Option<&[crate::Loc]> {
+        if self.count == 0 {
+            return Some(&[]);
+        }
+        // SAFETY: see `properties`.
+        unsafe { self.tape.as_ref() }.prop_value_locs_span(self.first, self.count)
+    }
+
     /// First value whose key's decoded bytes equal `key` (matching
     /// `E::Object::get`'s first-match semantics used everywhere else).
     #[inline]
@@ -1246,6 +1284,17 @@ impl ArrayJSON {
         }
         // SAFETY: see `ObjectJSON::properties`.
         unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
+    }
+
+    /// The recorded start location of each item, parallel to
+    /// [`Self::items`]; `None` unless the parse recorded them.
+    #[inline]
+    pub fn item_locs(&self) -> Option<&[crate::Loc]> {
+        if self.count == 0 {
+            return Some(&[]);
+        }
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }.item_locs_span(self.first, self.count)
     }
 }
 

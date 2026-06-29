@@ -39,7 +39,7 @@ use bun_install_types::DependencyVersionTag;
 // this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
 use super::PackageIDSlice;
-use super::package::{Meta, PackageColumns as _};
+use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     DependencySlice, LoadResult, Lockfile as BinaryLockfile, Package, PatchedDep,
     TrustedDependenciesSet, VersionHashMap, tree,
@@ -1591,7 +1591,12 @@ impl<T> PkgMap<T> {
 fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
     match &expr.data {
         ExprData::EObjectJSON(o) => o.get().properties(),
-        _ => &[],
+        // The lockfile root always comes from the immutable entry point; a
+        // classic tree here would silently parse as an empty lockfile.
+        _ => {
+            debug_assert!(!expr.is_object(), "object_rows on a mutable object");
+            &[]
+        }
     }
 }
 
@@ -1603,18 +1608,10 @@ fn array_items(expr: &Expr) -> &[JSON::E::JsonValue] {
     }
 }
 
-/// Location of the value of the property whose key starts at `key_loc`.
-/// The immutable AST records only key locations (and `Expr::get` returns the
-/// key's location), so diagnostics that point at a property *value* recover
-/// it from the source. Cold path: an error/warning is about to be reported.
-fn value_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> bun_ast::Loc {
-    JSON::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
-}
-
 /// Location of item `index` of the array that is the value of the property
 /// whose key starts at `key_loc`. Cold path, see [`value_loc`].
 fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bun_ast::Loc {
-    let array_loc = value_loc(source, key_loc);
+    let array_loc = value_loc_of(source, key_loc);
     JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)
 }
 
@@ -1651,7 +1648,7 @@ pub fn parse_into_binary_lockfile(
 
         log.add_error(
             Some(source),
-            value_loc(source, lockfile_version_expr.loc),
+            value_loc_of(source, lockfile_version_expr.loc),
             b"Invalid lockfile version",
         );
         return Err(ParseError::InvalidLockfileVersion);
@@ -1661,7 +1658,7 @@ pub fn parse_into_binary_lockfile(
         log.add_range_error_fmt_with_notes(
             Some(source),
             bun_ast::Range {
-                loc: value_loc(source, lockfile_version_expr.loc),
+                loc: value_loc_of(source, lockfile_version_expr.loc),
                 ..Default::default()
             },
             Box::new([bun_ast::range_data(
@@ -1688,7 +1685,7 @@ pub fn parse_into_binary_lockfile(
             None => {
                 log.add_error(
                     Some(source),
-                    value_loc(source, config_version_expr.loc),
+                    value_loc_of(source, config_version_expr.loc),
                     b"Invalid \"configVersion\". Expected a number",
                 );
                 return Err(ParseError::InvalidConfigVersion);
@@ -1701,7 +1698,7 @@ pub fn parse_into_binary_lockfile(
         if !trusted_dependencies_expr.is_array() {
             log.add_error(
                 Some(source),
-                value_loc(source, trusted_dependencies_expr.loc),
+                value_loc_of(source, trusted_dependencies_expr.loc),
                 b"Expected an array",
             );
             return Err(ParseError::InvalidTrustedDependenciesSet);
@@ -1730,7 +1727,7 @@ pub fn parse_into_binary_lockfile(
         if !patched_dependencies_expr.is_object() {
             log.add_error(
                 Some(source),
-                value_loc(source, patched_dependencies_expr.loc),
+                value_loc_of(source, patched_dependencies_expr.loc),
                 b"Expected an object",
             );
             return Err(ParseError::InvalidPatchedDependencies);
@@ -1740,7 +1737,7 @@ pub fn parse_into_binary_lockfile(
             let Some(path_str) = row.value.as_str() else {
                 log.add_error(
                     Some(source),
-                    value_loc(source, row.key_loc),
+                    value_loc_of(source, row.key_loc),
                     b"Expected a string",
                 );
                 return Err(ParseError::InvalidPatchedDependencies);
@@ -1761,7 +1758,7 @@ pub fn parse_into_binary_lockfile(
         if !overrides_expr.is_object() {
             log.add_error(
                 Some(source),
-                value_loc(source, overrides_expr.loc),
+                value_loc_of(source, overrides_expr.loc),
                 b"Expected an object",
             );
             return Err(ParseError::InvalidOverridesObject);
@@ -1781,7 +1778,7 @@ pub fn parse_into_binary_lockfile(
             let Some(version_str) = row.value.as_str() else {
                 log.add_error(
                     Some(source),
-                    value_loc(source, row.key_loc),
+                    value_loc_of(source, row.key_loc),
                     b"Expected a string",
                 );
                 return Err(ParseError::InvalidOverridesObject);
@@ -1806,7 +1803,7 @@ pub fn parse_into_binary_lockfile(
                     None => {
                         log.add_error(
                             Some(source),
-                            value_loc(source, row.key_loc),
+                            value_loc_of(source, row.key_loc),
                             b"Invalid override version",
                         );
                         return Err(ParseError::InvalidOverridesObject);
@@ -1823,7 +1820,7 @@ pub fn parse_into_binary_lockfile(
         if !catalog_expr.is_object() {
             log.add_error(
                 Some(source),
-                value_loc(source, catalog_expr.loc),
+                value_loc_of(source, catalog_expr.loc),
                 b"Expected an object",
             );
             return Err(ParseError::InvalidCatalogObject);
@@ -1842,7 +1839,7 @@ pub fn parse_into_binary_lockfile(
             let Some(version_str) = row.value.as_str() else {
                 log.add_error(
                     Some(source),
-                    value_loc(source, row.key_loc),
+                    value_loc_of(source, row.key_loc),
                     b"Expected a string",
                 );
                 return Err(ParseError::InvalidCatalogObject);
@@ -1867,7 +1864,7 @@ pub fn parse_into_binary_lockfile(
                     None => {
                         log.add_error(
                             Some(source),
-                            value_loc(source, row.key_loc),
+                            value_loc_of(source, row.key_loc),
                             b"Invalid catalog version",
                         );
                         return Err(ParseError::InvalidCatalogObject);
@@ -1895,7 +1892,7 @@ pub fn parse_into_binary_lockfile(
         if !catalogs_expr.is_object() {
             log.add_error(
                 Some(source),
-                value_loc(source, catalogs_expr.loc),
+                value_loc_of(source, catalogs_expr.loc),
                 b"Expected an object",
             );
             return Err(ParseError::InvalidCatalogsObject);
@@ -1915,7 +1912,7 @@ pub fn parse_into_binary_lockfile(
             let Some(catalog_obj) = catalog_row.value.as_object() else {
                 log.add_error(
                     Some(source),
-                    value_loc(source, catalog_row.key_loc),
+                    value_loc_of(source, catalog_row.key_loc),
                     b"Expected an object",
                 );
                 return Err(ParseError::InvalidCatalogsObject);
@@ -1940,7 +1937,7 @@ pub fn parse_into_binary_lockfile(
                 let Some(version_str) = row.value.as_str() else {
                     log.add_error(
                         Some(source),
-                        value_loc(source, row.key_loc),
+                        value_loc_of(source, row.key_loc),
                         b"Expected a string",
                     );
                     return Err(ParseError::InvalidCatalogsObject);
@@ -1965,7 +1962,7 @@ pub fn parse_into_binary_lockfile(
                         None => {
                             log.add_error(
                                 Some(source),
-                                value_loc(source, row.key_loc),
+                                value_loc_of(source, row.key_loc),
                                 b"Invalid catalog version",
                             );
                             return Err(ParseError::InvalidCatalogsObject);
@@ -2005,7 +2002,7 @@ pub fn parse_into_binary_lockfile(
         if row.value.as_object().is_none() {
             log.add_error(
                 Some(source),
-                value_loc(source, row.key_loc),
+                value_loc_of(source, row.key_loc),
                 b"Expected an object",
             );
             return Err(ParseError::InvalidWorkspaceObject);
@@ -2029,7 +2026,7 @@ pub fn parse_into_binary_lockfile(
         let Some(name_expr) = value.get(b"name") else {
             log.add_error(
                 Some(source),
-                value_loc(source, row.key_loc),
+                value_loc_of(source, row.key_loc),
                 b"Expected a string name property",
             );
             return Err(ParseError::InvalidWorkspaceObject);
@@ -2038,7 +2035,7 @@ pub fn parse_into_binary_lockfile(
         let Some(name_hash) = name_expr.as_string_hash_utf8(StringBuilder::string_hash)? else {
             log.add_error(
                 Some(source),
-                value_loc(source, name_expr.loc),
+                value_loc_of(source, name_expr.loc),
                 b"Expected a string name property",
             );
             return Err(ParseError::InvalidWorkspaceObject);
@@ -2053,7 +2050,7 @@ pub fn parse_into_binary_lockfile(
             if !version_expr.is_string() {
                 log.add_error(
                     Some(source),
-                    value_loc(source, version_expr.loc),
+                    value_loc_of(source, version_expr.loc),
                     b"Expected a string version property",
                 );
                 return Err(ParseError::InvalidWorkspaceObject);
@@ -2071,7 +2068,7 @@ pub fn parse_into_binary_lockfile(
             if !parsed.valid {
                 log.add_error(
                     Some(source),
-                    value_loc(source, version_expr.loc),
+                    value_loc_of(source, version_expr.loc),
                     b"Invalid semver version",
                 );
                 return Err(ParseError::InvalidSemver);
@@ -2090,7 +2087,7 @@ pub fn parse_into_binary_lockfile(
     let Some(root_pkg_exr) = maybe_root_pkg else {
         log.add_error(
             Some(source),
-            value_loc(source, workspaces_obj.loc),
+            value_loc_of(source, workspaces_obj.loc),
             b"Expected root package",
         );
         return Err(ParseError::InvalidWorkspaceObject);
@@ -2107,7 +2104,7 @@ pub fn parse_into_binary_lockfile(
                 None => {
                     log.add_error(
                         Some(source),
-                        value_loc(source, name.loc),
+                        value_loc_of(source, name.loc),
                         b"Expected a string",
                     );
                     return Err(ParseError::InvalidWorkspaceObject);
@@ -2243,7 +2240,7 @@ pub fn parse_into_binary_lockfile(
         if !pkgs_expr.is_object() {
             log.add_error(
                 Some(source),
-                value_loc(source, pkgs_expr.loc),
+                value_loc_of(source, pkgs_expr.loc),
                 b"Expected an object",
             );
             return Err(ParseError::InvalidPackagesObject);
@@ -2267,7 +2264,7 @@ pub fn parse_into_binary_lockfile(
             let Some(pkg_info) = row.value.as_array() else {
                 log.add_error(
                     Some(source),
-                    value_loc(source, row.key_loc),
+                    value_loc_of(source, row.key_loc),
                     b"Expected an array",
                 );
                 return Err(ParseError::InvalidPackageInfo);
@@ -2296,7 +2293,7 @@ pub fn parse_into_binary_lockfile(
             let Some(pkg_info) = row.value.as_array() else {
                 log.add_error(
                     Some(source),
-                    value_loc(source, key_loc),
+                    value_loc_of(source, key_loc),
                     b"Expected an array",
                 );
                 return Err(ParseError::InvalidPackageInfo);
@@ -2308,7 +2305,7 @@ pub fn parse_into_binary_lockfile(
             if pkg_info.is_empty() {
                 log.add_error(
                     Some(source),
-                    value_loc(source, key_loc),
+                    value_loc_of(source, key_loc),
                     b"Missing package info",
                 );
                 return Err(ParseError::InvalidPackageInfo);
@@ -2385,7 +2382,7 @@ pub fn parse_into_binary_lockfile(
                 if i >= pkg_info.len() {
                     log.add_error(
                         Some(source),
-                        value_loc(source, key_loc),
+                        value_loc_of(source, key_loc),
                         b"Missing npm registry",
                     );
                     return Err(ParseError::InvalidPackageInfo);
@@ -2527,7 +2524,7 @@ pub fn parse_into_binary_lockfile(
                         if i >= pkg_info.len() {
                             log.add_error(
                                 Some(source),
-                                value_loc(source, key_loc),
+                                value_loc_of(source, key_loc),
                                 b"Missing dependencies object",
                             );
                             return Err(ParseError::InvalidPackageInfo);
@@ -2591,7 +2588,7 @@ pub fn parse_into_binary_lockfile(
                         if i >= pkg_info.len() {
                             log.add_error(
                                 Some(source),
-                                value_loc(source, key_loc),
+                                value_loc_of(source, key_loc),
                                 b"Missing package binaries object",
                             );
                             return Err(ParseError::InvalidPackageInfo);
@@ -2629,7 +2626,7 @@ pub fn parse_into_binary_lockfile(
                     if i >= pkg_info.len() {
                         log.add_error(
                             Some(source),
-                            value_loc(source, key_loc),
+                            value_loc_of(source, key_loc),
                             b"Missing integrity",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -2698,7 +2695,7 @@ pub fn parse_into_binary_lockfile(
                     if i >= pkg_info.len() {
                         log.add_error(
                             Some(source),
-                            value_loc(source, key_loc),
+                            value_loc_of(source, key_loc),
                             b"Missing git dependency tag",
                         );
                         return Err(ParseError::InvalidPackageInfo);
@@ -2828,7 +2825,7 @@ pub fn parse_into_binary_lockfile(
                         string_buf,
                         source,
                         log,
-                        value_loc(source, root_pkg_exr.loc),
+                        value_loc_of(source, root_pkg_exr.loc),
                     )?;
                     return Err(ParseError::InvalidPackageInfo);
                 };
@@ -2875,7 +2872,7 @@ pub fn parse_into_binary_lockfile(
                         if needed > buf_slice.len() {
                             log.add_error_fmt(
                                 source,
-                                value_loc(source, root_pkg_exr.loc),
+                                value_loc_of(source, root_pkg_exr.loc),
                                 format_args!(
                                     "Workspace and dependency name too long: '{}/{}'",
                                     bstr::BStr::new(workspace_name),
@@ -2903,7 +2900,7 @@ pub fn parse_into_binary_lockfile(
                             string_buf,
                             source,
                             log,
-                            value_loc(source, root_pkg_exr.loc),
+                            value_loc_of(source, root_pkg_exr.loc),
                         )?;
                         return Err(ParseError::InvalidPackageInfo);
                     };
@@ -3092,7 +3089,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         if !optional_peers.is_array() {
             log.add_error(
                 Some(source),
-                value_loc(source, optional_peers.loc),
+                value_loc_of(source, optional_peers.loc),
                 b"Expected an array",
             );
             return Err(ParseError::InvalidPackageInfo);
@@ -3124,7 +3121,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
             if !deps.is_object() {
                 log.add_error(
                     Some(source),
-                    value_loc(source, deps.loc),
+                    value_loc_of(source, deps.loc),
                     b"Expected an object",
                 );
                 return Err(ParseError::InvalidPackagesTree);
@@ -3139,7 +3136,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let Some(version_str) = row.value.as_str() else {
                     log.add_error(
                         Some(source),
-                        value_loc(source, row.key_loc),
+                        value_loc_of(source, row.key_loc),
                         b"Expected a string",
                     );
                     return Err(ParseError::InvalidDependencyVersion);
@@ -3170,7 +3167,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                         None => {
                             log.add_error(
                                 Some(source),
-                                value_loc(source, row.key_loc),
+                                value_loc_of(source, row.key_loc),
                                 b"Invalid dependency version",
                             );
                             return Err(ParseError::InvalidDependencyVersion);

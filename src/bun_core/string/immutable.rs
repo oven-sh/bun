@@ -477,8 +477,8 @@ pub fn contains_t<T: Eq>(self_: &[T], str: &[T]) -> bool {
 pub use crate::strings_impl::contains_case_insensitive_ascii;
 
 /// Index of the first byte in `slice` that appears in `chars` (SIMD via
-/// highway). Every caller indexes with the result, so this returns `usize`
-/// unlike the `u32`-returning single-char scanners above.
+/// highway). Returns `usize` (unlike the `u32`-returning single-char
+/// scanners above) so callers can index with the result directly.
 #[inline]
 pub fn index_of_any(slice: &[u8], chars: &[u8]) -> Option<usize> {
     match chars.len() {

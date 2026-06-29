@@ -299,66 +299,81 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
-    let flags = uSockets.LISTEN_DISALLOW_REUSE_PORT_FAILURE;
-
-    if (state.reuseAddr) {
-      flags |= uSockets.LISTEN_REUSE_ADDR;
-    }
-
-    if (state.ipv6Only) {
-      flags |= uSockets.SOCKET_IPV6_ONLY;
-    }
-
-    if (state.reusePort) {
-      flags |= uSockets.LISTEN_REUSE_PORT;
-    }
-
-    // TODO flags
-    const family = this.type === "udp4" ? "IPv4" : "IPv6";
     try {
-      Bun.udpSocket({
-        hostname: ip,
-        port: port || 0,
-        flags,
-        socket: {
-          data: (_socket, data, port, address) => {
-            this.emit("message", data, {
-              port: port,
-              address: address,
-              size: data.length,
-              // TODO check if this is correct
-              family,
-            });
-          },
-          error: error => {
-            this.emit("error", error);
-          },
-        },
-      }).$then(
-        socket => {
-          if (state.unrefOnBind) {
-            socket.unref();
-            state.unrefOnBind = false;
-          }
-          state.handle.socket = socket;
-          state.receiving = true;
-          state.bindState = BIND_STATE_BOUND;
-
-          this.emit("listening");
-        },
-        err => {
-          state.bindState = BIND_STATE_UNBOUND;
-          this.emit("error", err);
-        },
-      );
+      attachSocket(this, ip, port);
     } catch (err) {
       state.bindState = BIND_STATE_UNBOUND;
       this.emit("error", err);
+      return;
     }
+
+    this.emit("listening");
   });
 
   return this;
 };
+
+const createSocketFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsCreate", 1);
+
+// Synchronously creates + binds the native socket for `self`, attaches it to
+// the handle, and marks the socket BOUND. On failure, throws without touching
+// `bindState`; callers own error reporting and the `listening` event.
+function attachSocket(self, ip, port) {
+  const state = self[kStateSymbol];
+
+  let flags = uSockets.LISTEN_DISALLOW_REUSE_PORT_FAILURE;
+
+  if (state.reuseAddr) {
+    flags |= uSockets.LISTEN_REUSE_ADDR;
+  }
+
+  if (state.ipv6Only) {
+    flags |= uSockets.SOCKET_IPV6_ONLY;
+  }
+
+  if (state.reusePort) {
+    flags |= uSockets.LISTEN_REUSE_PORT;
+  }
+
+  const family = self.type === "udp4" ? "IPv4" : "IPv6";
+  const socket = createSocketFn({
+    hostname: ip,
+    port: port || 0,
+    flags,
+    socket: {
+      data: (_socket, data, port, address) => {
+        self.emit("message", data, {
+          port: port,
+          address: address,
+          size: data.length,
+          family,
+        });
+      },
+      error: error => {
+        self.emit("error", error);
+      },
+    },
+  });
+
+  if (state.unrefOnBind) {
+    socket.unref();
+    state.unrefOnBind = false;
+  }
+  state.handle.socket = socket;
+  state.receiving = true;
+  state.bindState = BIND_STATE_BOUND;
+}
+
+// node binds an unbound socket to a random port before a membership operation
+// (libuv's `uv__udp_maybe_deferred_bind`), synchronously and without emitting
+// "listening". A closed or already-binding socket is "not running".
+function implicitBind(self) {
+  const state = self[kStateSymbol];
+  if (!state.handle || state.bindState !== BIND_STATE_UNBOUND) {
+    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
+  }
+  attachSocket(self, self.type === "udp4" ? "0.0.0.0" : "::", 0);
+}
 
 Socket.prototype.connect = function (port, address, callback) {
   port = validatePort(port, "Port", false);
@@ -815,15 +830,12 @@ Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
   if (typeof interfaceAddress !== "undefined") {
     validateString(interfaceAddress, "interfaceAddress");
   }
-  const { handle, bindState } = this[kStateSymbol];
+  const { handle } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(multicastAddress)) {
       throw EINVAL("addMembership");
     }
-    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
-  }
-  if (bindState === BIND_STATE_UNBOUND) {
-    this.bind({ port: 0, exclusive: true }, null);
+    implicitBind(this);
   }
   return handle.socket.addMembership(multicastAddress, interfaceAddress);
 };
@@ -841,7 +853,7 @@ Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) 
     if (!isIP(multicastAddress)) {
       throw EINVAL("dropMembership");
     }
-    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
+    implicitBind(this);
   }
   return handle.socket.dropMembership(multicastAddress, interfaceAddress);
 };
@@ -853,15 +865,12 @@ Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAdd
     validateString(interfaceAddress, "interfaceAddress");
   }
 
-  const { handle, bindState } = this[kStateSymbol];
+  const { handle } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(sourceAddress) || !isIP(groupAddress)) {
       throw EINVAL("addSourceSpecificMembership");
     }
-    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
-  }
-  if (bindState === BIND_STATE_UNBOUND) {
-    this.bind(0);
+    implicitBind(this);
   }
   return handle.socket.addSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
 };
@@ -873,15 +882,12 @@ Socket.prototype.dropSourceSpecificMembership = function (sourceAddress, groupAd
     validateString(interfaceAddress, "interfaceAddress");
   }
 
-  const { handle, bindState } = this[kStateSymbol];
+  const { handle } = this[kStateSymbol];
   if (!handle?.socket) {
     if (!isIP(sourceAddress) || !isIP(groupAddress)) {
       throw EINVAL("dropSourceSpecificMembership");
     }
-    throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
-  }
-  if (bindState === BIND_STATE_UNBOUND) {
-    this.bind(0);
+    implicitBind(this);
   }
   return handle.socket.dropSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
 };

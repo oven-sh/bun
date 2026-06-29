@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 
-import { disableAggressiveGCScope } from "harness";
+import { disableAggressiveGCScope, isIPv6, isMacOS, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -302,5 +302,116 @@ describe("bind()", () => {
     // The in-flight first bind must still complete normally.
     await listening;
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+// Node implicitly binds an unbound socket to a random port before a membership
+// operation (libuv's deferred bind) rather than throwing "not running". The
+// loopback interface is explicit so the joins don't need a multicast route.
+describe("membership on an unbound socket", () => {
+  const GROUP4 = "224.0.0.114";
+  const SSM_GROUP4 = "232.0.0.114";
+  const SSM_SOURCE4 = "127.0.0.2";
+  const LO4 = "127.0.0.1";
+
+  // Same loopback scope ids node-dgram.test.js uses for the bound-socket case.
+  const LO6 = isWindows ? "::%1" : isMacOS ? "::%lo0" : "::%lo";
+
+  test("addMembership() implicitly binds", () => {
+    const socket = createSocket("udp4");
+    try {
+      socket.addMembership(GROUP4, LO4);
+      expect(socket.address()).toMatchObject({ address: "0.0.0.0", family: "IPv4" });
+      expect(socket.address().port).toBeGreaterThan(0);
+      socket.dropMembership(GROUP4, LO4);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("addSourceSpecificMembership() implicitly binds", () => {
+    const socket = createSocket("udp4");
+    try {
+      socket.addSourceSpecificMembership(SSM_SOURCE4, SSM_GROUP4, LO4);
+      expect(socket.address()).toMatchObject({ address: "0.0.0.0", family: "IPv4" });
+      expect(socket.address().port).toBeGreaterThan(0);
+      socket.dropSourceSpecificMembership(SSM_SOURCE4, SSM_GROUP4, LO4);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.skipIf(!isIPv6())("addMembership() on a udp6 socket implicitly binds to [::]", () => {
+    const socket = createSocket("udp6");
+    try {
+      socket.addMembership("ff01::1", LO6);
+      expect(socket.address()).toMatchObject({ address: "::", family: "IPv6" });
+      expect(socket.address().port).toBeGreaterThan(0);
+      socket.dropMembership("ff01::1", LO6);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("the implicitly bound socket can send", async () => {
+    const receiver = createSocket("udp4");
+    const sender = createSocket("udp4");
+    try {
+      const received = Promise.withResolvers<Buffer>();
+      receiver.on("message", received.resolve);
+      receiver.on("error", received.reject);
+
+      const listening = Promise.withResolvers<void>();
+      receiver.on("listening", listening.resolve);
+      receiver.bind(0, LO4);
+      await listening.promise;
+
+      sender.addMembership(GROUP4, LO4);
+      const sent = Promise.withResolvers<void>();
+      sender.on("error", sent.reject);
+      sender.send("via implicit bind", receiver.address().port, LO4, err => (err ? sent.reject(err) : sent.resolve()));
+
+      await sent.promise;
+      expect((await received.promise).toString()).toBe("via implicit bind");
+    } finally {
+      sender.close();
+      receiver.close();
+    }
+  });
+
+  test("an invalid multicast address does not trigger the implicit bind", () => {
+    const socket = createSocket("udp4");
+    try {
+      expect(() => socket.addMembership("256.256.256.256")).toThrowWithCode(Error, "EINVAL");
+      expect(() => socket.address()).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("a closed socket still throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const socket = createSocket("udp4");
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    socket.close(onClose);
+    await closed;
+    expect(() => socket.addMembership(GROUP4, LO4)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+    expect(() => socket.dropMembership(GROUP4, LO4)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+    expect(() => socket.addSourceSpecificMembership(SSM_SOURCE4, SSM_GROUP4, LO4)).toThrowWithCode(
+      Error,
+      "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    );
+    expect(() => socket.dropSourceSpecificMembership(SSM_SOURCE4, SSM_GROUP4, LO4)).toThrowWithCode(
+      Error,
+      "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    );
+  });
+
+  test("a bind() already in flight still throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const socket = createSocket("udp4");
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    socket.bind(0, onListening);
+    expect(() => socket.addMembership(GROUP4, LO4)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+    await listening;
+    socket.close();
   });
 });

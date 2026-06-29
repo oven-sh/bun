@@ -176,6 +176,37 @@ describe("async context passes through", () => {
 
     expect(seen).toEqual(["creator", "refresher", null, "again", "again"]);
   });
+  // A non-callable `_onTimeout` is treated as cleared when the timer fires, so refresh()
+  // must not wrap it in an async context frame: that would make it truthy and leave the
+  // refresher's context installed globally once the invoke fails.
+  test("setTimeout().refresh() does not re-bind a non-callable _onTimeout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+        const als = new AsyncLocalStorage();
+        const errors = [];
+        process.on("uncaughtException", err => errors.push(String(err)));
+        async function main() {
+          let t;
+          await new Promise(resolve => (t = setTimeout(resolve, 1)));
+          t._onTimeout = null;
+          als.run("refresher", () => t.refresh());
+          setTimeout(() => {
+            console.log(JSON.stringify({ store: als.getStore() ?? null, errors }));
+          }, 20);
+        }
+        main();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe('{"store":null,"errors":[]}');
+    expect(exitCode).toBe(0);
+  });
   test("setInterval", async () => {
     let resolve: (x: string[]) => void;
     const promise = new Promise<string[]>(r => (resolve = r));

@@ -2,6 +2,7 @@
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/JSPromise.h>
 
 #if ASSERT_ENABLED
 #include <JavaScriptCore/IntegrityInlines.h>
@@ -104,6 +105,12 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__recaptureAsyncContextIfNeeded(
     JSValue callback = JSValue::decode(callbackValue);
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(callback)) {
         callback = wrapper->callback.get();
+    }
+    // `timeout._onTimeout = <any value>` writes this slot directly. Only re-wrap what the
+    // timer can invoke: wrapping anything else would turn the falsy values the timer
+    // treats as cleared into a truthy object.
+    if (!callback.isCallable() && !dynamicDowncast<JSPromise>(callback)) {
+        return callbackValue;
     }
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callback));
 }

@@ -110,6 +110,7 @@
 #include "ZigGlobalObject.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
+#include "JSBuffer.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
 #include "JSKeyObject.h"
@@ -276,6 +277,11 @@ enum ArrayBufferViewSubtag {
     BigInt64ArrayTag = 10,
     BigUint64ArrayTag = 11,
     Float16ArrayTag = 12,
+
+    // Bun subtags start at 254 and decrease with each addition, so they can't
+    // collide with future WebKit subtags. A Uint8Array that is a Node.js Buffer;
+    // only written under SerializationContext::NodeV8Serialize.
+    Bun__NodeBufferTag = 254,
 };
 
 // static bool isTypeExposedToGlobalObject(JSC::JSGlobalObject& globalObject, SerializationTag tag)
@@ -374,6 +380,7 @@ static unsigned typedArrayElementSize(ArrayBufferViewSubtag tag)
     case Int8ArrayTag:
     case Uint8ArrayTag:
     case Uint8ClampedArrayTag:
+    case Bun__NodeBufferTag:
         return 1;
     case Int16ArrayTag:
     case Uint16ArrayTag:
@@ -1350,9 +1357,15 @@ private:
             write(Uint8ClampedArrayTag);
         else if (obj->inherits<JSInt8Array>())
             write(Int8ArrayTag);
-        else if (obj->inherits<JSUint8Array>())
-            write(Uint8ArrayTag);
-        else if (obj->inherits<JSInt16Array>())
+        else if (obj->inherits<JSUint8Array>()) {
+            // Node's v8.serialize() round-trips Buffer as Buffer (it writes a host
+            // object tag for it); structuredClone()/postMessage() produce a plain
+            // Uint8Array in Node, so only NodeV8Serialize writes the Buffer subtag.
+            if (m_context == SerializationContext::NodeV8Serialize && JSBuffer__isBuffer(m_lexicalGlobalObject, JSValue::encode(JSValue(obj))))
+                write(Bun__NodeBufferTag);
+            else
+                write(Uint8ArrayTag);
+        } else if (obj->inherits<JSInt16Array>())
             write(Int16ArrayTag);
         else if (obj->inherits<JSUint16Array>())
             write(Uint16ArrayTag);
@@ -3812,6 +3825,23 @@ private:
         case BigUint64ArrayTag:
             arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, BigUint64Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
             return true;
+        case Bun__NodeBufferTag: {
+            // Written by node:v8's serialize() for Node.js Buffers: reconstruct with
+            // a Buffer structure so Buffer.isBuffer() is true after the round trip.
+            auto* globalObject = defaultGlobalObject(m_globalObject);
+            // Buffers over resizable/growable ArrayBuffers use a distinct structure;
+            // see constructFromArrayBuffer in JSBuffer.cpp.
+            JSC::Structure* structure = arrayBuffer->isResizableOrGrowableShared()
+                ? globalObject->JSResizableOrGrowableSharedBufferSubclassStructure()
+                : globalObject->JSBufferSubclassStructure();
+            RefPtr<Uint8Array> impl = Uint8Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length);
+            if (!impl) [[unlikely]] {
+                arrayBufferView = jsNull();
+                return true;
+            }
+            arrayBufferView = JSC::JSUint8Array::create(structure, m_lexicalGlobalObject, WTF::move(impl));
+            return true;
+        }
         default:
             return false;
         }

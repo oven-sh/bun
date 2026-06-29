@@ -4,6 +4,14 @@
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
+// Like jsc.serialize(value, { binaryType: "nodebuffer" }), except Buffer instances
+// round-trip as Buffer instead of Uint8Array, matching Node's DefaultSerializer.
+const serializeImpl: (value: unknown) => Buffer = $newCppFunction(
+  "StructuredClone.cpp",
+  "jsFunctionNodeV8Serialize",
+  1,
+);
+
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
 }
@@ -104,7 +112,7 @@ function stopCoverage() {
   notimpl("stopCoverage");
 }
 function serialize(arg1) {
-  return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+  return serializeImpl(arg1);
 }
 
 function getDefaultHeapSnapshotPath() {

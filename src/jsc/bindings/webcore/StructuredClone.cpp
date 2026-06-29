@@ -33,6 +33,7 @@
 #include "SerializedScriptValue.h"
 #include "MessagePort.h"
 #include "JSStructuredSerializeOptions.h"
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -211,6 +212,33 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(deserialized);
+}
+
+// node:v8's serialize(). Unlike the structured clone entry points above, Node.js
+// Buffers are tagged so they deserialize as Buffer rather than Uint8Array
+// (Node's DefaultSerializer writes them as host objects). Returns a Buffer.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8Serialize, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = callFrame->argument(0);
+
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+    Vector<RefPtr<MessagePort>> dummyPorts;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), dummyPorts,
+        SerializationForStorage::Yes, SerializationContext::NodeV8Serialize);
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    throwScope.assertNoException();
+
+    auto arrayBuffer = serialized.releaseReturnValue()->toArrayBuffer();
+    size_t byteLength = arrayBuffer->byteLength();
+    auto* result = JSC::JSUint8Array::create(globalObject, defaultGlobalObject(globalObject)->JSBufferSubclassStructure(), WTF::move(arrayBuffer), 0, byteLength);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSValue::encode(result);
 }
 
 } // namespace WebCore

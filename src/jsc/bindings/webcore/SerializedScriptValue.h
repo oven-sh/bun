@@ -103,7 +103,10 @@ enum class SerializationErrorMode { NonThrowing,
     Throwing };
 enum class SerializationContext { Default,
     WorkerPostMessage,
-    WindowPostMessage };
+    WindowPostMessage,
+    // Bun: node:v8's serialize(). Writes Node.js Buffers with their own subtag so
+    // they deserialize as Buffer, matching Node's DefaultSerializer.
+    NodeV8Serialize };
 enum class SerializationForStorage : bool { No,
     Yes };
 enum class SerializationForCrossProcessTransfer : bool { No,

@@ -158,7 +158,7 @@ impl From<ParserError> for bun_core::Error {
 }
 
 /// The longest fixed lookahead the parser performs from an in-bounds offset:
-/// the 9-byte `<![CDATA[` probe in `html_block_start_kind`.
+/// the 9-byte `<![CDATA[` probe in `is_html_block_start_condition`.
 const MAX_LOOKAHEAD: OFF = 9;
 
 /// The largest input `input_size` accepts. Every offset, mark and span
@@ -175,6 +175,18 @@ pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 /// `OFF::MAX`.
 pub(crate) const MAX_BLOCK_BYTES: usize =
     OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
+
+/// Rejects growing `block_bytes` to `needed` bytes once the parser's u32
+/// block offsets could no longer address it. Every site that grows the
+/// buffer (`start_new_block`, `push_container_bytes`, `end_current_block`)
+/// checks this before appending.
+#[inline]
+pub(crate) fn check_block_bytes_len(needed: usize) -> Result<(), ParserError> {
+    if needed > MAX_BLOCK_BYTES {
+        return Err(ParserError::TooManyBlocks);
+    }
+    Ok(())
+}
 
 /// Callers that size anything from the input length must reject oversized
 /// inputs with this before allocating.

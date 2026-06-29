@@ -32,13 +32,7 @@ impl Parser<'_> {
         let cur_len = self.block_bytes.len();
         let aligned = (cur_len + align_mask) & !align_mask;
         let needed = aligned + size_of::<BlockHeader>();
-        // Block offsets are u32 (`block_byte_off`, the casts in
-        // `push_container` and `enter_child_containers`); a document needing
-        // more header bytes than they can address must be rejected here, at
-        // the only places `block_bytes` grows, not cast.
-        if needed > parser::MAX_BLOCK_BYTES {
-            return Err(parser::Error::TooManyBlocks);
-        }
+        parser::check_block_bytes_len(needed)?;
         self.block_bytes
             .reserve(needed.saturating_sub(self.block_bytes.len()));
         // Zero-fill to `needed`; bytes in [aligned, needed) are immediately

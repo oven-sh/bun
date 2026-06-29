@@ -847,11 +847,7 @@ impl Parser<'_> {
         let cur_len = self.block_bytes.len();
         let aligned = (cur_len + align_mask) & !align_mask;
         let needed = aligned + size_of::<BlockHeader>();
-        // See `push_container_bytes`: block offsets are u32, so reject a
-        // document whose headers outgrow them at the site that grows them.
-        if needed > parser::MAX_BLOCK_BYTES {
-            return Err(parser::Error::TooManyBlocks);
-        }
+        parser::check_block_bytes_len(needed)?;
         self.block_bytes.ensure_total_capacity(needed);
         // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
         // overwritten by the BlockHeader write below.
@@ -884,7 +880,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn end_current_block(&mut self) -> Result<(), bun_alloc::AllocError> {
+    pub fn end_current_block(&mut self) -> Result<(), parser::Error> {
         if let Some(cb_off) = self.current_block {
             // Capture the header fields, drop the &mut borrow, then access
             // other &self fields.
@@ -931,6 +927,9 @@ impl Parser<'_> {
                     self.current_block_lines.len() * size_of::<VerbatimLine>(),
                 )
             };
+            // The block's lines land in `block_bytes` too (12 bytes per
+            // line), not just its header, so this growth needs the same cap.
+            parser::check_block_bytes_len(self.block_bytes.len() + line_bytes.len())?;
             self.block_bytes.extend_from_slice(line_bytes);
             self.current_block = None;
         }

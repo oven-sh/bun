@@ -12,6 +12,7 @@
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
+extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 
 namespace Bun {
 using namespace WTF;
@@ -56,6 +57,27 @@ static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNa
     } else {
         return Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(start), len, !ambiguousIsNarrow);
     }
+}
+
+// True when a grapheme cluster boundary always precedes the word's first codepoint
+// (worst-case predecessor: the separator space). A word-initial cluster-fusing
+// codepoint (combining mark, ZWJ, VS16, keycap) makes row widths non-additive.
+template<typename Char>
+static inline bool wordStartsNewCluster(const Char* wordStart, const Char* wordEnd)
+{
+    if (wordStart >= wordEnd)
+        return true;
+    char32_t cp;
+    if constexpr (sizeof(Char) == 1) {
+        cp = static_cast<char32_t>(static_cast<uint8_t>(*wordStart));
+    } else {
+        size_t cpLen;
+        cp = decodeUTF16(reinterpret_cast<const UChar*>(wordStart), wordEnd - wordStart, cpLen);
+    }
+    if (cp < 0x80)
+        return true;
+    uint8_t state = 0;
+    return Bun__graphemeBreak(' ', cp, &state);
 }
 
 // ============================================================================
@@ -600,7 +622,10 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
         }
 
         rows.last().append(wordStart, wordEnd);
-        lastRowWidth = rowLength + wordLen;
+        if (wordStartsNewCluster(wordStart, wordEnd))
+            lastRowWidth = rowLength + wordLen;
+        else
+            lastRowWidthDirty = true;
         wordStart = it + 1;
         wordIndex++;
     }

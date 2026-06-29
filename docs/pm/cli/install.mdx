@@ -136,7 +136,7 @@ Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. B
 
 ## Global packages
 
-To install a package globally, use the `-g`/`--global` flag. Typically this is used for installing command-line tools.
+To install a package globally, use the `-g`/`--global` flag. Use it to install command-line tools.
 
 ```bash terminal icon="terminal"
 bun install --global cowsay # or `bun install -g cowsay`
@@ -346,7 +346,7 @@ Environment variables take priority over `bunfig.toml`.
 | Name                               | Description                                                   |
 | ---------------------------------- | ------------------------------------------------------------- |
 | `BUN_CONFIG_REGISTRY`              | Set an npm registry (default: https://registry.npmjs.org)     |
-| `BUN_CONFIG_TOKEN`                 | Set an auth token (does nothing)                              |
+| `BUN_CONFIG_TOKEN`                 | Set an auth token (currently does nothing)                    |
 | `BUN_CONFIG_YARN_LOCKFILE`         | Save a Yarn v1-style yarn.lock                                |
 | `BUN_CONFIG_LINK_NATIVE_BINS`      | Point `bin` in package.json to a platform-specific dependency |
 | `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | Don’t save a lockfile                                         |
@@ -359,9 +359,9 @@ Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${versio
 
 When the `node_modules` folder exists, Bun decides whether to install a package by checking that the `"name"` and `"version"` in its `package.json` at the expected `node_modules` location match the expected name and version. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 
-When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
+When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, Bun downloads and extracts tarballs eagerly while resolving.
 
-When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, Bun won’t attempt to download the tarball.
+When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` and `version` already exists in the expected location within `node_modules`, Bun won’t attempt to download the tarball.
 
 ## CI/CD
 
@@ -390,7 +390,7 @@ For CI/CD environments that want to enforce reproducible builds, use `bun ci` to
 bun ci
 ```
 
-This is equivalent to `bun install --frozen-lockfile`. It installs exact versions from `bun.lock` and fails if `package.json` doesn't match the lockfile. To use `bun ci` or `bun install --frozen-lockfile`, you must commit `bun.lock` to version control.
+`bun ci` is equivalent to `bun install --frozen-lockfile`. It installs exact versions from `bun.lock` and fails if `package.json` doesn't match the lockfile. To use `bun ci` or `bun install --frozen-lockfile`, you must commit `bun.lock` to version control.
 
 In your workflow, run `bun ci` instead of `bun install`:
 
@@ -507,7 +507,7 @@ Bun migrates projects from pnpm automatically. When a `pnpm-lock.yaml` file is d
 bun install
 ```
 
-Migration only runs when `bun.lock` is absent. There is no opt-out flag for pnpm migration.
+Migration only runs when `bun.lock` is absent. There is currently no opt-out flag for pnpm migration.
 
 The migration process handles:
 
@@ -537,7 +537,7 @@ catalogs:
     babel: ^7.0.0
 ```
 
-The workspace packages list and catalogs are moved to the `workspaces` field in `package.json`:
+Bun moves the workspace packages list and catalogs to the `workspaces` field in `package.json`:
 
 ```json package.json icon="file-json"
 {
@@ -572,7 +572,7 @@ Dependencies using pnpm's `catalog:` protocol are preserved:
 
 ### Configuration Migration
 
-The following pnpm configuration is migrated from both `pnpm-lock.yaml` and `pnpm-workspace.yaml`:
+Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pnpm-workspace.yaml`:
 
 - **Overrides**: Moved from `pnpm.overrides` to root-level `overrides` in `package.json`
 - **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`

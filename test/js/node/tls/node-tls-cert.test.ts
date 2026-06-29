@@ -628,23 +628,27 @@ it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
     passphrase: "123123123",
   });
 
-  for (const invalid of ["not-exist.pem", "", " "]) {
-    const proc = Bun.spawn({
-      env: {
-        ...bunEnv,
-        SERVER_PORT: server.address.port.toString(),
-        NODE_EXTRA_CA_CERTS: invalid,
-      },
-      stderr: "pipe",
-      stdout: "inherit",
-      stdin: "inherit",
-      cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
-    });
+  // The three children are independent; running them sequentially exceeds the
+  // per-test budget under a debug build.
+  await Promise.all(
+    ["not-exist.pem", "", " "].map(async invalid => {
+      await using proc = Bun.spawn({
+        env: {
+          ...bunEnv,
+          SERVER_PORT: server.address.port.toString(),
+          NODE_EXTRA_CA_CERTS: invalid,
+        },
+        stderr: "pipe",
+        stdout: "inherit",
+        stdin: "inherit",
+        cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+      });
 
-    expect(await proc.exited).toBe(1);
-    const stderr = await proc.stderr.text();
-    expect(stderr).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
-  }
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+      expect(exitCode).toBe(1);
+    }),
+  );
 });
 
 it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", async () => {

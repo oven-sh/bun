@@ -283,9 +283,9 @@ describe("bind()", () => {
   // must reach the caller's try/catch, never an attached 'error' listener.
   test("on an already-bound socket throws ERR_SOCKET_ALREADY_BOUND and does not emit 'error'", async () => {
     await using socket = createSocket("udp4");
-    const onError = jest.fn();
+    const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+    const onError = jest.fn(reject);
     socket.on("error", onError);
-    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
     socket.bind(0, onListening);
     await listening;
     expect(() => socket.bind(0)).toThrowWithCode(Error, "ERR_SOCKET_ALREADY_BOUND");
@@ -294,9 +294,9 @@ describe("bind()", () => {
 
   test("while a bind is still in flight throws ERR_SOCKET_ALREADY_BOUND and does not emit 'error'", async () => {
     await using socket = createSocket("udp4");
-    const onError = jest.fn();
+    const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+    const onError = jest.fn(reject);
     socket.on("error", onError);
-    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
     socket.bind(0, onListening);
     expect(() => socket.bind(0)).toThrowWithCode(Error, "ERR_SOCKET_ALREADY_BOUND");
     // The in-flight first bind must still complete normally.

@@ -944,7 +944,8 @@ const promises = {
           query = query.then(promisifyResolveX(false));
           break;
       }
-      return translateErrorCode(observeQuery(queryNameFor(rrtype), hostname, query));
+      // The native resolver treats the null rrtype above as an A query.
+      return translateErrorCode(observeQuery(queryNameFor(rrtype ?? "A"), hostname, query));
     }
 
     resolve4(hostname, options) {

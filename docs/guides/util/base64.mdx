@@ -24,13 +24,16 @@ const decoded = Uint8Array.fromBase64(encoded);
 const text = new TextDecoder().decode(decoded); // => "hello world"
 ```
 
-Node.js `Buffer` also extends `Uint8Array`, so the same APIs work on buffers.
+Node.js `Buffer` extends `Uint8Array`, so buffers can be encoded with `toBase64()` and passed to APIs that accept `Uint8Array`. `Buffer` also provides Node.js-compatible base64 decoding with `Buffer.from(encoded, "base64")`.
 
 ```ts
 const encoded = Buffer.from("hello world").toBase64();
 // => "aGVsbG8gd29ybGQ="
 
-const text = Buffer.from(encoded, "base64").toString("utf8");
+const bytes = Buffer.from(encoded, "base64");
+bytes instanceof Uint8Array; // => true
+
+const text = bytes.toString("utf8");
 // => "hello world"
 ```
 

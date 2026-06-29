@@ -89,6 +89,36 @@ describe("bundler", () => {
     run: { stdout: "undefined" },
     drop: ["Bun"],
   });
+  // `--drop` must also match computed string-literal property accesses.
+  itBundled("drop/ComputedFunctionCall", {
+    files: {
+      "/a.js": `console["log"]("hello");`,
+    },
+    run: { stdout: "" },
+    drop: ["console"],
+    backend: "api",
+  });
+  itBundled("drop/ComputedBecomesUndefined", {
+    files: {
+      "/a.js": `console.log(Bun["inspect"]["table"]());`,
+    },
+    run: { stdout: "undefined" },
+    drop: ["Bun.inspect.table"],
+  });
+  itBundled("drop/ComputedBecomesUndefinedNested1", {
+    files: {
+      "/a.js": `console.log(Bun["inspect"]["table"]());`,
+    },
+    run: { stdout: "undefined" },
+    drop: ["Bun.inspect"],
+  });
+  itBundled("drop/ComputedBecomesUndefinedNested2", {
+    files: {
+      "/a.js": `console.log(Bun["inspect"]["table"]());`,
+    },
+    run: { stdout: "undefined" },
+    drop: ["Bun"],
+  });
   itBundled("drop/AssignTarget", {
     files: {
       "/a.js": `console.log(

@@ -915,14 +915,14 @@ impl JsonValue {
             JsonValue::Object(o) => {
                 let o = o.get();
                 hasher.update(&[4]);
-                for p in o.properties.iter() {
+                for p in o.properties().iter() {
                     hasher.update(p.key.slice());
                     p.value.write_to_hasher(hasher);
                 }
             }
             JsonValue::Array(a) => {
                 hasher.update(&[5]);
-                for item in a.get().items.iter() {
+                for item in a.get().items().iter() {
                     item.write_to_hasher(hasher);
                 }
             }
@@ -965,68 +965,148 @@ pub struct PropertySimple {
 
 const _: () = assert!(core::mem::size_of::<PropertySimple>() == 32);
 
-/// `Data::EObjectSimple` — see the JSON "simple" nodes comment above. The
-/// rows live in the parse arena (one pointer bump + copy per object, never
-/// an allocator round trip), exactly like every decoded string the AST
-/// already borrows from it.
-pub struct ObjectSimple {
-    pub properties: crate::StoreSlice<PropertySimple>,
-    pub close_brace_loc: crate::Loc,
-    pub is_single_line: bool,
+/// The two row tapes of one JSON document: every simple object's property
+/// rows and every simple array's items, each in a single arena slab that the
+/// parser grows by doubling (the abandoned halves are arena memory, freed
+/// with everything else). Containers reference `(first, count)` spans of
+/// their direct children — children are contiguous because a container's
+/// rows are appended as one block when it closes — resolved through these
+/// base pointers, which move when a tape grows.
+///
+/// The bases are atomics only because AST nodes are shared read-only across
+/// printer threads (`Cell` would make the nodes `!Sync`); all stores happen
+/// on the parsing thread before the AST is visible to anyone else, so every
+/// access uses relaxed ordering.
+pub struct JsonTape {
+    pub props: core::sync::atomic::AtomicPtr<PropertySimple>,
+    pub items: core::sync::atomic::AtomicPtr<JsonValue>,
 }
 
-impl Default for ObjectSimple {
-    fn default() -> Self {
-        ObjectSimple {
-            properties: crate::StoreSlice::EMPTY,
-            close_brace_loc: crate::Loc::EMPTY,
-            is_single_line: false,
+impl JsonTape {
+    pub fn empty() -> JsonTape {
+        JsonTape {
+            props: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            items: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
         }
     }
 }
 
+/// `Data::EObjectSimple` — see the JSON "simple" nodes comment above. Holds
+/// a `(first, count)` span of the document's property-row tape.
+pub struct ObjectSimple {
+    tape: core::ptr::NonNull<JsonTape>,
+    first: u32,
+    count: u32,
+    pub close_brace_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+// SAFETY: `tape` points into the parse arena that owns the whole AST (same
+// lifetime-erasure contract as `StoreRef`/`StoreStr`); the tape is only
+// mutated by the parsing thread, and shared use afterwards is read-only.
+unsafe impl Send for ObjectSimple {}
+// SAFETY: see the `Send` impl; the moving base pointer is an `AtomicPtr`.
+unsafe impl Sync for ObjectSimple {}
+
 impl ObjectSimple {
+    /// `tape` must be the document's arena-allocated [`JsonTape`] and
+    /// `[first, first + count)` this object's rows in its `props` tape.
+    #[inline]
+    pub fn new(
+        tape: &JsonTape,
+        first: u32,
+        count: u32,
+        is_single_line: bool,
+        close_brace_loc: crate::Loc,
+    ) -> Self {
+        ObjectSimple {
+            tape: core::ptr::NonNull::from(tape),
+            first,
+            count,
+            close_brace_loc,
+            is_single_line,
+        }
+    }
+
     /// This object's `"key": value` rows in source order.
     #[inline]
     pub fn properties(&self) -> &[PropertySimple] {
-        self.properties.slice()
+        if self.count == 0 {
+            // Empty containers may predate the tape's first slab.
+            return &[];
+        }
+        // SAFETY: per the constructor's contract, the tape base (relaxed:
+        // see `JsonTape`) points at an arena slab with at least
+        // `first + count` initialized rows, valid as long as the arena.
+        unsafe {
+            let base = self
+                .tape
+                .as_ref()
+                .props
+                .load(core::sync::atomic::Ordering::Relaxed);
+            core::slice::from_raw_parts(base.add(self.first as usize), self.count as usize)
+        }
     }
 
-    /// First value whose key's decoded bytes equal `key` (objects with a
-    /// duplicate key behave like `JSON.parse`: documented for callers that
-    /// care, the *last* one wins — JSON consumers index by key, so `get`
-    /// matches `E::Object::get`'s first-match semantics used everywhere in
-    /// the codebase).
+    /// First value whose key's decoded bytes equal `key` (matching
+    /// `E::Object::get`'s first-match semantics used everywhere else).
     #[inline]
     pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
-        self.properties
-            .slice()
+        self.properties()
             .iter()
             .find(|p| p.key.slice() == key)
             .map(|p| &p.value)
     }
 }
 
-/// `Data::EArraySimple` — see the JSON "simple" nodes comment above.
+/// `Data::EArraySimple` — see the JSON "simple" nodes comment above. Holds
+/// a `(first, count)` span of the document's item tape.
 pub struct ArraySimple {
-    pub items: crate::StoreSlice<JsonValue>,
+    tape: core::ptr::NonNull<JsonTape>,
+    first: u32,
+    count: u32,
     pub close_bracket_loc: crate::Loc,
     pub is_single_line: bool,
 }
 
+// SAFETY: see `ObjectSimple`.
+unsafe impl Send for ArraySimple {}
+// SAFETY: see `ObjectSimple`.
+unsafe impl Sync for ArraySimple {}
+
 impl ArraySimple {
+    /// See [`ObjectSimple::new`]; `[first, first + count)` indexes the
+    /// `items` tape.
+    #[inline]
+    pub fn new(
+        tape: &JsonTape,
+        first: u32,
+        count: u32,
+        is_single_line: bool,
+        close_bracket_loc: crate::Loc,
+    ) -> Self {
+        ArraySimple {
+            tape: core::ptr::NonNull::from(tape),
+            first,
+            count,
+            close_bracket_loc,
+            is_single_line,
+        }
+    }
+
     #[inline]
     pub fn items(&self) -> &[JsonValue] {
-        self.items.slice()
-    }
-}
-
-impl Default for ArraySimple {
-    fn default() -> Self {
-        ArraySimple {
-            items: crate::StoreSlice::EMPTY,
-            close_bracket_loc: crate::Loc::EMPTY,
-            is_single_line: false,
+        if self.count == 0 {
+            return &[];
+        }
+        // SAFETY: see `ObjectSimple::properties`.
+        unsafe {
+            let base = self
+                .tape
+                .as_ref()
+                .items
+                .load(core::sync::atomic::Ordering::Relaxed);
+            core::slice::from_raw_parts(base.add(self.first as usize), self.count as usize)
         }
     }
 }

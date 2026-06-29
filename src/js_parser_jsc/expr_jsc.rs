@@ -157,9 +157,9 @@ pub(crate) fn object_simple_to_js(
     if !stack_check.is_safe_to_recurse() {
         return Err(js_err(global.throw_stack_overflow()));
     }
-    let obj = JSValue::create_empty_object(global, this.properties.slice().len());
+    let obj = JSValue::create_empty_object(global, this.properties().len());
     let _guard = obj.protected();
-    for prop in this.properties.slice().iter() {
+    for prop in this.properties().iter() {
         let key = utf8_bytes_to_js(prop.key.slice(), global)?;
         let value = json_value_to_js(&prop.value, global, stack_check)?;
         JSValue::put_to_property_key(obj, global, key, value).map_err(js_err)?;
@@ -175,9 +175,9 @@ pub(crate) fn array_simple_to_js(
     if !stack_check.is_safe_to_recurse() {
         return Err(js_err(global.throw_stack_overflow()));
     }
-    let array = JSValue::create_empty_array(global, this.items.slice().len()).map_err(js_err)?;
+    let array = JSValue::create_empty_array(global, this.items().len()).map_err(js_err)?;
     let _guard = array.protected();
-    for (j, item) in this.items.slice().iter().enumerate() {
+    for (j, item) in this.items().iter().enumerate() {
         let value = json_value_to_js(item, global, stack_check)?;
         array.put_index(global, j as u32, value).map_err(js_err)?;
     }

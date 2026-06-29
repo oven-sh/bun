@@ -2648,8 +2648,8 @@ impl Data {
             Data::EObjectSimple(e) => {
                 let e = e.get();
                 raw(hasher, e.is_single_line);
-                raw(hasher, e.properties.len() as u32);
-                for p in e.properties.iter() {
+                raw(hasher, e.properties().len() as u32);
+                for p in e.properties().iter() {
                     hasher.update(p.key.slice());
                     p.value.write_to_hasher(hasher);
                 }
@@ -2657,8 +2657,8 @@ impl Data {
             Data::EArraySimple(e) => {
                 let e = e.get();
                 raw(hasher, e.is_single_line);
-                raw(hasher, e.items.len() as u32);
-                for item in e.items.iter() {
+                raw(hasher, e.items().len() as u32);
+                for item in e.items().iter() {
                     item.write_to_hasher(hasher);
                 }
             }

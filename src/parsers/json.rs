@@ -964,7 +964,7 @@ mod tests {
             }
             E::JsonValue::Object(o) => {
                 out.push('{');
-                for (i, p) in o.get().properties.slice().iter().enumerate() {
+                for (i, p) in o.get().properties().iter().enumerate() {
                     if i > 0 {
                         out.push(',');
                     }
@@ -976,7 +976,7 @@ mod tests {
             }
             E::JsonValue::Array(a) => {
                 out.push('[');
-                for (i, item) in a.get().items.slice().iter().enumerate() {
+                for (i, item) in a.get().items().iter().enumerate() {
                     if i > 0 {
                         out.push(',');
                     }
@@ -992,7 +992,7 @@ mod tests {
         match &e.data {
             Data::EObjectSimple(o) => {
                 out.push('{');
-                for (i, p) in o.get().properties.slice().iter().enumerate() {
+                for (i, p) in o.get().properties().iter().enumerate() {
                     if i > 0 {
                         out.push(',');
                     }
@@ -1004,7 +1004,7 @@ mod tests {
             }
             Data::EArraySimple(a) => {
                 out.push('[');
-                for (i, item) in a.get().items.slice().iter().enumerate() {
+                for (i, item) in a.get().items().iter().enumerate() {
                     if i > 0 {
                         out.push(',');
                     }

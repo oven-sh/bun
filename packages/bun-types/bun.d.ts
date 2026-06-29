@@ -882,9 +882,9 @@ declare module "bun" {
      * When a `TypedArray` is passed, the bytes are parsed directly without
      * copying if the content is ASCII. Optional `start` and `end` parameters
      * select a window of the input without copying. For typed arrays these
-     * are byte offsets and `read` will be a byte offset into the original
-     * typed array. For strings these are character offsets and `read` will
-     * be a character offset into the original string.
+     * are byte offsets and `read` is a byte offset into the original
+     * typed array. For strings these are character offsets and `read` is
+     * a character offset into the original string.
      *
      * @param input The JSONL string or typed array to parse
      * @param start Offset to start parsing from (bytes for typed arrays, characters for strings, default: 0)
@@ -1485,7 +1485,7 @@ declare module "bun" {
      *
      * JSON5 is a superset of JSON based on ECMAScript 5.1 that supports
      * comments, trailing commas, unquoted keys, single-quoted strings,
-     * hex numbers, `Infinity`, and `NaN`.
+     * hex numbers, `Infinity`, `NaN`, and more.
      *
      * @category Utilities
      *
@@ -1851,6 +1851,9 @@ declare module "bun" {
    * const url = Bun.pathToFileURL("/foo/bar.txt");
    * console.log(url.href); // "file:///foo/bar.txt"
    * ```
+   *
+   * Internally, this function uses WebKit's URL API to
+   * convert the path to a file:// URL.
    */
   function pathToFileURL(path: string): URL;
 
@@ -2072,9 +2075,9 @@ declare module "bun" {
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
-   * This Blob is lazy. That means it won't do any work until you read from it.
+   * This Blob is lazy: it does no work until you read from it.
    *
-   * - `size` will not be valid until the contents of the file are read at least once.
+   * - `size` is not valid until the contents of the file are read at least once.
    * - `type` is auto-set based on the file extension when possible
    *
    * @category File System
@@ -2100,7 +2103,7 @@ declare module "bun" {
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
      *
-     * If `begin` > 0, {@link Bun.write()} will be slower on macOS
+     * If `begin` > 0, {@link Bun.write()} is slower on macOS
      *
      * @param begin - start offset in bytes
      * @param end - absolute offset in bytes (relative to 0)
@@ -2113,7 +2116,7 @@ declare module "bun" {
      *
      * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
      *
-     * If `begin` > 0, {@link Bun.write}() will be slower on macOS
+     * If `begin` > 0, {@link Bun.write}() is slower on macOS
      *
      * @param begin - start offset in bytes
      * @param contentType - MIME type for the new BunFile
@@ -2149,8 +2152,8 @@ declare module "bun" {
      * Does the file exist?
      *
      * This returns true for regular files and FIFOs. It returns false for
-     * directories. Note that a race condition can occur where the file is
-     * deleted or renamed after this is called but before you open it.
+     * directories. A race condition can occur where the file is deleted or
+     * renamed after this is called but before you open it.
      *
      * This does a system call to check if the file exists, which can be
      * slow.
@@ -2225,7 +2228,7 @@ declare module "bun" {
 
   interface CSRFVerifyOptions {
     /**
-     * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * The secret to use for the token. If not provided, Bun generates a random default secret in memory and uses it.
      */
     secret?: string;
 
@@ -2264,7 +2267,7 @@ declare module "bun" {
   namespace CSRF {
     /**
      * Generate a CSRF token.
-     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * @param secret The secret to use for the token. If not provided, Bun generates a random default secret in memory and uses it.
      * @param options The options for the token.
      * @returns The generated token.
      */
@@ -2280,7 +2283,7 @@ declare module "bun" {
   }
 
   /**
-   *   This lets you use macros as regular imports
+   *   Use macros as regular imports.
    *   @example
    *   ```
    *   {
@@ -2389,8 +2392,8 @@ declare module "bun" {
     /**
      *    Replace an import statement with a macro.
      *
-     *    This will remove the import statement from the final output
-     *    and replace any function calls or template strings with the result returned by the macro
+     *    This removes the import statement from the final output
+     *    and replaces any function calls or template strings with the result returned by the macro
      *
      *    @example
      *    ```json
@@ -2401,7 +2404,7 @@ declare module "bun" {
      *    }
      *    ```
      *
-     *    Code that calls `graphql` will be replaced with the result of the macro.
+     *    Code that calls `graphql` is replaced with the result of the macro.
      *
      *    ```js
      *    import {graphql} from "react-relay";
@@ -2451,16 +2454,16 @@ declare module "bun" {
     deadCodeElimination?: boolean;
 
     /**
-     * This does two things (and possibly more in the future):
-     * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations will be inlined into their usages.
+     * This does two things:
+     * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations are inlined into their usages.
      * 2. `let` and `const` declarations only used once are inlined into their usages.
      *
      * JavaScript engines typically do these optimizations internally, however
      * it might only happen much later in the compilation pipeline, after code
      * has been executed many many times.
      *
-     * This will typically shrink the output size of code, but it might increase
-     * it in some cases. Do your own benchmarks!
+     * This typically shrinks the output size of code, but it might increase
+     * it in some cases. Do your own benchmarks.
      */
     inline?: boolean;
 
@@ -2707,7 +2710,7 @@ declare module "bun" {
      *   references to string literals containing the actual environment variable values
      * - `"disable"`: Disables environment variable injection entirely
      * - A string ending in `*`: Inlines environment variables that match the given prefix.
-     *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
+     *   For example, `"MY_PUBLIC_*"` only includes env vars starting with "MY_PUBLIC_"
      *
      * @example
      * ```ts
@@ -2770,7 +2773,7 @@ declare module "bun" {
 
     /**
      * Generate bytecode for the output. This can dramatically improve cold
-     * start times, but will make the final output larger and slightly increase
+     * start times, but makes the final output larger and slightly increases
      * memory usage.
      *
      * - CommonJS: works with or without `compile: true`
@@ -2904,7 +2907,7 @@ declare module "bun" {
     /**
      * A map of file paths to their contents for in-memory bundling.
      *
-     * This allows you to bundle virtual files that don't exist on disk, or override
+     * Use this to bundle virtual files that don't exist on disk, or override
      * the contents of files that do exist on disk. The keys are file paths (which should
      * match how they're imported) and the values are the file contents.
      *
@@ -6745,19 +6748,19 @@ declare module "bun" {
        *
        * For stdin you may pass:
        *
-       * - `"ignore"`, `null`, `undefined`: The process will have no standard input (default)
-       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
-       * - `"inherit"`: The process will inherit the standard input of the current process
-       * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process will read from buffer/stream.
-       * - `number`: The process will read from the file descriptor
+       * - `"ignore"`, `null`, `undefined`: The process has no standard input (default)
+       * - `"pipe"`: The process has a new {@link FileSink} for standard input
+       * - `"inherit"`: The process inherits the standard input of the current process
+       * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process reads from buffer/stream.
+       * - `number`: The process reads from the file descriptor
        *
        * For stdout and stderr you may pass:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
-       * - `"ignore"`, `null`: The process will have no standard output/error
-       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process has no standard output/error
+       * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
-       * - `number`: The process will write to the file descriptor
+       * - `number`: The process writes to the file descriptor
        *
        * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
        * creates a socketpair like `"pipe"`, but the parent-end fd exposed
@@ -6774,11 +6777,11 @@ declare module "bun" {
       /**
        * The file descriptor for the standard input. It may be:
        *
-       * - `"ignore"`, `null`, `undefined`: The process will have no standard input
-       * - `"pipe"`: The process will have a new {@link FileSink} for standard input
-       * - `"inherit"`: The process will inherit the standard input of the current process
-       * - `ArrayBufferView`, `Blob`: The process will read from the buffer
-       * - `number`: The process will read from the file descriptor
+       * - `"ignore"`, `null`, `undefined`: The process has no standard input
+       * - `"pipe"`: The process has a new {@link FileSink} for standard input
+       * - `"inherit"`: The process inherits the standard input of the current process
+       * - `ArrayBufferView`, `Blob`: The process reads from the buffer
+       * - `number`: The process reads from the file descriptor
        *
        * @default "ignore"
        */
@@ -6786,11 +6789,11 @@ declare module "bun" {
       /**
        * The file descriptor for the standard output. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
-       * - `"ignore"`, `null`: The process will have no standard output/error
-       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process has no standard output/error
+       * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
-       * - `number`: The process will write to the file descriptor
+       * - `number`: The process writes to the file descriptor
        *
        * @default "pipe"
        */
@@ -6798,11 +6801,11 @@ declare module "bun" {
       /**
        * The file descriptor for the standard error. It may be:
        *
-       * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
-       * - `"ignore"`, `null`: The process will have no standard output/error
-       * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"ignore"`, `null`: The process has no standard output/error
+       * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
-       * - `number`: The process will write to the file descriptor
+       * - `number`: The process writes to the file descriptor
        *
        * @default "inherit" for `spawn`
        * "pipe" for `spawnSync`
@@ -6910,7 +6913,7 @@ declare module "bun" {
       serialization?: "json" | "advanced";
 
       /**
-       * If true, the subprocess will have a hidden window.
+       * If true, the subprocess has a hidden window.
        */
       windowsHide?: boolean;
 

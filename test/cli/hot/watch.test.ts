@@ -1,9 +1,13 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, forEachLine, isASAN, isBroken, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { renameSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+
+// Every case spawns a watch-mode bun process and waits on several of its
+// runs; give them headroom on slow ASAN/CI machines.
+setDefaultTimeout(isASAN ? 120_000 : 30_000);
 
 describe.todoIf(isBroken && isWindows)("--watch works", async () => {
   for (const watchedFile of ["entry.js", "tmp.js"]) {
@@ -118,9 +122,11 @@ describe.skipIf(isWindows)("watch mode detects atomic saves", () => {
 
     await waitFor(`${first} atomically saved`, before);
     await waitFor("Ran 2 tests across 2 files", before);
-    expect(buf.slice(before)).toContain(`${first} atomically saved`);
+    // The re-run executed cleanly: it picked up the replaced file and none of
+    // the re-ran tests failed.
+    expect(buf.slice(before)).not.toContain("(fail)");
 
     proc.kill();
     reader.releaseLock();
-  }, 60_000);
+  });
 });

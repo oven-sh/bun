@@ -1125,7 +1125,7 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
 }
 
 fn validate_request_target(target: &[u8]) -> Result<(), bun_core::Error> {
-    if strings::index_of_any(target, b"\r\n ").is_some() {
+    if target.iter().any(|&byte| byte <= 0x20 || byte == 0x7f) {
         return Err(err!(InvalidURL));
     }
     Ok(())

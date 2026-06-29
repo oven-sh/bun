@@ -9962,3 +9962,60 @@ it("reports an invalid URL for a manifest tarball URL containing a space", async
     expect(exitCode).not.toBe(0);
   });
 });
+
+it.each([
+  ["tab", "\t"],
+  ["vertical tab", "\x0b"],
+])("reports an invalid URL for a manifest tarball URL containing a %s", async (_name, char) => {
+  await withContext(defaultOpts, async ctx => {
+    const tarballRequests: string[] = [];
+    setContextHandler(ctx, async request => {
+      const url = new URL(request.url);
+      if (url.pathname.includes(".tgz")) {
+        tarballRequests.push(request.url);
+        return new Response("Not Found", { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          name: "baz",
+          versions: {
+            "0.0.2": {
+              name: "baz",
+              version: "0.0.2",
+              dist: {
+                tarball: `${ctx.registry_url}baz${char}-0.0.2.tgz`,
+              },
+            },
+          },
+          "dist-tags": {
+            latest: "0.0.2",
+          },
+        }),
+      );
+    });
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          baz: "0.0.2",
+        },
+      }),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("InvalidURL downloading tarball");
+    expect(tarballRequests).toEqual([]);
+    expect(out).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+});

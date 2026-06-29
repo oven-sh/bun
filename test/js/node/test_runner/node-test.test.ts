@@ -53,10 +53,11 @@ describe("node:test", () => {
     });
   });
 
-  // Node runs todo bodies and reports the outcome as todo whether it passes or
-  // fails; a failing todo never fails the run. The fixture logs one LOG: line
-  // per body that executed, and the LOG:MUST-NOT-APPEAR lines sit in bodies
-  // that must never run (skip wins over todo, including inside a todo suite).
+  // Node runs todo bodies (including a todo suite's before/after hooks) and
+  // reports every outcome as todo; a failing todo never fails the run. The
+  // fixture logs one LOG: line per body that executed, and the
+  // LOG:MUST-NOT-APPEAR lines sit in bodies that must never run (skip wins
+  // over todo at every site, including inside a todo suite).
   test("todo test bodies run and never fail the run", async () => {
     const { exitCode, stdout, stderr } = await runTests(["09-todo.js"]);
     expect({
@@ -75,11 +76,17 @@ describe("node:test", () => {
         "LOG:regular",
         "LOG:todo-suite-modifier",
         "LOG:todo-suite-option",
+        "LOG:before-hook",
+        // Node cancels the subtest after a failed before(); bun still runs it.
+        // Both report it as todo and exit 0.
+        "LOG:after-failed-before",
+        "LOG:inside-after-suite",
+        "LOG:after-hook",
       ],
-      // Node reports the same logs and the same pass/fail/todo counts; its skip
-      // count is 3 because it never evaluates a skipped suite's callback, while
-      // bun:test's `describe.skip` registers the suite's child as skipped.
-      summary: { pass: 1, fail: 0, todo: 9, skip: 4 },
+      // Node agrees on fail: 0 and exit 0. Its skip count is 3 (it never
+      // evaluates a skipped suite's callback) and its todo count is 11 (it
+      // does not count the two failed hooks or the extra subtest above).
+      summary: { pass: 1, fail: 0, todo: 13, skip: 4, errors: 0 },
     });
   });
 
@@ -87,7 +94,7 @@ describe("node:test", () => {
     const { exitCode, stderr } = await runTests(["10-describe-concurrency.js"]);
     expect({ exitCode, summary: summarize(stderr) }).toEqual({
       exitCode: 0,
-      summary: { pass: 13, fail: 0, todo: 0, skip: 0 },
+      summary: { pass: 13, fail: 0, todo: 0, skip: 0, errors: 0 },
     });
   });
 
@@ -95,7 +102,7 @@ describe("node:test", () => {
     const { exitCode, stderr } = await runTests(["11-describe-concurrency-invalid.js"]);
     expect({ exitCode, summary: summarize(stderr) }).toEqual({
       exitCode: 0,
-      summary: { pass: 1, fail: 0, todo: 0, skip: 0 },
+      summary: { pass: 1, fail: 0, todo: 0, skip: 0, errors: 0 },
     });
   });
 
@@ -111,7 +118,23 @@ describe("node:test", () => {
     }).toEqual({
       exitCode: 0,
       logs: ["LOG:after-concurrent"],
-      summary: { pass: 14, fail: 0, todo: 0, skip: 0 },
+      summary: { pass: 14, fail: 0, todo: 0, skip: 0, errors: 0 },
+    });
+  });
+
+  // A failing before() in a plain (non-todo) suite fails the run, attributed
+  // to the hook rather than counted as an unhandled error between tests, and
+  // the suite's tests do not run.
+  test("a failing before hook in a plain suite fails the run", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["13-hook-failure.js"]);
+    expect({
+      exitCode,
+      logs: stdout.split("\n").filter(line => line.startsWith("LOG:")),
+      summary: summarize(stderr),
+    }).toEqual({
+      exitCode: 1,
+      logs: ["LOG:before"],
+      summary: { pass: 0, fail: 1, todo: 0, skip: 0, errors: 0 },
     });
   });
 
@@ -129,10 +152,17 @@ describe("node:test", () => {
   });
 });
 
-/** Extracts the pass/fail/todo/skip counts from a `bun test` summary. */
+/** Extracts the pass/fail/todo/skip/errors counts from a `bun test` summary. */
 function summarize(stderr: string) {
   const count = (label: string) => Number(stderr.match(new RegExp(`(\\d+) ${label}\\n`))?.[1] ?? 0);
-  return { pass: count("pass"), fail: count("fail"), todo: count("todo"), skip: count("skip") };
+  return {
+    pass: count("pass"),
+    fail: count("fail"),
+    todo: count("todo"),
+    skip: count("skip"),
+    // "Unhandled error between tests" entries: they also make the run exit 1.
+    errors: count("errors?"),
+  };
 }
 
 async function runTests(filenames: string[]) {

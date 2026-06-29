@@ -776,13 +776,10 @@ function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
   const runHook = (done: (error?: unknown) => void) => {
-    let result: unknown;
-    try {
-      result = fn();
-    } catch (error) {
-      done(error);
-      return;
-    }
+    // A synchronous throw must propagate: the runner attributes it to this
+    // hook's own entry. Routing it through `done(error)` instead reports it as
+    // an unattributed error, because a before/after hook has no current test.
+    const result = fn();
     if (result instanceof Promise) {
       (result as Promise<unknown>).then(() => done()).catch(error => done(error));
     } else {

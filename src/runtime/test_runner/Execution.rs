@@ -204,6 +204,15 @@ impl ExecutionSequence {
         }
         ScopeMode::Normal
     }
+
+    /// A beforeAll/afterAll of a node:test todo suite has no test entry and
+    /// inherits `TodoRun` from the suite, so fall back to the hook's own mode.
+    fn is_todo_run(&self) -> bool {
+        self.test_entry
+            .or(self.first_entry)
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+            .is_some_and(|entry| unsafe { entry.as_ref() }.base.mode == ScopeMode::TodoRun)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
@@ -669,7 +678,7 @@ impl Execution {
         }
         // Node reports a todo test as todo no matter how it finished: a passing
         // body, a throwing body, a timeout, and a failing hook all count as todo.
-        if sequence.entry_mode() == ScopeMode::TodoRun {
+        if sequence.is_todo_run() {
             sequence.result = Result::Todo;
         }
         if let Some(first_entry) = sequence.first_entry {

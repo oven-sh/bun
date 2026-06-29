@@ -1,5 +1,5 @@
 const test = require("node:test");
-const { describe } = test;
+const { describe, before, after } = test;
 const assert = require("node:assert");
 
 // Node runs the body of a `todo` test and reports the outcome as todo either
@@ -75,5 +75,29 @@ describe("todo suite (option)", { todo: true }, () => {
   test("inside the option suite", () => {
     console.log("LOG:todo-suite-option");
     assert.fail("expected failure: must be reported as todo, not fail the run");
+  });
+});
+
+// Node runs a todo suite's before/after hooks and absorbs their failures too:
+// the hook and the tests it cancels are reported as todo, never as failures.
+describe.todo("throwing before suite", () => {
+  before(() => {
+    console.log("LOG:before-hook");
+    assert.fail("expected failure: a todo suite's before() must not fail the run");
+  });
+
+  test("after the failing before", () => {
+    console.log("LOG:after-failed-before");
+  });
+});
+
+describe("throwing after suite", { todo: true }, () => {
+  after(() => {
+    console.log("LOG:after-hook");
+    assert.fail("expected failure: a todo suite's after() must not fail the run");
+  });
+
+  test("inside the after suite", () => {
+    console.log("LOG:inside-after-suite");
   });
 });

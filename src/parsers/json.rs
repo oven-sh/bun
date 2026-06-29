@@ -134,9 +134,22 @@ fn empty_object_expr() -> Expr {
     }
 }
 
+/// A parsed simple-AST JSON document (`E::ObjectSimple` / `E::ArraySimple`
+/// containers): the root expression plus the [`E::JsonTape`] that owns every
+/// row and decoded string of the document. Everything reachable from `root`
+/// borrows the tape and the source it was parsed from, so keep all three
+/// alive together. `tape` is `None` only for the empty-input fast path,
+/// whose root borrows nothing.
+pub struct ParsedJson {
+    pub root: Expr,
+    pub tape: Option<Box<E::JsonTape>>,
+}
+
 /// Everything a full parse produces beyond the root expression.
 struct ParseOutput {
     root: Expr,
+    /// Simple mode only: see [`ParsedJson::tape`].
+    tape: Option<Box<E::JsonTape>>,
     is_ascii_only: bool,
     indentation: Indentation,
 }
@@ -212,12 +225,15 @@ fn run_stage2<'s>(
         return Err(parser.unexpected_here());
     }
     let is_ascii_only = parser.is_ascii_only;
+    // The root borrows the tape: take ownership before the parser drops it.
+    let tape = parser.take_tape();
     drop(parser);
     let is_ascii_only = is_ascii_only
         && sidx.flags & (json_index::FLAG_HAS_BACKSLASH_IN_STRING | json_index::FLAG_HAS_NON_ASCII)
             == 0;
     Ok(ParseOutput {
         root,
+        tape,
         is_ascii_only,
         indentation: if opts.guess_indentation {
             guess_indentation(&source.contents)
@@ -342,18 +358,39 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
 pub fn parse_utf8_registry(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
-    if source.contents.is_empty() {
-        return Ok(empty_object_expr());
-    }
+) -> Result<ParsedJson, bun_core::Error> {
     const REGISTRY_OPTS: JSONOptions = JSONOptions {
         is_json: true,
         json_warn_duplicate_keys: false,
         simple_objects: true,
         ..JSONOptions::DEFAULT
     };
-    Ok(parse_impl(source, log, bump, REGISTRY_OPTS, true, false)?.root)
+    parse_simple(source, log, REGISTRY_OPTS)
+}
+
+/// Shared driver for the simple-AST entry points. No arena: the document's
+/// [`E::JsonTape`] owns everything the parse allocates and is returned to
+/// the caller.
+fn parse_simple(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    opts: JSONOptions,
+) -> Result<ParsedJson, bun_core::Error> {
+    debug_assert!(opts.simple_objects);
+    if source.contents.is_empty() {
+        return Ok(ParsedJson {
+            root: empty_object_expr(),
+            tape: None,
+        });
+    }
+    // The parser only reaches for an arena on paths the simple AST never
+    // takes (`!force_utf8` string storage); this one borrows the process
+    // heap and is never allocated from.
+    let out = parse_impl(source, log, &Bump::borrowing_default(), opts, true, false)?;
+    Ok(ParsedJson {
+        root: out.root,
+        tape: out.tape,
+    })
 }
 
 /// Parse package.json (comments & trailing commas allowed, strings UTF-8).
@@ -375,6 +412,9 @@ pub fn parse_package_json_utf8(
 pub struct JsonResult {
     pub root: Expr,
     pub indentation: Indentation,
+    /// `Some` only for `simple_objects` parses (see [`ParsedJson::tape`]):
+    /// the row tape `root` borrows. Keep it alive as long as the `Expr`.
+    pub tape: Option<Box<E::JsonTape>>,
 }
 
 /// Compile-time-options spelling kept for existing call sites; reifies the
@@ -423,13 +463,14 @@ pub fn parse_package_json_utf8_with_opts_rt(
     if source.contents.is_empty() {
         return Ok(JsonResult {
             root: empty_object_expr(),
-            indentation: Indentation::default(),
+            ..Default::default()
         });
     }
     let out = parse_impl(source, log, bump, opts, true, false)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
+        tape: out.tape,
     })
 }
 
@@ -503,16 +544,12 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
 pub fn parse_jsonc(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
-    if source.contents.is_empty() {
-        return Ok(empty_object_expr());
-    }
+) -> Result<ParsedJson, bun_core::Error> {
     const JSONC_OPTS: JSONOptions = JSONOptions {
         simple_objects: true,
         ..TSCONFIG_OPTS
     };
-    Ok(parse_impl(source, log, bump, JSONC_OPTS, true, false)?.root)
+    parse_simple(source, log, JSONC_OPTS)
 }
 
 /// `.env` / `--define` values: JSON if it looks like JSON, `true/false/null/
@@ -1065,8 +1102,9 @@ mod tests {
         errors: usize,
         warnings: usize,
         first_msg: String,
-        // Keep the arena alive for the AST's lifetime.
+        // Keep the arena and the simple row tape alive for the AST's lifetime.
         _bump: Box<Bump>,
+        _tape: Option<Box<E::JsonTape>>,
         _scope: js_ast::StoreResetGuard,
     }
 
@@ -1076,13 +1114,17 @@ mod tests {
         let mut log = bun_ast::Log::init();
         let bump = Box::new(Bump::new());
         let source = bun_ast::Source::init_path_string("fixture.json", contents);
+        let mut tape = None;
         let r = match which {
             Which::Utf8 => parse_utf8(&source, &mut log, &bump),
             Which::Plain => parse::<false>(&source, &mut log, &bump),
             Which::TsConfig => parse_ts_config::<true>(&source, &mut log, &bump),
             Which::Env => parse_env_json(&source, &mut log, &bump),
             Which::PackageJson => parse_package_json_utf8(&source, &mut log, &bump),
-            Which::Jsonc => parse_jsonc(&source, &mut log, &bump),
+            Which::Jsonc => parse_jsonc(&source, &mut log).map(|p| {
+                tape = p.tape;
+                p.root
+            }),
             Which::Simple => parse_package_json_utf8_with_opts_rt(
                 JSONOptions {
                     is_json: true,
@@ -1093,7 +1135,10 @@ mod tests {
                 &mut log,
                 &bump,
             )
-            .map(|r| r.root),
+            .map(|mut r| {
+                tape = r.tape.take();
+                r.root
+            }),
         };
         let first_msg = log
             .msgs
@@ -1106,6 +1151,7 @@ mod tests {
             warnings: log.warnings as usize,
             first_msg,
             _bump: bump,
+            _tape: tape,
             _scope: scope,
         }
     }

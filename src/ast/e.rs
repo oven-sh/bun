@@ -889,7 +889,7 @@ pub enum JsonValue {
     Number(Number),
     /// UTF-8 bytes of the decoded string: a zero-copy slice of the source
     /// when the literal has no escapes (the common case), otherwise decoded
-    /// into the parse arena.
+    /// into the document's [`JsonTape`].
     String(Str),
     Object(StoreRef<ObjectSimple>),
     Array(StoreRef<ArraySimple>),
@@ -965,29 +965,100 @@ pub struct PropertySimple {
 
 const _: () = assert!(core::mem::size_of::<PropertySimple>() == 32);
 
-/// The two row tapes of one JSON document: every simple object's property
-/// rows and every simple array's items, each in a single arena slab that the
-/// parser grows by doubling (the abandoned halves are arena memory, freed
-/// with everything else). Containers reference `(first, count)` spans of
-/// their direct children — children are contiguous because a container's
-/// rows are appended as one block when it closes — resolved through these
-/// base pointers, which move when a tape grows.
+/// Everything one simple-mode JSON document allocates that does not borrow
+/// the source, owned in one place so that dropping the document is dropping
+/// this:
 ///
-/// The bases are atomics only because AST nodes are shared read-only across
-/// printer threads (`Cell` would make the nodes `!Sync`); all stores happen
-/// on the parsing thread before the AST is visible to anyone else, so every
-/// access uses relaxed ordering.
+/// - `props` / `items`: every simple object's property rows and every simple
+///   array's items. Containers hold `(first, count)` *index* spans of their
+///   direct children (contiguous because a container's rows are appended as
+///   one block when it closes), so growth may relocate these freely — they
+///   are plain `Vec`s on the global heap, and the abandoned half of a
+///   doubling is freed by `Vec`'s realloc instead of leaking into an arena.
+/// - `str_chunks`: escape-decoded string bytes. `Str`s point *into* these,
+///   so they are append-only chunks whose addresses never move. Empty for
+///   almost every real document (clean strings borrow the source).
+///
+/// The parser builds one per document and is its only writer; once parsing
+/// returns the tape is immutable. Every container node holds a
+/// `NonNull<JsonTape>` back to it — the same lifetime-erasure contract as
+/// `StoreRef`: the tape (and the source, for borrowed strings) must outlive
+/// every `Expr` reached through the document's root.
 pub struct JsonTape {
-    pub props: core::sync::atomic::AtomicPtr<PropertySimple>,
-    pub items: core::sync::atomic::AtomicPtr<JsonValue>,
+    props: Vec<PropertySimple>,
+    items: Vec<JsonValue>,
+    str_chunks: Vec<Box<[u8]>>,
+    /// Bytes of the last chunk already handed out.
+    str_used: usize,
 }
 
+// SAFETY: written only by the parsing thread while it holds exclusive access
+// (the parser is the tape's only writer and nothing reads it until parsing
+// returns); shared use afterwards is read-only. Same contract as the
+// container nodes that point at it.
+unsafe impl Send for JsonTape {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for JsonTape {}
+
 impl JsonTape {
-    pub fn empty() -> JsonTape {
+    const STR_CHUNK: usize = 4096;
+
+    pub const fn empty() -> JsonTape {
         JsonTape {
-            props: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-            items: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            props: Vec::new(),
+            items: Vec::new(),
+            str_chunks: Vec::new(),
+            str_used: 0,
         }
+    }
+
+    /// Append one closing object's direct children as a contiguous block and
+    /// return its `(first, count)` span in the property tape.
+    #[inline]
+    pub fn append_props(&mut self, rows: &[PropertySimple]) -> (u32, u32) {
+        let first = self.props.len() as u32;
+        self.props.extend_from_slice(rows);
+        (first, rows.len() as u32)
+    }
+
+    /// See [`Self::append_props`]; the array-item tape.
+    #[inline]
+    pub fn append_items(&mut self, rows: &[JsonValue]) -> (u32, u32) {
+        let first = self.items.len() as u32;
+        self.items.extend_from_slice(rows);
+        (first, rows.len() as u32)
+    }
+
+    /// Copy decoded string bytes into the tape. The returned `Str` is valid
+    /// for the tape's lifetime: chunks are never grown or moved once handed
+    /// out, only new ones appended.
+    pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
+        let fits = self
+            .str_chunks
+            .last()
+            .is_some_and(|c| c.len() - self.str_used >= bytes.len());
+        if !fits {
+            let cap = bytes.len().max(Self::STR_CHUNK);
+            self.str_chunks.push(vec![0u8; cap].into_boxed_slice());
+            self.str_used = 0;
+        }
+        let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
+        let out = &mut chunk[self.str_used..self.str_used + bytes.len()];
+        out.copy_from_slice(bytes);
+        self.str_used += bytes.len();
+        Str::new(out)
+    }
+
+    /// `[first, first + count)` of the property tape.
+    #[inline]
+    fn props_span(&self, first: u32, count: u32) -> &[PropertySimple] {
+        &self.props[first as usize..first as usize + count as usize]
+    }
+
+    /// `[first, first + count)` of the item tape.
+    #[inline]
+    fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
+        &self.items[first as usize..first as usize + count as usize]
     }
 }
 
@@ -1001,16 +1072,17 @@ pub struct ObjectSimple {
     pub is_single_line: bool,
 }
 
-// SAFETY: `tape` points into the parse arena that owns the whole AST (same
-// lifetime-erasure contract as `StoreRef`/`StoreStr`); the tape is only
-// mutated by the parsing thread, and shared use afterwards is read-only.
+// SAFETY: `tape` points at the document's [`JsonTape`] (same lifetime-erasure
+// contract as `StoreRef`/`StoreStr`: the owner must outlive the AST); the
+// tape is only written by the parsing thread before the AST is visible to
+// anyone else, and shared use afterwards is read-only.
 unsafe impl Send for ObjectSimple {}
-// SAFETY: see the `Send` impl; the moving base pointer is an `AtomicPtr`.
+// SAFETY: see the `Send` impl.
 unsafe impl Sync for ObjectSimple {}
 
 impl ObjectSimple {
-    /// `tape` must be the document's arena-allocated [`JsonTape`] and
-    /// `[first, first + count)` this object's rows in its `props` tape.
+    /// `tape` must be the document's [`JsonTape`] and `[first, first +
+    /// count)` this object's rows in its `props` tape.
     #[inline]
     pub fn new(
         tape: &JsonTape,
@@ -1032,20 +1104,11 @@ impl ObjectSimple {
     #[inline]
     pub fn properties(&self) -> &[PropertySimple] {
         if self.count == 0 {
-            // Empty containers may predate the tape's first slab.
             return &[];
         }
-        // SAFETY: per the constructor's contract, the tape base (relaxed:
-        // see `JsonTape`) points at an arena slab with at least
-        // `first + count` initialized rows, valid as long as the arena.
-        unsafe {
-            let base = self
-                .tape
-                .as_ref()
-                .props
-                .load(core::sync::atomic::Ordering::Relaxed);
-            core::slice::from_raw_parts(base.add(self.first as usize), self.count as usize)
-        }
+        // SAFETY: per the constructor's contract the tape outlives this node
+        // and is no longer being written to.
+        unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
     }
 
     /// First value whose key's decoded bytes equal `key` (matching
@@ -1100,14 +1163,7 @@ impl ArraySimple {
             return &[];
         }
         // SAFETY: see `ObjectSimple::properties`.
-        unsafe {
-            let base = self
-                .tape
-                .as_ref()
-                .items
-                .load(core::sync::atomic::Ordering::Relaxed);
-            core::slice::from_raw_parts(base.add(self.first as usize), self.count as usize)
-        }
+        unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
     }
 }
 

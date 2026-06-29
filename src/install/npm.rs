@@ -1982,20 +1982,26 @@ impl PackageManifest {
         // across calls (the AstAlloc state stays installed for the re-arm) and
         // bulk-frees via `reset_retain_with_limit` on the next call — see
         // `initialize_mini_store` in lib.rs for why.
-        let bump = bun_alloc::Arena::new();
+        // Never allocated from: the manifest is parsed into a simple AST
+        // whose strings are always UTF-8, so the `as_string(&bump)` accessor
+        // calls below never reach for it. It only exists to satisfy their
+        // signature; borrowing the process heap costs nothing.
+        let bump = bun_alloc::Arena::borrowing_default();
         // Registry manifests get no duplicate-key warnings: nothing ever
         // reads them for this log, and they cost a measurable fraction of
         // every manifest parse.
-        let json = match JSON::parse_utf8_registry(&source, log, &bump) {
+        // `parsed` owns the document's row tape; `json` (and every `Expr`
+        // reached through it) borrows the tape and `source`.
+        let parsed = match JSON::parse_utf8_registry(&source, log) {
             Ok(j) => j,
             Err(_) => {
-                // don't use the arena memory!
                 let mut cloned_log = bun_ast::Log::init();
                 log.clone_to_with_recycled(&mut cloned_log, true);
                 *log = cloned_log;
                 return Ok(None);
             }
         };
+        let json = parsed.root;
 
         if let Some(error_q) = json.as_property(b"error") {
             if let Some(err) = error_q.expr.as_string(&bump) {

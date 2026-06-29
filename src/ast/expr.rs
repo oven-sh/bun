@@ -250,14 +250,17 @@ impl Expr {
     pub fn materialize_json(&self) -> Expr {
         match &self.data {
             Data::EObjectSimple(o) => Expr::init(Self::materialize_object(o.get()), self.loc),
-            Data::EArraySimple(a) => Expr::init(Self::materialize_array(a.get(), self.loc), self.loc),
+            Data::EArraySimple(a) => {
+                Expr::init(Self::materialize_array(a.get(), self.loc), self.loc)
+            }
             _ => *self,
         }
     }
 
     fn materialize_object(o: &E::ObjectSimple) -> E::Object {
         let rows = o.properties();
-        let mut properties: G::PropertyList = Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+        let mut properties: G::PropertyList =
+            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
         for row in rows {
             let key = Expr::init(
                 E::String {

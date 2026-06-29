@@ -17,8 +17,10 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         b"input.jsonc",
         false,
         true,
-        |arena, log, source| {
-            let parse_result = match json::parse_jsonc(source, log, arena) {
+        |_arena, log, source| {
+            // `parsed` owns the document's row tape; the root borrows it (and
+            // `source`), so it must stay alive across `to_js`.
+            let parsed = match json::parse_jsonc(source, log) {
                 Ok(v) => v,
                 Err(e) => {
                     if e == bun_core::err!(StackOverflow) {
@@ -28,7 +30,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
             };
 
-            match parse_result.to_js(global) {
+            match parsed.root.to_js(global) {
                 Ok(v) => Ok(v),
                 Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
                 Err(ToJSError::JSError) => Err(JsError::Thrown),

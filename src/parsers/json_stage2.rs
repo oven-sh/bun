@@ -53,14 +53,11 @@ pub(crate) struct Parser<'a, 's, 'i> {
     /// `E::ObjectSimple`.
     scratch_simple_props: Vec<E::PropertySimple>,
     scratch_json_items: Vec<E::JsonValue>,
-    /// Simple mode: the document's row tapes (`E::JsonTape`), arena-owned.
-    /// Grown by doubling in [`Self::push_props_block`] /
-    /// [`Self::push_items_block`]; `None` outside simple mode.
+    /// Simple mode: the document's [`E::JsonTape`], heap-allocated and owned
+    /// by the parser (raw, from `Box::leak`) until [`Self::take_tape`] hands
+    /// it to the caller; [`Drop`] reclaims it on the error paths that never
+    /// get there. `None` outside simple mode.
     tape: Option<core::ptr::NonNull<E::JsonTape>>,
-    props_len: u32,
-    props_cap: u32,
-    items_len: u32,
-    items_cap: u32,
     /// Parallel to `scratch_props` (only when duplicate-key warnings are on):
     /// the wyhash of every key of the in-progress objects, so duplicate
     /// detection is a contiguous `u64` scan instead of pointer-chasing.
@@ -100,6 +97,14 @@ impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
     }
     fn syntax_err() -> bun_core::Error {
         bun_core::err!("SyntaxError")
+    }
+}
+
+/// A parse that errors out never reaches `take_tape`: reclaim the tape it
+/// leaked in `new` (everything that pointed into it is unreachable).
+impl Drop for Parser<'_, '_, '_> {
+    fn drop(&mut self) {
+        drop(self.take_tape());
     }
 }
 
@@ -148,19 +153,28 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             scratch_simple_props: Vec::new(),
             scratch_json_items: Vec::new(),
             tape: if opts.simple_objects {
-                Some(core::ptr::NonNull::from(&*bump.alloc(E::JsonTape::empty())))
+                Some(core::ptr::NonNull::from(Box::leak(Box::new(
+                    E::JsonTape::empty(),
+                ))))
             } else {
                 None
             },
-            props_len: 0,
-            props_cap: 0,
-            items_len: 0,
-            items_cap: 0,
             dup_hashes: Vec::new(),
             dup_maps: Vec::new(),
             spill_depth: 0,
             is_ascii_only: true,
         }
+    }
+
+    /// Hand the document's [`E::JsonTape`] — and ownership of it — to the
+    /// caller. Simple mode only; the AST just produced borrows it, so it
+    /// must outlive every use of the root `Expr`.
+    pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
+        // SAFETY: `tape` came from `Box::leak` in `new` and is given out
+        // exactly once (`take`); nothing else frees it.
+        self.tape
+            .take()
+            .map(|p| unsafe { Box::from_raw(p.as_ptr()) })
     }
 
     /// Does some string indexed so far contain a `\` or a control character?
@@ -430,92 +444,39 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// The document's [`E::JsonTape`] (simple mode only).
     #[inline]
     fn tape_ref(&self) -> &'a E::JsonTape {
-        // SAFETY: created in `Parser::new` from a `&'a Bump` allocation;
-        // arena-owned for at least the AST's lifetime.
+        // SAFETY: heap-allocated in `Parser::new`; the lifetime-erased
+        // contract is that the caller keeps it alive for the AST's lifetime.
         unsafe { self.tape.expect("simple mode").as_ref() }
+    }
+
+    /// The document's [`E::JsonTape`], mutably. The parser is its only
+    /// writer; nothing reads it until parsing returns.
+    #[inline]
+    fn tape_mut(&mut self) -> &mut E::JsonTape {
+        // SAFETY: see `tape_ref`; exclusively owned until `take_tape`.
+        unsafe { self.tape.expect("simple mode").as_mut() }
     }
 
     /// Append `scratch_simple_props[mark..]` (one closing object's direct
     /// children, contiguous on top of the scratch stack) as a block to the
-    /// property tape and return its `(first, count)` span. The tape grows by
-    /// doubling inside the arena: abandoned halves are arena memory, and the
-    /// per-document allocation count is logarithmic.
+    /// property tape and return its `(first, count)` span.
     fn push_props_block(&mut self, mark: usize) -> (u32, u32) {
-        let n = self.scratch_simple_props.len() - mark;
-        if n == 0 {
-            return (self.props_len, 0);
-        }
-        let len = self.props_len;
-        let mut cap = self.props_cap;
-        let base = Self::reserve_rows(self.bump, &self.tape_ref().props, len, &mut cap, n);
-        self.props_cap = cap;
-        // SAFETY: `reserve_rows` returned a slab with capacity for
-        // `len + n` rows; source (scratch stack) and destination (arena
-        // slab) cannot overlap.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self.scratch_simple_props.as_ptr().add(mark),
-                base.add(len as usize),
-                n,
-            );
-        }
-        self.props_len += n as u32;
+        // SAFETY: see `tape_mut`. The raw-derived `&mut` is not a borrow of
+        // `self`, so the (disjoint, parser-owned) scratch stack can be read
+        // alongside it.
+        let tape = unsafe { self.tape.expect("simple mode").as_mut() };
+        let span = tape.append_props(&self.scratch_simple_props[mark..]);
         self.scratch_simple_props.truncate(mark);
-        (len, n as u32)
+        span
     }
 
     /// See [`Self::push_props_block`]; the array-item tape.
     fn push_items_block(&mut self, mark: usize) -> (u32, u32) {
-        let n = self.scratch_json_items.len() - mark;
-        if n == 0 {
-            return (self.items_len, 0);
-        }
-        let len = self.items_len;
-        let mut cap = self.items_cap;
-        let base = Self::reserve_rows(self.bump, &self.tape_ref().items, len, &mut cap, n);
-        self.items_cap = cap;
         // SAFETY: see `push_props_block`.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self.scratch_json_items.as_ptr().add(mark),
-                base.add(len as usize),
-                n,
-            );
-        }
-        self.items_len += n as u32;
+        let tape = unsafe { self.tape.expect("simple mode").as_mut() };
+        let span = tape.append_items(&self.scratch_json_items[mark..]);
         self.scratch_json_items.truncate(mark);
-        (len, n as u32)
-    }
-
-    /// Ensure the tape behind `base` has capacity for `len + extra` rows,
-    /// reallocating in the arena (and publishing the new base) if not.
-    /// Returns the (possibly new) base pointer.
-    fn reserve_rows<T: Copy>(
-        bump: &Bump,
-        base: &core::sync::atomic::AtomicPtr<T>,
-        len: u32,
-        cap: &mut u32,
-        extra: usize,
-    ) -> *mut T {
-        use core::sync::atomic::Ordering::Relaxed;
-        let needed = len as usize + extra;
-        let old = base.load(Relaxed);
-        if needed <= *cap as usize {
-            return old;
-        }
-        let new_cap = needed.next_power_of_two().max(64);
-        let slab = bump
-            .alloc_uninit_slice::<T>(new_cap)
-            .as_mut_ptr()
-            .cast::<T>();
-        if len != 0 {
-            // SAFETY: the old slab holds `len` initialized rows; the new
-            // slab is fresh arena memory with room for `new_cap >= len`.
-            unsafe { core::ptr::copy_nonoverlapping(old, slab, len as usize) };
-        }
-        base.store(slab, Relaxed);
-        *cap = new_cap as u32;
-        slab
+        span
     }
 
     /// A value in `SIMPLE` mode: nested containers and strings become inline
@@ -630,6 +591,16 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok(E::Str::new(body))
     }
 
+    /// Where decoded string bytes the AST keeps alive belong: the document's
+    /// [`E::JsonTape`] in simple mode (it owns everything the simple AST
+    /// allocates), the caller's arena otherwise.
+    fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str {
+        if self.tape.is_some() {
+            return self.tape_mut().alloc_str(bytes);
+        }
+        E::Str::new(self.bump.alloc_slice_copy(bytes))
+    }
+
     /// A string with no escapes and no control characters.
     #[inline]
     fn make_clean_string(&mut self, body: &'s [u8]) -> PResult<E::EString> {
@@ -672,7 +643,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.decode_escapes(body, &mut buf)?;
         if self.force_utf8 {
             let utf8 = strings::to_utf8_alloc(&buf);
-            return Ok(E::EString::init(self.bump.alloc_slice_copy(&utf8)));
+            let owned = self.alloc_owned_str(&utf8);
+            return Ok(E::EString::init(owned.slice()));
         }
         if strings::first_non_ascii16(&buf).is_some() {
             Ok(E::EString::init_utf16(self.bump.alloc_slice_copy(&buf)))

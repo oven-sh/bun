@@ -259,9 +259,7 @@ describe("dns", () => {
 
     test("missing hostname throws ERR_MISSING_ARGS", () => {
       // @ts-expect-error
-      expect(() => dns.lookupSync()).toThrow(
-        expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS" }),
-      );
+      expect(() => dns.lookupSync()).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS" }));
     });
 
     test.each(["", 123, null])("invalid hostname %p throws ERR_INVALID_ARG_TYPE", hostname => {

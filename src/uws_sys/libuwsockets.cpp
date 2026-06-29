@@ -1356,8 +1356,10 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-      /* Like internalEnd(): the final close-flagged response must close the socket. */
-      uwsRes->uncorkAndCloseIfNeeded(data, false);
+      /* An uncorked, close-flagged final response must close itself. keepCorked:
+       * a corked caller (node:http's destroy buffers then force-closes) owns its
+       * cork, and uncorking here would flush the bytes it means to discard. */
+      uwsRes->uncorkAndCloseIfNeeded(data, true);
     }
     else
     {
@@ -1383,8 +1385,10 @@ extern "C"
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-      /* Like internalEnd(): the final close-flagged response must close the socket. */
-      uwsRes->uncorkAndCloseIfNeeded(data, false);
+      /* An uncorked, close-flagged final response must close itself. keepCorked:
+       * a corked caller (node:http's destroy buffers then force-closes) owns its
+       * cork, and uncorking here would flush the bytes it means to discard. */
+      uwsRes->uncorkAndCloseIfNeeded(data, true);
     }
   }
 

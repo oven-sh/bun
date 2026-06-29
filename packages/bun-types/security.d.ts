@@ -34,11 +34,11 @@ declare module "bun" {
       /**
        * The severity of the advisory.
        *
-       * Bun always prints every advisory returned from the
+       * Bun always pretty-prints every advisory returned from the
        * {@link Scanner.scan `scan()`} hook, then:
        *
-       * - if any is **fatal**, Bun cancels the installation and exits with
-       *   a non-zero exit code
+       * - if any is **fatal**, Bun immediately cancels the installation and
+       *   exits with a non-zero exit code
        * - otherwise, if any is **warn**, Bun asks whether to continue with
        *   the install when running in a TTY, and exits immediately when not
        */

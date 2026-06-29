@@ -596,6 +596,13 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
+    // A DONT_CONTEXTIFY context's global is its special sandbox, which is
+    // already a context; reuse it instead of re-contextifying a vanilla global
+    // (that would break Object.freeze(globalThis)), matching runInContext.
+    if (auto* specialSandbox = dynamicDowncast<NodeVMSpecialSandbox>(contextObjectValue)) {
+        RELEASE_AND_RETURN(scope, runInContext(specialSandbox->parentGlobal(), script, specialSandbox, callFrame->argument(1)));
+    }
+
     bool notContextified = NodeVM::getContextArg(globalObject, contextObjectValue);
 
     if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {

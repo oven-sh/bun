@@ -123,6 +123,20 @@ describe("vm", () => {
       const context = createContext(constants.DONT_CONTEXTIFY);
       expect(() => runInContext("Object.freeze(globalThis);", context)).not.toThrow();
     });
+
+    test("runInNewContext throws for a contextified global", () => {
+      let caught: unknown;
+      try {
+        runInNewContext("Object.freeze(globalThis);", {});
+      } catch (e) {
+        caught = e;
+      }
+      expect((caught as Error)?.name).toBe("TypeError");
+    });
+
+    test("runInNewContext with DONT_CONTEXTIFY can still be frozen, matching Node", () => {
+      expect(() => runInNewContext("Object.freeze(globalThis);", constants.DONT_CONTEXTIFY)).not.toThrow();
+    });
   });
 
   describe("compileFunction()", () => {

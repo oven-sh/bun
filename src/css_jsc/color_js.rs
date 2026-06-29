@@ -191,7 +191,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     use bun_core::ZigStringSlice;
     use bun_css as css;
     use bun_css::CssColor;
-    use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
+    use bun_css::values::color::{Colorspace as _, HSL, LAB, RGBA};
     use bun_jsc::StringJsc as _;
 
     let args = frame.arguments_as_array::<2>();
@@ -369,16 +369,11 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         | OutputColorFormat::RgbObject
                         | OutputColorFormat::RgbaArray
                         | OutputColorFormat::RgbArray) => {
-                            let srgba: SRGB = match &result {
-                                CssColor::Float(float) => match &**float {
-                                    css::FloatColor::Rgb(rgb) => *rgb,
-                                    other => other.into_srgb(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_srgb(),
-                                CssColor::Lab(lab) => lab.into_srgb(),
-                                _ => break 'formatted,
+                            // `currentColor`, system colors and `light-dark()` have no
+                            // concrete channel values to convert to.
+                            let Some(rgba) = RGBA::try_from_css_color(&result) else {
+                                return Ok(JSValue::NULL);
                             };
-                            let rgba = srgba.into_rgba();
                             match tag {
                                 OutputColorFormat::RgbaObject => {
                                     let object = JSValue::create_empty_object(global, 4);
@@ -538,35 +533,29 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         }
 
                         OutputColorFormat::Hsl => {
-                            let hsl: HSL = match &result {
-                                CssColor::Float(float) => match &**float {
-                                    css::FloatColor::Hsl(hsl) => *hsl,
-                                    other => other.into_hsl(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_hsl(),
-                                CssColor::Lab(lab) => lab.into_hsl(),
-                                _ => break 'formatted,
+                            let Some(hsl) = HSL::try_from_css_color(&result) else {
+                                return Ok(JSValue::NULL);
                             };
 
+                            // `s` and `l` are unit fractions; CSS requires percentages.
                             break 'color BunString::create_format(format_args!(
-                                "hsl({}, {}, {})",
-                                hsl.h, hsl.s, hsl.l
+                                "hsl({}, {}%, {}%)",
+                                hsl.h,
+                                hsl.s * 100.0,
+                                hsl.l * 100.0
                             ));
                         }
                         OutputColorFormat::Lab => {
-                            let lab: LAB = match &result {
-                                CssColor::Float(float) => float.into_lab(),
-                                CssColor::Lab(lab) => match &**lab {
-                                    css::LabColor::Lab(lab_) => *lab_,
-                                    other => other.into_lab(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_lab(),
-                                _ => break 'formatted,
+                            let Some(lab) = LAB::try_from_css_color(&result) else {
+                                return Ok(JSValue::NULL);
                             };
 
+                            // `l` is a unit fraction; `lab()` has no legacy comma syntax.
                             break 'color BunString::create_format(format_args!(
-                                "lab({}, {}, {})",
-                                lab.l, lab.a, lab.b
+                                "lab({}% {} {})",
+                                lab.l * 100.0,
+                                lab.a,
+                                lab.b
                             ));
                         }
                     }

@@ -67,6 +67,7 @@ const rgbObjectColors = [
   { r: 255, g: 255, b: 255 },
 ];
 
+// These survive the u8 round-trip exactly, so `color(x, "hsl") === x`.
 const hslColors = [
   "hsl(0, 100%, 50%)",
   "hsl(120, 100%, 50%)",
@@ -74,19 +75,11 @@ const hslColors = [
   "hsl(60, 100%, 50%)",
   "hsl(300, 100%, 50%)",
   "hsl(180, 100%, 50%)",
-  "hsl(300, 100%, 50%)",
-  "hsl(120, 100%, 50%)",
-  "hsl(240, 100%, 50%)",
 ];
 
-const labColors = [
-  "lab(50%, 50%, 50%)",
-  "lab(100%, 100%, 100%)",
-  "lab(0%, 0%, 0%)",
-  "lab(100%, 0%, 0%)",
-  "lab(0%, 100%, 0%)",
-  "lab(0%, 0%, 100%)",
-];
+// Fixed points of the "lab" serializer: `lab(<percentage> <number> <number>)`
+// with a lightness that survives the f32 `/ 100 * 100` round-trip.
+const labColors = ["lab(50% 62.5 62.5)", "lab(75% -40 20)", "lab(100% 0 0)", "lab(0% 0 0)"];
 
 const formatted = {
   "{rgb}": rgbObjectColors,
@@ -97,8 +90,8 @@ const formatted = {
   rgba: rgbaColors,
   hex: hexLowercase,
   HEX: hexUppercase,
-  // hsl: hslColors,
-  // lab: labColors,
+  hsl: hslColors,
+  lab: labColors,
   number: hexLowercase.map(color => parseInt(color.slice(1), 16)),
 };
 
@@ -202,13 +195,135 @@ test("0 args", () => {
   );
 });
 
+// currentColor, system colors and light-dark() are valid CSS <color> values,
+// but they have no concrete r/g/b channels to convert. Only the "css" format
+// can represent them; everything else must return null, never the input text.
+describe("colors without concrete channel values", () => {
+  const inputs = [
+    ["currentColor", "currentColor"],
+    ["currentcolor", "currentColor"],
+    ["Canvas", "canvas"],
+    ["light-dark(red, blue)", "light-dark(red, #00f)"],
+  ];
+  const conversionFormats = [
+    "number",
+    "{rgba}",
+    "{rgb}",
+    "[rgba]",
+    "[rgb]",
+    "rgb",
+    "rgba",
+    "hex",
+    "HEX",
+    "hsl",
+    "lab",
+    "ansi-16m",
+    "ansi-256",
+    "ansi-16",
+  ];
+
+  describe.each(inputs)("color(%s)", (input, css) => {
+    test.each(conversionFormats)(`"%s" is null`, format => {
+      expect(color(input, format)).toBeNull();
+    });
+    test(`"css" is ${JSON.stringify(css)}`, () => {
+      expect(color(input, "css")).toBe(css);
+    });
+  });
+});
+
+describe("color() function inputs convert", () => {
+  test.each([
+    ["color(srgb 1 0 0)", "#ff0000"],
+    ["color(srgb-linear 1 0 0)", "#ff0000"],
+    ["color(xyz 0 0 0)", "#000000"],
+  ])("color(%s, 'hex') === %s", (input, expected) => {
+    expect(color(input, "hex")).toBe(expected);
+  });
+
+  test("converts to non-string formats", () => {
+    expect(color("color(srgb 1 0 0)", "number")).toBe(0xff0000);
+    expect(color("color(srgb 1 0 0)", "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+    expect(color("color(srgb 1 0 0 / 0.5)", "[rgba]")).toEqual([255, 0, 0, 128]);
+  });
+
+  test("out-of-gamut colors are mapped into sRGB", () => {
+    expect(color("color(display-p3 0 1 0)", "hex")).toMatch(/^#[0-9a-f]{6}$/);
+  });
+});
+
+// https://drafts.csswg.org/css-color-4/#named-colors are ASCII case-insensitive.
+describe("named colors are ASCII case-insensitive", () => {
+  test.each([
+    ["Red", "red"],
+    ["RED", "red"],
+    ["rEbEcCaPuRpLe", "#639"],
+    ["WhiteSmoke", "#f5f5f5"],
+  ])("color(%s, 'css') === %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+    expect(color(input, "hex")).toBe(color(input.toLowerCase(), "hex"));
+  });
+});
+
+// Every component of lab()/lch()/oklab()/oklch() accepts <number> and
+// <percentage>. The expected values are anchored to the equivalent syntax
+// that was already supported, per the reference ranges in CSS Color 4.
+describe("lab-like function component syntax", () => {
+  test("lab() accepts percentage a/b (the docs' own example)", () => {
+    expect(color("lab(50% 50% 50%)", "hex")).toBe("#db3702"); // == lab(50% 62.5 62.5)
+    expect(color("lab(50% -100% -100%)", "hex")).toBe("#005d5a"); // == lab(50% -125 -125)
+  });
+
+  test("number lightness", () => {
+    expect(color("lab(50 50 50)", "hex")).toBe("#ca4b22"); // == lab(50% 50 50)
+    expect(color("lch(50 50 50)", "hex")).toBe("#b25f37"); // == lch(50% 50 50)
+    expect(color("oklab(0.5 0.1 0.1)", "hex")).toBe("#a14203"); // == oklab(50% 0.1 0.1)
+    expect(color("oklch(0.5 0.1 50)", "hex")).toBe("#90502a"); // == oklch(50% 0.1 50)
+  });
+
+  test("percentage chroma", () => {
+    expect(color("lch(50% 50% 50)", "hex")).toBe("#c94e0d"); // == lch(50% 75 50)
+    expect(color("oklab(0.5 100% -100%)", "hex")).toBe("#9500c0"); // == oklab(50% 0.4 -0.4)
+    expect(color("oklch(0.5 50% 50)", "hex")).toBe("#a34100"); // == oklch(50% 0.2 50)
+  });
+});
+
+describe("hsl and lab output formats emit valid CSS", () => {
+  test('"hsl" uses percentages', () => {
+    expect(color("red", "hsl")).toBe("hsl(0, 100%, 50%)");
+    expect(color("hsl(120, 100%, 50%)", "hsl")).toBe("hsl(120, 100%, 50%)");
+  });
+
+  test('"hsl" output reparses to the same color', () => {
+    const input = "hsl(120, 25%, 75%)";
+    expect(color(color(input, "hsl")!, "hex")).toBe(color(input, "hex")!);
+  });
+
+  test('"lab" output reparses to the same color', () => {
+    expect(color("lab(50% 62.5 62.5)", "lab")).toBe("lab(50% 62.5 62.5)");
+    const red = color("red", "lab")!;
+    expect(red).toStartWith("lab(");
+    expect(color(red, "hex")).toBe("#ff0000");
+  });
+});
+
 test("fuzz ansi256", () => {
+  // Stride through each channel instead of sweeping all 16.7 million values:
+  // the full sweep takes minutes on a debug build. 15 is smaller than every
+  // bucket of the tmux quantizer (48, 114, then 40 wide), so every branch of
+  // it is still reached, as are the 0 and 255 endpoints.
+  const channel: number[] = [];
+  for (let value = 0; value < 256; value += 15) {
+    channel.push(value);
+  }
+  channel.push(255);
+
   withoutAggressiveGC(() => {
-    for (let i = 0; i < 256; i++) {
+    for (const i of channel) {
       const iShifted = i << 16;
-      for (let j = 0; j < 256; j++) {
+      for (const j of channel) {
         const jShifted = j << 8;
-        for (let k = 0; k < 256; k++) {
+        for (const k of channel) {
           const int = iShifted | jShifted | k;
           if (color(int, "ansi256") === null) {
             throw new Error(`color(${i}, ${j}, ${k}, "ansi256") is null`);

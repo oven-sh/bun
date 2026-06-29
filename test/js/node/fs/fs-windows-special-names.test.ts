@@ -42,7 +42,7 @@ async function runInChild(cwd: string, fixture: string): Promise<unknown> {
 }
 
 for (const name of [" spaces.txt ", ".dots.txt."]) {
-  test.skipIf(!isWindows)(`fs round-trips the relative name ${JSON.stringify(name)}`, async () => {
+  test.concurrent.skipIf(!isWindows)(`fs round-trips the relative name ${JSON.stringify(name)}`, async () => {
     using dir = tempDir("fs-win-names", {});
     const fixture = `
       const fs = require("node:fs");
@@ -76,7 +76,7 @@ for (const name of [" spaces.txt ", ".dots.txt."]) {
   });
 }
 
-test.skipIf(!isWindows)("fs.rename and fs.copyFile see the literal relative name", async () => {
+test.concurrent.skipIf(!isWindows)("fs.rename and fs.copyFile see the literal relative name", async () => {
   using dir = tempDir("fs-win-names", {});
   const fixture = `
     const fs = require("node:fs");
@@ -96,7 +96,7 @@ test.skipIf(!isWindows)("fs.rename and fs.copyFile see the literal relative name
   });
 });
 
-test.skipIf(!isWindows)("fs.mkdir keeps a trailing dot in relative directory names", async () => {
+test.concurrent.skipIf(!isWindows)("fs.mkdir keeps a trailing dot in relative directory names", async () => {
   using dir = tempDir("fs-win-names", {});
   const fixture = `
     const fs = require("node:fs");
@@ -120,7 +120,7 @@ test.skipIf(!isWindows)("fs.mkdir keeps a trailing dot in relative directory nam
   });
 });
 
-test.skipIf(!isWindows)("Dirent.parentPath reports the relative path as given", async () => {
+test.concurrent.skipIf(!isWindows)("Dirent.parentPath reports the relative path as given", async () => {
   using dir = tempDir("fs-win-names", { "sub/a.txt": "a", "sub/b/c.txt": "c" });
   const fixture = `
     const fs = require("node:fs");
@@ -137,7 +137,7 @@ test.skipIf(!isWindows)("Dirent.parentPath reports the relative path as given", 
   });
 });
 
-test.skipIf(!isWindows)("alternate data streams and explicit \\\\?\\ paths keep working", async () => {
+test.concurrent.skipIf(!isWindows)("alternate data streams and explicit \\\\?\\ paths keep working", async () => {
   // Guards the relative-path rewrite: ADS names contain a colon and must not
   // be mistaken for drive-relative paths, and already-namespaced absolute
   // paths must not be prefixed twice.
@@ -168,7 +168,7 @@ test.skipIf(!isWindows)("alternate data streams and explicit \\\\?\\ paths keep 
   });
 });
 
-test.skipIf(!isWindows)("issue 8836 reproduction", async () => {
+test.concurrent.skipIf(!isWindows)("issue 8836 reproduction", async () => {
   // Verbatim shape of the original report: write, read, stat, unlink each
   // name without any of them throwing.
   using dir = tempDir("fs-win-names", {});

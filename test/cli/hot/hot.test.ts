@@ -478,13 +478,16 @@ it(
     });
     childDied.catch(() => {}); // observed through the races below
 
+    // The readers only accumulate diagnostic output and resolve the two
+    // signal promises; every signal they could carry is already covered by
+    // those, so a stream torn down by `runner.kill()` must not fail the test.
     const moduleNotFound = Promise.withResolvers<void>();
     const stderrDone = (async () => {
       for await (const chunk of runner.stderr) {
         stderrText += new TextDecoder().decode(chunk);
         if (stderrText.includes("Cannot find module")) moduleNotFound.resolve();
       }
-    })();
+    })().catch(() => {});
     const port = Promise.withResolvers<number>();
     const stdoutDone = (async () => {
       for await (const chunk of runner.stdout) {
@@ -492,7 +495,7 @@ it(
         const match = stdoutText.match(/PORT=(\d+)/);
         if (match) port.resolve(Number(match[1]));
       }
-    })();
+    })().catch(() => {});
 
     const url = `http://localhost:${await Promise.race([port.promise, childDied])}/`;
     const body = async () => await (await fetch(url)).text();

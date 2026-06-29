@@ -732,9 +732,55 @@ impl<'a> TablePrinter<'a> {
         })
     }
 
-    /// Format `value` exactly once (bare for strings, quoted otherwise),
-    /// appending its rendered bytes to the shared `cell_text` scratch, and
-    /// return the recorded byte range plus its visible width.
+    /// Whether a string cell value should be rendered in quoted/escaped form.
+    ///
+    /// `console.table` normally prints plain string cells without surrounding
+    /// quotes, but a string containing a C0 control character (0x00-0x1F)
+    /// corrupts the output: `\n`/`\r` push the rest of the row past the
+    /// border, `\t` expands to a terminal-dependent width, and ANSI escape
+    /// sequences (which begin with ESC, 0x1B) are interpreted by the terminal
+    /// instead of shown. Promoting such a cell to the quoted form has the
+    /// formatter escape the whole string, so the table stays rectangular and
+    /// the value is shown literally, matching Node (issue #32223).
+    ///
+    /// DEL/C1 (0x7F-0x9F) are intentionally excluded: they are zero-width in
+    /// both the width calculation and typical terminals (so they don't break
+    /// layout), and the quoted path uses `write_json_string`, which per JSON
+    /// only escapes 0x00-0x1F, so promoting them would quote the cell but still
+    /// leave the bytes raw.
+    fn should_quote_string_cell(
+        &self,
+        value: JSValue,
+        tag: formatter::TagResult,
+    ) -> JsResult<bool> {
+        use crate::StringJsc as _;
+        if !matches!(
+            tag.tag,
+            TagPayload::String | TagPayload::StringPossiblyFormatted
+        ) {
+            return Ok(true);
+        }
+        // A boxed `String` already renders as `[String: "..."]` with JSON
+        // escaping in `print_string`, so leave it unpromoted to keep that type
+        // indicator. `DerivedStringObject` is not special-cased there and falls
+        // through to raw bytes, so it still needs the scan below.
+        if tag.cell == jsc::JSType::StringObject {
+            return Ok(false);
+        }
+        if !value.is_string() {
+            return Ok(false);
+        }
+        let str = OwnedString::new(BunString::from_js(value, self.global_object)?);
+        Ok(if str.is_utf16() {
+            str.utf16().iter().any(|&c| c < 0x20)
+        } else {
+            str.byte_slice().iter().any(|&b| b < 0x20)
+        })
+    }
+
+    /// Format `value` exactly once (bare for plain strings, quoted/escaped
+    /// otherwise), appending its rendered bytes to the shared `cell_text`
+    /// scratch, and return the recorded byte range plus its visible width.
     fn format_cell<const ENABLE_ANSI_COLORS: bool>(
         &self,
         cell_text: &mut Vec<u8>,
@@ -743,10 +789,7 @@ impl<'a> TablePrinter<'a> {
         let offset = cell_text.len();
         let mut value_formatter = self.value_formatter.shallow_clone();
         let tag = formatter::Tag::get(value, self.global_object)?;
-        value_formatter.quote_strings = !(matches!(
-            tag.tag,
-            TagPayload::String | TagPayload::StringPossiblyFormatted
-        ));
+        value_formatter.quote_strings = self.should_quote_string_cell(value, tag)?;
         value_formatter.format::<ENABLE_ANSI_COLORS>(tag, cell_text, value, self.global_object)?;
 
         let text = &cell_text[offset..];

@@ -1,4 +1,4 @@
-use crate::string::strings;
+use crate::strings;
 
 const SPECIAL_CHARACTERS: &[u8] = b"|\\{}()[]^$+*?.-";
 

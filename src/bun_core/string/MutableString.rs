@@ -1,4 +1,5 @@
-use crate::string::{ZStr, strings};
+use crate::string::ZStr;
+use crate::strings;
 use bun_alloc::AllocError;
 
 /// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on

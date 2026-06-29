@@ -23,7 +23,7 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 
 // ── BOM ──────────────────────────────────────────────────────────────────────
 // A `BOM` enum also
-// lives in `bun_core::immutable::unicode_draft` but that module is private
+// lives in `bun_core::strings::unicode_draft` but that module is private
 // (`mod unicode_draft` — no `pub use` of `BOM` yet); the resolver needs it for
 // `read_file_with_handle_and_allocator` so the enum is duplicated here. The
 // UTF-16→UTF-8 transcode goes through `strings::to_utf8_alloc` (re-exported

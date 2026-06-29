@@ -1,8 +1,6 @@
-// Fixture for perf_hooks.test.ts ("node:dns operations are observable ...").
-// A local UDP DNS server answers every A/TXT/PTR query so the 'dns'
-// performance entries asserted by the parent test are produced without a real
-// resolver. Runs in its own process because it repoints the default resolver
-// at the local server with dns.setServers().
+// Fixture for perf_hooks.test.ts: a local UDP DNS server answers the A/TXT/PTR
+// queries so the asserted 'dns' entries are produced without a real resolver.
+// Runs in its own process because dns.setServers() repoints the default resolver.
 import dgram from "node:dgram";
 import dns from "node:dns";
 import { once } from "node:events";

@@ -313,8 +313,7 @@ function observeLookupService(host, port, promise) {
 
 // `name` is Node's c-ares binding (and entry) name for the operation, e.g.
 // resolve4 -> "queryA", reverse -> "getHostByAddr". `detail.result` records
-// the promise's value, so callers pass the promise the user will observe:
-// https://github.com/nodejs/node/blob/v25.2.1/lib/internal/dns/promises.js#L288-L330
+// the wrapped promise's value, so callers pass the one the user observes.
 function observeQuery(name, host, promise, ttl?) {
   if (!hasObserver("dns")) return promise;
   const ctx = {};

@@ -2,6 +2,9 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { AddressInfo } from "node:net";
+import { createServer } from "node:net";
 import * as path from "node:path";
 function test(
   label: string,
@@ -238,6 +241,90 @@ describe("WebSocket", () => {
       expect(wasClean).toBeFalse();
       done();
     });
+  });
+});
+
+describe("WebSocket AsyncLocalStorage context", () => {
+  it("dispatches events in the context active at construction", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Upgrade failed", { status: 500 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("hello");
+        },
+        message(ws) {
+          ws.close(1000, "done");
+        },
+      },
+    });
+
+    const als = new AsyncLocalStorage<string>();
+    const contexts: Record<string, string | undefined> = {};
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    als.run("creation-context", () => {
+      const ws = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      ws.onopen = () => {
+        contexts.open = als.getStore();
+        ws.send("x");
+      };
+      ws.onmessage = () => {
+        contexts.message = als.getStore();
+      };
+      ws.addEventListener("close", () => {
+        contexts.closeListener = als.getStore();
+      });
+      ws.onclose = () => {
+        contexts.close = als.getStore();
+        resolve();
+      };
+      ws.onerror = () => reject(new Error("unexpected error event"));
+    });
+
+    await promise;
+    expect(contexts).toEqual({
+      open: "creation-context",
+      message: "creation-context",
+      closeListener: "creation-context",
+      close: "creation-context",
+    });
+  });
+
+  it("dispatches error and close events in the context active at construction", async () => {
+    // The upgrade never completes: the server destroys the socket, so the
+    // client goes down the connection-error path (error + close events).
+    const tcpServer = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => tcpServer.listen(0, "127.0.0.1", resolve));
+    const { port } = tcpServer.address() as AddressInfo;
+
+    try {
+      const als = new AsyncLocalStorage<string>();
+      const contexts: Record<string, string | undefined> = {};
+      const { promise, resolve } = Promise.withResolvers<void>();
+
+      als.run("creation-context", () => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+        ws.onerror = () => {
+          contexts.error = als.getStore();
+        };
+        ws.onclose = () => {
+          contexts.close = als.getStore();
+          resolve();
+        };
+      });
+
+      await promise;
+      expect(contexts).toEqual({
+        error: "creation-context",
+        close: "creation-context",
+      });
+    } finally {
+      tcpServer.close();
+    }
   });
 });
 

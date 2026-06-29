@@ -3,6 +3,11 @@
 #include "root.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallData.h>
+#include <wtf/Noncopyable.h>
+
+namespace WebCore {
+class JSValueInWrappedObject;
+}
 
 class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:
@@ -16,6 +21,11 @@ public:
 
     // When given a JSFunction that you want to call later, wrap it with this function
     static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
+
+    // Snapshots the active async context (what AsyncLocalStorage.getStore() reads)
+    // into `slot` for AsyncContextFrameScope to restore later. No-op when there is
+    // none. `slot` must be GC-visited by the owning object's JS wrapper.
+    static void captureCurrentContext(JSC::JSGlobalObject* globalObject, WebCore::JSValueInWrappedObject& slot);
 
     // The following is JSC::call but
     // - it unwraps AsyncContextFrame
@@ -63,4 +73,19 @@ public:
         , context(context_, JSC::WriteBarrierEarlyInit)
     {
     }
+};
+
+// RAII: installs `context` as the active async context and restores the previous
+// one on exit. Use it around an event dispatch that runs asynchronously on behalf
+// of a resource created earlier. A no-op when `context` is empty or undefined.
+class AsyncContextFrameScope {
+    WTF_MAKE_NONCOPYABLE(AsyncContextFrameScope);
+
+public:
+    AsyncContextFrameScope(JSC::JSGlobalObject*, JSC::JSValue context);
+    ~AsyncContextFrameScope();
+
+private:
+    JSC::JSGlobalObject* m_globalObject { nullptr };
+    JSC::JSValue m_previousContext;
 };

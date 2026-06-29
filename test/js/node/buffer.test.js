@@ -3730,6 +3730,85 @@ it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
   expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
 });
 
+describe("Buffer.from(arrayBuffer, byteOffset, length) bounds", () => {
+  it("clamps NaN and non-positive lengths to 0", () => {
+    const ab = new ArrayBuffer(16);
+    const cases = [
+      [ab, 4, -1],
+      [ab, 4, -100],
+      [ab, 0, -Infinity],
+      [ab, 0, -0],
+      [ab, 0, "-5"],
+      [ab, 0, NaN],
+      [ab, 16, -1],
+      [ab, undefined, -1],
+      [ab, 4, { valueOf: () => -1 }],
+      [new SharedArrayBuffer(16), 4, -1],
+    ];
+    const lengths = cases.map(args => {
+      try {
+        return Buffer.from(...args).length;
+      } catch (e) {
+        return e.code;
+      }
+    });
+    expect(lengths).toEqual(cases.map(() => 0));
+    // the byteOffset is still respected
+    expect(Buffer.from(ab, 4, -1).byteOffset).toBe(4);
+    // deprecated constructor form takes the same path
+    expect(new Buffer(ab, 4, -1).length).toBe(0);
+  });
+
+  it("throws ERR_BUFFER_OUT_OF_BOUNDS for positive lengths past the end", () => {
+    const ab = new ArrayBuffer(16);
+    expect(() => Buffer.from(ab, 0, 17)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, 8, 9)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, 0, Infinity)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    // Node compares the un-truncated length against the remaining capacity
+    expect(() => Buffer.from(ab, 0, 16.5)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(Buffer.from(ab, 0, 16).length).toBe(16);
+    expect(Buffer.from(ab, 0, 15.5).length).toBe(15);
+    expect(Buffer.from(ab, 8, 8).length).toBe(8);
+    // ... and that capacity is computed from the un-truncated offset
+    expect(() => Buffer.from(ab, 0.5, 16)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, 15.5, 1)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(Buffer.from(ab, 0.5, 15).length).toBe(15);
+    const fractional = Buffer.from(ab, 3.5, 12);
+    expect([fractional.byteOffset, fractional.length]).toEqual([3, 12]);
+  });
+
+  it("throws ERR_BUFFER_OUT_OF_BOUNDS for offsets past the end", () => {
+    const ab = new ArrayBuffer(16);
+    expect(() => Buffer.from(ab, 17)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, Infinity)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    // Node compares the un-truncated offset against byteLength
+    expect(() => Buffer.from(ab, 16.5)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, -1)).toThrow(RangeError);
+    expect(Buffer.from(ab, 16).length).toBe(0);
+    // (-1, 0] truncates to a zero offset
+    expect(Buffer.from(ab, -0.5).length).toBe(16);
+  });
+
+  it("honors an explicit length on a resizable ArrayBuffer", () => {
+    const rab = new ArrayBuffer(8, { maxByteLength: 32 });
+    const fixed = Buffer.from(rab, 0, 4);
+    const clamped = Buffer.from(rab, 4, -1);
+    const tracking = Buffer.from(rab, 4);
+    expect([fixed.length, clamped.length, clamped.byteOffset, tracking.length]).toEqual([4, 0, 4, 4]);
+    rab.resize(32);
+    // only the no-length form is a length-tracking view
+    expect([fixed.length, clamped.length, tracking.length]).toEqual([4, 0, 28]);
+  });
+
+  it("honors an explicit length on a growable SharedArrayBuffer", () => {
+    const gsab = new SharedArrayBuffer(8, { maxByteLength: 32 });
+    const fixed = Buffer.from(gsab, 0, 4);
+    const tracking = Buffer.from(gsab);
+    gsab.grow(32);
+    expect([fixed.length, tracking.length]).toEqual([4, 32]);
+  });
+});
+
 describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
   for (const method of ["writeBigInt64BE", "writeBigInt64LE", "writeBigUInt64BE", "writeBigUInt64LE"]) {
     for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {

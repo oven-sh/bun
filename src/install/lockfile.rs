@@ -1008,6 +1008,12 @@ impl Lockfile {
     /// by the user (or by files the user explicitly points the project at), so
     /// their `file:` dependencies are trusted like root dependencies. Paths
     /// declared by remote packages (registry, git, tarball) are not.
+    ///
+    /// A `Folder` declaring package is always itself declared by the root or a
+    /// workspace: only those folder dependencies have their package.json
+    /// parsed. A folder dependency of any other package is recorded as a
+    /// resolution with no dependencies of its own (see the transitive folder
+    /// branch in `get_or_put_resolved_package`), so it never declares one.
     pub fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let parent_id = self.get_parent_pkg_of_dependency(id);
         if parent_id == invalid_package_id {

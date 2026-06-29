@@ -10,10 +10,14 @@
 
 import type { Dependency } from "../source.ts";
 
-// Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e + the win-pipe
-// CancelIoEx race fix + ConPTY support in uv_spawn. To bump upstream, rebase
-// the `bun` branch and update this SHA.
-const LIBUV_COMMIT = "4dcfac4780d394e0dc2d3fb30335ca01b553eb46";
+// Tip of oven-sh/libuv's `dylan/win-appcontainer` branch (oven-sh/libuv#5) —
+// the `bun` branch (upstream f3ce527e + the win-pipe CancelIoEx race fix +
+// ConPTY support in uv_spawn) plus AppContainer (lowbox) support: LOCAL\
+// internal pipe names, bounded+randomized access-denied retries, console read
+// cancellation without input injection, sandbox-rewritten junction readback,
+// uv_pipe/realpath/stat error-reporting fixes, and uv_os_is_app_container().
+// To bump upstream, rebase the `bun` branch and update this SHA.
+const LIBUV_COMMIT = "a237caddc48dea3e93d414b899af4bfb90f1d59a";
 
 // prettier-ignore
 const SHARED = [

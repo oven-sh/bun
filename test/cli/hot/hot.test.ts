@@ -440,10 +440,9 @@ it(
   timeout,
 );
 
-// Unlike the entrypoint (covered above), an *imported* file has no dedicated
-// recovery path: `rm` destroys the inode its per-file watch is attached to and
-// evicts its watchlist entry, so only the parent-directory watch can notice
-// the recreated path. Before the fix, --hot served the old module forever.
+// `rm` of an *imported* file kills its per-file watch and evicts its watchlist
+// entry, so only the parent-directory watch can notice the recreated path.
+// Unlike the entrypoint (covered above), it had no recovery path.
 it(
   "should hot reload an imported file after it is deleted and recreated",
   async () => {

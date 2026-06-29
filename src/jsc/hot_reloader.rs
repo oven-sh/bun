@@ -484,16 +484,10 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub tombstones: StringHashMap<*mut Fs::EntriesOption>,
 
-    /// Absolute path → watch hash for file watch entries evicted because
-    /// the file was deleted. Once evicted, a recreated file at the same
-    /// path no longer maps to any file watch item (on POSIX the per-inode
-    /// watch died with the inode; on Windows the path-matched entry is
-    /// gone), so only the parent directory's watch can observe it and
-    /// `--hot` would serve the old module forever. The directory arms of
-    /// `on_file_update` consume this via `reenqueue_recreated_files`; the
-    /// enqueued reload's re-import re-adds the per-file watch. This is the
-    /// general form of the entrypoint-only recovery in [`MainFile`].
-    /// Watcher-thread only, like `tombstones`.
+    /// Absolute path → watch hash for file watch entries evicted while the
+    /// file was gone from disk. Once recreated, only the parent directory's
+    /// watch can observe such a path, so `reenqueue_recreated_files` enqueues
+    /// its reload from there. Watcher-thread only, like `tombstones`.
     pub deleted_watched_files: StringHashMap<bun_watcher::HashType>,
 
     _event_loop: PhantomData<*mut EventLoopType>,
@@ -841,13 +835,9 @@ where
         self.tombstones.put(key, value).expect("unreachable");
     }
 
-    /// Record a file watch entry that is being evicted while its path is
-    /// gone from disk. No-op if the path still exists, because then the
-    /// reload being enqueued re-imports and re-watches it. When it is gone
-    /// the reload can't, so nothing would ever re-arm the watch and `--hot`
-    /// would keep serving the stale module; the directory arms of
-    /// `on_file_update` consume this via [`Self::reenqueue_recreated_files`]
-    /// once the path exists again.
+    /// Remember an evicted file watch only while its path is gone from disk
+    /// (a still-present path means the reload being enqueued re-watches it).
+    /// The directory arms consume this via [`Self::reenqueue_recreated_files`].
     fn remember_deleted_watch(&mut self, path: &[u8], hash: bun_watcher::HashType) {
         if bun_sys::exists(path) {
             return;
@@ -855,20 +845,9 @@ where
         bun_core::handle_oom(self.deleted_watched_files.put(path, hash));
     }
 
-    /// Directory-arm half of the recreated-import recovery: for every
-    /// [`Self::remember_deleted_watch`]ed path directly under `dir_path` that
-    /// exists on disk again but is **not** back in the watchlist, enqueue a
-    /// reload and forget it; the re-import re-adds the per-file watch.
-    ///
-    /// The watchlist membership check is load-bearing, not an optimization.
-    /// A delete also enqueues its own reload (the `File` arm's `DELETE`
-    /// append), and if the path reappears before that reload runs (e.g. a
-    /// rename immediately follows the unlink), that reload already re-added
-    /// the watch. Appending again here would stack a second reload of an
-    /// unchanged module, which can land between a rejected module's eval and
-    /// its report and clobber its sourcemap. `watchlist_hashes` is the
-    /// caller's snapshot taken on this batch's entry, so it already reflects
-    /// every re-add the JS thread performed since the record was made.
+    /// For every [`Self::remember_deleted_watch`]ed path directly under
+    /// `dir_path` that exists again and has no reload covering it, enqueue
+    /// one and drop the record; the re-import re-adds the per-file watch.
     fn reenqueue_recreated_files(
         &mut self,
         dir_path: &[u8],
@@ -878,16 +857,17 @@ where
         if self.deleted_watched_files.is_empty() {
             return;
         }
-        // A reload is already queued and has not started. It reads the live
-        // filesystem and re-adds every module that resolves, so it already
-        // covers any recorded path that has reappeared by now. Re-check on
-        // the next directory event instead of stacking a second reload.
+        // A queued, not-yet-started reload reads the live filesystem and
+        // re-adds every recorded path that has reappeared by now. Appending
+        // would only stack a duplicate; re-check on the next directory event.
         if self.pending_count.load(Ordering::Relaxed) > 0 {
             return;
         }
         let dir_no_slash = strings::paths::without_trailing_slash_windows_path(dir_path);
         self.deleted_watched_files.retain(|deleted_path, hash| {
-            // Already re-watched: an earlier reload re-imported it.
+            // Already re-watched: an earlier reload re-imported it. A second
+            // reload of the unchanged module could land between a rejected
+            // module's eval and its report and clobber its sourcemap.
             if watchlist_hashes.contains(hash) {
                 return false;
             }

@@ -471,6 +471,24 @@ test.skipIf(!isWindows || isArm64)("cpSync over symlinks does not leak Windows h
   expect(after - before).toBeLessThan(N / 2);
 });
 
+// Junctions are the one link type Windows lets unprivileged processes create, so
+// node_modules trees from npm/pnpm/bun contain them. cpSync must copy them as
+// links (Node's dereference:false default), and creating the copied link must not
+// require symlink privilege (junction fallback).
+test.skipIf(!isWindows)("cpSync recursive copies a junction as a link to the original target", () => {
+  const basename = tempDirWithFiles("cp-junction", {
+    "from/real/inner.txt": "inner",
+  });
+  fs.symlinkSync(join(basename, "from", "real"), join(basename, "from", "junction"), "junction");
+
+  fs.cpSync(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+  const copied = join(basename, "result", "junction");
+  expect(fs.lstatSync(copied).isSymbolicLink()).toBe(true);
+  expect(fs.realpathSync(copied)).toBe(fs.realpathSync(join(basename, "from", "real")));
+  expect(fs.readFileSync(join(copied, "inner.txt"), "utf8")).toBe("inner");
+});
+
 // On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed
 // with on-disk directories, so this test targets POSIX where MAX_PATH_BYTES is small
 // enough to reach via relative mkdir + chdir.

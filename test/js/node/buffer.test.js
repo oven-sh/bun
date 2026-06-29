@@ -3871,13 +3871,25 @@ describe("Buffer.fill offset/end argument handling", () => {
     );
   });
 
-  it("treats a null encoding like an absent one, as Node's normalizeEncoding does", () => {
+  it("treats a null or empty-string encoding like an absent one, as Node's normalizeEncoding does", () => {
+    // normalizeEncoding returns utf8 for exactly undefined, null, and "".
     expect(Buffer.alloc(5, 0xaa).fill("a", 1, 3, null).toString("hex")).toBe("aa6161aaaa");
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, 3, "").toString("hex")).toBe("aa6161aaaa");
+    // A string "" in the offset or end slot becomes the encoding first, then
+    // that encoding is treated as absent.
+    expect(Buffer.alloc(5, 0xaa).fill("a", "").toString("hex")).toBe("6161616161");
+    expect(Buffer.alloc(5, 0xaa).fill("a", 1, "").toString("hex")).toBe("aa61616161");
     expect(Buffer.alloc(3, "a", null).toString("hex")).toBe("616161");
+    expect(Buffer.alloc(3, "a", "").toString("hex")).toBe("616161");
     // toString goes through Node's getEncodingOps, not normalizeEncoding, so a
-    // null encoding there is still ERR_UNKNOWN_ENCODING. Pins that the null
-    // handling lives at the fill/alloc gates, not inside parseEncoding.
+    // null or empty-string encoding there is still ERR_UNKNOWN_ENCODING. Pins
+    // that the handling lives at the fill/alloc gates, not inside parseEncoding.
     expect(() => Buffer.from("ab").toString(null)).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    expect(() => Buffer.from("ab").toString("")).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    // A String object is not a string primitive, so it is not "absent".
+    expect(() => Buffer.alloc(3, "a", new String(""))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
   });
 
   // Differential test: the fixture enumerates every fill() argument shape and

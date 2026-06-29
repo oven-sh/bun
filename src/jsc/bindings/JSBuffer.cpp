@@ -293,6 +293,14 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
     return encoded.value();
 }
 
+// Node's normalizeEncoding (lib/internal/util.js) treats undefined, null, and
+// the empty string as an absent encoding (utf8). buf.toString rejects all three
+// (getEncodingOps), so this lives at the fill/alloc gates, not in parseEncoding.
+static bool isAbsentEncoding(JSC::JSValue value)
+{
+    return value.isUndefinedOrNull() || (value.isString() && asString(value)->length() == 0);
+}
+
 // Matches Node's validateOffset (lib/buffer.js), which is validateInteger and
 // therefore renders its range as ">= min && <= max", unlike boundsError's
 // ">= min and <= max".
@@ -662,9 +670,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
             WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope arg2 = callFrame->uncheckedArgument(2);
-                // A null encoding is the same as an absent one (Node's
-                // normalizeEncoding tests `enc == null`), not an error.
-                if (!arg2.value().isUndefinedOrNull()) {
+                if (!isAbsentEncoding(arg2.value())) {
                     encoding = parseEncoding(scope, lexicalGlobalObject, arg2.value(), true);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
@@ -1363,9 +1369,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     // encoding error wins. parseEncoding is also the first
     // user-JS-visible call: `toString` on an object encoding can detach
     // or resize castedThis; the post-coercion clamp further down reads
-    // byteLength() once more to catch any such effect. A null encoding is the
-    // same as an absent one (Node's normalizeEncoding tests `enc == null`).
-    if (!encodingValue.isUndefinedOrNull() && value.isString()) {
+    // byteLength() once more to catch any such effect.
+    if (!isAbsentEncoding(encodingValue) && value.isString()) {
         encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, true);
         RETURN_IF_EXCEPTION(scope, {});
     }

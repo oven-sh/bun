@@ -865,17 +865,18 @@ where
         }
         let dir_no_slash = strings::paths::without_trailing_slash_windows_path(dir_path);
         self.deleted_watched_files.retain(|deleted_path, hash| {
-            // Already re-watched: an earlier reload re-imported it. A second
-            // reload of the unchanged module could land between a rejected
-            // module's eval and its report and clobber its sourcemap.
-            if watchlist_hashes.contains(hash) {
-                return false;
-            }
             let deleted_path: &[u8] = deleted_path;
             if bun_core::dirname(deleted_path) != Some(dir_no_slash)
                 || !bun_sys::exists(deleted_path)
             {
                 return true;
+            }
+            // Exists and re-watched: an earlier reload re-imported it, so
+            // re-enqueuing would stack a redundant reload. Must stay after
+            // the filters above: evictions are flushed after the event loop,
+            // so the snapshot still holds same-batch evict-marked hashes.
+            if watchlist_hashes.contains(hash) {
+                return false;
             }
             record_changed_path(deleted_path);
             task.append(*hash);

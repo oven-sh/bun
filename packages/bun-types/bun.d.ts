@@ -1782,10 +1782,10 @@ declare module "bun" {
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
    *
-   * Reads the multi-part or URL-encoded form data into a {@link FormData} object
+   * Reads the multipart or URL-encoded form data into a {@link FormData} object.
    *
    * @param stream The stream to consume.
-   * @param multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
+   * @param multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URL-encoded form.
    * @returns A promise that resolves with the data encoded into a {@link FormData} object.
    *
    * @example
@@ -1794,7 +1794,7 @@ declare module "bun" {
    * // without dashes
    * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
    *
-   * const myStream = getStreamFromSomewhere() // ...
+   * const stream = getStreamFromSomewhere() // ...
    * const formData = await Bun.readableStreamToFormData(stream, boundary);
    * formData.get("foo"); // "bar"
    * ```
@@ -1815,14 +1815,12 @@ declare module "bun" {
    * Consume all data from a {@link ReadableStream} until it closes or errors.
    *
    * @param stream The stream to consume
-   * @returns A promise that resolves with the chunks as an array
+   * @returns The chunks as an array, or a promise that resolves with one
    */
   function readableStreamToArray<T>(stream: ReadableStream<T>): Promise<T[]> | T[];
 
   /**
    * Escape the following characters in a string:
-   *
-   * @category Security
    *
    * - `"` becomes `"&quot;"`
    * - `&` becomes `"&amp;"`
@@ -1831,10 +1829,12 @@ declare module "bun" {
    * - `>` becomes `"&gt;"`
    *
    * This function is optimized for large input. On an M1X, it processes 480 MB/s -
-   * 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
+   * 20 GB/s, depending on how much data is being escaped and whether there is non-ASCII
    * text.
    *
-   * Non-string types will be converted to a string before escaping.
+   * Non-string types are converted to a string before escaping.
+   *
+   * @category Security
    */
   function escapeHTML(input: string | object | number | boolean): string;
 
@@ -1851,9 +1851,6 @@ declare module "bun" {
    * const url = Bun.pathToFileURL("/foo/bar.txt");
    * console.log(url.href); // "file:///foo/bar.txt"
    * ```
-   *
-   * Internally, this function uses WebKit's URL API to
-   * convert the path to a file:// URL.
    */
   function pathToFileURL(path: string): URL;
 
@@ -1862,6 +1859,9 @@ declare module "bun" {
    */
   function peek<T = undefined>(promise: T | Promise<T>): Promise<T> | T;
   namespace peek {
+    /**
+     * Read a promise's state without awaiting it: `"pending"`, `"fulfilled"`, or `"rejected"`.
+     */
     function status<T = undefined>(promise: T | Promise<T>): "pending" | "fulfilled" | "rejected";
   }
 
@@ -1870,7 +1870,7 @@ declare module "bun" {
    *
    * @param url The URL to convert.
    * @returns A filesystem path.
-   * @throws If the URL is not a URL.
+   * @throws If `url` is not a valid URL.
    *
    * @category File System
    *
@@ -1889,35 +1889,35 @@ declare module "bun" {
     start(options?: {
       asUint8Array?: boolean;
       /**
-       * Preallocate an internal buffer of this size
-       * This can significantly improve performance when the chunk size is small
+       * Preallocate an internal buffer of this size.
+       * This can significantly improve performance when the chunk size is small.
        */
       highWaterMark?: number;
       /**
        * On {@link ArrayBufferSink.flush}, return the written data as a `Uint8Array`.
-       * Writes will restart from the beginning of the buffer.
+       * Writes restart from the beginning of the buffer.
        */
       stream?: boolean;
     }): void;
 
     write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
     /**
-     * Flush the internal buffer
+     * Flush the internal buffer.
      *
-     * If {@link ArrayBufferSink.start} was passed a `stream` option, this will return a `ArrayBuffer`
-     * If {@link ArrayBufferSink.start} was passed a `stream` option and `asUint8Array`, this will return a `Uint8Array`
-     * Otherwise, this will return the number of bytes written since the last flush
+     * - If {@link ArrayBufferSink.start} was passed a `stream` option, this returns an `ArrayBuffer`.
+     * - If it was passed a `stream` option and `asUint8Array`, this returns a `Uint8Array`.
+     * - Otherwise, this returns the number of bytes written since the last flush.
      *
-     * This API might change later to separate Uint8ArraySink and ArrayBufferSink
+     * This API might change later to separate Uint8ArraySink and ArrayBufferSink.
      */
     flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
     end(): ArrayBuffer | Uint8Array<ArrayBuffer>;
   }
 
-  /** DNS Related APIs */
+  /** DNS-related APIs */
   namespace dns {
     /**
-     * Lookup the IP address for a hostname
+     * Look up the IP address for a hostname
      *
      * Uses non-blocking APIs by default
      *
@@ -1949,7 +1949,7 @@ declare module "bun" {
      * Bun supports three DNS resolvers:
      * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
      * - `system` - Uses the system's non-blocking DNS resolver API if available, falls back to `getaddrinfo`. This is the default on macOS and the same as `getaddrinfo` on Linux.
-     * - `getaddrinfo` - Uses the posix standard `getaddrinfo` function. Will cause performance issues under concurrent loads.
+     * - `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function. Causes performance issues under concurrent loads.
      *
      * To customize the DNS resolver, pass a `backend` option to `dns.lookup`:
      * ```js
@@ -1986,36 +1986,34 @@ declare module "bun" {
          * On Linux, `system` is the same as `getaddrinfo`.
          *
          * `c-ares` is more performant on Linux in some high concurrency
-         * situations, but it lacks support support for mDNS (`*.local`,
+         * situations, but it lacks support for mDNS (`*.local`,
          * `*.localhost` domains) along with some other advanced features. If
-         * you run into issues using `c-ares`, you should try `system`. If the
-         * hostname ends with `.local` or `.localhost`, Bun will automatically
-         * use `system` instead of `c-ares`.
+         * you run into issues using `c-ares`, try `system`. If the
+         * hostname ends with `.local` or `.localhost`, Bun automatically
+         * uses `system` instead of `c-ares`.
          *
          * [`getaddrinfo`](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
          * is the POSIX standard function for blocking DNS resolution. Bun runs
-         * it in Bun's thread pool, which is limited to `cpus / 2`. That means
-         * if you run a lot of concurrent DNS lookups, concurrent IO will
-         * potentially pause until the DNS lookups are done.
+         * it in Bun's thread pool, which is limited to `cpus / 2`, so many
+         * concurrent DNS lookups can pause other concurrent IO until the
+         * lookups finish.
          *
-         * On macOS, it shouldn't be necessary to use "`getaddrinfo`" because
+         * On macOS, `"getaddrinfo"` shouldn't be necessary because
          * `"system"` uses the same API underneath (except non-blocking).
          *
          * On Windows, libuv's non-blocking DNS resolver is used by default, and
          * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
-         * backend isn't currently supported on Windows.
+         * backend isn't supported on Windows.
          */
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
     ): Promise<DNSLookup[]>;
 
     /**
-     *
      * **Experimental API**
      *
-     * Prefetch a hostname.
-     *
-     * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
+     * Prefetch a hostname so that later `fetch()` and `Bun.connect()` calls
+     * can skip the DNS lookup.
      *
      * @param hostname The hostname to prefetch
      * @param port The port to prefetch. Default is 443. Port helps distinguish between IPv6 vs IPv4-only connections.
@@ -3043,9 +3041,7 @@ declare module "bun" {
     executablePath?: string;
     outfile?: string;
     /**
-     * Whether to autoload .env files when the standalone executable runs
-     *
-     * Standalone-only: applies only when building/running the standalone executable.
+     * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
      *
@@ -3053,9 +3049,7 @@ declare module "bun" {
      */
     autoloadDotenv?: boolean;
     /**
-     * Whether to autoload bunfig.toml when the standalone executable runs
-     *
-     * Standalone-only: applies only when building/running the standalone executable.
+     * Whether the standalone executable loads bunfig.toml when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
      *
@@ -3063,9 +3057,7 @@ declare module "bun" {
      */
     autoloadBunfig?: boolean;
     /**
-     * Whether to autoload tsconfig.json when the standalone executable runs
-     *
-     * Standalone-only: applies only when building/running the standalone executable.
+     * Whether the standalone executable loads tsconfig.json when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-tsconfig`, `--no-compile-autoload-tsconfig`
      *
@@ -3073,9 +3065,7 @@ declare module "bun" {
      */
     autoloadTsconfig?: boolean;
     /**
-     * Whether to autoload package.json when the standalone executable runs
-     *
-     * Standalone-only: applies only when building/running the standalone executable.
+     * Whether the standalone executable loads package.json when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
      *
@@ -3096,7 +3086,7 @@ declare module "bun" {
   /**
    * Hash and verify passwords using argon2 or bcrypt
    *
-   * These are fast APIs that can run in a worker thread if used asynchronously.
+   * The asynchronous functions run in a worker thread.
    *
    * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
@@ -3107,12 +3097,12 @@ declare module "bun" {
       algorithm: "argon2id" | "argon2d" | "argon2i";
 
       /**
-       * Memory cost, which defines the memory usage, given in kibibytes. Minimum 8.
+       * Memory usage, in kibibytes. Minimum 8.
        */
       memoryCost?: number;
       /**
-       * Defines the amount of computation realized and therefore the execution
-       * time, given in number of iterations.
+       * Number of iterations. More iterations means more computation and a
+       * longer hash time.
        */
       timeCost?: number;
     }
@@ -3121,7 +3111,9 @@ declare module "bun" {
       algorithm: "bcrypt";
 
       /**
-       * A number between 4 and 31. The default is 10.
+       * A number between 4 and 31.
+       *
+       * @default 10
        */
       cost?: number;
     }
@@ -3131,13 +3123,13 @@ declare module "bun" {
 
   /**
    * Hash and verify passwords using argon2 or bcrypt. The default is argon2.
-   * Password hashing functions are necessarily slow, and this object will
-   * automatically run in a worker thread.
-   *
-   * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
+   * Password hashing functions are necessarily slow, so the asynchronous
+   * functions run in a worker thread.
    *
    * The underlying implementation of these functions is provided by the
    * `rust-argon2` and `bcrypt` Rust crates.
+   *
+   * @see [Bun.password API docs](https://bun.com/guides/util/hash-a-password)
    *
    * @example
    * **Example with argon2**
@@ -3177,7 +3169,7 @@ declare module "bun" {
      *
      * @throws If the algorithm is specified and does not match the hash
      * @throws If the algorithm is invalid
-     * @throws if the hash is invalid
+     * @throws If the hash is invalid
      */
     verify(
       /**
@@ -3192,7 +3184,7 @@ declare module "bun" {
        */
       hash: Bun.StringOrBuffer,
       /**
-       * If not specified, the algorithm will be inferred from the hash.
+       * If not specified, the algorithm is inferred from the hash.
        *
        * If specified and the algorithm does not match the hash, this function
        * throws an error.
@@ -3230,7 +3222,8 @@ declare module "bun" {
        */
       password: Bun.StringOrBuffer,
       /**
-       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       * When using bcrypt, passwords longer than 72 bytes are hashed with
+       * SHA-512 before being passed to bcrypt
        *
        * @default "argon2id"
        */
@@ -3238,9 +3231,11 @@ declare module "bun" {
     ): Promise<string>;
 
     /**
-     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
-     * Warning: password hashing is slow, consider using {@link Bun.password.verify}
-     * instead which runs in a worker thread.
+     * Synchronously verify a password against a previously hashed password using
+     * argon2 or bcrypt. The default is argon2.
+     *
+     * Warning: password hashing is slow. Prefer {@link Bun.password.verify},
+     * which runs in a worker thread.
      *
      * The underlying implementation of these functions is provided by the
      * `rust-argon2` and `bcrypt` Rust crates.
@@ -3276,15 +3271,16 @@ declare module "bun" {
        */
       hash: Bun.StringOrBuffer,
       /**
-       * If not specified, the algorithm will be inferred from the hash.
+       * If not specified, the algorithm is inferred from the hash.
        */
       algorithm?: Password.AlgorithmLabel,
     ): boolean;
 
     /**
-     * Synchronously hash and verify passwords using argon2 or bcrypt. The default is argon2.
-     * Warning: password hashing is slow, consider using {@link Bun.password.hash}
-     * instead which runs in a worker thread.
+     * Synchronously hash a password using argon2 or bcrypt. The default is argon2.
+     *
+     * Warning: password hashing is slow. Prefer {@link Bun.password.hash},
+     * which runs in a worker thread.
      *
      * The underlying implementation of these functions is provided by the
      * `rust-argon2` and `bcrypt` Rust crates.
@@ -3320,7 +3316,8 @@ declare module "bun" {
       password: Bun.StringOrBuffer,
 
       /**
-       * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       * When using bcrypt, passwords longer than 72 bytes are hashed with
+       * SHA-512 before being passed to bcrypt
        *
        * @default "argon2id"
        */
@@ -3333,7 +3330,7 @@ declare module "bun" {
    *
    * Uses platform-specific secure storage:
    * - **macOS**: Keychain Services
-   * - **Linux**: libsecret (GNOME Keyring, KWallet, etc.)
+   * - **Linux**: libsecret (GNOME Keyring, KWallet, and others)
    * - **Windows**: Windows Credential Manager
    *
    * @category Security
@@ -3399,7 +3396,7 @@ declare module "bun" {
     /**
      * Retrieve a stored credential from the operating system's secure storage.
      *
-     * @param options - The service and name identifying the credential
+     * @param options The service and name identifying the credential
      * @returns The stored credential value, or null if not found
      *
      * @example
@@ -3428,15 +3425,14 @@ declare module "bun" {
        * The service or application name.
        *
        * Use a unique identifier for your application to avoid conflicts.
-       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       * Consider reverse domain notation for production apps, for example
+       * "com.example.myapp".
        */
       service: string;
 
       /**
-       * The account name, username, or resource identifier.
-       *
-       * This identifies the specific credential within the service.
-       * Common patterns include usernames, email addresses, or resource URLs.
+       * The account name, username, or resource identifier (such as an email
+       * address or URL) that identifies the credential within the service.
        */
       name: string;
     }): Promise<string | null>;
@@ -3444,11 +3440,11 @@ declare module "bun" {
     /**
      * Store or update a credential in the operating system's secure storage.
      *
-     * If a credential already exists for the given service/name combination, it will be replaced.
+     * If a credential already exists for the given service/name combination, it is replaced.
      * The credential is encrypted by the operating system and only accessible to the current user.
      *
-     * @param options - The service and name identifying the credential
-     * @param value - The secret value to store (e.g., password, API key, token)
+     * @param options The service and name identifying the credential, and the value to store
+     * @param value The secret value to store, such as a password, API key, or token
      *
      * @example
      * ```ts
@@ -3510,26 +3506,23 @@ declare module "bun" {
        * The service or application name.
        *
        * Use a unique identifier for your application to avoid conflicts.
-       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       * Consider reverse domain notation for production apps, for example
+       * "com.example.myapp".
        */
       service: string;
 
       /**
-       * The account name, username, or resource identifier.
-       *
-       * This identifies the specific credential within the service.
-       * Common patterns include usernames, email addresses, or resource URLs.
+       * The account name, username, or resource identifier (such as an email
+       * address or URL) that identifies the credential within the service.
        */
       name: string;
 
       /**
-       * The secret value to store.
+       * The secret value to store, such as a password, API key, or token.
+       * The operating system encrypts the value before storing it.
        *
-       * This should be a sensitive credential like a password, API key, or token.
-       * The value is encrypted by the operating system before storage.
-       *
-       * Note: To delete a credential, use the delete() method or pass an empty string.
-       * An empty string value will delete the credential if it exists.
+       * An empty string deletes the credential if it exists, the same as
+       * calling `delete()`.
        */
       value: string;
 
@@ -3548,7 +3541,7 @@ declare module "bun" {
     /**
      * Delete a stored credential from the operating system's secure storage.
      *
-     * @param options - The service and name identifying the credential
+     * @param options The service and name identifying the credential
      * @returns true if a credential was deleted, false if not found
      *
      * @example
@@ -3595,22 +3588,23 @@ declare module "bun" {
        * The service or application name.
        *
        * Use a unique identifier for your application to avoid conflicts.
-       * Consider using reverse domain notation for production apps (e.g., "com.example.myapp").
+       * Consider reverse domain notation for production apps, for example
+       * "com.example.myapp".
        */
       service: string;
 
       /**
-       * The account name, username, or resource identifier.
-       *
-       * This identifies the specific credential within the service.
-       * Common patterns include usernames, email addresses, or resource URLs.
+       * The account name, username, or resource identifier (such as an email
+       * address or URL) that identifies the credential within the service.
        */
       name: string;
     }): Promise<boolean>;
   };
 
   /**
-   * A build artifact represents a file that was generated by the bundler @see {@link Bun.build}
+   * A file generated by the bundler.
+   *
+   * @see {@link Bun.build}
    *
    * @category Bundler
    */
@@ -3632,19 +3626,15 @@ declare module "bun" {
     success: boolean;
     logs: Array<BuildMessage | ResolveMessage>;
     /**
-     * Metadata about the build including inputs, outputs, and their relationships.
+     * Metadata about the build:
+     * - **inputs**: every bundled source file with its byte size, imports, and format
+     * - **outputs**: every generated file with its byte size, the inputs that
+     *   contributed to it, imports between chunks, and exports
      *
      * Only present when {@link BuildConfig.metafile} is `true`.
      *
-     * The metafile contains detailed information about:
-     * - **inputs**: All source files that were bundled, their byte sizes, imports, and format
-     * - **outputs**: All generated output files, their byte sizes, which inputs contributed to each output, imports between chunks, and exports
-     *
-     * This can be used for:
-     * - Bundle size analysis and visualization
-     * - Detecting unused code or dependencies
-     * - Understanding the dependency graph
-     * - Integration with bundle analyzer tools
+     * Use it for bundle size analysis, inspecting the dependency graph, or as
+     * input to bundle analyzer tools.
      *
      * @example
      * ```ts
@@ -3677,12 +3667,15 @@ declare module "bun" {
   }
 
   /**
-   * Metafile structure containing build metadata for analysis.
+   * Build metadata: every input and output file, its size, and the imports
+   * between them.
+   *
+   * @see {@link BuildOutput.metafile}
    *
    * @category Bundler
    */
   interface BuildMetafile {
-    /** Information about all input source files */
+    /** Input source files, keyed by path */
     inputs: {
       [path: string]: {
         /** Size of the input file in bytes */
@@ -3697,14 +3690,14 @@ declare module "bun" {
           original?: string;
           /** Whether this import is external to the bundle */
           external?: boolean;
-          /** Import attributes (e.g., `{ type: "json" }`) */
+          /** Import attributes, for example `{ type: "json" }` */
           with?: Record<string, string>;
         }>;
         /** Module format of the input file */
         format?: "esm" | "cjs" | "json" | "css";
       };
     };
-    /** Information about all output files */
+    /** Output files, keyed by path */
     outputs: {
       [path: string]: {
         /** Size of the output file in bytes */
@@ -3725,9 +3718,9 @@ declare module "bun" {
         }>;
         /** List of exported names from this output */
         exports: string[];
-        /** Entry point path if this output is an entry point */
+        /** Entrypoint path, if this output is an entrypoint */
         entryPoint?: string;
-        /** Path to the associated CSS bundle (for JS entry points with CSS) */
+        /** Path to the associated CSS bundle (for JS entrypoints with CSS) */
         cssBundle?: string;
       };
     };

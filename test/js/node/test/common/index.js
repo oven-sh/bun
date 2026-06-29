@@ -134,6 +134,22 @@ if (process.argv.length === 2 &&
         globalThis.gc ??= () => Bun.gc(true);
         break;
       }
+      if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {
+        // V8's externalized-string test helpers. JavaScriptCore has no string
+        // externalization to force, so the create/externalize helpers are
+        // identity/no-op; isOneByteString answers the representation-independent
+        // question V8's helper answers (are all code units <= 0xFF).
+        globalThis.createExternalizableString ??= s => `${s}`;
+        globalThis.createExternalizableTwoByteString ??= s => `${s}`;
+        globalThis.externalizeString ??= () => {};
+        globalThis.isOneByteString ??= s => {
+          for (let i = 0; i < s.length; i++) {
+            if (s.charCodeAt(i) > 0xff) return false;
+          }
+          return true;
+        };
+        break;
+      }
       if (flag === "--expose-internals" && process.versions.bun) {
         process.env.SKIP_FLAG_CHECK = "1";
         // Serve require("internal/*") from bun's internal module registry

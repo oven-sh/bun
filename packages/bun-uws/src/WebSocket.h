@@ -327,6 +327,10 @@ public:
 
         /* Free us as subscribers if we unsubscribed from our last topic */
         if (ok && last) {
+            /* Flush queued publish() messages before the Subscriber is freed.
+             * freeSubscriber unlinks without draining, which would otherwise
+             * drop messages that publish() already accepted this tick. */
+            webSocketContextData->topicTree->drain(webSocketData->subscriber);
             webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
             webSocketData->subscriber = nullptr;
         }
@@ -378,17 +382,16 @@ public:
     SendStatus publish(std::string_view topic, std::string_view message, OpCode opCode = OpCode::TEXT, bool compress = false) {
         WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
-        /* We cannot be a subscriber of this topic if we are not a subscriber of anything */
+        /* A sender with no Subscriber (never subscribed to anything) still publishes; nullptr
+         * is a valid "exclude nobody" sender for TopicTree (App::publish relies on this). */
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
-        if (!webSocketData->subscriber) {
-            return DROPPED;
-        }
+        Subscriber *sender = webSocketData->subscriber;
 
         /* Publish as sender, does not receive its own messages even if subscribed to relevant topics */
         if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
             SendStatus worst = SUCCESS;
             bool hasReceivers = false;
-            webSocketContextData->topicTree->publishBig(webSocketData->subscriber, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
+            webSocketContextData->topicTree->publishBig(sender, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
                 hasReceivers = true;
                 auto *ws = (WebSocket<SSL, true, int> *) s->user;
 
@@ -400,12 +403,12 @@ public:
             if (!t) {
                 return DROPPED;
             }
-            webSocketContextData->topicTree->publish(webSocketData->subscriber, topic, {std::string(message), opCode, compress});
+            webSocketContextData->topicTree->publish(sender, topic, {std::string(message), opCode, compress});
             /* publish() may have synchronously drained a subscriber; check backpressure after. */
             SendStatus worst = SUCCESS;
             bool hasReceivers = false;
             for (Subscriber *s : *t) {
-                if (s == webSocketData->subscriber) continue;
+                if (s == sender) continue;
                 hasReceivers = true;
                 auto *ws = (WebSocket<SSL, true, int> *) s->user;
                 worst = worseStatus(worst, (SendStatus) ws->sendStatus());

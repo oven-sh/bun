@@ -1736,17 +1736,29 @@ impl FileSystemFlags {
         let js_type = val.js_type();
         if js_type.is_string_like() {
             let str = val.get_zig_string(ctx)?;
+            // Node's stringToFlags throws ERR_INVALID_ARG_VALUE for every
+            // unrecognized flag string.
             if str.len == 0 {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                )));
+                return Err(ctx
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                        ),
+                    )
+                    .throw());
             }
             // it's definitely wrong when the string is super long
             else if str.len > 12 {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    str
-                )));
+                return Err(ctx
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                            str
+                        ),
+                    )
+                    .throw());
             }
 
             let flags: Option<i32> = 'brk: {
@@ -1774,10 +1786,15 @@ impl FileSystemFlags {
             };
 
             let Some(flags) = flags else {
-                return Err(ctx.throw_invalid_arguments(format_args!(
-                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    str
-                )));
+                return Err(ctx
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                            str
+                        ),
+                    )
+                    .throw());
             };
 
             return Ok(Some(FileSystemFlags(flags)));

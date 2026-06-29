@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Accessing `proc.stdout` on a piped subprocess moves the already-registered
@@ -171,4 +171,129 @@ test.skipIf(isWindows)(
     expect(exitCode).toBe(0);
   },
   60_000,
+);
+
+// Asserts the lifetime invariant rather than racing for the crash: the actual
+// free needs a GC to land inside the microtask drain, which conservative stack
+// scanning makes non-deterministic. Instead, the source wrapper must still be
+// Strong-protected right after a re-entrant reader.cancel(), because
+// on_read_chunk's own pin keeps it above the downgrade-at-one threshold.
+// Windows uses libuv for pipe I/O; the read_with_fn path under test is POSIX.
+test.skipIf(isWindows)(
+  "re-entrant cancel inside a subprocess stdout read keeps the FileReader pinned for the rest of the dispatch",
+  async () => {
+    using dir = tempDir("fr-cancel-uaf", {});
+    const flag = join(String(dir), "go");
+    const pidFile = join(String(dir), "gcpid");
+
+    const script = /* js */ `
+      const { heapStats } = require("bun:jsc");
+      const fs = require("node:fs");
+      const FLAG = ${JSON.stringify(flag)};
+      const PIDFILE = ${JSON.stringify(pidFile)};
+
+      const protectedSrc = () =>
+        heapStats().protectedObjectTypeCounts.FileInternalReadableStreamSource ?? 0;
+
+      globalThis.__done = Promise.withResolvers();
+
+      globalThis.__onchunk = function __onchunk({ value, done }) {
+        const chunkLen = done ? 0 : value.byteLength;
+        const protectedBefore = protectedSrc();
+        // cancel() synchronously reaches FileReader::on_reader_done, which
+        // drops the across-read ref while read_with_fn is still on the stack.
+        globalThis.__r.cancel().catch(() => {});
+        const protectedAfter = protectedSrc();
+        fs.writeSync(1, JSON.stringify({ chunkLen, protectedBefore, protectedAfter }) + "\\n");
+        globalThis.__done.resolve();
+      };
+
+      // sh backgrounds a subshell that inherits stdout, writes its pid, and
+      // exits immediately; the grandchild waits for FLAG, blasts 512 KiB at
+      // the socketpair, then idles holding fd 1 so received_hup stays false.
+      const proc = Bun.spawn({
+        cmd: [
+          "/bin/sh",
+          "-c",
+          '( while [ ! -e "$0" ]; do sleep 0.02; done; ' +
+            'dd if=/dev/zero bs=65536 count=8 2>/dev/null; exec sleep 15 ) & ' +
+            'echo $! > "$1"',
+          FLAG,
+          PIDFILE,
+        ],
+        stdin: "ignore",
+        stdout: "pipe", // from_pipe: FileReader created, across-read ref taken
+        stderr: "ignore",
+      });
+      globalThis.__s = proc.stdout;
+      await proc.exited; // sh has exited; only the grandchild holds the pipe
+      globalThis.__r = globalThis.__s.getReader();
+      // Wire every failure into __done so a rejected read or a throwing
+      // handler fails the fixture with the real error instead of hanging.
+      globalThis.__r.read().then(
+        chunk => {
+          try {
+            globalThis.__onchunk(chunk);
+          } catch (err) {
+            globalThis.__done.reject(err);
+          }
+        },
+        err => globalThis.__done.reject(err),
+      );
+
+      // Release the grandchild, then block without ticking the event loop so
+      // it saturates the socketpair buffer before the readable poll can
+      // dispatch, delivering one large chunk in a single read_with_fn call.
+      fs.writeFileSync(FLAG, "");
+      Bun.sleepSync(800);
+
+      await globalThis.__done.promise;
+      try { process.kill(Number(fs.readFileSync(PIDFILE, "utf8").trim()), "SIGKILL"); } catch {}
+    `;
+
+    let stdout = "",
+      stderr = "",
+      exitCode: number | null = null;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", script],
+        // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which
+        // kills a detached grandchild the moment its intermediate parent
+        // exits. This test needs it to outlive sh and keep the pipe's write
+        // end open; cleanup is explicit (the fixture and the finally below).
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    } finally {
+      // Always reap the detached grandchild; the fixture's own kill is
+      // skipped if it crashes first.
+      try {
+        process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL");
+      } catch {}
+    }
+
+    let result: { chunkLen: number; protectedBefore: number; protectedAfter: number };
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+    }
+    // Precondition: a non-empty chunk was flushed, so on_read_chunk's p.run()
+    // ran with read_with_fn still on the stack. The kernel socketpair buffer
+    // decides which of read_with_fn's two flush sites fires (the 128 KiB
+    // mid-loop flush on Linux; the retry flush on macOS, whose default is a
+    // few KiB), and the pin under test guards both identically, so the chunk
+    // size is deliberately not pinned to a platform-specific buffer size.
+    expect(result.chunkLen).toBeGreaterThan(0);
+    // Precondition: the from_pipe pin made the wrapper Strong before cancel.
+    expect(result.protectedBefore).toBeGreaterThanOrEqual(1);
+    // Invariant: the re-entrant cancel must not downgrade the wrapper while
+    // read_with_fn is still on the stack. Before the fix, protectedAfter is 0
+    // here, and a GC in this window frees the box read_with_fn is using.
+    expect(result.protectedAfter).toBeGreaterThanOrEqual(1);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
 );

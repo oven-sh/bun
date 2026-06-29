@@ -383,6 +383,7 @@ declare function $code(): TODO;
 declare function $controlledReadableStream(): TODO;
 declare function $controller(): TODO;
 declare function $createEmptyReadableStream(): TODO;
+declare function $createErroredReadableStream(reason: unknown): TODO;
 declare function $createFIFO(): TODO;
 declare function $createNativeReadableStream(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;

@@ -944,7 +944,10 @@ impl BufferOutputSink {
         if !captured.is_empty() {
             captured.ensure_still_alive();
             captured.unprotect();
-            return Ok(captured);
+            // Throw directly: the callers gate on `JSValue::to_error()`, which
+            // only recognises `ErrorInstance`/`Exception`, so an abort reason
+            // (a DOMException or any user value) would be returned instead.
+            return Err(global.throw_value(captured));
         }
 
         response_js_value.ensure_still_alive();
@@ -987,20 +990,25 @@ impl BufferOutputSink {
         // refcount > 0 so the allocation is live.
         let global = unsafe { (*sink).global };
 
-        if let Some(err) = js_err {
+        if let Some(mut err) = js_err {
             // SAFETY: (*sink).response is the heap Response allocated in init()
             // and kept alive by (*sink).response_value (Strong root).
             let sink_body_value = unsafe { (*(*sink).response).get_body_value() };
             let sink_ptr_usize = sink as usize;
-            if matches!(sink_body_value, webcore::body::Value::Locked(l)
-                if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
+            // If a `.body` readable is already attached, stay `Locked` so
+            // `to_error_instance` delivers the error to its ByteStream; clearing
+            // to `Empty` here would strand any pending `reader.read()` forever.
+            let has_readable = match sink_body_value {
+                webcore::body::Value::Locked(l) => l.readable.has(),
+                _ => false,
+            };
+            if !has_readable
+                && matches!(sink_body_value, webcore::body::Value::Locked(l)
+                    if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_none())
             {
-                if let webcore::body::Value::Locked(l) = sink_body_value {
-                    l.readable.deinit();
-                }
+                // No reader and no pending read: normalize to `Empty` so
+                // `to_error_instance` takes the simple (non-`Locked`) path.
                 *sink_body_value = webcore::body::Value::Empty;
-                // is there a pending promise?
-                // we will need to reject it
             } else if matches!(sink_body_value, webcore::body::Value::Locked(l)
                 if l.task.map_or(0, |p| p as usize) == sink_ptr_usize && l.promise.is_some())
             {
@@ -1013,17 +1021,14 @@ impl BufferOutputSink {
                 let _ = sink_body_value.to_error_instance(err.dupe(&global), &global);
                 // TODO: properly propagate exception upwards
             } else {
-                let ret_err = create_lolhtml_error(&global);
+                let ret_err = err.to_js(&global);
                 ret_err.ensure_still_alive();
                 ret_err.protect();
                 Self::write_tmp_sync_error(sink, ret_err);
             }
-            // SAFETY: rewriter set by init(). Read into a local before the
-            // call — `end()` re-enters `OutputSink::done(&mut *sink)`.
-            let rewriter = unsafe { (*sink).rewriter };
-            // SAFETY: `rewriter` was created via `builder.build()` in `init()`
-            // and is not yet freed (destroyed only in `Drop` at refcount zero).
-            let _ = unsafe { lolhtml::HTMLRewriter::end(rewriter) };
+            // Do not `end()` the rewriter: that would run `done()`, replacing
+            // the error just stored on the body with the truncated output.
+            // `Drop` destroys the rewriter once the sink's refcount hits zero.
             return;
         }
 

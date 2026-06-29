@@ -2855,7 +2855,9 @@ pub fn to_utf16_alloc_for_real(
         return Ok(v);
     }
     // All-ASCII path: widen each byte.
-    let mut out = Vec::with_capacity(bytes.len() + sentinel as usize);
+    let mut out: Vec<u16> = Vec::new();
+    out.try_reserve_exact(bytes.len() + sentinel as usize)
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
     out.extend(bytes.iter().map(|&b| u16::from(b)));
     if sentinel {
         out.push(0);
@@ -3033,7 +3035,8 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     Ok(list)
 }
 
-/// Errors from `to_utf16_alloc` when `fail_if_invalid = true`.
+/// Errors from `to_utf16_alloc`. `InvalidByteSequence` is only returned when
+/// `fail_if_invalid = true`; `OutOfMemory` can be returned by any call.
 ///
 /// Re-exported from `unicode_draft` so that `to_utf16_alloc_maybe_buffered`
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error
@@ -3069,8 +3072,10 @@ pub fn to_utf16_alloc(
     // spare capacity — avoids the redundant zero-fill of `vec![0u16; cap]`,
     // which for large source files (build/create-next benches) is a measurable
     // memset. `.max(1)` keeps the buffer pointer non-dangling so simdutf never
-    // sees `Vec::with_capacity(0)`'s `0x2` sentinel.
-    let mut out: Vec<u16> = Vec::with_capacity(cap.max(1));
+    // sees `Vec::new()`'s dangling `0x2` sentinel.
+    let mut out: Vec<u16> = Vec::new();
+    out.try_reserve_exact(cap.max(1))
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
     // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
     // never reads from the output buffer and writes at most `out_length` code
     // units (the upper bound returned by `utf16_length_from_utf8`), so passing
@@ -3096,7 +3101,8 @@ pub fn to_utf16_alloc(
     }
     // Slow path: WTF-8 decode with replacement. `out` is still len 0 (we never
     // committed the failed fast-path write); reuse its capacity.
-    out.reserve(bytes.len() + if sentinel { 1 } else { 0 });
+    out.try_reserve(bytes.len() + if sentinel { 1 } else { 0 })
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
     let mut remaining = bytes;
     while let Some(i) = first_non_ascii(remaining) {
         let i = i as usize;

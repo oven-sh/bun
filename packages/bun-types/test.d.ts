@@ -266,7 +266,7 @@ declare module "bun:test" {
     /**
      * Marks this group of tests as to be written or to be fixed, if `condition` is true.
      *
-     * @param condition if these tests should be skipped
+     * @param condition if these tests should be marked TODO
      */
     todoIf(condition: boolean): Describe<T>;
     /**
@@ -778,7 +778,7 @@ declare module "bun:test" {
   export interface AsymmetricMatchersBuiltin {
     /**
      * Matches anything that was created with the given constructor.
-     * You can use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
+     * Use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
      *
      * @example
      *
@@ -794,8 +794,8 @@ declare module "bun:test" {
      */
     any(constructor: ((...args: any[]) => any) | { new (...args: any[]): any }): AsymmetricMatcher;
     /**
-     * Matches anything but null or undefined. You can use it inside `toEqual` or `toBeCalledWith` instead
-     * of a literal value. For example, if you want to check that a mock function is called with a
+     * Matches anything but null or undefined. Use it inside `toEqual` or `toBeCalledWith` instead
+     * of a literal value. For example, to check that a mock function is called with a
      * non-null argument:
      *
      * @example
@@ -809,16 +809,15 @@ declare module "bun:test" {
     anything(): AsymmetricMatcher;
     /**
      * Matches any array made up entirely of elements in the provided array.
-     * You can use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
+     * Use it inside `toEqual` or `toBeCalledWith` instead of a literal value.
      *
-     * Optionally, you can provide a type for the elements via a generic.
+     * Optionally, pass a type for the elements as a generic argument.
      */
     arrayContaining<E = any>(arr: readonly E[]): AsymmetricMatcher;
     /**
      * Matches any object that recursively matches the provided keys.
-     * This is often handy in conjunction with other asymmetric matchers.
      *
-     * Optionally, you can provide a type for the object via a generic.
+     * Optionally, pass a type for the object as a generic argument.
      * This ensures that the object contains the desired structure.
      */
     objectContaining(obj: object): AsymmetricMatcher;
@@ -868,7 +867,7 @@ declare module "bun:test" {
      * the expected array is not a subset of the received array. It is the
      * inverse of `expect.arrayContaining`.
      *
-     * Optionally, you can provide a type for the elements via a generic.
+     * Optionally, pass a type for the elements as a generic argument.
      */
     arrayContaining<E = any>(arr: readonly E[]): AsymmetricMatcher;
 
@@ -879,7 +878,7 @@ declare module "bun:test" {
      * it matches a received object which contains properties that are not
      * in the expected object. It is the inverse of `expect.objectContaining`.
      *
-     * Optionally, you can provide a type for the object via a generic.
+     * Optionally, pass a type for the object as a generic argument.
      * This ensures that the object contains the desired structure.
      */
     objectContaining(obj: object): AsymmetricMatcher;
@@ -900,7 +899,7 @@ declare module "bun:test" {
 
     /**
      * `expect.not.closeTo` matches a number not close to the provided value.
-     * Useful when comparing floating point numbers in object properties or array item.
+     * Use it when comparing floating point numbers in object properties or array items.
      * It is the inverse of `expect.closeTo`.
      */
     closeTo(num: number, numDigits?: number): AsymmetricMatcher;
@@ -1305,7 +1304,7 @@ declare module "bun:test" {
     toBeFalsy(): void;
 
     /**
-     * Asserts that a value is defined. (e.g. is not `undefined`)
+     * Asserts that a value is defined (that is, not `undefined`).
      *
      * @example
      * expect(true).toBeDefined();

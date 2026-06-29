@@ -125,8 +125,5 @@ describe.skipIf(isWindows)("watch mode detects atomic saves", () => {
     // The re-run executed cleanly: it picked up the replaced file and none of
     // the re-ran tests failed.
     expect(buf.slice(before)).not.toContain("(fail)");
-
-    proc.kill();
-    reader.releaseLock();
   });
 });

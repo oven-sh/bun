@@ -511,6 +511,12 @@ pub mod Jest {
     }
 }
 
+/// Backs `$rust("jest.rs", "isOnlyEnabled")` in `node:test`: whether the test
+/// runner was started with `--only` (Node's `--test-only` equivalent).
+pub(crate) fn is_only_enabled(_global: &JSGlobalObject) -> JSValue {
+    JSValue::from(Jest::runner().is_some_and(|runner| runner.only))
+}
+
 pub mod on_unhandled_rejection {
     use super::*;
 

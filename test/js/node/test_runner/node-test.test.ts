@@ -54,15 +54,38 @@ describe("node:test", () => {
   });
 });
 
-async function runTests(filenames: string[]) {
+describe("node:test only", () => {
+  // Node ignores `only` (test.only, describe.only, and { only: true }) unless
+  // the runner is started with --test-only; bun's equivalent flag is --only.
+  // CI is set to "false" so bun:test's CI guard on `.only` stays out of the way.
+  const onlyEnv = { ...bunEnv, CI: "false" };
+  const fixtures = ["06-only-modifier.js", "07-only-option.js", "08-only-describe.js"];
+
+  test.concurrent.each(fixtures)("%s: only is ignored without --only", async fixture => {
+    const { exitCode, stderr } = await runTests([fixture], [], onlyEnv);
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each(fixtures)("%s: --only runs only the focused test", async fixture => {
+    const { exitCode, stderr } = await runTests([fixture], ["--only"], onlyEnv);
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(stderr).toContain("Ran 1 test across 1 file");
+    expect(exitCode).toBe(0);
+  });
+});
+
+async function runTests(filenames: string[], flags: string[] = [], env: Record<string, string | undefined> = bunEnv) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
   const {
     exited,
     stdout: stdoutStream,
     stderr: stderrStream,
   } = spawn({
-    cmd: [bunExe(), "test", ...testPaths],
-    env: bunEnv,
+    cmd: [bunExe(), "test", ...flags, ...testPaths],
+    env,
     stderr: "pipe",
   });
   const [exitCode, stdout, stderr] = await Promise.all([

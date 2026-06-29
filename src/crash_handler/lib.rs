@@ -3622,7 +3622,7 @@ mod draft {
                 let mut next_line: usize = 1;
                 while next_line != source_location.line as usize {
                     let slice = &buf[current_line_start..amt_read];
-                    if let Some(pos) = bun_core::index_of_char(slice, b'\n') {
+                    if let Some(pos) = bun_core::strings::index_of_char_usize(slice, b'\n') {
                         next_line += 1;
                         if pos == slice.len() - 1 {
                             amt_read = f.read(&mut buf[..])?;
@@ -3640,7 +3640,7 @@ mod draft {
                 break 'seek current_line_start;
             };
             let slice = &mut buf[line_start..amt_read];
-            if let Some(pos) = bun_core::index_of_char(slice, b'\n') {
+            if let Some(pos) = bun_core::strings::index_of_char_usize(slice, b'\n') {
                 let line = &mut slice[0..pos];
                 for b in line.iter_mut() {
                     if *b == b'\t' {
@@ -3666,7 +3666,9 @@ mod draft {
                 }
                 while amt_read == buf.len() {
                     amt_read = f.read(&mut buf[..])?;
-                    if let Some(pos) = bun_core::index_of_char(&buf[0..amt_read], b'\n') {
+                    if let Some(pos) =
+                        bun_core::strings::index_of_char_usize(&buf[0..amt_read], b'\n')
+                    {
                         let line = &mut buf[0..pos];
                         for b in line.iter_mut() {
                             if *b == b'\t' {

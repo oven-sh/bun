@@ -403,7 +403,7 @@ pub mod debug_flags {
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
         #[cfg(debug_assertions)]
         for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(str_, bp) {
+            if crate::strings::includes(str_, bp) {
                 return true;
             }
         }
@@ -414,8 +414,7 @@ pub mod debug_flags {
     pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
         #[cfg(debug_assertions)]
         for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings_impl::includes(pretty, bp) || crate::strings_impl::includes(text, bp)
-            {
+            if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
                 return true;
             }
         }

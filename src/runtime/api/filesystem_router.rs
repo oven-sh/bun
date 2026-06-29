@@ -7,11 +7,11 @@ pub mod kind_enum {
     pub(crate) const DYNAMIC: &[u8] = b"dynamic";
 
     pub(crate) fn classify(name: &[u8]) -> &'static [u8] {
-        if bun_core::contains(name, b"[[...") {
+        if bun_core::strings::contains(name, b"[[...") {
             OPTIONAL_CATCH_ALL
-        } else if bun_core::contains(name, b"[...") {
+        } else if bun_core::strings::contains(name, b"[...") {
             CATCH_ALL
-        } else if bun_core::contains(name, b"[") {
+        } else if bun_core::strings::contains(name, b"[") {
             DYNAMIC
         } else {
             EXACT

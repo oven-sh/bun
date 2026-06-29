@@ -746,7 +746,7 @@ impl ServerConfig {
 
                 for port_env in PORT_ENV {
                     if let Some(port) = env.get(port_env) {
-                        if let Ok(_port) = bun_core::immutable::parse_int::<u16>(port, 10) {
+                        if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
                             break 'brk _port;
                         }
                     }

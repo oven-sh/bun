@@ -665,6 +665,61 @@ it("readableStreamToBytes (default)", async () => {
   expect(new TextDecoder().decode(new Uint8Array(buffer))).toBe("abdefgh");
 });
 
+describe("consuming an already-errored stream rejects instead of throwing", () => {
+  const erroredStream = error =>
+    new ReadableStream({
+      start(controller) {
+        controller.error(error);
+      },
+    });
+
+  test.each([
+    "readableStreamToArrayBuffer",
+    "readableStreamToBytes",
+    "readableStreamToBlob",
+    "readableStreamToArray",
+    "readableStreamToFormData",
+    "readableStreamToText",
+    "readableStreamToJSON",
+  ])("Bun.%s", async name => {
+    const error = new Error("boom");
+    let promise;
+    expect(() => {
+      promise = Bun[name](erroredStream(error));
+    }).not.toThrow();
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(error);
+  });
+
+  test.each(["arrayBuffer", "bytes", "blob", "formData", "text", "json"])("Response.prototype.%s", async name => {
+    const error = new Error("boom");
+    const response = new Response(erroredStream(error), {
+      headers: { "content-type": "multipart/form-data; boundary=x" },
+    });
+    let promise;
+    expect(() => {
+      promise = response[name]();
+    }).not.toThrow();
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(error);
+  });
+
+  test.each(["arrayBuffer", "bytes", "blob", "formData", "text", "json"])("Request.prototype.%s", async name => {
+    const error = new Error("boom");
+    const request = new Request("http://localhost/", {
+      method: "POST",
+      body: erroredStream(error),
+      headers: { "content-type": "multipart/form-data; boundary=x" },
+    });
+    let promise;
+    expect(() => {
+      promise = request[name]();
+    }).not.toThrow();
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(error);
+  });
+});
+
 it("ReadableStream for Blob", async () => {
   var blob = new Blob(["abdefgh", "ijklmnop"]);
   expect(await blob.text()).toBe("abdefghijklmnop");

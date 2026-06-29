@@ -59,7 +59,7 @@ describe("node:test only", () => {
   // the runner is started with --test-only; bun's equivalent flag is --only.
   // CI is set to "false" so bun:test's CI guard on `.only` stays out of the way.
   const onlyEnv = { ...bunEnv, CI: "false" };
-  const fixtures = ["06-only-modifier.js", "07-only-option.js", "08-only-describe.js"];
+  const fixtures = ["06-only-modifier.js", "07-only-option.js", "08-only-describe.js", "10-only-describe-option.js"];
 
   test.concurrent.each(fixtures)("%s: only is ignored without --only", async fixture => {
     const { exitCode, stderr } = await runTests([fixture], [], onlyEnv);

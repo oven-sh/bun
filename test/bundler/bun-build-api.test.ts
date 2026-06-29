@@ -1,7 +1,7 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
@@ -454,7 +454,7 @@ describe("Bun.build", () => {
   test.concurrent.skipIf(isWindows)(
     "repeated in-process builds of a symlinked package do not reuse a closed fd",
     async () => {
-      const dir = tempDirWithFiles("build-symlink-fd-cache", {
+      using dir = tempDir("build-symlink-fd-cache", {
         "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
         "vendor/pkg/index.js": `export const value = 1;\n`,
         "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
@@ -473,13 +473,13 @@ describe("Bun.build", () => {
         });
       `,
       });
-      mkdirSync(join(dir, "node_modules"), { recursive: true });
-      symlinkSync("../vendor/pkg", join(dir, "node_modules", "pkg"));
+      mkdirSync(join(String(dir), "node_modules"), { recursive: true });
+      symlinkSync("../vendor/pkg", join(String(dir), "node_modules", "pkg"));
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", "repro.test.ts"],
         env: bunEnv,
-        cwd: dir,
+        cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
       });

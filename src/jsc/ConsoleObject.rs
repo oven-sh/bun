@@ -3166,9 +3166,9 @@ pub mod formatter {
 
                     const QUOTE_U16: &[u16] = &[b'"' as u16];
                     while let Some(j) = strings::index_of_any16(utf16_slice, QUOTE_U16) {
-                        writer.write_16_bit(&utf16_slice[0..j as usize]);
+                        writer.write_16_bit(&utf16_slice[0..j]);
                         writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j as usize + 1..];
+                        utf16_slice = &utf16_slice[j + 1..];
                     }
 
                     writer.write_16_bit(utf16_slice);

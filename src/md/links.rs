@@ -207,7 +207,7 @@ impl Parser<'_> {
                 // Ordinary text: SIMD-jump to the next character that can
                 // affect bracket matching.
                 _ => match bun_core::strings::index_of_any(&content[pos..], scan_chars) {
-                    Some(rel) => pos += rel as usize,
+                    Some(rel) => pos += rel,
                     None => break,
                 },
             }

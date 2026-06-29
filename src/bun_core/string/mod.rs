@@ -1611,7 +1611,7 @@ impl ZigString {
                 .iter()
                 .position(|&c| c < 256 && chars.contains(&(c as u8)))
         } else {
-            crate::strings::index_of_any(self.slice(), chars).map(|i| i as usize)
+            crate::strings::index_of_any(self.slice(), chars)
         }
     }
 

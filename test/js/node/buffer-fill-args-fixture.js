@@ -26,6 +26,22 @@ const cases = [
   // fill(string, encoding) has no end slot, so anything there is discarded.
   ['fill("b", "utf8", 3)', b => b.fill("b", "utf8", 3)],
 
+  // An undefined offset also takes the encoding slot in Node, shadowing an
+  // explicit 4th-argument encoding. A numeric offset keeps it.
+  ['fill("ab", undefined, undefined, "utf16le")', b => b.fill("ab", undefined, undefined, "utf16le")],
+  ['fill("a", undefined, undefined, "bogus")', b => b.fill("a", undefined, undefined, "bogus")],
+  ['fill("ab", 0, undefined, "utf16le")', b => b.fill("ab", 0, undefined, "utf16le")],
+  ['fill("a", 1, undefined, "bogus")', b => b.fill("a", 1, undefined, "bogus")],
+
+  // No arguments: Node routes an undefined value into the numeric path (0).
+  ["fill()", b => b.fill()],
+  ["fill(undefined)", b => b.fill(undefined)],
+
+  // Positional arguments past the fourth are ignored.
+  ['fill(0, 1, 3, "utf8", "x")', b => b.fill(0, 1, 3, "utf8", "x")],
+  ['fill("b", 1, 3, "utf8", "x")', b => b.fill("b", 1, 3, "utf8", "x")],
+  ['fill("ab", 0, 4, "utf16le", "x")', b => b.fill("ab", 0, 4, "utf16le", "x")],
+
   // Shapes that already agreed, pinned so a regression in either direction shows up.
   ["fill(0)", b => b.fill(0)],
   ["fill(0, 1)", b => b.fill(0, 1)],
@@ -61,6 +77,6 @@ for (const [name, run] of cases) {
     // separately in buffer.test.js.
     result = "throws " + err.name + " " + err.code;
   }
-  lines.push(name.padEnd(26) + " " + result);
+  lines.push(name.padEnd(44) + " " + result);
 }
 process.stdout.write(lines.join("\n") + "\n");

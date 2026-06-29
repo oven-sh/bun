@@ -1313,11 +1313,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (callFrame->argumentCount() < 1) {
-        return JSValue::encode(castedThis);
-    }
-
-    auto value = callFrame->uncheckedArgument(0);
+    // No early return for 0 arguments: Node's fill() forwards an undefined
+    // value into the numeric path, which zero-fills the whole buffer.
+    auto value = callFrame->argument(0);
     // Capture byteLength up front for two orthogonal purposes:
     //  1. The upper-bound argument to validateInteger(end) so `end >
     //     buf.length` throws ERR_OUT_OF_RANGE with Node's wording and
@@ -1335,23 +1333,12 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     size_t offset = 0;
     size_t end = limit;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
-    JSValue encodingValue = jsUndefined();
-    JSValue offsetValue = jsUndefined();
-    JSValue endValue = jsUndefined();
-
-    switch (callFrame->argumentCount()) {
-    case 4:
-        encodingValue = callFrame->uncheckedArgument(3);
-        [[fallthrough]];
-    case 3:
-        endValue = callFrame->uncheckedArgument(2);
-        [[fallthrough]];
-    case 2:
-        offsetValue = callFrame->uncheckedArgument(1);
-        [[fallthrough]];
-    default:
-        break;
-    }
+    // argument() (not uncheckedArgument) so trailing positional arguments past
+    // the fourth are ignored like Node's plain-JS fill(value, offset, end,
+    // encoding) signature, instead of degrading every slot to undefined.
+    JSValue offsetValue = callFrame->argument(1);
+    JSValue endValue = callFrame->argument(2);
+    JSValue encodingValue = callFrame->argument(3);
 
     // Node's _fill only reinterprets a string offset/end as the encoding when the
     // fill value is itself a string; otherwise validateInteger below rejects them.

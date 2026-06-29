@@ -3847,6 +3847,30 @@ describe("Buffer.fill offset/end argument handling", () => {
     expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, 1, 3, "bogus"))).toEqual([0xaa, 0, 0, 0xaa, 0xaa]);
   });
 
+  it("zero-fills the whole buffer when called with no arguments", () => {
+    // Node forwards the undefined value into the numeric path, which coerces to 0.
+    expect(Array.from(Buffer.alloc(3, 0xaa).fill())).toEqual([0, 0, 0]);
+    expect(Array.from(Buffer.alloc(3, 0xaa).fill(undefined))).toEqual([0, 0, 0]);
+  });
+
+  it("ignores positional arguments past the fourth", () => {
+    expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, 1, 3, "utf8", "x"))).toEqual([0xaa, 0, 0, 0xaa, 0xaa]);
+    expect(Buffer.alloc(5, 0xaa).fill("ab", 0, 4, "utf16le", "x").toString("hex")).toBe("61006200aa");
+  });
+
+  it("lets an undefined offset shadow an explicit 4th-argument encoding, like Node", () => {
+    // Node's _fill assigns `encoding = offset` whenever offset is undefined or
+    // a string, so fill(str, undefined, ..., encoding) falls back to utf8 and a
+    // bogus 4th-argument encoding is never even validated.
+    expect(Buffer.alloc(4, 0xaa).fill("ab", undefined, undefined, "utf16le").toString("hex")).toBe("61626162");
+    expect(Buffer.alloc(4, 0xaa).fill("a", undefined, undefined, "bogus").toString("hex")).toBe("61616161");
+    // With a numeric offset the explicit encoding is honored.
+    expect(Buffer.alloc(4, 0xaa).fill("ab", 0, undefined, "utf16le").toString("hex")).toBe("61006200");
+    expect(() => Buffer.alloc(4).fill("a", 1, undefined, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+  });
+
   // Differential test: the fixture enumerates every fill() argument shape and
   // prints the resulting bytes or the thrown error class + code. Running it
   // under Node.js and under Bun must produce byte-identical output.

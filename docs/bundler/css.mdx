@@ -387,7 +387,7 @@ If the `:dir()` selector isn't supported, Bun generates additional fallbacks.
 
 ### :dir() selector
 
-The `:dir()` pseudo-class styles elements based on their text direction (RTL or LTR), as determined by the document or explicit direction attributes, so you can write direction-aware styles without JavaScript.
+The `:dir()` pseudo-class styles elements based on their text direction (RTL or LTR), as determined by the document or explicit direction attributes. Use it to write direction-aware styles without JavaScript.
 
 ```css title="styles.css" icon="file-code"
 /* Apply different styles based on text direction */
@@ -434,7 +434,7 @@ If multiple arguments to `:lang()` aren't supported, Bun generates further fallb
 
 ### :lang() selector
 
-The `:lang()` pseudo-class targets elements based on their language. Modern CSS accepts multiple language codes in a single `:lang()`, so you can group rules for related languages.
+The `:lang()` pseudo-class targets elements based on their language. To group rules for related languages, pass multiple language codes to a single `:lang()`.
 
 ```css title="styles.css" icon="file-code"
 /* Typography adjustments for CJK languages */
@@ -475,7 +475,7 @@ If needed, Bun can generate additional fallbacks for `:is()` as well.
 
 ### :is() selector
 
-The `:is()` pseudo-class function (formerly `:matches()`) takes a selector list and matches if any selector in the list matches, so you can group selectors instead of repeating them.
+The `:is()` pseudo-class function (formerly `:matches()`) takes a selector list and matches if any selector in the list matches.
 
 ```css title="styles.css" icon="file-code"
 /* Instead of writing these separately */
@@ -537,7 +537,7 @@ For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks us
 
 ### :not() selector
 
-The `:not()` pseudo-class excludes elements that match a selector. The modern version accepts multiple arguments, so one `:not()` can exclude several patterns.
+The `:not()` pseudo-class excludes elements that match a selector. The modern version accepts multiple arguments to exclude several patterns with one `:not()`.
 
 ```css title="styles.css" icon="file-code"
 /* Select all buttons except primary and secondary variants */
@@ -810,7 +810,7 @@ For browsers that don't support this syntax, Bun's CSS bundler converts it to th
 
 ### system-ui font
 
-The `system-ui` generic font family uses the device's native UI font, so you don't have to specify a font stack for each platform.
+The `system-ui` generic font family uses the device's native UI font.
 
 ```css title="styles.css" icon="file-code"
 .native-interface {
@@ -930,7 +930,7 @@ The class names are unique to each file, so they don't collide.
 
 ### Composition
 
-CSS modules support composing class selectors together, so you can reuse style rules across multiple classes.
+CSS modules can compose class selectors together to reuse style rules across multiple classes.
 
 For example:
 

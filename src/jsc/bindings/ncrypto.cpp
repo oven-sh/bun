@@ -678,6 +678,8 @@ bool VerifySpkac(const char* input, size_t length)
     // case.
     length = std::string_view(input, length).find_last_not_of(" \n\r\t") + 1;
 #endif
+    if (length == 0) return false;
+
     NetscapeSPKIPointer spki(NETSCAPE_SPKI_b64_decode(input, length));
     if (!spki) return false;
 
@@ -696,6 +698,8 @@ BIOPointer ExportPublicKey(const char* input, size_t length)
     // As such, we trim those characters here for compatibility.
     length = std::string_view(input, length).find_last_not_of(" \n\r\t") + 1;
 #endif
+    if (length == 0) return {};
+
     NetscapeSPKIPointer spki(NETSCAPE_SPKI_b64_decode(input, length));
     if (!spki) return {};
 
@@ -715,6 +719,8 @@ Buffer<char> ExportChallenge(const char* input, size_t length)
     // As such, we trim those characters here for compatibility.
     length = std::string_view(input, length).find_last_not_of(" \n\r\t") + 1;
 #endif
+    if (length == 0) return {};
+
     NetscapeSPKIPointer sp(NETSCAPE_SPKI_b64_decode(input, length));
     if (!sp) return {};
 

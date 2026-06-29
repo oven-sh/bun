@@ -2112,7 +2112,7 @@ pub(crate) fn install_isolated_packages(
                         let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
                             .name
                             .slice(string_buf);
-                        if !crate::dependency::is_safe_install_folder_name(dep_name) {
+                        if !crate::package_installer::alias_is_safe_install_target(dep_name) {
                             unsafe_folder_name = Some(dep_name);
                             break;
                         }

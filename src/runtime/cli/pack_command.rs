@@ -515,9 +515,6 @@ fn iterate_included_project_tree(
         }
     }
 
-    let mut ignores: Vec<IgnorePatterns> = Vec::new();
-    let _ = &mut ignores; // unused in this fn body (declared but not read)
-
     let mut dirs: Vec<DirInfo> = Vec::new();
     dirs.push(DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1));
 
@@ -566,6 +563,10 @@ fn iterate_included_project_tree(
                     included = true;
                     is_unconditionally_included = true;
                 }
+            }
+
+            if is_excluded(&entry, &entry_subpath, dir_depth, &[]).is_some() {
+                continue;
             }
 
             if !included {

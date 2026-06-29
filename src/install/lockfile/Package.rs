@@ -3380,6 +3380,20 @@ pub mod serializer {
                         }
                     }
                 }
+                if matches!(field, PackageField::Scripts) {
+                    // `Scripts.filled` is a `bool`; validate the raw byte the
+                    // same way before the copy.
+                    let stride = mem::size_of::<Scripts>();
+                    let filled_at = mem::offset_of!(Scripts, filled);
+                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
+                    for raw in src.chunks_exact(stride) {
+                        if !matches!(raw[filled_at], 0 | 1) {
+                            return Err(bun_core::err!(
+                                "Lockfile validation failed: invalid package scripts"
+                            ));
+                        }
+                    }
+                }
                 bytes.copy_from_slice(src);
                 stream.pos = end_pos;
                 if matches!(field, PackageField::Meta) {
@@ -3391,6 +3405,18 @@ pub mod serializer {
                         if meta.needs_update() {
                             *needs_update = true;
                             break;
+                        }
+                    }
+                }
+                if matches!(field, PackageField::Scripts) {
+                    // Registry packages never persist lifecycle scripts in the
+                    // lockfile (they are read from the installed package.json),
+                    // so drop any that a stored lockfile claims to have.
+                    let len = sliced.items::<"scripts", Scripts>().len();
+                    for i in 0..len {
+                        let tag = sliced.items::<"resolution", Resolution<SemverIntType>>()[i].tag;
+                        if matches!(tag, ResolutionTag::Npm) {
+                            sliced.items_mut::<"scripts", Scripts>()[i] = Scripts::default();
                         }
                     }
                 }

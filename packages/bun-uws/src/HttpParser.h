@@ -683,6 +683,33 @@ namespace uWS
             }
         }
 
+        /* RFC 9112 3.2.2: Host = uri-host [ ":" port ] (RFC 3986 3.2.2 authority characters) */
+        static inline bool isHostFieldValueByte(unsigned char c) {
+            if (((c >= 'a') & (c <= 'z')) | ((c >= '0') & (c <= '9')) | (c == '.') | (c == '-') | (c == ':')) [[likely]] {
+                return true;
+            }
+            if ((c >= 'A') & (c <= 'Z')) {
+                return true;
+            }
+            switch (c) {
+                case '_': case '~': case '%': case '[': case ']':
+                case '!': case '$': case '&': case '\'': case '(': case ')':
+                case '*': case '+': case ',': case ';': case '=':
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static inline bool isValidHostFieldValue(std::string_view host) {
+            for (unsigned char c : host) {
+                if (!isHostFieldValueByte(c)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
         static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
@@ -895,9 +922,14 @@ namespace uWS
             /* Break if no host header (but we can have empty string which is different from nullptr).
              * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
              * 'upgrade'/'connect' events before its Host requirement is enforced. */
-            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
+            std::string_view hostValue = req->getHeader("host");
+            if (!req->ancientHttp && requireHostHeader && !hostValue.data()
                 && !isConnectRequest && !req->getHeader("upgrade").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
+            }
+            /* RFC 9112 3.2: a Host field value that is not a valid uri-host [ ":" port ] gets a 400. */
+            if (!req->ancientHttp && requireHostHeader && !isValidHostFieldValue(hostValue)) {
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
             }
 
             /* RFC 9112 6.3
@@ -975,7 +1007,15 @@ namespace uWS
             /* RFC 9112 6.3
              * If a message is received with both a Transfer-Encoding and a Content-Length header field,
              * the Transfer-Encoding overrides the Content-Length. */
-            if (transferEncoding.has) {
+            if (isConnectRequest) {
+                // This only serves to mark that the connect request read all headers
+                // and can start emitting data. Don't try to parse remaining data as HTTP -
+                // it's pipelined data that we've already captured in req->head.
+                remainingStreamingBytes = STATE_IS_CHUNKED;
+                // Mark remaining data as consumed and break - it's not HTTP
+                consumedTotal += length;
+                break;
+            } else if (transferEncoding.has) {
                 /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
@@ -1013,14 +1053,6 @@ namespace uWS
                         return HttpParserResult::success(consumedTotal, returnedUser);
                     }
                 }
-            } else if(isConnectRequest) {
-                // This only serves to mark that the connect request read all headers
-                // and can start emitting data. Don't try to parse remaining data as HTTP -
-                // it's pipelined data that we've already captured in req->head.
-                remainingStreamingBytes = STATE_IS_CHUNKED;
-                // Mark remaining data as consumed and break - it's not HTTP
-                consumedTotal += length;
-                break;
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
                 void *returnedUser = dataHandler(user, {}, true);

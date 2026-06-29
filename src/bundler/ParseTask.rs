@@ -2137,10 +2137,7 @@ pub mod parse_worker {
                         };
                     return Ok(CacheEntry {
                         contents,
-                        external_free_function: ExternalFreeFunction {
-                            ctx: wrapper.result.user_context,
-                            function: free_fn,
-                        },
+                        external_free_function: ExternalFreeFunction::NONE,
                         fd: wrapper.original_source_fd,
                     });
                 }

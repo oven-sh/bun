@@ -90,61 +90,55 @@ public:
         return stringWidth(span.data(), span.data() + span.size(), ambiguousIsNarrow);
     }
 
-    void trimLeadingSpaces()
+    size_t trimLeadingSpaces()
     {
-        size_t removeCount = 0;
-        bool inEscape = false;
+        if (m_leadingTrimComplete)
+            return 0;
 
-        // Count leading spaces (preserving ANSI)
-        for (size_t i = 0; i < m_data.size(); ++i) {
-            Char c = m_data[i];
+        const size_t size = m_data.size();
+        size_t read = m_trimScanOffset;
+        size_t write = m_trimScanOffset;
+        bool inEscape = m_trimInEscape;
+        size_t removedWidth = 0;
+
+        while (read < size) {
+            Char c = m_data[read];
             if (c == 0x1b) {
                 inEscape = true;
-                continue;
-            }
-            if (inEscape) {
+            } else if (inEscape) {
                 if (c == 'm' || c == 0x07)
                     inEscape = false;
+            } else if (c == ' ' || c == '\t') {
+                if (c == ' ')
+                    removedWidth++;
+                read++;
                 continue;
-            }
-            if (c == ' ' || c == '\t')
-                removeCount++;
-            else
+            } else {
+                m_leadingTrimComplete = true;
                 break;
+            }
+            m_data[write] = c;
+            write++;
+            read++;
         }
 
-        if (removeCount == 0)
-            return;
-
-        // Remove spaces while preserving ANSI codes
-        Vector<Char> newData;
-        newData.reserveCapacity(m_data.size() - removeCount);
-
-        inEscape = false;
-        size_t removed = 0;
-
-        for (size_t i = 0; i < m_data.size(); ++i) {
-            Char c = m_data[i];
-            if (c == 0x1b) {
-                inEscape = true;
-                newData.append(c);
-                continue;
+        if (write != read) {
+            while (read < size) {
+                m_data[write] = m_data[read];
+                write++;
+                read++;
             }
-            if (inEscape) {
-                if (c == 'm' || c == 0x07)
-                    inEscape = false;
-                newData.append(c);
-                continue;
-            }
-            if ((c == ' ' || c == '\t') && removed < removeCount) {
-                removed++;
-                continue;
-            }
-            newData.append(c);
+            m_data.shrink(write);
         }
 
-        m_data = std::move(newData);
+        m_trimScanOffset = write;
+        m_trimInEscape = inEscape;
+        return removedWidth;
     }
+
+    size_t m_trimScanOffset = 0;
+    bool m_trimInEscape = false;
+    bool m_leadingTrimComplete = false;
 };
 
 // ============================================================================
@@ -533,6 +527,8 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
     // Process each word
     const Char* wordStart = lineStart;
     size_t wordIndex = 0;
+    size_t lastRowWidth = 0;
+    bool lastRowWidthDirty = false;
 
     for (const Char* it = lineStart; it <= lineEnd; ++it) {
         if (it < lineEnd && *it != ' ')
@@ -540,10 +536,18 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
 
         const Char* wordEnd = it;
 
-        if (options.trim)
-            rows.last().trimLeadingSpaces();
+        if (options.trim) {
+            size_t removedWidth = rows.last().trimLeadingSpaces();
+            if (!lastRowWidthDirty)
+                lastRowWidth = removedWidth < lastRowWidth ? lastRowWidth - removedWidth : 0;
+        }
 
-        size_t rowLength = rows.last().width(options.ambiguousIsNarrow);
+        if (lastRowWidthDirty) {
+            lastRowWidth = rows.last().width(options.ambiguousIsNarrow);
+            lastRowWidthDirty = false;
+        }
+
+        size_t rowLength = lastRowWidth;
 
         if (wordIndex != 0) {
             if (rowLength >= columns && (!options.wordWrap || !options.trim)) {
@@ -568,6 +572,7 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
                 rows.append(Row<Char>());
 
             wrapWord(rows, wordStart, wordEnd, columns, options);
+            lastRowWidthDirty = true;
             wordStart = it + 1;
             wordIndex++;
             continue;
@@ -576,23 +581,26 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
         if (rowLength + wordLen > columns && rowLength > 0 && wordLen > 0) {
             if (!options.wordWrap && rowLength < columns) {
                 wrapWord(rows, wordStart, wordEnd, columns, options);
+                lastRowWidthDirty = true;
                 wordStart = it + 1;
                 wordIndex++;
                 continue;
             }
 
             rows.append(Row<Char>());
+            rowLength = 0;
         }
 
-        rowLength = rows.last().width(options.ambiguousIsNarrow);
         if (rowLength + wordLen > columns && !options.wordWrap) {
             wrapWord(rows, wordStart, wordEnd, columns, options);
+            lastRowWidthDirty = true;
             wordStart = it + 1;
             wordIndex++;
             continue;
         }
 
         rows.last().append(wordStart, wordEnd);
+        lastRowWidth = rowLength + wordLen;
         wordStart = it + 1;
         wordIndex++;
     }

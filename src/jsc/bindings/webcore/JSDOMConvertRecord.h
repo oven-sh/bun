@@ -28,6 +28,7 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
@@ -122,22 +123,34 @@ private:
         }
 
         if (canUseFastPath) {
+            Vector<JSC::Identifier, 8> identifiers;
+            JSC::MarkedArgumentBuffer values;
             structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 if (entry.attributes() & PropertyAttribute::DontEnum) {
                     return true;
                 }
 
+                identifiers.append(Identifier::fromUid(vm, entry.key()));
+                values.append(object->getDirect(entry.offset()));
+                return true;
+            });
+
+            if (values.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(&lexicalGlobalObject, scope);
+                return {};
+            }
+
+            for (size_t i = 0; i < identifiers.size(); ++i) {
                 // 1. Let typedKey be key converted to an IDL value of type K.
-                auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, Identifier::fromUid(vm, entry.key()));
-                RETURN_IF_EXCEPTION(scope, false);
+                auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifiers[i]);
+                RETURN_IF_EXCEPTION(scope, {});
 
                 // 2. Let value be ? Get(O, key).
-                JSC::JSValue value = object->getDirect(entry.offset());
-                scope.assertNoException();
+                JSC::JSValue value = values.at(i);
 
                 // 3. Let typedValue be value converted to an IDL value of type V.
                 auto typedValue = Converter<V>::convert(lexicalGlobalObject, value, args...);
-                RETURN_IF_EXCEPTION(scope, false);
+                RETURN_IF_EXCEPTION(scope, {});
 
                 // 4. Set result[typedKey] to typedValue.
                 // Note: It's possible that typedKey is already in result if K is USVString and key contains unpaired surrogates.
@@ -147,7 +160,7 @@ private:
                         if (!addResult.isNewEntry) {
                             ASSERT(result[addResult.iterator->value].key == typedKey);
                             result[addResult.iterator->value].value = WTF::move(typedValue);
-                            return true;
+                            continue;
                         }
                     }
                 } else
@@ -155,10 +168,7 @@ private:
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
                 result.append({ WTF::move(typedKey), WTF::move(typedValue) });
-                return true;
-            });
-
-            RETURN_IF_EXCEPTION(scope, {});
+            }
 
             return result;
         }

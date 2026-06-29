@@ -2302,19 +2302,29 @@ pub fn parse_compress_args(
     Ok((buffer_value, options_val))
 }
 
-/// [`parse_compress_args`] + sync `StringOrBuffer` coercion of `arguments[0]`.
-/// Shared by `JSZlib::{gzip,gunzip,deflate,inflate}_sync` and
-/// `JSZstd::{compress,decompress}_sync`.
+/// Sync `StringOrBuffer` coercion of the buffer argument. Callers that read
+/// option properties (which can run arbitrary JS) must do so *before* calling
+/// this, so nothing runs between the coercion and the use of the slice.
+#[inline]
+pub fn coerce_compress_buffer(
+    global: &JSGlobalObject,
+    buffer_value: JSValue,
+) -> JsResult<node::StringOrBuffer> {
+    if let Some(buffer) = node::StringOrBuffer::from_js(global, buffer_value)? {
+        return Ok(buffer);
+    }
+    Err(global.throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
+}
+
+/// [`parse_compress_args`] + [`coerce_compress_buffer`], for callers that read
+/// no further option properties.
 #[inline]
 pub fn parse_compress_buffer_and_options(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<(node::StringOrBuffer, Option<JSValue>)> {
     let (buffer_value, options_val) = parse_compress_args(global, callframe)?;
-    if let Some(buffer) = node::StringOrBuffer::from_js(global, buffer_value)? {
-        return Ok((buffer, options_val));
-    }
-    Err(global.throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
+    Ok((coerce_compress_buffer(global, buffer_value)?, options_val))
 }
 
 #[allow(non_snake_case)]
@@ -2368,8 +2378,8 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, &buffer, options_val, true)
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
+        gzip_or_deflate_sync(global_this, buffer_value, options_val, true)
     }
 
     #[bun_jsc::host_fn]
@@ -2377,8 +2387,8 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, &buffer, options_val, false)
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
+        gunzip_or_inflate_sync(global_this, buffer_value, options_val, false)
     }
 
     #[bun_jsc::host_fn]
@@ -2386,8 +2396,8 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, &buffer, options_val, false)
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
+        gzip_or_deflate_sync(global_this, buffer_value, options_val, false)
     }
 
     #[bun_jsc::host_fn]
@@ -2395,13 +2405,13 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, &buffer, options_val, true)
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
+        gunzip_or_inflate_sync(global_this, buffer_value, options_val, true)
     }
 
     pub(crate) fn gunzip_or_inflate_sync(
         global_this: &JSGlobalObject,
-        buffer: &node::StringOrBuffer,
+        buffer_value: JSValue,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2453,6 +2463,7 @@ pub mod JSZlib {
             return Ok(JSValue::ZERO);
         }
 
+        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
 
         let mut list: Vec<u8> = 'brk: {
@@ -2582,7 +2593,7 @@ pub mod JSZlib {
 
     pub(crate) fn gzip_or_deflate_sync(
         global_this: &JSGlobalObject,
-        buffer: &node::StringOrBuffer,
+        buffer_value: JSValue,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2624,6 +2635,7 @@ pub mod JSZlib {
             return Ok(JSValue::ZERO);
         }
 
+        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
         let _ = window_bits; // unused
 
@@ -2784,10 +2796,11 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
+        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
 
+        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let input = buffer.slice();
 
         // Calculate max compressed size

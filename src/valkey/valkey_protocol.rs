@@ -814,4 +814,17 @@ impl SubscriptionPushMessage {
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
     }
+
+    #[inline]
+    pub fn is_reply_kind(kind: &[u8]) -> bool {
+        matches!(
+            kind,
+            b"subscribe"
+                | b"unsubscribe"
+                | b"psubscribe"
+                | b"punsubscribe"
+                | b"ssubscribe"
+                | b"sunsubscribe"
+        )
+    }
 }

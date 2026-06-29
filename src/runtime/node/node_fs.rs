@@ -2025,7 +2025,7 @@ mod _async_tasks {
                 }
             }
 
-            let open_flags = sys::O::DIRECTORY | sys::O::RDONLY;
+            let open_flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW;
             let fd = match openat_os_path(FD::cwd(), src, open_flags, 0) {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(
@@ -5116,7 +5116,7 @@ impl NodeFS {
                         flags |= sys::O::EXCL;
                     }
 
-                    let dest_fd = match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+                    let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
                         Ok(result) => result,
                         Err(err) => return Err(err.with_path(args.dest.slice())),
                     };
@@ -5188,7 +5188,7 @@ impl NodeFS {
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
-            let dest_fd = match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+            let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
                 Ok(result) => result,
                 Err(err) => return Err(err),
             };
@@ -5295,7 +5295,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Syscall::open(dest, flags, DEFAULT_PERMISSION)?;
+            let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -8290,7 +8290,9 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0 {
+            if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0
+                || attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT != 0
+            {
                 let r = self._copy_single_file_sync(
                     src,
                     dest,
@@ -8374,7 +8376,12 @@ impl NodeFS {
             }
         }
 
-        let fd = match openat_os_path(FD::cwd(), src, sys::O::DIRECTORY | sys::O::RDONLY, 0) {
+        let fd = match openat_os_path(
+            FD::cwd(),
+            src,
+            sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
+            0,
+        ) {
             Err(err) => return Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd]))),
             Ok(fd_) => fd_,
         };
@@ -8640,7 +8647,8 @@ impl NodeFS {
                     flags |= sys::O::EXCL;
                 }
 
-                let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags)?;
+                let dest_fd =
+                    Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
@@ -8733,7 +8741,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags)?;
+            let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -8904,10 +8912,11 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = match Self::_cp_open_dest_with_mkdir(self, dest, flags) {
-                Ok(fd) => fd,
-                Err(e) => return Err(e),
-            };
+            let dest_fd =
+                match Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
+                    Ok(fd) => fd,
+                    Err(e) => return Err(e),
+                };
 
             // No O_TRUNC at open: if src and dest resolve to the same inode,
             // that would zero the file before the first read.
@@ -9123,14 +9132,14 @@ impl NodeFS {
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
     /// `_copy_single_file_sync`.
-    /// Tries `open(dest, flags, default_permission)`; on ENOENT creates the
+    /// Tries `open(dest, flags, mode)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    fn _cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32) -> Maybe<FD> {
+    fn _cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
         // PORT: extracted from the mac/linux/freebsd arms of `_copySingleFileSync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
-        match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+        match Syscall::open(dest, flags, mode) {
             Ok(result) => Ok(result),
             Err(err) => {
                 if err.get_errno() == E::ENOENT {
@@ -9149,7 +9158,7 @@ impl NodeFS {
                         ..Default::default()
                     });
                     mkdir_result?;
-                    if let Ok(result) = Syscall::open(dest, flags, DEFAULT_PERMISSION) {
+                    if let Ok(result) = Syscall::open(dest, flags, mode) {
                         return Ok(result);
                     }
                 }

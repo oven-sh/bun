@@ -1241,6 +1241,14 @@ enum BatchSegment {
     Ext { ptr: *const u8, len: u32 },
 }
 
+struct DispatchGuard<'a>(&'a Cell<u32>);
+
+impl Drop for DispatchGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
+}
+
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut H2FrameParser` until Phase 1 lands —
@@ -1297,6 +1305,7 @@ pub struct H2FrameParser {
     /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
     /// Drained into Connection::close_stream on the next rewrite_read batch.
     pending_engine_stream_closes: JsCell<Vec<u32>>,
+    dispatch_depth: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
     max_outstanding_settings: Cell<u32>,
@@ -2648,6 +2657,11 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    fn enter_dispatch(&self) -> DispatchGuard<'_> {
+        self.dispatch_depth.set(self.dispatch_depth.get() + 1);
+        DispatchGuard(&self.dispatch_depth)
+    }
+
     pub(crate) fn dispatch(&self, event: JSH2FrameParser::Gc, value: JSValue) {
         value.ensure_still_alive();
         let Some(this_value) = self.strong_this.get().try_get() else {
@@ -2656,6 +2670,7 @@ impl H2FrameParser {
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
@@ -2672,12 +2687,14 @@ impl H2FrameParser {
             return JSValue::ZERO;
         };
         value.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
         self.handlers
             .get()
             .call_event_handler_with_result(event, this_value, &[ctx_value, value])
     }
 
     pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_write_callback(callback, &[]);
     }
 
@@ -2695,6 +2712,7 @@ impl H2FrameParser {
         };
         value.ensure_still_alive();
         extra.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
@@ -2719,6 +2737,7 @@ impl H2FrameParser {
         value.ensure_still_alive();
         extra.ensure_still_alive();
         extra2.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
@@ -2745,6 +2764,7 @@ impl H2FrameParser {
         extra.ensure_still_alive();
         extra2.ensure_still_alive();
         extra3.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
@@ -5384,20 +5404,23 @@ impl H2FrameParser {
             // Streams whose legacy lifecycle finished since the last batch: evict the engine
             // entry and free the legacy slot. free_resources already ran for these (it is the
             // only producer of this queue); duplicate ids are fine — remove() yields None.
-            self.pending_engine_stream_closes.with_mut(|v| {
-                for id in v.drain(..) {
-                    engine.close_stream(id);
-                    if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
-                        // SAFETY: stream is the heap::alloc'd *mut Stream owned by the map
-                        // entry just removed; free_resources ran when it was queued, no
-                        // borrows are live at the top of rewrite_read, ids never repeat
-                        // within a session, so this frees exactly once.
-                        unsafe {
-                            drop(bun_core::heap::take(stream));
+            if self.dispatch_depth.get() == 0 {
+                self.pending_engine_stream_closes.with_mut(|v| {
+                    for id in v.drain(..) {
+                        engine.close_stream(id);
+                        if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
+                            // SAFETY: stream is the heap::alloc'd *mut Stream owned by the
+                            // map entry just removed; free_resources ran when it was queued,
+                            // dispatch_depth == 0 means no caller below us on the stack holds
+                            // a `&mut Stream` across a JS dispatch, ids never repeat within a
+                            // session, so this frees exactly once.
+                            unsafe {
+                                drop(bun_core::heap::take(stream));
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
         }
         if self.rewrite_tail.get().is_empty() {
             let feed = {
@@ -5621,6 +5644,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             value_js,
             JSValue::js_number(stream_id as f64),
         );
+    }
+
+    fn can_open_stream(&self) -> bool {
+        self.get_session_memory_usage() <= self.max_session_memory.get() as usize
     }
 
     fn is_local_stream(&self, stream_id: u32) -> bool {
@@ -5866,7 +5893,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(code as f64),
             );
         }
-        // The reset closes the stream; release its JS context root.
+        // The reset closes the stream; free the legacy slot (queueing the engine eviction)
+        // and release its JS context root, mirroring the on_stream_end full-close path.
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).free_resources::<false>(self) };
+        }
         self.sctx.with_mut(|m| {
             m.remove(&stream_id);
         });
@@ -9141,6 +9173,7 @@ impl H2FrameParser {
             pending_send_window_consumed: Cell::new(0),
             pending_stream_send_consumed: JsCell::new(Vec::new()),
             pending_engine_stream_closes: JsCell::new(Vec::new()),
+            dispatch_depth: Cell::new(0),
             pending_settings_window_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),

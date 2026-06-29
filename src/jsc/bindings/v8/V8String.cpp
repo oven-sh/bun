@@ -87,21 +87,8 @@ MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data,
 
 int String::Utf8Length(Isolate* isolate) const
 {
-    auto jsString = localToObjectPointer<JSString>();
-    if (jsString->length() == 0) {
-        return 0;
-    }
-
-    auto str = jsString->view(isolate->globalObject());
-    if (str->is8Bit()) {
-        const auto span = str->span8();
-        size_t len = simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(span.data()), span.size());
-        return static_cast<int>(std::min(len, static_cast<size_t>(std::numeric_limits<int>::max())));
-    } else {
-        const auto span = str->span16();
-        size_t len = simdutf::utf8_length_from_utf16(span.data(), span.size());
-        return static_cast<int>(std::min(len, static_cast<size_t>(std::numeric_limits<int>::max())));
-    }
+    size_t len = Utf8LengthV2(isolate);
+    return static_cast<int>(std::min(len, static_cast<size_t>(std::numeric_limits<int>::max())));
 }
 
 bool String::IsOneByte() const

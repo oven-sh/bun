@@ -8,7 +8,6 @@ use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
-use bun_wyhash::hash;
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
@@ -607,7 +606,6 @@ impl PostgresSQLQuery {
             // holding a `&mut` across other &mut connection borrows below trips borrowck, so
             // store the raw `*mut *mut PostgresSQLStatement` and re-dereference at use sites.
             let mut connection_entry_value: Option<*mut *mut PostgresSQLStatement> = None;
-            let signature_hash: u64 = hash(&signature.name);
             if !connection
                 .flags
                 .get()
@@ -619,7 +617,7 @@ impl PostgresSQLQuery {
                 // raw slot ptr + existing value while the borrow is live so the
                 // remainder of this block needs no further `&mut` to the map.
                 let (entry_value_ptr, existing_stmt) = match connection.statements.with_mut(|s| {
-                    s.get_or_put(signature_hash).map(|e| {
+                    s.get_or_put(&signature.name).map(|e| {
                         let existing = if e.found_existing {
                             Some(*e.value_ptr)
                         } else {
@@ -718,7 +716,7 @@ impl PostgresSQLQuery {
                         if connection_entry_value.is_some() {
                             let _ = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature_hash));
+                                .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
                         release_query_ref();
@@ -750,7 +748,7 @@ impl PostgresSQLQuery {
                         if connection_entry_value.is_some() {
                             let _ = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature_hash));
+                                .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
                         release_query_ref();
@@ -760,7 +758,7 @@ impl PostgresSQLQuery {
                         if connection_entry_value.is_some() {
                             let _ = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature_hash));
+                                .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
                         release_query_ref();

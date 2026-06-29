@@ -148,6 +148,9 @@ pub enum ParserError {
     /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata,
     /// so the parser's `u32` block offsets cannot address it.
     TooManyBlocks,
+    /// Resolving link reference definitions would emit more than
+    /// `Parser::max_ref_def_output` bytes of destination/title text.
+    RefDefOutputTooLarge,
 }
 
 bun_core::oom_from_alloc!(ParserError);
@@ -264,6 +267,21 @@ impl<'a> Parser<'a> {
         self.block_bytes.resize(needed, 0);
         *self.get_block_header_at(aligned) = header;
         Ok(aligned)
+    }
+
+    /// Charge one resolved reference link/image against the remaining
+    /// reference-definition output budget (`max_ref_def_output`).
+    pub(crate) fn charge_ref_def_output(
+        &mut self,
+        dest_len: usize,
+        title_len: usize,
+    ) -> Result<(), ParserError> {
+        let n = dest_len as u64 + title_len as u64;
+        if n > self.max_ref_def_output {
+            return Err(ParserError::RefDefOutputTooLarge);
+        }
+        self.max_ref_def_output -= n;
+        Ok(())
     }
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {

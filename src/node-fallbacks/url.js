@@ -195,13 +195,13 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
   // how the browser resolves relative URLs.
   if (slashesDenoteHost || proto || rest.match(/^\/\/[^@\/]+@[^@\/]+/)) {
     var slashes = rest.substr(0, 2) === "//";
-    if (slashes && !(proto && hostlessProtocol[proto])) {
+    if (slashes && !(proto && hostlessProtocol[lowerProto])) {
       rest = rest.substr(2);
       this.slashes = true;
     }
   }
 
-  if (!hostlessProtocol[proto] && (slashes || (proto && !slashedProtocol[proto]))) {
+  if (!hostlessProtocol[lowerProto] && (slashes || (lowerProto && !slashedProtocol[lowerProto]))) {
     // there's a hostname.
     // the first instance of /, ?, ;, or # ends the host.
     //

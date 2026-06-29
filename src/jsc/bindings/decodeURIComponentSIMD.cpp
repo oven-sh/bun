@@ -18,9 +18,21 @@ ALWAYS_INLINE static uint8_t hexToInt(uint8_t c)
     return 255; // Invalid
 }
 
+ALWAYS_INLINE static void appendLiteralRun(StringBuilder& result, std::span<const uint8_t> bytes, bool inputIsASCII)
+{
+    if (bytes.empty())
+        return;
+    const std::span<const Latin1Character> chars = { reinterpret_cast<const Latin1Character*>(bytes.data()), bytes.size() };
+    if (inputIsASCII) {
+        result.append(chars);
+        return;
+    }
+    result.append(WTF::String::fromUTF8ReplacingInvalidSequences(chars));
+}
+
 WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
 {
-    ASSERT_WITH_MESSAGE(simdutf::validate_ascii(reinterpret_cast<const char*>(input.data()), input.size()), "Input is not ASCII");
+    const bool inputIsASCII = simdutf::validate_ascii(reinterpret_cast<const char*>(input.data()), input.size());
 
     const std::span<const Latin1Character> lchar = { reinterpret_cast<const Latin1Character*>(input.data()), input.size() };
 
@@ -48,12 +60,17 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
         cursor++;
     }
 
-    return String(lchar);
+    if (inputIsASCII)
+        return String(lchar);
+    return String::fromUTF8ReplacingInvalidSequences(lchar);
 
 slow_path:
+    while (cursor < end && *cursor != '%') {
+        cursor++;
+    }
     StringBuilder result;
     result.reserveCapacity(input.size());
-    result.append(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(input.data()), cursor - input.data()));
+    appendLiteralRun(result, input.first(static_cast<size_t>(cursor - input.data())), inputIsASCII);
 
     while (cursor < end) {
         if (*cursor == '%') {
@@ -244,6 +261,7 @@ slow_path:
             continue;
         } else {
             // Look ahead for next % using SIMD
+            const uint8_t* runStart = cursor;
             const uint8_t* lookAhead = cursor;
             while (lookAhead + stride <= end) {
                 auto chunk = SIMD::load(lookAhead);
@@ -252,18 +270,13 @@ slow_path:
                 }
                 lookAhead += stride;
             }
-
-            // Append everything up to lookAhead
-            result.append(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(cursor), lookAhead - cursor));
             cursor = lookAhead;
 
             // Handle remaining bytes until next % or end
             while (cursor < end && *cursor != '%') {
                 cursor++;
             }
-            if (cursor > lookAhead) {
-                result.append(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(lookAhead), cursor - lookAhead));
-            }
+            appendLiteralRun(result, std::span<const uint8_t>(runStart, static_cast<size_t>(cursor - runStart)), inputIsASCII);
         }
     }
 

@@ -38,4 +38,3 @@ bun_sha_hmac.workspace = true
 bun_sql.workspace = true
 bun_uws.workspace = true
 bun_uws_sys.workspace = true
-bun_wyhash.workspace = true

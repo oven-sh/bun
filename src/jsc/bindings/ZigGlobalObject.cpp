@@ -2243,7 +2243,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_nativeMicrotaskTrampoline.initLater(
         [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Public));
+            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
         });
 
     m_navigatorObject.initLater(

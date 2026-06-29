@@ -5328,6 +5328,7 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
 // the surface of the native NodeHTTPResponse handle that ServerResponse drives
 // (cork/writeHead/write/end/abort/...), serializing directly onto the TLS socket.
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
+  const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head = null;
   let headWritten = false;
   let chunked = false;
@@ -5347,8 +5348,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let hasConnection = false;
     const headers = head?.headers;
     if (headers) {
-      for (const { 0: name, 1: value } of headers) {
-        switch (name) {
+      for (let i = 0, end = headers.length - 1; i < end; i += 2) {
+        const name = headers[i];
+        const value = headers[i + 1];
+        if (name.length === 1 && name.charCodeAt(0) === 0) continue;
+        switch (name.toLowerCase()) {
           case "content-length":
             hasContentLength = true;
             break;
@@ -5420,6 +5424,14 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       return callback();
     },
     writeHead(statusCode, statusMessage, headers) {
+      const originalStatusCode = statusCode;
+      statusCode |= 0;
+      if (statusCode < 100 || statusCode > 999) {
+        throw $ERR_HTTP_INVALID_STATUS_CODE(`${originalStatusCode}`);
+      }
+      if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
+        throw $ERR_INVALID_CHAR("statusMessage");
+      }
       head = { statusCode, statusMessage, headers };
     },
     flushHeaders() {

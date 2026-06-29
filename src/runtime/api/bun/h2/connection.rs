@@ -18,6 +18,13 @@ pub struct Stream {
     pub state: State,
     pub send_window: SendWindow,
     pub recv_window: RecvWindow,
+    /// A non-informational inbound header block was delivered: the next inbound HEADERS on this
+    /// stream is a trailer section (RFC 9113 §8.1).
+    pub recv_final_headers: bool,
+    /// Declared `content-length` of the inbound message, if any (RFC 9113 §8.1.1).
+    pub content_length: Option<u64>,
+    /// DATA payload bytes (padding excluded) received so far.
+    pub recv_body_bytes: u64,
 }
 
 impl Stream {
@@ -26,8 +33,27 @@ impl Stream {
             state: State::Idle,
             send_window: SendWindow::new(initial_send),
             recv_window: RecvWindow::new(initial_recv),
+            recv_final_headers: false,
+            content_length: None,
+            recv_body_bytes: 0,
         }
     }
+}
+
+/// RFC 9110 §8.6: `content-length` is 1*DIGIT. Anything else, or a value that does not fit
+/// in a u64, is rejected.
+fn parse_content_length(value: &[u8]) -> Option<u64> {
+    if value.is_empty() {
+        return None;
+    }
+    let mut n: u64 = 0;
+    for &c in value {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        n = n.checked_mul(10)?.checked_add(u64::from(c - b'0'))?;
+    }
+    Some(n)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -80,6 +106,12 @@ pub trait Sink {
 
     /// A new stream was created by an inbound HEADERS (the embedder allocates its JS wrapper).
     fn on_stream_open(&self, _stream_id: u32) {}
+    /// Whether the embedder can afford the state for a new peer-initiated stream (the session
+    /// memory budget). `false` refuses the HEADERS with RST_STREAM (REFUSED_STREAM) before any
+    /// stream state is allocated; the header block is still decoded for HPACK-table sync.
+    fn can_open_stream(&self) -> bool {
+        true
+    }
     /// One decoded header field. `name`/`value` alias a shared buffer — copy before returning.
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
@@ -168,6 +200,7 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
+    header_stream_refused: bool,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -206,6 +239,7 @@ impl Connection {
             header_target: 0,
             header_push_parent: 0,
             header_stream_closed: false,
+            header_stream_refused: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -724,44 +758,49 @@ impl Connection {
             );
             return true;
         }
-        let cur_state = self
-            .streams
-            .entry(hdr.stream_id)
-            .or_insert_with(|| Stream::new(send_init, recv_init))
-            .state;
-        let ev = if end_stream {
-            stream::Event::RecvHeadersEndStream
-        } else {
-            stream::Event::RecvHeaders
-        };
+        let refused = is_new && self.is_server && !sink.can_open_stream();
         let mut stream_closed = false;
-        match stream::transition(cur_state, ev) {
-            Ok(next) => {
-                if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                    s.state = next;
+        if !refused {
+            let cur_state = self
+                .streams
+                .entry(hdr.stream_id)
+                .or_insert_with(|| Stream::new(send_init, recv_init))
+                .state;
+            let ev = if end_stream {
+                stream::Event::RecvHeadersEndStream
+            } else {
+                stream::Event::RecvHeaders
+            };
+            match stream::transition(cur_state, ev) {
+                Ok(next) => {
+                    if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
+                        s.state = next;
+                    }
                 }
-            }
-            Err(stream::TransitionError::Protocol) => {
-                self.send_go_away(
-                    sink,
-                    ErrorCode::ProtocolError,
-                    b"HEADERS in invalid stream state",
-                );
-                return true;
-            }
-            Err(stream::TransitionError::StreamClosed) => {
-                // §4.3: the field block must still be decompressed even though the frames are
-                // discarded - skipping it would desync the connection-scoped HPACK table and
-                // corrupt the next valid stream's headers. Buffer/decode the block, then
-                // finish_header_block refuses it with RST_STREAM(STREAM_CLOSED).
-                stream_closed = true;
+                Err(stream::TransitionError::Protocol) => {
+                    self.send_go_away(
+                        sink,
+                        ErrorCode::ProtocolError,
+                        b"HEADERS in invalid stream state",
+                    );
+                    return true;
+                }
+                Err(stream::TransitionError::StreamClosed) => {
+                    // §4.3: the field block must still be decompressed even though the frames are
+                    // discarded - skipping it would desync the connection-scoped HPACK table and
+                    // corrupt the next valid stream's headers. Buffer/decode the block, then
+                    // finish_header_block refuses it with RST_STREAM(STREAM_CLOSED).
+                    stream_closed = true;
+                }
             }
         }
         if is_new {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            sink.on_stream_open(hdr.stream_id);
+            if !refused {
+                sink.on_stream_open(hdr.stream_id);
+            }
         }
 
         self.header_block.clear();
@@ -771,6 +810,7 @@ impl Connection {
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
         self.header_stream_closed = stream_closed;
+        self.header_stream_refused = refused;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;
@@ -814,6 +854,7 @@ impl Connection {
         }
         let block = std::mem::take(&mut self.header_block);
         let stream_closed = std::mem::take(&mut self.header_stream_closed);
+        let stream_refused = std::mem::take(&mut self.header_stream_refused);
         let mut off = 0usize;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
@@ -823,10 +864,21 @@ impl Connection {
         let max_pairs = self.max_header_list_pairs as usize;
         let mut list_size: usize = 0;
         let mut field_count: usize = 0;
+        // RFC 9113 §8.1: a trailer section is the final header block on the stream — it must
+        // carry END_STREAM and must not contain pseudo-header fields.
+        let is_trailer = push_parent == 0
+            && !stream_closed
+            && self
+                .streams
+                .get(&target)
+                .is_some_and(|s| s.recv_final_headers);
         let mut rejected = false;
-        let mut malformed = false;
+        let mut malformed = is_trailer && !self.header_end_stream;
         let mut seen_regular = false;
         let mut seen_pseudo: u8 = 0;
+        let mut informational = false;
+        let mut content_length: Option<u64> = None;
+        let mut connect = false;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
                 Ok(h) => {
@@ -839,7 +891,7 @@ impl Connection {
                     }
                     // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
-                    if stream_closed {
+                    if stream_closed || stream_refused {
                         continue;
                     }
                     // RFC 9113 §8.2.1/§8.2.2: connection-specific fields, a pseudo-header following a
@@ -875,10 +927,17 @@ impl Connection {
                                 || bit == 64
                                 || (seen_pseudo & bit) != 0
                                 || wrong_direction
+                                || is_trailer
                             {
                                 malformed = true;
                             }
+                            if rest == b"status" && value_b.len() == 3 && value_b[0] == b'1' {
+                                informational = true;
+                            }
                             seen_pseudo |= bit;
+                            if rest == b"method" && value_b == b"CONNECT" {
+                                connect = true;
+                            }
                         } else {
                             seen_regular = true;
                             match name_b {
@@ -890,6 +949,12 @@ impl Connection {
                                         malformed = true;
                                     }
                                 }
+                                b"content-length" => match parse_content_length(value_b) {
+                                    Some(n) if content_length.is_none() => {
+                                        content_length = Some(n);
+                                    }
+                                    _ => malformed = true,
+                                },
                                 _ => {}
                             }
                         }
@@ -913,6 +978,11 @@ impl Connection {
         if fatal {
             return true;
         }
+        if stream_refused {
+            self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+            sink.on_stream_rejected(target);
+            return false;
+        }
         if stream_closed {
             // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
             // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
@@ -922,6 +992,19 @@ impl Connection {
             }
             sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
             return false;
+        }
+        if push_parent == 0 && self.is_server && !malformed && !rejected {
+            if let Some(s) = self.streams.get_mut(&target) {
+                if !connect && s.content_length.is_none() {
+                    s.content_length = content_length;
+                }
+                if self.header_end_stream
+                    && s.content_length
+                        .is_some_and(|declared| declared != s.recv_body_bytes)
+                {
+                    malformed = true;
+                }
+            }
         }
         if malformed && !rejected {
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
@@ -946,6 +1029,12 @@ impl Connection {
             return false;
         }
         let end_stream = self.header_end_stream;
+        if push_parent == 0
+            && !informational
+            && let Some(s) = self.streams.get_mut(&target)
+        {
+            s.recv_final_headers = true;
+        }
         sink.on_headers_complete(target, end_stream, self.header_flags);
         if end_stream {
             let state = self.streams.get(&target).map(|s| s.state as u8);
@@ -1026,6 +1115,8 @@ impl Connection {
                         }
                         sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
                         discard = true;
+                    } else {
+                        st.recv_body_bytes = st.recv_body_bytes.saturating_add(data_total as u64);
                     }
                 }
             }
@@ -1053,6 +1144,9 @@ impl Connection {
     /// `handle_data` does for whole frames.
     fn finish_streamed_data(&mut self, sink: &impl Sink, inflight: &DataInFlight) {
         if inflight.end_stream && !inflight.discard {
+            if self.enforce_content_length(sink, inflight.stream_id) {
+                return;
+            }
             let state = match self.streams.get_mut(&inflight.stream_id) {
                 Some(s) => {
                     if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
@@ -1138,6 +1232,7 @@ impl Connection {
                     if s.recv_window.is_overflowed_with(recv_limit) {
                         DataDecision::Rst(ErrorCode::FlowControlError)
                     } else {
+                        s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
                         DataDecision::Deliver(0)
                     }
                 }
@@ -1167,6 +1262,9 @@ impl Connection {
         // ignores flow control (sending a whole burst past the window in one batch) undetectable.
 
         if end_stream {
+            if self.enforce_content_length(sink, hdr.stream_id) {
+                return false;
+            }
             let state = match self.streams.get_mut(&hdr.stream_id) {
                 Some(s) => {
                     if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
@@ -1181,6 +1279,28 @@ impl Connection {
             }
         }
         false
+    }
+
+    /// RFC 9113 §8.1.1: once END_STREAM arrives, a request whose received DATA total contradicts
+    /// its declared `content-length` is malformed. Resets the stream with PROTOCOL_ERROR instead
+    /// of signalling end-of-stream and returns true if it did so.
+    fn enforce_content_length(&mut self, sink: &impl Sink, stream_id: u32) -> bool {
+        if !self.is_server {
+            return false;
+        }
+        let mismatch = self.streams.get(&stream_id).is_some_and(|s| {
+            s.content_length
+                .is_some_and(|declared| declared != s.recv_body_bytes)
+        });
+        if !mismatch {
+            return false;
+        }
+        self.send_rst_stream(sink, stream_id, ErrorCode::ProtocolError);
+        if let Some(s) = self.streams.get_mut(&stream_id) {
+            s.state = State::Closed;
+        }
+        sink.on_stream_reset(stream_id, ErrorCode::ProtocolError.as_u32());
+        true
     }
 
     /// RFC 9113 §6.4 RST_STREAM.
@@ -1311,6 +1431,7 @@ impl Connection {
         self.header_target = promised;
         self.header_push_parent = hdr.stream_id;
         self.header_stream_closed = false;
+        self.header_stream_refused = false;
         if !end_headers {
             self.continuation_stream = hdr.stream_id;
             return false;

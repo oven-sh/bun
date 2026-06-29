@@ -261,6 +261,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     // iteration state
     pub workbuf: Vec<WorkItem<A>>,
 
+    followed_links: Vec<FollowedLink>,
+
     is_ignored: IgnoreFilterFn,
 
     _accessor: core::marker::PhantomData<A>,
@@ -939,7 +941,25 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             let mut add_dir: bool = false;
                             let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
-                            if child.count() != 0 {
+                            let descend = child.count() != 0
+                                && match A::statat(dir_fd, ZStr::from_slice_with_nul(b".\0")) {
+                                    Ok(target) => {
+                                        if self.walker.is_followed_link_ancestor(
+                                            symlink_full_path_z.as_bytes(),
+                                            &target,
+                                        ) {
+                                            false
+                                        } else {
+                                            self.walker.record_followed_link(
+                                                symlink_full_path_z.as_bytes(),
+                                                target,
+                                            );
+                                            true
+                                        }
+                                    }
+                                    Err(_) => true,
+                                };
+                            if descend {
                                 self.walker.workbuf.push(WorkItem::new_with_fd(
                                     work_item.path,
                                     child,
@@ -1200,6 +1220,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
 // WorkItem
 // ─────────────────────────────────────────────────────────────────────────────
 
+struct FollowedLink {
+    path: Box<[u8]>,
+    stat: Stat,
+}
+
 pub struct WorkItem<A: Accessor> {
     pub path: Box<[u8]>,
     /// Bitmask of active component indices.
@@ -1395,6 +1420,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             i: 0,
             path_buf: Box::new(PathBuffer::uninit()),
             workbuf: Vec::new(),
+            followed_links: Vec::new(),
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,
         };
@@ -1926,6 +1952,23 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             entry_start,
         ));
         Ok(())
+    }
+
+    fn is_followed_link_ancestor(&self, link_path: &[u8], target: &Stat) -> bool {
+        self.followed_links.iter().any(|followed| {
+            followed.stat.st_dev == target.st_dev
+                && followed.stat.st_ino == target.st_ino
+                && followed.path.len() < link_path.len()
+                && strings::starts_with(link_path, &followed.path)
+                && bun_core::path_sep::is_sep_native(link_path[followed.path.len()])
+        })
+    }
+
+    fn record_followed_link(&mut self, link_path: &[u8], target: Stat) {
+        self.followed_links.push(FollowedLink {
+            path: Box::from(link_path),
+            stat: target,
+        });
     }
 
     #[inline]

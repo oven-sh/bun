@@ -352,6 +352,9 @@ impl Default for FSWatchTaskWindows {
 pub enum StringOrBytesToDecode {
     String(bun_core::String),
     BytesToFree(Box<[u8]>),
+    /// ReadDirectoryChangesW overflow: events were lost and no filename is
+    /// available. JS receives a null filename (matches node).
+    NoFilename,
 }
 
 // The `String` arm wraps `bun_core::String`, which is `#[derive(Copy)]` and
@@ -367,9 +370,8 @@ impl Drop for StringOrBytesToDecode {
     }
 }
 
-// `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
-// it into the owned `bytes_to_free` arm so the Windows task can carry it across
-// the thread hop.
+// `fs_events.rs` is compiled (not run) on Windows, where its platform-generic
+// `to_event(path.into())` needs `EventPathString: From<&[u8]>` to type-check.
 impl From<&[u8]> for StringOrBytesToDecode {
     #[inline]
     fn from(bytes: &[u8]) -> Self {
@@ -384,6 +386,7 @@ impl core::fmt::Display for StringOrBytesToDecode {
             StringOrBytesToDecode::BytesToFree(utf8) => {
                 write!(f, "{}", bstr::BStr::new(utf8))
             }
+            StringOrBytesToDecode::NoFilename => f.write_str("(null)"),
         }
     }
 }
@@ -435,27 +438,29 @@ impl FSWatchTaskWindows {
     #[cfg(windows)]
     fn run_path<const EVENT_TYPE: EventType>(ctx: &FSWatcher, path: &mut StringOrBytesToDecode) {
         use bun_jsc::StringJsc;
-        if ctx.encoding == Encoding::Utf8 {
-            let StringOrBytesToDecode::String(s) = path else {
-                // Producer invariant (win_watcher::on_path_update_windows): when
-                // `ctx.encoding == Utf8` the payload is always the `String`
-                // variant, and `encoding` is immutable after init.
-                unreachable!()
-            };
-            // Returning from this helper on `transferToJS` failure lets
-            // `run()` fall through to `unref_task()`, so
-            // `pending_activity_count` is never left permanently elevated.
-            let Ok(js) = s.transfer_to_js(&ctx.global_this) else {
-                return;
-            };
-            ctx.emit_with_filename::<EVENT_TYPE>(js);
-        } else {
-            let StringOrBytesToDecode::BytesToFree(bytes_ref) = path else {
-                unreachable!()
-            };
-            let bytes = core::mem::take(bytes_ref);
-            ctx.emit::<EVENT_TYPE>(&bytes);
-            drop(bytes);
+        // Producer invariant (win_watcher::emit): `String` is built only when
+        // `ctx.encoding == Utf8`, `BytesToFree` only otherwise, `NoFilename`
+        // for either; `encoding` is immutable after init.
+        match path {
+            StringOrBytesToDecode::NoFilename => {
+                ctx.emit_with_filename::<EVENT_TYPE>(JSValue::NULL);
+            }
+            StringOrBytesToDecode::String(s) => {
+                debug_assert!(ctx.encoding == Encoding::Utf8);
+                // Returning from this helper on `transferToJS` failure lets
+                // `run()` fall through to `unref_task()`, so
+                // `pending_activity_count` is never left permanently elevated.
+                let Ok(js) = s.transfer_to_js(&ctx.global_this) else {
+                    return;
+                };
+                ctx.emit_with_filename::<EVENT_TYPE>(js);
+            }
+            StringOrBytesToDecode::BytesToFree(bytes_ref) => {
+                debug_assert!(ctx.encoding != Encoding::Utf8);
+                let bytes = core::mem::take(bytes_ref);
+                ctx.emit::<EVENT_TYPE>(&bytes);
+                drop(bytes);
+            }
         }
     }
 

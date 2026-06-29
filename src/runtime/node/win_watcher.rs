@@ -234,22 +234,23 @@ impl PathWatcher {
             return;
         }
 
-        let Some(path) = (if filename.is_null() {
+        // A NULL filename with status 0 is libuv's ReadDirectoryChangesW
+        // buffer-overflow notification (win/fs-event.c): events were lost.
+        // Match node: deliver 'change' with a null filename so callers can rescan.
+        let path: Option<&[u8]> = if filename.is_null() {
             None
         } else {
             // SAFETY: libuv passes a valid NUL-terminated string when non-null.
-            Some(ZStr::from_cstr(unsafe {
-                core::ffi::CStr::from_ptr(filename)
-            }))
-        }) else {
-            return;
+            Some(unsafe { core::ffi::CStr::from_ptr(filename) }.to_bytes())
         };
 
-        // Intentional wrap to bun_watcher::HashType
-        let hash = this.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
+        // Intentional wrap to bun_watcher::HashType. Overflow events bypass
+        // dedup in `emit`, so they carry no hash.
+        let hash =
+            path.map_or(0, |p| this.handle.hash(p, events, status) as bun_watcher::HashType);
         let is_file = !this.handle.is_dir();
         this.emit(
-            path.as_bytes(),
+            path,
             hash,
             timestamp,
             is_file,
@@ -263,7 +264,7 @@ impl PathWatcher {
 
     pub(crate) fn emit(
         &mut self,
-        path: &[u8],
+        path: Option<&[u8]>,
         hash: bun_watcher::HashType,
         timestamp: u64,
         is_file: bool,
@@ -275,16 +276,23 @@ impl PathWatcher {
 
         for i in 0..self.handlers.len() {
             let event = &mut self.handlers.values_mut()[i];
-            if event.emit(hash, timestamp, event_type) {
+            // An overflow notification is never a suppressible duplicate — node
+            // delivers every one — so it bypasses dedup, like the posix
+            // `emit_unsuppressed`.
+            if path.is_none() || event.emit(hash, timestamp, event_type) {
                 let ctx: *mut FSWatcher = self.handlers.keys()[i].cast::<FSWatcher>();
                 // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
                 let encoding = unsafe { (*ctx).encoding };
                 // `EventPathString` on Windows is `StringOrBytesToDecode`.
-                let payload = match encoding {
-                    crate::node::Encoding::Utf8 => {
-                        StringOrBytesToDecode::String(BunString::clone_utf8(path))
-                    }
-                    _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
+                let payload = match path {
+                    // Overflow: no filename available; JS receives null (node parity).
+                    None => StringOrBytesToDecode::NoFilename,
+                    Some(path) => match encoding {
+                        crate::node::Encoding::Utf8 => {
+                            StringOrBytesToDecode::String(BunString::clone_utf8(path))
+                        }
+                        _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
+                    },
                 };
                 on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
                 #[cfg(debug_assertions)]
@@ -299,7 +307,7 @@ impl PathWatcher {
         bun_output::scoped_log!(
             fs_watch,
             "emit({}, {}, {}, at {}) x {}",
-            bstr::BStr::new(path),
+            bstr::BStr::new(path.unwrap_or(b"(null)")),
             if is_file { "file" } else { "dir" },
             <&'static str>::from(event_type),
             timestamp,

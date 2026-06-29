@@ -955,6 +955,120 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
   expect(exitCode).toBe(0); // unpatched: exitCode is 3 (Windows segfault)
 });
 
+// libuv signals a ReadDirectoryChangesW buffer overflow (events were lost) by
+// invoking the fs_event callback with a NULL filename; node surfaces it as a
+// 'change' event with a null filename, for every encoding, so callers can rescan.
+test.skipIf(!isWindows)(
+  "fs.watch delivers a null-filename 'change' event when ReadDirectoryChangesW overflows (windows)",
+  async () => {
+    using dir = tempDir("fswatch-overflow", {});
+    const watchDir = String(dir);
+    // ~100-char names make ~210-byte FILE_NOTIFY_INFORMATION entries, so ~19
+    // fill libuv's 4KB buffer; 100 blocked-loop writes overflow it ~5x over.
+    const N = 100;
+
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const path = require("node:path");
+
+      const dir = ${JSON.stringify(watchDir)};
+      const N = ${N};
+
+      const stats = {
+        utf8: { names: new Set(), nulls: 0, nullEventTypes: new Set() },
+        buffer: { names: new Set(), nulls: 0, nullEventTypes: new Set() },
+      };
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let settled = false;
+      const settle = fn => { if (!settled) { settled = true; fn(); } };
+
+      // Per watcher, the contract is: every created file is observed, or the
+      // overflow notification (strictly-null filename) arrives.
+      const done = s => s.nulls > 0 || s.names.size >= N;
+      const seen = (slot, eventType, filename) => {
+        if (filename === null) {
+          slot.nulls++;
+          slot.nullEventTypes.add(eventType);
+        } else {
+          slot.names.add(String(filename));
+        }
+        if (done(stats.utf8) && done(stats.buffer)) settle(resolve);
+      };
+
+      const watchers = [
+        fs.watch(dir, { encoding: "utf8" }, (e, f) => seen(stats.utf8, e, f)),
+        fs.watch(dir, { encoding: "buffer" }, (e, f) => seen(stats.buffer, e, f)),
+      ];
+      for (const w of watchers) {
+        w.on("error", err => settle(() => reject(err)));
+        w.on("close", () => settle(() => reject(new Error("watcher closed before overflow or full delivery"))));
+      }
+
+      // The watch is armed synchronously, so sync-writing N files now blocks
+      // the event loop while the kernel-side 4KB notification buffer fills,
+      // overflows, and discards — forcing the lost-events notification.
+      const pad = Buffer.alloc(90, "x").toString();
+      for (let i = 0; i < N; i++) {
+        fs.writeFileSync(path.join(dir, "f" + pad + String(i).padStart(3, "0") + ".txt"), "");
+      }
+
+      // Bounded window: on a build that drops the overflow notification the
+      // condition never becomes true, so give up and report what arrived.
+      const giveUp = setTimeout(() => settle(resolve), 3_000);
+
+      promise
+        .finally(() => {
+          clearTimeout(giveUp);
+          for (const w of watchers) w.close();
+          console.log(JSON.stringify({
+            utf8: { names: stats.utf8.names.size, nulls: stats.utf8.nulls, nullEventTypes: [...stats.utf8.nullEventTypes] },
+            buffer: { names: stats.buffer.names.size, nulls: stats.buffer.nulls, nullEventTypes: [...stats.buffer.nullEventTypes] },
+          }));
+        })
+        .catch(err => {
+          console.error(err);
+          process.exitCode = 1;
+        });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    type Slot = { names: number; nulls: number; nullEventTypes: string[] };
+    let result: { utf8: Slot; buffer: Slot };
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`fixture produced no JSON\nstdout: ${stdout}\nstderr: ${stderr}`);
+    }
+
+    const summarize = (s: Slot) =>
+      s.names >= N
+        ? "all events delivered"
+        : s.nulls > 0
+          ? `overflow signaled via ${JSON.stringify(s.nullEventTypes)}`
+          : `silent loss: ${JSON.stringify(s)}`;
+
+    const okDelivery = expect.stringMatching(/^(all events delivered|overflow signaled via \["change"\])$/);
+    expect({
+      utf8: summarize(result.utf8),
+      buffer: summarize(result.buffer),
+      signalCode: proc.signalCode, // the fixture must exit on its own
+      exitCode,
+    }).toEqual({
+      utf8: okDelivery,
+      buffer: okDelivery,
+      signalCode: null,
+      exitCode: 0,
+    });
+  },
+);
+
 // The FSEvents path in PathWatcher.init() dupeZ's the resolved directory path
 // into `resolved_path`, but then immediately overwrote `this.*` with a struct
 // literal that did not include `.resolved_path`, resetting it to its default

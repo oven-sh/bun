@@ -672,7 +672,7 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
 
         if (header.key == WebCore::HTTPHeaderName::Connection) {
             // Prevent automatic Connection: close insertion when user provides one
-            data->wroteConnectionHeader = true;
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
             // RFC 9112 §9.6: a server that sends the "close" connection option
             // MUST close after the response.
             if (connectionValueHasClose(value)) {
@@ -713,14 +713,14 @@ static void NodeHTTPServer__writeHead(
     response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
     // It owns the Connection header the same way (_storeHeader always decides
     // and writes one), so never append uWS's own Connection: close after it.
-    response->getHttpResponseData()->wroteConnectionHeader = true;
+    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
 
     // 204/304 responses must not carry any body framing, even when the user
     // explicitly set a Transfer-Encoding header (Node.js suppresses the
     // chunked framing and closes the connection for those).
     if (statusMessageLength >= 3 && (memcmp(statusMessage, "204", 3) == 0 || memcmp(statusMessage, "304", 3) == 0)
         && (statusMessageLength == 3 || statusMessage[3] == ' ')) {
-        response->getHttpResponseData()->noBodyStatus = true;
+        response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
     }
 
     if (headersObject) {
@@ -753,9 +753,9 @@ static void NodeHTTPServer__writeHead(
                 // (HEAD - suppress all body framing like 204/304).
                 if (name.length() == 1 && name[0] == 0) {
                     if (value == "2"_s) {
-                        httpResponseData->noBodyStatus = true;
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
                     } else {
-                        httpResponseData->closeDelimited = true;
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED;
                     }
                     continue;
                 }

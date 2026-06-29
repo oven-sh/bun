@@ -297,7 +297,9 @@ private:
                 return nullptr;
             }
 
-            /* Mark pending request and emit it */
+            /* Mark pending request and reset the rest of the per-response
+             * state; a stale bit from the previous keep-alive response (e.g.
+             * HTTP_NO_BODY_STATUS) must not leak into this one. */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
 
@@ -307,13 +309,9 @@ private:
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             }
 
-            httpResponseData->fromAncientRequest = httpRequest->isAncient();
-
-            /* Reset per-request framing flags; stale values from a previous
-             * keep-alive response can suppress body framing or Connection. */
-            httpResponseData->noBodyStatus = false;
-            httpResponseData->closeDelimited = false;
-            httpResponseData->wroteConnectionHeader = false;
+            if (httpRequest->isAncient()) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_FROM_ANCIENT_REQUEST;
+            }
 
             /* Select the router based on SNI (only possible for SSL) */
             auto *selectedRouter = &httpContextData->router;

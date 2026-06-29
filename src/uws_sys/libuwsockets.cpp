@@ -1343,7 +1343,7 @@ extern "C"
         /* RFC 9112 9.6: a closing response should carry a "close" connection
          * option, skipped once the header block is terminated or when the
          * application already wrote its own Connection header. */
-        if (!(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED)) && !data->wroteConnectionHeader)
+        if (!(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED | uWS::HttpResponseData<true>::HTTP_WROTE_CONNECTION_HEADER)))
         {
           uwsRes->writeHeader("Connection", "close");
         }
@@ -1366,7 +1366,7 @@ extern "C"
         /* RFC 9112 9.6: a closing response should carry a "close" connection
          * option, skipped once the header block is terminated or when the
          * application already wrote its own Connection header. */
-        if (!(data->state & (uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_END_CALLED)) && !data->wroteConnectionHeader)
+        if (!(data->state & (uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_END_CALLED | uWS::HttpResponseData<false>::HTTP_WROTE_CONNECTION_HEADER)))
         {
           uwsRes->writeHeader("Connection", "close");
         }

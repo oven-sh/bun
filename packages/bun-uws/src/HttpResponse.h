@@ -144,8 +144,8 @@ public:
 
         /* A no-body status carries no Content-Length (RFC 9110 8.6) and no body
          * bytes (RFC 9112 6.3 terminates it at the blank line). end() already
-         * short-circuits on noBodyStatus; tryEnd() reaches here directly. */
-        if (httpResponseData->noBodyStatus) {
+         * short-circuits on HTTP_NO_BODY_STATUS; tryEnd() reaches here directly. */
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NO_BODY_STATUS) {
             allowContentLength = false;
             data = {};
             totalSize = 0;
@@ -159,7 +159,7 @@ public:
                 /* RFC 9112 9.6: a closing response should carry a "close"
                  * connection option, skipped once the body started or when the
                  * application already wrote its own Connection header. */
-                if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED)) && !httpResponseData->wroteConnectionHeader) {
+                if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER))) {
                     writeHeader("Connection", "close");
                 }
 
@@ -168,7 +168,7 @@ public:
         }
 
         /* if write was called and there was previously no Content-Length header set */
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_FROM_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
@@ -432,10 +432,10 @@ public:
 
         /* RFC 9110 8.6: a 1xx/204 MUST NOT carry Content-Length and has no
          * body; record that at the one point every response passes through.
-         * 304 MAY carry one, so node:http sets noBodyStatus for it itself. */
+         * 304 MAY carry one, so node:http sets HTTP_NO_BODY_STATUS for it itself. */
         if (status.length() >= 3 && (status.length() == 3 || status[3] == ' ')
             && (status[0] == '1' || (status[0] == '2' && status[1] == '0' && status[2] == '4'))) {
-            httpResponseData->noBodyStatus = true;
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_NO_BODY_STATUS;
         }
 
         /* Update status */
@@ -464,7 +464,7 @@ public:
 
         /* Every integer Content-Length write funnels through this overload;
          * a 1xx / 204 response must not carry one (RFC 9110 8.6). */
-        if (getHttpResponseData()->noBodyStatus && key.length() == 14 && !strncasecmp(key.data(), "content-length", 14)) {
+        if ((getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_NO_BODY_STATUS) && key.length() == 14 && !strncasecmp(key.data(), "content-length", 14)) {
             return this;
         }
 
@@ -491,7 +491,7 @@ public:
         /* 204/304 responses carry no body framing at all: no Content-Length,
          * no chunked framing and no terminating chunk, even when an explicit
          * Transfer-Encoding header was written (RFC 9110 6.4.1). */
-        if (httpResponseData->noBodyStatus) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NO_BODY_STATUS) {
             internalEnd({nullptr, 0}, 0, false, false, closeConnection);
             return;
         }
@@ -501,7 +501,7 @@ public:
          * framing, and the connection closes to delimit the message. The
          * CONNECTION_CLOSE state is set directly so internalEnd() closes the
          * socket without adding a Connection: close header the user removed. */
-        if (httpResponseData->closeDelimited) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED) {
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             internalEnd(data, data.length(), false, false, false);
             return;
@@ -512,8 +512,8 @@ public:
          * Terminate the headers and enter chunked mode so internalEnd() takes the
          * chunked path instead of writing the raw body after the headers. */
         if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER) &&
-            !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) &&
-            !httpResponseData->fromAncientRequest && !httpResponseData->noBodyStatus) {
+            !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER |
+                HttpResponseData<SSL>::HTTP_FROM_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
             writeStatus(HTTP_200_OK);
             writeMark();
             Super::write("\r\n", 2);
@@ -562,7 +562,7 @@ public:
 
         /* Close-delimited responses must not re-add the Transfer-Encoding
          * header the user removed; their body is raw, so take the else path. */
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited && !httpResponseData->noBodyStatus) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_FROM_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
@@ -635,7 +635,7 @@ public:
 
         /* Close-delimited responses (the user removed the framing headers)
          * write raw bytes with no chunk framing, like the else path. */
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_FROM_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED))) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
@@ -677,7 +677,7 @@ public:
 
         /* Close-delimited bodies are raw; the chunk-terminating CRLF would be
          * injected into the body bytes. */
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest && !httpResponseData->closeDelimited) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_FROM_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED))) {
             // Write End of Chunked Encoding after data has been written
             Super::write("\r\n", 2);
         }

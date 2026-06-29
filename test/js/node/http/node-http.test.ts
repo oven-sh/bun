@@ -2736,7 +2736,7 @@ it("standalone ServerResponse discards body writes to a no-body response without
 });
 
 it("flushHeaders on a 204 response carries no chunked framing", async () => {
-  // noBodyStatus must suppress the Transfer-Encoding header in flushHeaders()
+  // HTTP_NO_BODY_STATUS must suppress the Transfer-Encoding header in flushHeaders()
   // and the terminating chunk in internalEnd(), like the one-shot end() path.
   const server = createServer((req, res) => {
     if (req.url === "/nobody") {

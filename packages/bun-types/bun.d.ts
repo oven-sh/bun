@@ -1,5 +1,5 @@
 /**
- * Bun.js runtime APIs
+ * Bun runtime APIs
  *
  * @example
  *
@@ -50,15 +50,10 @@ declare module "bun" {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
 
     /**
-     * Helper type for avoiding conflicts in types.
+     * Uses the lib.dom.d.ts definition of a global if it exists, otherwise falls back to `Otherwise`.
      *
-     * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
-     *
-     * This is to avoid type conflicts between lib.dom.d.ts and \@types/bun.
-     *
-     * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
-     * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
-     * to the type that lib.dom.d.ts provides.
+     * Some symbols can't be declared in a way that satisfies both \@types/bun and lib.dom.d.ts,
+     * so when lib.dom.d.ts is loaded, its definition wins.
      */
     type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
       // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
@@ -202,7 +197,7 @@ declare module "bun" {
     onerror: ((this: EventSource, ev: Event) => any) | null;
     onmessage: ((this: EventSource, ev: MessageEvent) => any) | null;
     onopen: ((this: EventSource, ev: Event) => any) | null;
-    /** Returns the state of this EventSource object's connection. It can have the values described below. */
+    /** Returns the state of this EventSource object's connection: `CONNECTING` (0), `OPEN` (1), or `CLOSED` (2). */
     readonly readyState: number;
     /** Returns the URL providing the event stream. */
     readonly url: string;
@@ -248,14 +243,14 @@ declare module "bun" {
     ): void;
 
     /**
-     * Keep the event loop alive while connection is open or reconnecting
+     * Keep the event loop alive while the connection is open or reconnecting
      *
      * Not available in browsers
      */
     ref(): void;
 
     /**
-     * Do not keep the event loop alive while connection is open or reconnecting
+     * Do not keep the event loop alive while the connection is open or reconnecting
      *
      * Not available in browsers
      */
@@ -307,7 +302,7 @@ declare module "bun" {
     pull?: UnderlyingSourcePullCallback<R>;
     start?: UnderlyingSourceStartCallback<R>;
     /**
-     * Mode "bytes" is not currently supported.
+     * Mode "bytes" is not supported.
      */
     type?: undefined;
   }
@@ -374,8 +369,8 @@ declare module "bun" {
    */
   interface WorkerOptions {
     /**
-     * A string specifying an identifying name for the DedicatedWorkerGlobalScope representing the scope of
-     * the worker, which is mainly useful for debugging purposes.
+     * An identifying name for the worker's `DedicatedWorkerGlobalScope`, mainly
+     * useful for debugging.
      */
     name?: string;
 
@@ -388,10 +383,10 @@ declare module "bun" {
     smol?: boolean;
 
     /**
-     * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
-     * When `false`, the worker will not keep the parent thread alive.
+     * When `true`, the worker keeps the parent thread alive until the worker is terminated or `unref`'d.
+     * When `false`, it does not.
      *
-     * By default, this is `false`.
+     * @default false
      */
     ref?: boolean;
 
@@ -401,10 +396,9 @@ declare module "bun" {
     type?: Bun.WorkerType | undefined;
 
     /**
-     * List of arguments which would be stringified and appended to
-     * `Bun.argv` / `process.argv` in the worker. This is mostly similar to the `data`
-     * but the values will be available on the global `Bun.argv` as if they
-     * were passed as CLI options to the script.
+     * List of arguments to stringify and append to `Bun.argv` / `process.argv`
+     * in the worker. The values are available on the global `Bun.argv` as if
+     * they were passed as CLI options to the script.
      */
     argv?: any[] | undefined;
 
@@ -412,7 +406,9 @@ declare module "bun" {
     // eval?: boolean | undefined;
 
     /**
-     * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
+     * If set, the initial value of `process.env` inside the Worker thread. Pass `worker.SHARE_ENV`
+     * from `node:worker_threads` to share environment variables between the parent and worker threads;
+     * changes to one thread's `process.env` then affect the other thread as well. Default: `process.env`.
      */
     env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"] | undefined;
 
@@ -477,17 +473,16 @@ declare module "bun" {
     ): void;
 
     /**
-     * Opposite of `unref()`, calling `ref()` on a previously `unref()`ed worker does _not_ let the program exit if it's the only active handle left (the default
-     * behavior). If the worker is `ref()`ed, calling `ref()` again has
-     * no effect.
-     * @since v10.5.0
+     * Opposite of `unref()`: calling `ref()` on a previously `unref()`ed worker does _not_ let the
+     * program exit if it's the only active handle left (the default behavior).
+     * If the worker is already `ref()`ed, calling `ref()` again has no effect.
      */
     ref(): void;
 
     /**
      * Calling `unref()` on a worker allows the thread to exit if this is the only
-     * active handle in the event system. If the worker is already `unref()`ed calling`unref()` again has no effect.
-     * @since v10.5.0
+     * active handle in the event system. If the worker is already `unref()`ed,
+     * calling `unref()` again has no effect.
      */
     unref(): void;
 
@@ -495,7 +490,6 @@ declare module "bun" {
      * An integer identifier for the referenced thread. Inside the worker thread,
      * it is available as `require('node:worker_threads').threadId`.
      * This value is unique for each `Worker` instance inside a single process.
-     * @since v10.5.0
      */
     threadId: number;
   }
@@ -503,7 +497,7 @@ declare module "bun" {
   interface Env {
     NODE_ENV?: string;
     /**
-     * Can be used to change the default timezone at runtime
+     * Set to change the default timezone at runtime
      */
     TZ?: string;
   }
@@ -518,42 +512,45 @@ declare module "bun" {
   const env: Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
   /**
-   * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
+   * The raw arguments passed to the process, including flags passed to Bun.
+   * To read the flags passed to your script, use `process.argv` instead.
    */
   const argv: string[];
 
   interface WhichOptions {
     /**
-     * Overrides the PATH environment variable
+     * Overrides the `PATH` environment variable
      */
     PATH?: string;
 
     /**
-     * When given a relative path, use this path to join it.
+     * When `command` is a relative path, resolve it against this directory.
      */
     cwd?: string;
   }
 
   /**
-   * Find the path to an executable, similar to typing which in your terminal. Reads the `PATH` environment variable unless overridden with `options.PATH`.
+   * Find the path to an executable, like the `which` command in your terminal.
+   * Reads the `PATH` environment variable unless overridden with `options.PATH`.
    *
    * @category Utilities
    *
    * @param command The name of the executable or script to find
    * @param options Options for the search
+   * @returns The path to the executable, or `null` if it isn't found
    */
   function which(command: string, options?: WhichOptions): string | null;
 
   interface StringWidthOptions {
     /**
-     * If `true`, count ANSI escape codes as part of the string width. If `false`, ANSI escape codes are ignored when calculating the string width.
+     * If `true`, count ANSI escape codes as part of the string width. If `false`, ignore them.
      *
      * @default false
      */
     countAnsiEscapeCodes?: boolean;
 
     /**
-     * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
+     * If `true`, count ambiguous-width characters as 1 character wide. If `false`, count them as 2 characters wide.
      *
      * @default true
      */
@@ -564,13 +561,10 @@ declare module "bun" {
    * Get the column count of a string as it would be displayed in a terminal.
    * Supports ANSI escape codes, emoji, and wide characters.
    *
-   * This is useful for:
-   * - Aligning text in a terminal
-   * - Quickly checking if a string contains ANSI escape codes
-   * - Measuring the width of a string in a terminal
+   * This API is designed to match the `string-width` npm package, so existing
+   * code can be ported in either direction.
    *
-   * This API is designed to match the popular "string-width" package, so that
-   * existing code can be easily ported to Bun and vice versa.
+   * @category Utilities
    *
    * @returns The width of the string in columns
    *
@@ -651,7 +645,7 @@ declare module "bun" {
    * @param input The string to slice
    * @param start Starting column (default 0). Negative counts from end.
    * @param end Ending column, exclusive (default end of string). Negative counts from end.
-   * @param options Optional behavior flags (e.g. `ellipsis` for truncation)
+   * @param options Optional behavior flags (such as `ellipsis` for truncation)
    * @returns The sliced string with ANSI codes intact
    *
    * @example
@@ -713,7 +707,7 @@ declare module "bun" {
     trim?: boolean;
 
     /**
-     * When it's ambiguous and `true`, count ambiguous width characters as 1 character wide.
+     * If `true`, count ambiguous-width characters as 1 character wide.
      * If `false`, count them as 2 characters wide.
      *
      * @default true
@@ -724,7 +718,7 @@ declare module "bun" {
   /**
    * Wrap a string to fit within the specified column width, preserving ANSI escape codes.
    *
-   * This function is designed to be compatible with the popular "wrap-ansi" NPM package.
+   * Designed to be compatible with the `wrap-ansi` npm package.
    *
    * Features:
    * - Preserves ANSI escape codes (colors, styles) across line breaks
@@ -823,7 +817,7 @@ declare module "bun" {
   /**
    * JSONL (JSON Lines) related APIs.
    *
-   * Each line in the input is expected to be a valid JSON value separated by newlines.
+   * Each line of the input is a JSON value.
    */
   namespace JSONL {
     /**
@@ -832,7 +826,7 @@ declare module "bun" {
     interface ParseChunkResult {
       /** The successfully parsed JSON values. */
       values: unknown[];
-      /** How far into the input was consumed. When the input is a string, this is a character offset. When the input is a `TypedArray`, this is a byte offset. Use `input.slice(read)` or `input.subarray(read)` to get the unconsumed remainder. */
+      /** How much of the input was consumed. When the input is a string, this is a character offset. When the input is a `TypedArray`, this is a byte offset. Use `input.slice(read)` or `input.subarray(read)` to get the unconsumed remainder. */
       read: number;
       /** `true` if all input was consumed successfully. `false` if the input ends with an incomplete value or a parse error occurred. */
       done: boolean;
@@ -847,8 +841,8 @@ declare module "bun" {
      * a `SyntaxError`. If values were parsed before the error, returns the
      * successfully parsed values without throwing.
      *
-     * Incomplete trailing values (e.g. from a partial chunk) are silently
-     * ignored and not included in the result.
+     * Incomplete trailing values (for example, from a partial chunk) are
+     * silently ignored.
      *
      * When a `TypedArray` is passed, the bytes are parsed directly without
      * copying if the content is ASCII.

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -565,5 +565,104 @@ describe("async context passes through", () => {
       });
     });
     expect(a).toBe("value");
+  });
+  // The observer callback runs in the async context of the entry that
+  // scheduled the delivery batch (the first one queued), matching Node.
+  test("PerformanceObserver", async () => {
+    const s = new AsyncLocalStorage<string>();
+    const { promise, resolve } = Promise.withResolvers<{ store: string | undefined; names: string[] }>();
+    const observer = new PerformanceObserver(list => {
+      resolve({
+        store: s.getStore(),
+        names: list
+          .getEntries()
+          .map(e => e.name)
+          .sort(),
+      });
+    });
+    try {
+      s.run("registration", () => observer.observe({ entryTypes: ["measure"] }));
+      s.run("p1", () => {
+        performance.mark("a");
+        performance.measure("m1", "a");
+      });
+      s.run("p2", () => {
+        performance.mark("b");
+        performance.measure("m2", "b");
+      });
+      expect(await promise).toEqual({ store: "p1", names: ["m1", "m2"] });
+    } finally {
+      observer.disconnect();
+      performance.clearMarks();
+      performance.clearMeasures();
+    }
+  });
+  test("PerformanceObserver with no producing context", async () => {
+    const s = new AsyncLocalStorage<string>();
+    const { promise, resolve } = Promise.withResolvers<string | undefined>();
+    const observer = new PerformanceObserver(() => resolve(s.getStore()));
+    try {
+      // The registration context is not what the callback sees.
+      s.run("registration", () => observer.observe({ entryTypes: ["measure"] }));
+      performance.mark("c");
+      performance.measure("m3", "c");
+      expect(await promise).toBeUndefined();
+    } finally {
+      observer.disconnect();
+      performance.clearMarks();
+      performance.clearMeasures();
+    }
+  });
+  // Signal handlers mutate process-global state, so run them in a subprocess.
+  test.skipIf(isWindows)("process signal handlers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { AsyncLocalStorage } from "node:async_hooks";
+        const als = new AsyncLocalStorage();
+        const seen = [];
+        const firstBatch = Promise.withResolvers();
+        const rearmed = Promise.withResolvers();
+
+        // All listeners for a signal run in the context captured when the
+        // first one was registered, matching Node's Signal async resource.
+        als.run("first", () => {
+          process.on("SIGUSR2", () => {
+            seen.push("a:" + als.getStore());
+            if (seen.length === 2) firstBatch.resolve();
+          });
+        });
+        als.run("second", () => {
+          process.on("SIGUSR2", () => {
+            seen.push("b:" + als.getStore());
+            if (seen.length === 2) firstBatch.resolve();
+          });
+        });
+        process.kill(process.pid, "SIGUSR2");
+        await firstBatch.promise;
+
+        // Removing the last listener drops the captured context; a fresh
+        // registration captures the new one.
+        process.removeAllListeners("SIGUSR2");
+        als.run("third", () => {
+          process.on("SIGUSR2", () => {
+            seen.push("c:" + als.getStore());
+            rearmed.resolve();
+          });
+        });
+        process.kill(process.pid, "SIGUSR2");
+        await rearmed.promise;
+
+        console.log(JSON.stringify(seen));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify(["a:first", "b:first", "c:third"]),
+      exitCode: 0,
+    });
   });
 });

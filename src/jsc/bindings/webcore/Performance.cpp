@@ -51,6 +51,9 @@
 #include "PerformanceUserTiming.h"
 // #include "ResourceResponse.h"
 #include "ScriptExecutionContext.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/StrongInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
 
@@ -461,11 +464,33 @@ void Performance::scheduleTaskIfNeeded()
     if (!context)
         return;
 
+    // Observer callbacks run in the async context of the entry that scheduled
+    // the delivery task (the first one queued in this batch), matching Node.
+    if (auto* globalObject = context->jsGlobalObject()) {
+        JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+        if (!asyncContext.isUndefined())
+            m_timingBufferDeliveryAsyncContext.set(globalObject->vm(), asyncContext);
+    }
+
     m_hasScheduledTimingBufferDeliveryTask = true;
     context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
+
+        JSC::JSValue restoreAsyncContext {};
+        JSC::InternalFieldTuple* asyncContextData = nullptr;
+        auto* globalObject = context.jsGlobalObject();
+        if (m_timingBufferDeliveryAsyncContext && globalObject) {
+            asyncContextData = globalObject->m_asyncContextData.get();
+            restoreAsyncContext = asyncContextData->getInternalField(0);
+            asyncContextData->putInternalField(globalObject->vm(), 0, m_timingBufferDeliveryAsyncContext.get());
+        }
+        m_timingBufferDeliveryAsyncContext.clear();
+
         for (auto& observer : copyToVector(m_observers))
             observer->deliver();
+
+        if (asyncContextData)
+            asyncContextData->putInternalField(globalObject->vm(), 0, restoreAsyncContext);
     });
 }
 

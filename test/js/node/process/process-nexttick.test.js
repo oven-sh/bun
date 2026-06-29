@@ -1,7 +1,8 @@
 // Running this file in jest/vitest does not work as expected. Jest & Vitest
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {
@@ -1035,4 +1036,53 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 
   expect(call1).toBe(true);
   expect(call2).toBe(true);
+});
+
+// The onEachMicrotaskTick hook that hands control from the microtask queue to the nextTick
+// queue is one-shot: it uninstalls itself after the process's first process.nextTick call.
+// Every case below therefore needs a subprocess that has never called process.nextTick.
+describe("process.nextTick interleaving with the microtask queue", () => {
+  async function runFresh(kind, script) {
+    using dir = tempDir("nexttick-order", { "index.js": script });
+    await using proc = Bun.spawn({
+      cmd: kind === "-e" ? [bunExe(), "-e", script] : [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { order: JSON.parse(stdout.trim() || "null"), exitCode };
+  }
+
+  // Node drains the entire microtask queue, including microtasks those microtasks queue,
+  // before running nextTick callbacks queued from inside one of them. Node prints the same
+  // order for .js, .cjs, and .mjs entry points.
+  it.each(["-e", "file"])("queued from inside a microtask waits for the microtask queue (%s)", async kind => {
+    const result = await runFresh(
+      kind,
+      `const L = [];
+       Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick1")); });
+       Promise.resolve().then(() => { L.push("p2"); Promise.resolve().then(() => L.push("p2-nested")); });
+       queueMicrotask(() => L.push("q3"));
+       setTimeout(() => {
+         process.nextTick(() => L.push("tick2"));
+         Promise.resolve().then(() => L.push("p4"));
+         setTimeout(() => console.log(JSON.stringify(L)), 1);
+       }, 1);`,
+    );
+    expect(result).toEqual({ order: ["p1", "p2", "q3", "p2-nested", "tick1", "tick2", "p4"], exitCode: 0 });
+  });
+
+  // The script's own top-level code is a nextTick checkpoint boundary: nextTicks it queues run
+  // before the promise jobs it queues. Matches a Node CommonJS entry point.
+  it.each(["-e", "file"])("queued from the script's top-level code runs before its promise jobs (%s)", async kind => {
+    const result = await runFresh(
+      kind,
+      `const L = [];
+       process.nextTick(() => L.push("tick0"));
+       Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick1")); });
+       Promise.resolve().then(() => L.push("p2"));
+       setTimeout(() => console.log(JSON.stringify(L)), 1);`,
+    );
+    expect(result).toEqual({ order: ["tick0", "p1", "p2", "tick1"], exitCode: 0 });
+  });
 });

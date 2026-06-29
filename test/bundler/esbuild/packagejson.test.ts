@@ -323,7 +323,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserMapModuleDisabled", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'

@@ -2420,9 +2420,10 @@ impl<'a> Resolver<'a> {
                             )
                         {
                             if remap.is_empty() {
+                                // "browser": {"./some/path.js": false}
+                                // Keep the resolved path as the module's identity;
+                                // only mark it disabled.
                                 result.path_pair.primary.is_disabled = true;
-                                result.path_pair.primary =
-                                    Fs::Path::init_with_namespace(remap, b"file");
                             } else {
                                 let mut remapped = MatchResult::default();
                                 if self

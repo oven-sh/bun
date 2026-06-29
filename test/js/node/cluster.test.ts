@@ -192,11 +192,12 @@ if (cluster.isPrimary) {
   const iterations = 6;
   for (let i = 0; i < iterations; i++) await forkOnce();
 
-  // Bounded poll: deferred finalization may lag a tick, but a real leak
-  // (one Strong-rooted Subprocess per fork) never resolves.
+  // Bounded poll across event-loop turns: finalization may need a few extra
+  // turns, while a leaked (Strong-rooted) Subprocess never goes away.
+  const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
   let after = countSubprocesses();
   for (let i = 0; i < 40 && after - before > 1; i++) {
-    await Bun.sleep(25);
+    await nextTurn();
     after = countSubprocesses();
   }
 
@@ -217,9 +218,6 @@ if (cluster.isPrimary) {
   expect(summary, `stderr: ${stderr}`).toStartWith("{");
   const { before, after, workers } = JSON.parse(summary);
   expect(workers).toBe(0);
-  // The internal IPC send-queue used to hold jsc.Strong roots on the cluster
-  // Worker, which references the Subprocess that owns the queue, so every
-  // fork leaked one native Subprocess (plus the worker's JS object graph).
   expect(after - before).toBeLessThanOrEqual(1);
   expect(exitCode).toBe(0);
 }, 60_000);

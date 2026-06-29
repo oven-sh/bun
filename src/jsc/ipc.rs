@@ -998,9 +998,9 @@ impl SendQueue {
             self.windows.windows_write = None; // will be freed by _windowsOnWriteComplete
         }
         self.keep_alive.disable();
-        // The channel is gone: release the cluster-internal GC roots now. They
-        // root the cluster Worker, which references the owning Subprocess, a
-        // cycle the GC can never break (one Subprocess leaked per cluster.fork).
+        // The channel is gone: release the cluster-internal GC roots. They root
+        // the Worker, which references the owning Subprocess, so keeping them
+        // past the channel's lifetime pins the whole worker object graph.
         self.internal_msg_queue.deinit();
         let was_open = matches!(self.socket, SocketUnion::Open(_));
         self.socket = SocketUnion::Closed;

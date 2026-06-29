@@ -977,7 +977,7 @@ impl ServerWebSocket {
 
         let topic_slice = topic_str.to_slice_wtf8(global_this);
         if topic_slice.slice().is_empty() {
-            return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
+            return Err(global_this.throw(format_args!("publishText requires a non-empty topic")));
         }
 
         let slice = str.to_slice(global_this);

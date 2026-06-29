@@ -3769,6 +3769,12 @@ describe("Buffer.from(arrayBuffer, byteOffset, length) bounds", () => {
     expect(Buffer.from(ab, 0, 16).length).toBe(16);
     expect(Buffer.from(ab, 0, 15.5).length).toBe(15);
     expect(Buffer.from(ab, 8, 8).length).toBe(8);
+    // ... and that capacity is computed from the un-truncated offset
+    expect(() => Buffer.from(ab, 0.5, 16)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(() => Buffer.from(ab, 15.5, 1)).toThrowWithCode(RangeError, "ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(Buffer.from(ab, 0.5, 15).length).toBe(15);
+    const fractional = Buffer.from(ab, 3.5, 12);
+    expect([fractional.byteOffset, fractional.length]).toEqual([3, 12]);
   });
 
   it("throws ERR_BUFFER_OUT_OF_BOUNDS for offsets past the end", () => {

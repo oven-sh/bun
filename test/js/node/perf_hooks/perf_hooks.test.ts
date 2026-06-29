@@ -83,6 +83,16 @@ test("node:dns operations are observable as 'dns' performance entries", async ()
     addresses: expect.any(Array),
   });
   expect(typeof entries[0].detail.addresses[0]).toBe("string");
+  // An explicit order is reported as Node reports it: verbatim means exactly
+  // order === "verbatim".
+  expect(entries[1].detail).toEqual({
+    hostname: "localhost",
+    family: 0,
+    hints: 0,
+    verbatim: false,
+    order: "ipv6first",
+    addresses: expect.any(Array),
+  });
   expect(entries[2].detail).toEqual({
     host: "127.0.0.1",
     port: 80,

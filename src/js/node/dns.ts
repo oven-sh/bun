@@ -282,14 +282,16 @@ function observeLookup(hostname, options, promise) {
       hostname,
       family: options.family ?? 0,
       hints: options.flags ?? 0,
-      verbatim: options.order !== "ipv4first",
+      verbatim: options.order === "verbatim",
       order: options.order,
     },
   });
   return promise.then(res => {
     // An empty result reaches the caller as ENODATA (see throwIfEmpty), so it
-    // records nothing, like every other failed lookup.
-    if (res.length) stopPerf(ctx, kPerfEntry, { detail: { addresses: res.map(mapResolveX) } });
+    // records nothing, like every other failed lookup. The recorded addresses
+    // are ordered the way the caller will receive them.
+    if (res.length)
+      stopPerf(ctx, kPerfEntry, { detail: { addresses: sortByOrder(res, options.order).map(mapResolveX) } });
     return res;
   });
 }
@@ -325,6 +327,17 @@ function observeQuery(name, host, promise, ttl?) {
 function queryNameFor(rrtype) {
   rrtype = "" + rrtype;
   return "query" + rrtype.charAt(0).toUpperCase() + rrtype.slice(1).toLowerCase();
+}
+
+// Applies the requested result order to `res` in place and returns it.
+// Re-applying it is a no-op, so observeLookup may run it before the caller.
+function sortByOrder(res, order) {
+  if (order == "ipv4first") {
+    res.sort((a, b) => a.family - b.family);
+  } else if (order == "ipv6first") {
+    res.sort((a, b) => b.family - a.family);
+  }
+  return res;
 }
 
 function lookup(hostname, options, callback) {
@@ -373,11 +386,7 @@ function lookup(hostname, options, callback) {
     .then(res => {
       throwIfEmpty(res);
 
-      if (options.order == "ipv4first") {
-        res.sort((a, b) => a.family - b.family);
-      } else if (options.order == "ipv6first") {
-        res.sort((a, b) => b.family - a.family);
-      }
+      sortByOrder(res, options.order);
 
       if (options?.all) {
         callback(null, res.map(mapLookupAll));
@@ -738,22 +747,14 @@ Object.defineProperty(throwIfEmpty, "name", { value: "::bunternal::" });
 
 const promisifyLookup = order => res => {
   throwIfEmpty(res);
-  if (order == "ipv4first") {
-    res.sort((a, b) => a.family - b.family);
-  } else if (order == "ipv6first") {
-    res.sort((a, b) => b.family - a.family);
-  }
+  sortByOrder(res, order);
   const [{ address, family }] = res;
   return { address, family };
 };
 
 const promisifyLookupAll = order => res => {
   throwIfEmpty(res);
-  if (order == "ipv4first") {
-    res.sort((a, b) => a.family - b.family);
-  } else if (order == "ipv6first") {
-    res.sort((a, b) => b.family - a.family);
-  }
+  sortByOrder(res, order);
   return res.map(mapLookupAll);
 };
 

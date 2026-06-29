@@ -857,19 +857,40 @@ where
 
     /// Directory-arm half of the recreated-import recovery: for every
     /// [`Self::remember_deleted_watch`]ed path directly under `dir_path` that
-    /// exists on disk again, enqueue a reload and forget it. The reload's
-    /// re-import re-adds the per-file watch on the new inode; the existing
-    /// watchlist scan can't, because the delete already evicted the entry.
+    /// exists on disk again but is **not** back in the watchlist, enqueue a
+    /// reload and forget it; the re-import re-adds the per-file watch.
+    ///
+    /// The watchlist membership check is load-bearing, not an optimization.
+    /// A delete also enqueues its own reload (the `File` arm's `DELETE`
+    /// append), and if the path reappears before that reload runs (e.g. a
+    /// rename immediately follows the unlink), that reload already re-added
+    /// the watch. Appending again here would stack a second reload of an
+    /// unchanged module, which can land between a rejected module's eval and
+    /// its report and clobber its sourcemap. `watchlist_hashes` is the
+    /// caller's snapshot taken on this batch's entry, so it already reflects
+    /// every re-add the JS thread performed since the record was made.
     fn reenqueue_recreated_files(
         &mut self,
         dir_path: &[u8],
+        watchlist_hashes: &[bun_watcher::HashType],
         task: &mut Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
     ) {
         if self.deleted_watched_files.is_empty() {
             return;
         }
+        // A reload is already queued and has not started. It reads the live
+        // filesystem and re-adds every module that resolves, so it already
+        // covers any recorded path that has reappeared by now. Re-check on
+        // the next directory event instead of stacking a second reload.
+        if self.pending_count.load(Ordering::Relaxed) > 0 {
+            return;
+        }
         let dir_no_slash = strings::paths::without_trailing_slash_windows_path(dir_path);
         self.deleted_watched_files.retain(|deleted_path, hash| {
+            // Already re-watched: an earlier reload re-imported it.
+            if watchlist_hashes.contains(hash) {
+                return false;
+            }
             let deleted_path: &[u8] = deleted_path;
             if bun_core::dirname(deleted_path) != Some(dir_no_slash)
                 || !bun_sys::exists(deleted_path)
@@ -1047,7 +1068,7 @@ where
                         );
                         // Exception: a recreated import has no watchlist entry
                         // left, so no file event matches it. Re-arm it here.
-                        self.reenqueue_recreated_files(file_path, &mut current_task);
+                        self.reenqueue_recreated_files(file_path, hashes, &mut current_task);
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -1207,7 +1228,7 @@ where
                         // Same inode-replacement recovery, generalized to every
                         // import: its delete evicted the watchlist entry, so the
                         // `hashes` scan below can't see the recreated file.
-                        self.reenqueue_recreated_files(file_path, &mut current_task);
+                        self.reenqueue_recreated_files(file_path, hashes, &mut current_task);
 
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);

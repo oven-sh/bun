@@ -3313,11 +3313,10 @@ declare module "bun" {
   /**
    * Default Redis client
    *
-   * Connection information populated from one of, in order of preference:
+   * Connection information comes from the first of these that is set:
    * - `process.env.VALKEY_URL`
    * - `process.env.REDIS_URL`
    * - `"valkey://localhost:6379"`
-   *
    */
   export const redis: RedisClient;
 }

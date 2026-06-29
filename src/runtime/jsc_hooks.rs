@@ -3386,8 +3386,7 @@ unsafe fn maybe_auto_watch_file(
     if !unsafe { &*jsc_vm }.is_watcher_enabled() {
         return;
     }
-    if !bun_paths::is_absolute(path.text)
-        || bun_core::strings::contains(path.text, b"node_modules")
+    if !bun_paths::is_absolute(path.text) || bun_core::strings::contains(path.text, b"node_modules")
     {
         return;
     }

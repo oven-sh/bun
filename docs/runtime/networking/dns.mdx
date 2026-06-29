@@ -52,7 +52,7 @@ If the hostname cannot be resolved, it throws the same `DNSException` that `dns.
 try {
   dns.lookupSync("this-does-not-exist.invalid");
 } catch (error) {
-  console.log(error.code); // "ENOTFOUND"
+  console.log(error.code); // "DNS_ENOTFOUND"
 }
 ```
 

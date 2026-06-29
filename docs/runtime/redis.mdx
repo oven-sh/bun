@@ -254,6 +254,18 @@ Publishing messages is done through the `publish()` method:
 await client.publish(channelName, message);
 ```
 
+The message can be a string or binary data (`Buffer`, a typed array, or a
+`Blob`). Binary payloads are written to the wire as-is, which is useful when a
+subscriber in another process or language expects raw bytes:
+
+```typescript redis.ts icon="/icons/typescript.svg"
+await client.publish("updates", Buffer.from([0x00, 0x01, 0x02]));
+```
+
+Subscribers created with Bun's `.subscribe()` currently receive every message
+as a string. To consume a binary message from a Bun subscriber, encode it
+before publishing (for example with base64) and decode it in the listener.
+
 ### Subscriptions
 
 The Bun `RedisClient` allows you to subscribe to channels through the

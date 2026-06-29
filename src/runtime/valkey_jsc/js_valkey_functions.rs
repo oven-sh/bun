@@ -1611,37 +1611,17 @@ impl JSValkeyClient {
         NotSubscriber
     );
 
-    #[bun_jsc::host_fn(method)]
-    pub fn publish(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"publish")?;
-
-        let args_view = frame.arguments();
-        let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
-
-        let arg0 = frame.argument(0);
-        if !arg0.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
-        }
-        let channel = from_js(global, arg0)?.expect("unreachable");
-
-        args.push(channel);
-
-        let arg1 = frame.argument(1);
-        if !arg1.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "message", "string"));
-        }
-        let message = from_js(global, arg1)?.expect("unreachable");
-        args.push(message);
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"PUBLISH",
-            CommandArgs::Args(&args),
-            CommandMeta::default(),
-            "Failed to send PUBLISH command",
-        )
-    }
+    // PUBLISH and SPUBLISH take the same `channel message` argument shape, so
+    // they share `cmd_key_value!` and accept the same value types (string,
+    // Buffer/TypedArray/ArrayBuffer, Blob, number) as every other command.
+    cmd_key_value!(
+        publish,
+        b"publish",
+        "PUBLISH",
+        "channel",
+        "message",
+        NotSubscriber
+    );
 
     #[bun_jsc::host_fn(method)]
     pub fn subscribe(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

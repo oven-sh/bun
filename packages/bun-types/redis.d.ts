@@ -818,7 +818,7 @@ declare module "bun" {
      * @param message The message to publish
      * @returns Promise that resolves with the number of clients that received the message
      */
-    spublish(channel: RedisClient.KeyLike, message: string): Promise<number>;
+    spublish(channel: RedisClient.KeyLike, message: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Store the difference of multiple sets in a key
@@ -2700,12 +2700,15 @@ declare module "bun" {
      * Publish a message to a Redis channel.
      *
      * @param channel The channel to publish to.
-     * @param message The message to publish.
+     * @param message The message to publish. Binary payloads (`Buffer`,
+     * `Uint8Array`, `Blob`) are sent as-is. Subscribers in Bun currently
+     * receive messages as strings, so deliver binary data to a non-Bun
+     * subscriber or encode it (for example with base64) for a Bun one.
      *
      * @returns The number of clients that received the message. Note that in a
      * cluster this returns the total number of clients in the same node.
      */
-    publish(channel: string, message: string): Promise<number>;
+    publish(channel: RedisClient.KeyLike, message: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Subscribe to a Redis channel.

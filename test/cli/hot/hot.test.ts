@@ -270,10 +270,13 @@ it.each(["code", "object"])(
         var any = false;
         if (!/\[#!plugin\].*[0-9]\n/g.test(str)) continue;
 
-        for (let line of str.split("\n")) {
+        // Keep the trailing partial line buffered for the next chunk.
+        const lines = str.split("\n");
+        str = lines.pop() ?? "";
+
+        for (let line of lines) {
           if (!line.includes("[#!plugin]")) continue;
           reloadCounter++;
-          str = "";
 
           expect(line).toContain(`[#!plugin] Reloaded: ${reloadCounter} `);
           if (reloadCounter === 1) {

@@ -246,7 +246,7 @@ impl AnimationName {
             }
             (AnimationName::String(a), AnimationName::String(b)) => {
                 // SAFETY: arena-owned slices live for the parse session.
-                unsafe { bun_core::eql(&**a, &**b) }
+                unsafe { bun_core::strings::eql(&**a, &**b) }
             }
             _ => false,
         }

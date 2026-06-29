@@ -31,7 +31,7 @@ pub(crate) mod ci_info_generated {
     macro_rules! env_contains {
         ($k:literal, $needle:literal) => {
             getenv_z(zstr!($k)).map_or(false, |v| {
-                bun_core::immutable::index_of(v, $needle.as_bytes()).is_some()
+                bun_core::strings::index_of(v, $needle.as_bytes()).is_some()
             })
         };
     }

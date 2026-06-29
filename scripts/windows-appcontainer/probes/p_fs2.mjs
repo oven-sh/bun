@@ -1,0 +1,35 @@
+// p_fs2: junction deep-dive + relative-vs-absolute path matrix + ancestor access.
+import fs from 'node:fs';
+import path from 'node:path';
+import { t, done } from './_h.mjs';
+const A = p => path.resolve(p);
+
+t('setup', () => { fs.rmSync(A('jl'), { recursive: true, force: true }); fs.rmSync(A('jt'), { recursive: true, force: true }); fs.mkdirSync(A('jt'), { recursive: true }); fs.writeFileSync(A('jt/inside.txt'), 'IN'); return 'ok'; });
+t('symlinkSync(junction) abs->abs', () => { fs.symlinkSync(A('jt'), A('jl'), 'junction'); return 'ok'; });
+t('lstatSync(jl).isSymbolicLink', () => String(fs.lstatSync(A('jl')).isSymbolicLink()));
+t('readdirSync(through junction)', () => JSON.stringify(fs.readdirSync(A('jl'))));
+t('readFileSync(jl/inside.txt)', () => fs.readFileSync(A('jl/inside.txt'), 'utf8'));
+t('statSync(jl).isDirectory', () => String(fs.statSync(A('jl')).isDirectory()));
+t('readlinkSync(jl)', () => fs.readlinkSync(A('jl')));
+t('realpathSync(jl)', () => fs.realpathSync(A('jl')));
+t('realpathSync.native(jl)', () => fs.realpathSync.native(A('jl')));
+t('writeFileSync rel-with-dot', () => { fs.writeFileSync('rel.txt', 'x'); return 'ok'; });
+t('writeFileSync rel-no-dot', () => { fs.writeFileSync('relnodot', 'x'); return 'ok'; });
+t('writeFileSync abs', () => { fs.writeFileSync(A('abs.txt'), 'x'); return 'ok'; });
+t('readFileSync rel-with-dot', () => fs.readFileSync('abs.txt', 'utf8'));
+t('readdirSync(".")', () => String(fs.readdirSync('.').length));
+t('readdirSync(abs cwd)', () => String(fs.readdirSync(A('.')).length));
+t('readdirSync("subdir")', () => { fs.mkdirSync('subdir', { recursive: true }); return String(fs.readdirSync('subdir').length); });
+t('existsSync rel', () => String(fs.existsSync('abs.txt')));
+t('statSync rel', () => String(fs.statSync('abs.txt').size));
+t('openSync rel + writeSync', () => { const fd = fs.openSync('viaopen.txt', 'w'); fs.writeSync(fd, 'x'); fs.closeSync(fd); return 'ok'; });
+t('unlinkSync rel', () => { fs.unlinkSync('viaopen.txt'); return 'ok'; });
+t('lstatSync(C:\\)', () => String(fs.lstatSync('C:\\').isDirectory()));
+t('statSync(C:\\)', () => String(fs.statSync('C:\\').isDirectory()));
+t('readdirSync(C:\\)', () => String(fs.readdirSync('C:\\').length));
+t('statSync(C:\\Windows)', () => String(fs.statSync('C:\\Windows').isDirectory()));
+t('statSync(USERPROFILE)', () => String(fs.statSync(process.env.USERPROFILE).isDirectory()));
+t('readdirSync(USERPROFILE)', () => String(fs.readdirSync(process.env.USERPROFILE).length));
+t('mkdtempSync(relative)', () => fs.mkdtempSync('reltmp-'));
+t('fs.rmSync junction', () => { fs.rmSync(A('jl'), { recursive: true, force: true }); return 'ok'; });
+done('P_FS2');

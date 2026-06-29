@@ -324,6 +324,9 @@ pub fn parse<const FORCE_UTF8: bool>(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
+    if FORCE_UTF8 {
+        return Ok(parse_classic(source, log, bump, JSON_OPTS, false)?.root);
+    }
     Ok(parse_impl(source, log, bump, JSON_OPTS, FORCE_UTF8, false)?.root)
 }
 
@@ -346,7 +349,37 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_impl(source, log, bump, JSON_OPTS, true, CHECK_LEN)?.root)
+    Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
+}
+
+/// Shared driver for the classic-output (`E::Object` / `E::Array`) entry
+/// points whose strings are UTF-8: parse into the simple AST — the only
+/// form stage 2 builds for these — and [`materialize`] the classic tree the
+/// caller expects at the boundary, with every node's exact source location.
+/// The document's row tape dies here; everything was copied out of it (into
+/// the AST store, and `bump` for decoded strings).
+fn parse_classic(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+    opts: JSONOptions,
+    check_len: bool,
+) -> Result<ParseOutput, bun_core::Error> {
+    let mut out = parse_impl(
+        source,
+        log,
+        bump,
+        JSONOptions {
+            simple_objects: true,
+            ..opts
+        },
+        true,
+        check_len,
+    )?;
+    out.root = materialize_impl(&out.root, source, bump, opts.was_originally_macro);
+    // The classic tree borrows nothing from the row tape: drop it.
+    out.tape = None;
+    Ok(out)
 }
 
 /// Parse a JSON document fetched from a registry/HTTP API (npm package
@@ -394,9 +427,9 @@ fn parse_simple(
 }
 
 /// Parse package.json (comments & trailing commas allowed, strings UTF-8).
-/// Deliberately the full `E::Object` AST: these callers (install, `bun pm pkg`,
-/// lockfile, init) mutate and re-print the tree, which the read-only simple
-/// containers cannot represent.
+/// Classic `E::Object` AST: these callers (install, `bun pm pkg`, lockfile,
+/// init) mutate and re-print the tree, which the read-only simple containers
+/// cannot represent. Parsed simple and [`materialize`]d.
 pub fn parse_package_json_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -405,7 +438,7 @@ pub fn parse_package_json_utf8(
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
-    Ok(parse_impl(source, log, bump, PACKAGE_JSON_OPTS, true, false)?.root)
+    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
 }
 
 #[derive(Default)]
@@ -466,7 +499,13 @@ pub fn parse_package_json_utf8_with_opts_rt(
             ..Default::default()
         });
     }
-    let out = parse_impl(source, log, bump, opts, true, false)?;
+    // Callers that ask for the simple AST own its tape; everyone else gets
+    // the classic tree materialized out of it.
+    let out = if opts.simple_objects {
+        parse_impl(source, log, &Bump::borrowing_default(), opts, true, false)?
+    } else {
+        parse_classic(source, log, bump, opts, false)?
+    };
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -520,11 +559,14 @@ pub fn parse_for_bundling(
     })
 }
 
-/// `tsconfig.json` / `.jsonc` / `Bun.JSONC.parse`.
+/// `tsconfig.json` / `.jsonc` (the dialect: comments, trailing commas).
 ///
-/// Deliberately the full `E::Object` AST: the resolver's tsconfig walker warns
-/// with the `Loc` of individual `paths` array elements (`E::JsonValue` has no
-/// per-value `Loc`), and the bundler's JSONC loader / bunfig need `Expr` nodes.
+/// Classic `E::Object` AST — the tsconfig walker and bunfig pattern-match
+/// `Expr` nodes and report diagnostics with per-value `Loc`s, so the simple
+/// parse is [`materialize`]d at this boundary with every location intact.
+/// `FORCE_UTF8 = false` (the bundler's `.jsonc` module loader, whose strings
+/// become JavaScript) still builds the classic AST directly: only that mode
+/// can represent a string as UTF-16.
 #[inline]
 pub fn parse_ts_config<const FORCE_UTF8: bool>(
     source: &bun_ast::Source,
@@ -533,6 +575,9 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
 ) -> Result<Expr, bun_core::Error> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
+    }
+    if FORCE_UTF8 {
+        return Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root);
     }
     Ok(parse_impl(source, log, bump, TSCONFIG_OPTS, FORCE_UTF8, false)?.root)
 }
@@ -683,14 +728,14 @@ fn log_string_error(
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Extracts the top-level `name` and `version` strings from a package.json.
-// (The old implementation was a dedicated early-exit lexer walk; package.json
-// files are small enough that a regular parse is well within the noise of the
-// surrounding file I/O, so this is now a thin wrapper over the real parser.)
+// This runs once per installed package (`verify_package_json_name_and_
+// version`), so it does the least work a parse can: the simple AST, read
+// straight off the document's row tape — no classic nodes, no arena, and
+// nothing outliving the call but the two copied strings.
 
-pub struct PackageJSONVersionChecker<'a, 'bump> {
+pub struct PackageJSONVersionChecker<'a> {
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
-    bump: &'bump Bump,
 
     pub found_version_buf: [u8; 1024],
     pub found_name_buf: [u8; 1024],
@@ -698,27 +743,20 @@ pub struct PackageJSONVersionChecker<'a, 'bump> {
     found_version_len: usize,
     pub has_found_name: bool,
     pub has_found_version: bool,
-    pub name_loc: bun_ast::Loc,
 }
 
-impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump> {
-    pub fn init(
-        bump: &'bump Bump,
-        source: &'a bun_ast::Source,
-        log: &'a mut bun_ast::Log,
-    ) -> Result<Self, bun_core::Error> {
-        Ok(Self {
+impl<'a> PackageJSONVersionChecker<'a> {
+    pub fn init(source: &'a bun_ast::Source, log: &'a mut bun_ast::Log) -> Self {
+        Self {
             source,
             log,
-            bump,
             found_version_buf: [0; 1024],
             found_name_buf: [0; 1024],
             found_name_len: 0,
             found_version_len: 0,
             has_found_name: false,
             has_found_version: false,
-            name_loc: bun_ast::Loc::EMPTY,
-        })
+        }
     }
 
     /// The caller's `Log` is exclusively borrowed by the checker; this is how
@@ -738,46 +776,37 @@ impl<'a, 'bump> PackageJSONVersionChecker<'a, 'bump> {
         &self.found_version_buf[..self.found_version_len]
     }
 
-    pub fn parse_expr(&mut self) -> Result<Expr, bun_core::Error> {
-        if self.source.contents.is_empty() {
-            return Ok(empty_object_expr());
-        }
-        let root = parse_impl(
-            self.source,
-            self.log,
-            self.bump,
-            PKG_JSON_CHECKER_OPTS,
-            true,
-            false,
-        )?
-        .root;
-        if let js_ast::expr::Data::EObject(obj) = &root.data {
-            for prop in obj.properties.iter() {
-                let (Some(key), Some(value)) = (&prop.key, &prop.value) else {
-                    continue;
-                };
-                let (Some(key_s), Some(val_s)) = (key.data.as_e_string(), value.data.as_e_string())
-                else {
-                    continue;
-                };
-                if !self.has_found_name && key_s.data == b"name" {
-                    let len = val_s.data.len().min(self.found_name_buf.len());
-                    self.found_name_buf[..len].copy_from_slice(&val_s.data[..len]);
-                    self.found_name_len = len;
-                    self.has_found_name = true;
-                    self.name_loc = value.loc;
-                } else if !self.has_found_version && key_s.data == b"version" {
-                    let len = val_s.data.len().min(self.found_version_buf.len());
-                    self.found_version_buf[..len].copy_from_slice(&val_s.data[..len]);
-                    self.found_version_len = len;
-                    self.has_found_version = true;
-                }
-                if self.has_found_name && self.has_found_version {
-                    break;
-                }
+    /// Parse the document and record its first top-level `name` and
+    /// `version` properties whose values are strings.
+    pub fn parse(&mut self) -> Result<(), bun_core::Error> {
+        const OPTS: JSONOptions = JSONOptions {
+            simple_objects: true,
+            ..PKG_JSON_CHECKER_OPTS
+        };
+        let parsed = parse_simple(self.source, self.log, OPTS)?;
+        let js_ast::expr::Data::EObjectSimple(obj) = &parsed.root.data else {
+            return Ok(());
+        };
+        for row in obj.get().properties() {
+            let Some(value) = row.value.as_str() else {
+                continue;
+            };
+            if !self.has_found_name && row.key.slice() == b"name" {
+                let len = value.len().min(self.found_name_buf.len());
+                self.found_name_buf[..len].copy_from_slice(&value[..len]);
+                self.found_name_len = len;
+                self.has_found_name = true;
+            } else if !self.has_found_version && row.key.slice() == b"version" {
+                let len = value.len().min(self.found_version_buf.len());
+                self.found_version_buf[..len].copy_from_slice(&value[..len]);
+                self.found_version_len = len;
+                self.has_found_version = true;
+            }
+            if self.has_found_name && self.has_found_version {
+                break;
             }
         }
-        Ok(root)
+        Ok(())
     }
 }
 
@@ -955,28 +984,42 @@ pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_
 /// first byte of item `index` of the array whose `[` is at `array_loc`
 /// (= the `E::ArraySimple` expression's `loc`). `None` if the array's source
 /// has fewer than `index + 1` items (or `contents`/`array_loc` don't match).
+///
+/// Linear in the array's source extent: a caller visiting every item should
+/// sweep with [`array_first_item`] / [`array_next_item`] instead.
 pub fn array_item_loc(
     contents: &[u8],
     array_loc: bun_ast::Loc,
     index: usize,
 ) -> Option<bun_ast::Loc> {
-    let start = usize::try_from(array_loc.start).ok()?;
+    let mut p = array_first_item(contents, usize::try_from(array_loc.start).ok()?)?;
+    for _ in 0..index {
+        p = array_next_item(contents, p)?;
+    }
+    Some(bun_ast::usize2loc(p))
+}
+
+/// Byte offset of the first byte of the first item of the array whose `[` is
+/// at `start`. `None` for an empty array or non-matching bytes.
+fn array_first_item(contents: &[u8], start: usize) -> Option<usize> {
     if *contents.get(start)? != b'[' {
         return None;
     }
-    let mut p = skip_ws_and_comments(contents, start + 1)?;
-    for _ in 0..index {
-        p = skip_json_value(contents, p)?;
-        p = skip_ws_and_comments(contents, p)?;
-        if contents[p] != b',' {
-            return None;
-        }
-        p = skip_ws_and_comments(contents, p + 1)?;
-    }
-    if matches!(contents[p], b']' | b',') {
+    let p = skip_ws_and_comments(contents, start + 1)?;
+    (!matches!(contents[p], b']' | b',')).then_some(p)
+}
+
+/// Byte offset of the first byte of the item after the one starting at
+/// `item`: the item's value, any whitespace/comments, the `,`, and any
+/// whitespace/comments after it are skipped. `None` past the last item.
+fn array_next_item(contents: &[u8], item: usize) -> Option<usize> {
+    let p = skip_json_value(contents, item)?;
+    let p = skip_ws_and_comments(contents, p)?;
+    if contents[p] != b',' {
         return None;
     }
-    Some(bun_ast::usize2loc(p))
+    let p = skip_ws_and_comments(contents, p + 1)?;
+    (!matches!(contents[p], b']' | b',')).then_some(p)
 }
 
 /// Byte offset just past the string token whose opening `"` / `'` is at
@@ -1085,6 +1128,154 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
             }
             (q > p).then_some(q)
         }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Materialization: simple AST → classic AST
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Deep-convert a simple-AST document (`E::ObjectSimple` / `E::ArraySimple`)
+/// into the classic `E::Object` / `E::Array` tree, indistinguishable from a
+/// classic parse of the same `source`:
+///
+/// - every property value, array item, and nested container carries its
+///   exact source [`Loc`](bun_ast::Loc) again, recovered by re-scanning
+///   `source` from the locations the simple AST does keep (a property's key,
+///   a container's opening bracket). One forward pass per container — see
+///   the "Cold-path source-location recovery" section above. If the bytes
+///   don't match (a caller passed the wrong source) the key's / container's
+///   location is used instead, never a bogus one.
+/// - strings that don't borrow `source` (escape-decoded into the document's
+///   [`E::JsonTape`], which a caller materializing at a boundary is about to
+///   drop) are copied into `bump`, exactly where the classic parser put them.
+///
+/// Everything else (`is_single_line`, closing-bracket locations, property
+/// order and duplicates) is preserved. A non-container root is returned
+/// unchanged apart from the string re-homing.
+///
+/// This is the boundary for consumers that genuinely need the classic tree —
+/// to mutate it and print it back, or to splice it into a JavaScript AST.
+/// Everything that just *reads* JSON should stay on the simple containers.
+pub fn materialize(root: &Expr, source: &bun_ast::Source, bump: &Bump) -> Expr {
+    materialize_impl(root, source, bump, false)
+}
+
+/// [`materialize`] with the one parse option a classic container records
+/// that the simple containers don't.
+fn materialize_impl(
+    root: &Expr,
+    source: &bun_ast::Source,
+    bump: &Bump,
+    was_originally_macro: bool,
+) -> Expr {
+    Materializer {
+        contents: &source.contents,
+        bump,
+        was_originally_macro,
+    }
+    .expr(root, root.loc)
+}
+
+struct Materializer<'a> {
+    contents: &'a [u8],
+    bump: &'a Bump,
+    /// `E::Object::was_originally_macro` of every materialized container
+    /// (the simple containers don't store it; it is an option of the parse).
+    was_originally_macro: bool,
+}
+
+impl Materializer<'_> {
+    fn expr(&self, e: &Expr, loc: bun_ast::Loc) -> Expr {
+        match &e.data {
+            js_ast::expr::Data::EObjectSimple(o) => Expr::init(self.object(o.get()), loc),
+            js_ast::expr::Data::EArraySimple(a) => Expr::init(self.array(a.get(), loc), loc),
+            // The root of a scalar document can be a string that borrows the
+            // tape (an escaped literal); everything else is inline or in the
+            // Store and survives the tape. Simple-mode strings are always
+            // UTF-8, so `init` rebuilds the node losslessly.
+            js_ast::expr::Data::EString(s) => {
+                Expr::init(E::EString::init(self.rehome(s.get().data).slice()), loc)
+            }
+            _ => Expr { data: e.data, loc },
+        }
+    }
+
+    fn object(&self, o: &E::ObjectSimple) -> E::Object {
+        let rows = o.properties();
+        let mut properties: G::PropertyList =
+            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+        for row in rows {
+            let key = Expr::init(
+                E::String {
+                    data: self.rehome(row.key),
+                    ..Default::default()
+                },
+                row.key_loc,
+            );
+            // Exact value location: re-scan past the key token and the `:`.
+            let value_loc = property_value_loc(self.contents, row.key_loc).unwrap_or(row.key_loc);
+            properties.push(G::Property {
+                key: Some(key),
+                value: Some(self.json_value(&row.value, value_loc)),
+                kind: G::PropertyKind::Normal,
+                initializer: None,
+                ..Default::default()
+            });
+        }
+        E::Object {
+            properties,
+            is_single_line: o.is_single_line,
+            was_originally_macro: self.was_originally_macro,
+            close_brace_loc: o.close_brace_loc,
+            ..Default::default()
+        }
+    }
+
+    fn array(&self, a: &E::ArraySimple, loc: bun_ast::Loc) -> E::Array {
+        let rows = a.items();
+        let mut items: js_ast::ExprNodeList =
+            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+        // One forward sweep over the array's source recovers every item's
+        // exact start; a desync falls back to the array's own location.
+        let mut cursor = usize::try_from(loc.start)
+            .ok()
+            .and_then(|start| array_first_item(self.contents, start));
+        for item in rows {
+            let item_loc = cursor.map_or(loc, bun_ast::usize2loc);
+            items.push(self.json_value(item, item_loc));
+            cursor = cursor.and_then(|p| array_next_item(self.contents, p));
+        }
+        E::Array {
+            items,
+            is_single_line: a.is_single_line,
+            was_originally_macro: self.was_originally_macro,
+            close_bracket_loc: a.close_bracket_loc,
+            ..Default::default()
+        }
+    }
+
+    /// One row value at its recovered location; nested containers recurse.
+    fn json_value(&self, value: &E::JsonValue, loc: bun_ast::Loc) -> Expr {
+        match value {
+            E::JsonValue::Object(o) => Expr::init(self.object(o.get()), loc),
+            E::JsonValue::Array(a) => Expr::init(self.array(a.get(), loc), loc),
+            E::JsonValue::String(s) => Expr::init(E::EString::init(self.rehome(*s).slice()), loc),
+            _ => Expr::from_json_value(value, loc),
+        }
+    }
+
+    /// `bytes`, but never borrowing the document's tape: a slice of the
+    /// source is returned as-is (the common, zero-copy case) and anything
+    /// else — escape-decoded bytes the tape owns — is copied into the arena
+    /// the classic tree's strings belong to.
+    fn rehome(&self, bytes: E::Str) -> E::Str {
+        let source = self.contents.as_ptr_range();
+        let p = bytes.slice().as_ptr();
+        if source.contains(&p) {
+            return bytes;
+        }
+        E::Str::new(self.bump.alloc_slice_copy(bytes.slice()))
     }
 }
 
@@ -1587,48 +1778,73 @@ mod tests {
         assert_eq!(canon(jsonc, Which::TsConfig), canon(jsonc, Which::Jsonc));
     }
 
-    /// `Expr::materialize_json` over a simple-mode tree must produce a
-    /// classic tree with no simple nodes left, identical canonical JSON, and
-    /// the same key locations as a full-mode parse of the same document.
+    /// `json::materialize` over a simple-mode tree must produce a classic
+    /// tree *indistinguishable* from a full-mode parse of the same document:
+    /// no simple nodes left, identical canonical JSON, and — because the
+    /// classic entry points materialize at their boundary — the exact same
+    /// `loc` and `is_single_line` on **every** node (keys, values, array
+    /// items, nested containers), across comments, escapes, trailing commas,
+    /// and exotic whitespace.
     #[test]
-    fn materialize_json_matches_a_full_parse() {
-        // (json string, [(key loc, key)] in tree order) of a classic tree.
-        fn canon_full(root: &Expr) -> (std::string::String, Vec<(i32, std::string::String)>) {
-            fn keys(e: &Expr, out: &mut Vec<(i32, std::string::String)>) {
+    fn materialize_matches_a_full_parse() {
+        // Canonical JSON + every node of a classic tree in pre-order as
+        // (loc, leaf text or container shape).
+        type Nodes = Vec<(i32, std::string::String)>;
+        fn canon_full(root: &Expr) -> (std::string::String, Nodes) {
+            fn nodes(e: &Expr, out: &mut Nodes) {
+                let label = match &e.data {
+                    Data::EObject(o) => format!("{{:{}", o.is_single_line),
+                    Data::EArray(a) => format!("[:{}", a.is_single_line),
+                    Data::EObjectSimple(_) | Data::EArraySimple(_) => {
+                        panic!("simple node in a materialized/full tree")
+                    }
+                    _ => {
+                        let mut s = std::string::String::new();
+                        to_json_string(e, &mut s);
+                        s
+                    }
+                };
+                out.push((e.loc.start, label));
                 match &e.data {
                     Data::EObject(o) => {
                         for prop in o.properties.iter() {
-                            let key = prop.key.unwrap();
-                            let k = key.data.as_e_string().unwrap();
-                            out.push((key.loc.start, estring_to_string(&k)));
-                            keys(prop.value.as_ref().unwrap(), out);
+                            nodes(prop.key.as_ref().unwrap(), out);
+                            nodes(prop.value.as_ref().unwrap(), out);
                         }
                     }
                     Data::EArray(a) => {
                         for item in a.items.iter() {
-                            keys(item, out);
+                            nodes(item, out);
                         }
-                    }
-                    Data::EObjectSimple(_) | Data::EArraySimple(_) => {
-                        panic!("simple node in a materialized/full tree")
                     }
                     _ => {}
                 }
             }
             let mut s = std::string::String::new();
             to_json_string(root, &mut s);
-            let mut k = Vec::new();
-            keys(root, &mut k);
-            (s, k)
+            let mut n = Vec::new();
+            nodes(root, &mut n);
+            (s, n)
         }
         let mut deep = std::string::String::from("1");
         for _ in 0..40 {
             deep = format!("{{\"k\": [{deep}]}}");
         }
+        let mut generated = std::string::String::from("{");
+        for i in 0..120 {
+            if i > 0 {
+                generated.push(',');
+            }
+            generated.push_str(&format!(
+                "\"k{i}\": [{i}, -1.5e3,\"s{i}\" , \"esc\\n\\u00e9{i}\", true, false, null, {{\"n\": {{\"deep\": [\"x{i}\"]}}}}]"
+            ));
+        }
+        generated.push('}');
         let docs: Vec<(&str, Which, Which)> = vec![
             ("{}", Which::Utf8, Which::Simple),
             ("[]", Which::Utf8, Which::Simple),
             ("\"leaf\"", Which::Utf8, Which::Simple),
+            ("\"l\\u00e9af\\n\"", Which::Utf8, Which::Simple),
             ("-3.25e2", Which::Utf8, Which::Simple),
             (
                 r#"{"a": 1, "b": [true, null, "x", [], {}], "c": {"d": "é🚀", "e": ""}, "es\ncé": -0}"#,
@@ -1636,14 +1852,27 @@ mod tests {
                 Which::Simple,
             ),
             (
-                "[0, -1.5e3, \"s\", {\"n\": {\"deep\": [\"x\"]}}]",
+                "[0, -1.5e3, \"s\", {\"n\": {\"deep\": [\"x\"]}},\n[\n1\n]\n]",
                 Which::Utf8,
                 Which::Simple,
             ),
             (&deep, Which::Utf8, Which::Simple),
+            (&generated, Which::Utf8, Which::Simple),
             // JSONC: comments, trailing commas, single quotes.
             (
                 "// c\n{\"a\": [1, 2,], /* x */ \"b\": 'sq', }",
+                Which::TsConfig,
+                Which::Jsonc,
+            ),
+            // Comments and exotic unicode whitespace in every gap a value
+            // location is recovered across.
+            (
+                "{\n  // line\n  \"a\" /* k */ : // v\n   42,\n  \"arr\": [ /* a */ 1,\n     [2], // b\n   {'z': 'q'},\n  ],\n}",
+                Which::TsConfig,
+                Which::Jsonc,
+            ),
+            (
+                "{\"\u{e9}k\":\u{a0}\u{feff} 1,\"l\":\u{a0}[\u{a0}1\u{a0},\u{a0}2]}",
                 Which::TsConfig,
                 Which::Jsonc,
             ),
@@ -1656,7 +1885,10 @@ mod tests {
             };
             let materialized = {
                 let p = run(doc.as_bytes(), simple_which);
-                let root = p.root.unwrap().materialize_json();
+                // The same bytes `run` parsed, for the location re-scan.
+                let source = bun_ast::Source::init_path_string("fixture.json", doc.as_bytes());
+                let bump = Bump::new();
+                let root = materialize(p.root.as_ref().unwrap(), &source, &bump);
                 (root.loc, canon_full(&root))
             };
             assert_eq!(full, materialized, "materialized tree differs for {doc:?}");
@@ -2058,17 +2290,35 @@ mod tests {
         bun_ast::initialize_store_or_reset();
         let _scope = js_ast::StoreResetGuard::new();
         let mut log = bun_ast::Log::init();
-        let bump = Bump::new();
         let source = bun_ast::Source::init_path_string(
             "package.json",
             br#"{"private": true, "name": "my-pkg", "scripts": {"x": "y"}, "version": "1.2.3"}"#
                 .as_slice(),
         );
-        let mut checker = PackageJSONVersionChecker::init(&bump, &source, &mut log).unwrap();
-        checker.parse_expr().unwrap();
+        let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
+        checker.parse().unwrap();
         assert!(checker.has_found_name && checker.has_found_version);
         assert_eq!(checker.found_name(), b"my-pkg");
         assert_eq!(checker.found_version(), b"1.2.3");
+        // Non-string `name`/`version` values are skipped, not coerced; later
+        // string-valued duplicates win, exactly like the classic walk.
+        let source = bun_ast::Source::init_path_string(
+            "package.json",
+            br#"{"version": {"x": 1}, "name": 1, "name": "n2", "version": "9.9.9"}"#.as_slice(),
+        );
+        let mut log = bun_ast::Log::init();
+        let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
+        checker.parse().unwrap();
+        assert_eq!(
+            (checker.found_name(), checker.found_version()),
+            (b"n2".as_slice(), b"9.9.9".as_slice())
+        );
+        // Empty input parses to an empty object: nothing found, no error.
+        let source = bun_ast::Source::init_path_string("package.json", b"".as_slice());
+        let mut log = bun_ast::Log::init();
+        let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
+        checker.parse().unwrap();
+        assert!(!checker.has_found_name && !checker.has_errors());
     }
 
     #[test]

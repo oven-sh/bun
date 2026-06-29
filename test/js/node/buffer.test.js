@@ -1,7 +1,8 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import vm from "node:vm";
 
 const BufferModule = await import("buffer");
@@ -3844,6 +3845,23 @@ describe("Buffer.fill offset/end argument handling", () => {
 
   it("never treats the 4-argument encoding as meaningful for a non-string value", () => {
     expect(Array.from(Buffer.alloc(5, 0xaa).fill(0, 1, 3, "bogus"))).toEqual([0xaa, 0, 0, 0xaa, 0xaa]);
+  });
+
+  // Differential test: the fixture enumerates every fill() argument shape and
+  // prints the resulting bytes or the thrown error class + code. Running it
+  // under Node.js and under Bun must produce byte-identical output.
+  it.skipIf(!nodeExe())("every fill() argument shape produces the same output in Node.js and Bun", async () => {
+    const fixture = join(import.meta.dir, "buffer-fill-args-fixture.js");
+    async function run(exe) {
+      await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout, exitCode };
+    }
+    const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe())]);
+    expect(nodeRun.stdout).toContain("fill(");
+    expect(bunRun.stdout).toBe(nodeRun.stdout);
+    expect(nodeRun.exitCode).toBe(0);
+    expect(bunRun.exitCode).toBe(0);
   });
 });
 

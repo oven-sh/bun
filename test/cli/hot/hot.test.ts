@@ -240,6 +240,68 @@ it.each(["hot-file-loader.file", "hot-file-loader.css"])(
   timeout,
 );
 
+// https://github.com/oven-sh/bun/issues/4790
+it(
+  "should hot reload when a file loaded through a Bun.plugin onLoad callback is overwritten",
+  async () => {
+    const root = join(cwd, "hot-plugin-root.js");
+    const target = join(cwd, "hot-plugin-loader.graphql");
+    try {
+      var runner = spawn({
+        cmd: [bunExe(), "--hot", `--preload=${join(cwd, "hot-plugin-preload.js")}`, "run", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      var reloadCounter = 0;
+
+      async function onReload() {
+        writeFileSync(target, "v1");
+      }
+
+      var str = "";
+      for await (const chunk of runner.stdout) {
+        str += new TextDecoder().decode(chunk);
+        var any = false;
+        if (!/\[#!plugin\].*[0-9]\n/g.test(str)) continue;
+
+        for (let line of str.split("\n")) {
+          if (!line.includes("[#!plugin]")) continue;
+          reloadCounter++;
+          str = "";
+
+          if (reloadCounter === 4) {
+            runner.unref();
+            runner.kill();
+            break;
+          }
+
+          expect(line).toContain(`[#!plugin] Reloaded: ${reloadCounter}`);
+          // The first evaluation sees the original contents; every reload after
+          // the overwrite must re-run the plugin and see the new contents.
+          expect(line).toEndWith(reloadCounter === 1 ? "value=v0" : "value=v1");
+          any = true;
+        }
+
+        if (any) await onReload();
+      }
+
+      expect(reloadCounter).toBeGreaterThanOrEqual(4);
+    } finally {
+      // @ts-ignore
+      runner?.unref?.();
+      // @ts-ignore
+      runner?.kill?.(9);
+    }
+  },
+  // Bounded (not Infinity) in debug so a watch-registration regression fails
+  // instead of hanging: the reload this test waits for simply never arrives.
+  isDebug ? 60_000 : 10_000,
+);
+
 it(
   "should recover from errors",
   async () => {

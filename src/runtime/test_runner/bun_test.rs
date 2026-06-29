@@ -839,9 +839,12 @@ impl BunTest {
             // promise-catch path) so a failing hook fails its dependent tests.
             let strong = match ref_in.as_ref() {
                 Some(r) => r.buntest_weak.upgrade(),
-                // done() ran synchronously inside the callback (`run_test_callback`
-                // attaches the ref after it returns), so the owner is the active entry.
-                None => clone_active_strong(),
+                // No ref means `run_test_callback` has not attached one yet: done()
+                // ran synchronously inside the callback, or the body threw and
+                // orphaned it. Only while synchronously inside the runner's step
+                // (`in_run_loop`) is the active entry the owner; an orphan firing
+                // later must not be blamed on whatever entry is active by then.
+                None => clone_active_strong().filter(|s| s.get().in_run_loop),
             };
             match strong {
                 Some(strong) => {
@@ -853,7 +856,8 @@ impl BunTest {
                     strong.get().on_uncaught_exception(global_this, Some(value), false, &phase);
                 }
                 None => {
-                    // No live BunTest owns this callback; report it generically.
+                    // Orphaned, or no live BunTest: report it generically, keeping
+                    // the hook-demotion guard in `jest::on_unhandled_rejection`.
                     let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
                 }
             }

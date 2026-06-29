@@ -1660,6 +1660,77 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobal
     return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
 }
 
+// Calls the `Clipboard.ts` builtin to build the `{ Clipboard, instance }`
+// pair, handing it the real `EventTarget` constructor so reassigning the
+// global can't change what `Clipboard` extends. nullptr ⇔ the builtin threw.
+static JSC::JSObject* createClipboardObjects(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSFunction* factory = JSC::JSFunction::create(vm, globalObject, clipboardCreateClipboardCodeGenerator(vm), globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(WebCore::JSEventTarget::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    JSC::CallData callData = JSC::getCallData(factory);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, factory, callData, jsUndefined(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (returnedException) {
+        throwException(globalObject, scope, returnedException.get());
+        return nullptr;
+    }
+    return JSC::asObject(result);
+}
+
+// `navigator.clipboard` and the `Clipboard` interface object come from one
+// call into the builtin, cached together in `m_clipboardObjects`. Returns the
+// empty value if that call threw (the exception is left pending).
+static JSC::JSValue getClipboardObjectsMember(JSC::JSGlobalObject* lexicalGlobalObject, ASCIILiteral key)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* global = defaultGlobalObject(lexicalGlobalObject);
+    JSC::JSObject* objects = global->m_clipboardObjects.get(global);
+    RETURN_IF_EXCEPTION(scope, {});
+    return objects->getDirect(vm, JSC::Identifier::fromString(vm, key));
+}
+
+// `navigator.clipboard` — the spec's lazy `[SameObject]` singleton.
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetClipboard, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue value = getClipboardObjectsMember(globalObject, "instance"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(value ? value : JSC::jsUndefined());
+}
+
+// `globalThis.Clipboard` must be an accessor installed in `addBuiltinGlobals`,
+// not a lookup-table row: bare-identifier globals reify static table entries
+// at bytecode-link time, where the JS builtin this has to run cannot run.
+JSC_DEFINE_HOST_FUNCTION(functionGetClipboardConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue value = getClipboardObjectsMember(globalObject, "Clipboard"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(value ? value : JSC::jsUndefined());
+}
+
+// Per WebIDL the interface object is writable: assignment replaces the lazy
+// accessor with a plain data property, exactly like `functionSetSelf` below.
+JSC_DEFINE_HOST_FUNCTION(functionSetClipboardConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSValue value = callFrame->argument(0);
+    globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "Clipboard"_s), value, JSC::PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(value);
+}
+
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(createWritableStreamFromInternal);
@@ -2246,16 +2317,28 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Public));
         });
 
+    m_clipboardObjects.initLater(
+        [](const Initializer<JSObject>& init) {
+            auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
+            // The factory runs JS and can throw, but a LazyProperty initializer
+            // must ALWAYS call init.set(); a failure caches an empty sentinel
+            // (the accessors then yield undefined) instead of a RELEASE_ASSERT.
+            JSC::JSObject* objects = createClipboardObjects(globalObject);
+            init.set(objects ? objects : JSC::constructEmptyObject(globalObject));
+        });
+
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
             unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-            JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+            JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
 
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+            // https://w3c.github.io/clipboard-apis/#navigator-interface
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "clipboard"_s), functionNavigatorGetClipboard, JSC::NoIntrinsic, accessorAttributes);
 
             obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                 jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
@@ -3046,6 +3129,18 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
             JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
         PropertyAttribute::Accessor | 0);
+
+    // The `Clipboard` interface object — see functionGetClipboardConstructor
+    // for why this has to be an accessor here rather than a lookup-table row.
+    putDirectAccessor(
+        this,
+        JSC::Identifier::fromString(vm, "Clipboard"_s),
+        JSC::GetterSetter::create(
+            vm,
+            this,
+            JSFunction::create(vm, this, 0, "get Clipboard"_s, functionGetClipboardConstructor, ImplementationVisibility::Public),
+            JSFunction::create(vm, this, 1, "set Clipboard"_s, functionSetClipboardConstructor, ImplementationVisibility::Public)),
+        PropertyAttribute::Accessor | PropertyAttribute::DontEnum | 0);
 
     // TODO: this should be usable on the lookup table. it crashed las time i tried it
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);

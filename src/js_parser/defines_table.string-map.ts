@@ -256,6 +256,7 @@ const ENTRIES: ReadonlyArray<readonly [string, V]> = [
   ["ChannelMergerNode", "Other"],
   ["ChannelSplitterNode", "Other"],
   ["CharacterData", "Other"],
+  ["Clipboard", "Other"],
   ["ClipboardEvent", "Other"],
   ["CloseEvent", "Other"],
   ["Comment", "Other"],

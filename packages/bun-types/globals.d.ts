@@ -1451,9 +1451,60 @@ interface Navigator {
   readonly userAgent: string;
   readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
   readonly hardwareConcurrency: number;
+  /**
+   * The system clipboard, from the
+   * [Clipboard API](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard_API).
+   *
+   * Only `readText()` and `writeText()` are implemented. `read()` / `write()`
+   * (which require the `ClipboardItem` interface) are not.
+   *
+   * On Linux this drives `wl-paste`/`wl-copy` (Wayland), `xclip`, or `xsel`,
+   * so one of those must be installed and `$WAYLAND_DISPLAY` or `$DISPLAY`
+   * must be set; otherwise both methods reject with a `"NotAllowedError"`
+   * `DOMException`.
+   *
+   * @example
+   * ```ts
+   * await navigator.clipboard.writeText("Hello from Bun!");
+   * console.log(await navigator.clipboard.readText());
+   * ```
+   */
+  readonly clipboard: Clipboard;
 }
 
 declare var navigator: Navigator;
+
+/**
+ * The async [Clipboard API](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard).
+ *
+ * Reachable as the `navigator.clipboard` singleton. It has no public
+ * constructor: `new Clipboard()` throws a `TypeError`.
+ */
+interface Clipboard extends EventTarget {
+  /**
+   * Read the system clipboard's plain-text contents.
+   *
+   * @returns the text, or `""` when nothing (or nothing textual) is on the
+   * clipboard. Rejects with a `"NotAllowedError"` `DOMException` when the
+   * platform clipboard cannot be reached at all.
+   */
+  readText(): Promise<string>;
+  /**
+   * Replace the system clipboard's contents with `data` as plain text.
+   *
+   * Rejects with a `"NotAllowedError"` `DOMException` when the platform
+   * clipboard cannot be reached at all.
+   */
+  writeText(data: string): Promise<void>;
+}
+declare var Clipboard: Bun.__internal.UseLibDomIfAvailable<
+  "Clipboard",
+  {
+    prototype: Clipboard;
+    // Deliberately no `new ()`: per the spec, `Clipboard` has no constructor,
+    // and `new Clipboard()` throws a TypeError at runtime.
+  }
+>;
 
 interface BlobPropertyBag {
   /** Set a default "type". Not yet implemented. */

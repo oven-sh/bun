@@ -550,6 +550,85 @@ int64_t bun_coregraphics_clipboard_change_count()
     return pb ? msg<long>(s, pb, s->sel_registerName("changeCount")) : -1;
 }
 
+// ── NSPasteboard plain-text reader / writer ────────────────────────────────
+// `navigator.clipboard` text; same two-phase out=nullptr probe as the image
+// reader above. `public.utf8-plain-text` (= NSPasteboardTypeString) is what
+// every legacy text flavor auto-promotes to; CG_OK + `*out_len = 0` ⇔ no text.
+static constexpr const char kBunUtf8PlainTextUti[] = "public.utf8-plain-text";
+
+int32_t bun_coregraphics_clipboard_read_text(uint8_t* out, size_t* out_len)
+{
+    auto s = load();
+    if (!s) return CG_UNAVAILABLE;
+    Pool pool(s);
+    thread_local CFRef pending = nullptr;
+
+    if (out && pending) {
+        long n = s->CFDataGetLength(pending);
+        std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
+        *out_len = static_cast<size_t>(n);
+        s->CFRelease(pending);
+        pending = nullptr;
+        return CG_OK;
+    }
+    if (pending) {
+        s->CFRelease(pending);
+        pending = nullptr;
+    }
+    // A copy phase with nothing stashed means the caller broke the
+    // probe-then-copy protocol; never report success over an unwritten buffer.
+    if (out) {
+        *out_len = 0;
+        return CG_DECODE_FAILED;
+    }
+
+    CFRef pb = generalPasteboard(s);
+    if (!pb) return CG_UNAVAILABLE;
+    CFRef ustr = s->CFStringCreateWithCString(nullptr, kBunUtf8PlainTextUti, kBunCFStringEncodingUTF8);
+    if (!ustr) return CG_UNAVAILABLE;
+    CFRef nsdata = msg<CFRef>(s, pb, s->sel_registerName("dataForType:"), ustr);
+    s->CFRelease(ustr);
+    long n = nsdata ? s->CFDataGetLength(nsdata) : 0;
+    if (n <= 0) {
+        *out_len = 0;
+        return CG_OK; // no text present — not an error
+    }
+    *out_len = static_cast<size_t>(n);
+    // dataForType: returns autoreleased; retain so it survives the pool drain
+    // between the two calls.
+    pending = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
+    return CG_OK;
+}
+
+// `clearContents` then `setData:forType:` is the documented write sequence.
+// `setData:` copies the bytes to the pasteboard server, so the no-copy CFData
+// over the caller's buffer never outlives this call.
+int32_t bun_coregraphics_clipboard_write_text(const uint8_t* bytes, size_t len)
+{
+    auto s = load();
+    if (!s) return CG_UNAVAILABLE;
+    Pool pool(s);
+    CFRef pb = generalPasteboard(s);
+    if (!pb) return CG_UNAVAILABLE;
+    // CFData wants a real base pointer even for length 0 (Rust hands us a
+    // dangling sentinel for an empty slice).
+    static const uint8_t kEmpty = 0;
+    CFRef data = s->CFDataCreateWithBytesNoCopy(nullptr, len ? bytes : &kEmpty, static_cast<long>(len), *s->kCFAllocatorNull);
+    if (!data) return CG_ENCODE_FAILED;
+    CFRef ustr = s->CFStringCreateWithCString(nullptr, kBunUtf8PlainTextUti, kBunCFStringEncodingUTF8);
+    if (!ustr) {
+        s->CFRelease(data);
+        return CG_ENCODE_FAILED;
+    }
+    msg<long>(s, pb, s->sel_registerName("clearContents"));
+    // BOOL is `signed char` on x86_64 and `bool` on arm64; both return in the
+    // low byte, so read it as `signed char`.
+    bool ok = msg<signed char>(s, pb, s->sel_registerName("setData:forType:"), data, ustr) != 0;
+    s->CFRelease(ustr);
+    s->CFRelease(data);
+    return ok ? CG_OK : CG_ENCODE_FAILED;
+}
+
 } // extern "C"
 
 #else
@@ -562,4 +641,6 @@ extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*,
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }
 extern "C" int bun_coregraphics_clipboard(void*, void*, int) { return 1; }
 extern "C" long long bun_coregraphics_clipboard_change_count() { return -1; }
+extern "C" int bun_coregraphics_clipboard_read_text(void*, void*) { return 1; }
+extern "C" int bun_coregraphics_clipboard_write_text(const void*, unsigned long) { return 1; }
 #endif

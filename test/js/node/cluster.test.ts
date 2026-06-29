@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -160,6 +160,69 @@ process.send("regular message");
   const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
 });
+
+test("primary releases the worker object graph once the worker exits", async () => {
+  using dir = tempDir("cluster-fork-gc", {
+    "primary.fixture.ts": `
+import cluster from "node:cluster";
+import { heapStats } from "bun:jsc";
+
+if (cluster.isPrimary) {
+  const forkOnce = () =>
+    new Promise<void>((resolve, reject) => {
+      const worker = cluster.fork();
+      let pending = 2;
+      const step = () => --pending || resolve();
+      worker.on("error", reject);
+      worker.once("exit", (code, signal) =>
+        code === 0 && signal === null ? step() : reject(new Error(\`worker exited with \${code} \${signal}\`)),
+      );
+      worker.once("disconnect", step);
+    });
+
+  const countSubprocesses = () => {
+    Bun.gc(true);
+    return heapStats().objectTypeCounts.Subprocess ?? 0;
+  };
+
+  // Warm up lazily-initialized state so the measured window is steady-state.
+  for (let i = 0; i < 2; i++) await forkOnce();
+  const before = countSubprocesses();
+
+  const iterations = 6;
+  for (let i = 0; i < iterations; i++) await forkOnce();
+
+  // Bounded poll: deferred finalization may lag a tick, but a real leak
+  // (one Strong-rooted Subprocess per fork) never resolves.
+  let after = countSubprocesses();
+  for (let i = 0; i < 40 && after - before > 1; i++) {
+    await Bun.sleep(25);
+    after = countSubprocesses();
+  }
+
+  console.log(JSON.stringify({ before, after, workers: Object.keys(cluster.workers).length }));
+} else {
+  process.exit(0);
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "primary.fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const summary = stdout.trim().split("\n").at(-1) ?? "";
+  expect(summary, `stderr: ${stderr}`).toStartWith("{");
+  const { before, after, workers } = JSON.parse(summary);
+  expect(workers).toBe(0);
+  // The internal IPC send-queue used to hold jsc.Strong roots on the cluster
+  // Worker, which references the Subprocess that owns the queue, so every
+  // fork leaked one native Subprocess (plus the worker's JS object graph).
+  expect(after - before).toBeLessThanOrEqual(1);
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a

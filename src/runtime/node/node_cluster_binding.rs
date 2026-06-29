@@ -183,6 +183,13 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         return Ok(JSValue::FALSE);
     };
 
+    // Node's sendHelper reports false once the channel is gone. Registering the
+    // ack callback on a closed channel would also leak it: the ack can never
+    // arrive, and the callback roots the worker (and this Subprocess) forever.
+    if !ipc_data.is_connected() {
+        return Ok(JSValue::FALSE);
+    }
+
     if message.is_undefined() {
         return Err(global.throw_missing_arguments_value(&["message"]));
     }

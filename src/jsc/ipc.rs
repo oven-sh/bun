@@ -79,6 +79,16 @@ impl InternalMsgHolder {
         self.worker.has() && self.cb.has()
     }
 
+    /// Release every GC root the holder owns. Idempotent. Must be called when
+    /// the IPC channel closes: no further internal message can arrive or be
+    /// acked, so keeping the roots alive only pins the worker object graph.
+    pub fn deinit(&mut self) {
+        self.callbacks.clear();
+        self.worker.deinit();
+        self.cb.deinit();
+        self.messages.clear();
+    }
+
     pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
         self.messages
             .push(crate::StrongOptional::create(message, global));
@@ -988,6 +998,10 @@ impl SendQueue {
             self.windows.windows_write = None; // will be freed by _windowsOnWriteComplete
         }
         self.keep_alive.disable();
+        // The channel is gone: release the cluster-internal GC roots now. They
+        // root the cluster Worker, which references the owning Subprocess, a
+        // cycle the GC can never break (one Subprocess leaked per cluster.fork).
+        self.internal_msg_queue.deinit();
         let was_open = matches!(self.socket, SocketUnion::Open(_));
         self.socket = SocketUnion::Closed;
         // Only enqueue the close notification for the open→closed transition.

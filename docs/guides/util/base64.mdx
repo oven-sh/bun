@@ -40,10 +40,11 @@ const text = bytes.toString("utf8");
 <Warning>
   The older [`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/btoa) and [`atob()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/atob) APIs are still available for compatibility, but they operate on binary strings instead of byte arrays. Avoid them in new code, especially when handling arbitrary binary data or non-ASCII text.
 
-  ```ts
-  const encoded = btoa("bun"); // => "YnVu"
-  const decoded = atob(encoded); // => "bun"
-  ```
+```ts
+const encoded = btoa("bun"); // => "YnVu"
+const decoded = atob(encoded); // => "bun"
+```
+
 </Warning>
 
 ---

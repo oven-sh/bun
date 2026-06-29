@@ -1,3 +1,4 @@
+import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
@@ -2017,6 +2018,169 @@ describe("exist", () => {
 
   it("should return false with empty string", () => {
     expect(existsSync("")).toBe(false);
+  });
+});
+
+// existsSync/accessSync on Windows use a by-name attribute query:
+// GetFileInformationByName (Win11 23H2+) with a GetFileAttributesW fallback
+// for older Windows and for paths the fast query cannot answer (DOS devices,
+// locked system files). Both arms must agree on every edge case, so the same
+// matrix runs once per arm; the feature flag forces the fallback arm on
+// machines where the fast API exists.
+describe.skipIf(!isWindows)("windows existsSync/accessSync attribute-query semantics", () => {
+  const matrixFixture = String.raw`
+    import assert from "node:assert";
+    import fs from "node:fs";
+    import path from "node:path";
+    import { dlopen, FFIType } from "bun:ffi";
+
+    const { F_OK, R_OK, W_OK, X_OK } = fs.constants;
+    const p = (...segments) => path.join(process.cwd(), ...segments);
+
+    fs.writeFileSync(p("file.txt"), "hello");
+    fs.mkdirSync(p("dir"));
+    fs.writeFileSync(p("ro.txt"), "ro");
+    fs.mkdirSync(p("ro-dir"));
+    fs.writeFileSync(p("fïlé-中文.txt"), "non-ascii");
+    fs.symlinkSync(p("file.txt"), p("link-file"), "file");
+    fs.symlinkSync(p("dir"), p("link-dir"), "dir");
+    fs.symlinkSync(p("ro.txt"), p("link-ro"), "file");
+    fs.symlinkSync(p("missing-target"), p("link-dangling"), "file");
+    fs.symlinkSync(p("dir"), p("junction-dir"), "junction");
+    fs.mkdirSync(p("junction-target"));
+    fs.symlinkSync(p("junction-target"), p("junction-dangling"), "junction");
+    fs.rmdirSync(p("junction-target"));
+
+    const throws = (fn, code) => {
+      let threw;
+      try {
+        fn();
+      } catch (err) {
+        threw = err;
+      }
+      assert.ok(threw, "expected " + code + ", did not throw");
+      assert.strictEqual(threw.code, code);
+      assert.strictEqual(threw.syscall, "access");
+      return threw;
+    };
+
+    try {
+      // Read-only bits go on last so a setup failure above never leaves the
+      // temp dir undeletable; the finally below clears them.
+      fs.chmodSync(p("ro.txt"), 0o444);
+      fs.chmodSync(p("ro-dir"), 0o444);
+
+      // existsSync resolves reparse points through to their target.
+      assert.strictEqual(fs.existsSync(p("file.txt")), true);
+      assert.strictEqual(fs.existsSync(p("dir")), true);
+      assert.strictEqual(fs.existsSync(p("dir") + "\\"), true);
+      assert.strictEqual(fs.existsSync(p("ro.txt")), true);
+      assert.strictEqual(fs.existsSync(p("missing.txt")), false);
+      assert.strictEqual(fs.existsSync(p("missing-dir", "x.txt")), false);
+      assert.strictEqual(fs.existsSync(p("link-file")), true);
+      assert.strictEqual(fs.existsSync(p("link-dir")), true);
+      assert.strictEqual(fs.existsSync(p("link-dangling")), false);
+      assert.strictEqual(fs.existsSync(p("junction-dir")), true);
+      assert.strictEqual(fs.existsSync(p("junction-dangling")), false);
+      assert.strictEqual(fs.existsSync(p("fïlé-中文.txt")), true);
+      assert.strictEqual(fs.existsSync(p("fïlé-中文-missing.txt")), false);
+      assert.strictEqual(fs.existsSync("file.txt"), true); // relative to cwd
+      assert.strictEqual(fs.existsSync("./file.txt"), true);
+      assert.strictEqual(fs.existsSync("NUL"), true);
+      assert.strictEqual(fs.existsSync(""), false);
+
+      // accessSync reports the reparse point itself (no target resolution),
+      // and W_OK only fails for read-only non-directories.
+      fs.accessSync(p("file.txt"), F_OK);
+      fs.accessSync(p("file.txt"), R_OK | W_OK | X_OK);
+      fs.accessSync(p("dir"), W_OK);
+      fs.accessSync(p("ro-dir"), W_OK); // directories cannot be read-only
+      fs.accessSync(p("ro.txt"), R_OK);
+      fs.accessSync(p("fïlé-中文.txt"), W_OK);
+      fs.accessSync("file.txt", F_OK); // relative to cwd
+      fs.accessSync(p("link-file"), W_OK);
+      // The read-only bit lives on the target, not the link, and access
+      // reports the link itself.
+      fs.accessSync(p("link-ro"), W_OK);
+      fs.accessSync(p("link-dangling"), F_OK);
+      fs.accessSync(p("link-dangling"), W_OK);
+      fs.accessSync("NUL", W_OK);
+
+      const enoent = throws(() => fs.accessSync(p("missing.txt"), F_OK), "ENOENT");
+      assert.strictEqual(enoent.path, p("missing.txt"));
+      throws(() => fs.accessSync(p("missing-dir", "x.txt"), F_OK), "ENOENT");
+      throws(() => fs.accessSync(p("ro.txt"), W_OK), "EPERM");
+      throws(() => fs.accessSync(p("file.txt") + "\\", F_OK), "ENOTDIR");
+      throws(() => fs.accessSync("", F_OK), "ENOENT");
+
+      // The async flavors share the same syscall layer.
+      await fs.promises.access(p("ro.txt"), R_OK);
+      await assert.rejects(fs.promises.access(p("ro.txt"), W_OK), { code: "EPERM", syscall: "access" });
+      await assert.rejects(fs.promises.access(p("missing.txt"), F_OK), { code: "ENOENT", syscall: "access" });
+      {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        fs.access(p("link-dangling"), W_OK, err => (err ? reject(err) : resolve()));
+        await promise;
+      }
+      {
+        const { promise, resolve } = Promise.withResolvers();
+        fs.exists(p("link-dangling"), resolve);
+        assert.strictEqual(await promise, false);
+      }
+    } finally {
+      // Clear read-only bits so the temp dir can be deleted.
+      fs.chmodSync(p("ro.txt"), 0o666);
+      fs.chmodSync(p("ro-dir"), 0o777);
+    }
+
+    // Report whether the Win11 23H2+ API exists so CI logs show which arm
+    // the fast-path run actually exercised on this machine.
+    let fastApiAvailable = false;
+    try {
+      dlopen("api-ms-win-core-file-l2-1-4.dll", {
+        GetFileInformationByName: {
+          args: [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.u32],
+          returns: FFIType.i32,
+        },
+      });
+      fastApiAvailable = true;
+    } catch {}
+    console.log("fast-api-available=" + fastApiAvailable);
+    console.log("matrix ok");
+  `;
+
+  it.concurrent.each([
+    ["GetFileInformationByName fast path", {}],
+    ["GetFileAttributesW fallback", { BUN_FEATURE_FLAG_DISABLE_GET_FILE_INFORMATION_BY_NAME: "1" }],
+  ])("edge-case matrix agrees on both arms: %s", async (_label, extraEnv) => {
+    // Independent probe of the same API so the fixture's report is asserted
+    // against this machine's ground truth, not against itself.
+    let fastApiAvailable = false;
+    try {
+      dlopen("api-ms-win-core-file-l2-1-4.dll", {
+        GetFileInformationByName: {
+          args: [FFIType.ptr, FFIType.i32, FFIType.ptr, FFIType.u32],
+          returns: FFIType.i32,
+        },
+      });
+      fastApiAvailable = true;
+    } catch {}
+
+    using dir = tempDir("fs-exists-access-matrix", { "matrix-fixture.mjs": matrixFixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "matrix-fixture.mjs"],
+      env: { ...bunEnv, ...extraEnv },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is surfaced in the diff only on failure (debug builds may log benign warnings).
+    expect({
+      stdout: stdout.trim(),
+      exitCode,
+      ...(exitCode === 0 ? {} : { stderr }),
+    }).toEqual({ stdout: `fast-api-available=${fastApiAvailable}\nmatrix ok`, exitCode: 0 });
   });
 });
 

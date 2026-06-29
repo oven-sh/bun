@@ -361,6 +361,64 @@ pub struct FILE_BASIC_INFORMATION {
     pub FileAttributes: ULONG,
 }
 
+/// `FILE_ID_128` (`winnt.h`) — 128-bit file identifier.
+#[repr(C)]
+pub struct FILE_ID_128 {
+    pub Identifier: [u8; 16],
+}
+
+/// `FILE_STAT_BASIC_INFORMATION` (`ntifs.h`, Win11 ≥ 23H2) — output of
+/// `GetFileInformationByName(FileStatBasicByNameInfo)`.
+#[repr(C)]
+pub struct FILE_STAT_BASIC_INFORMATION {
+    pub FileId: LARGE_INTEGER,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub ReparseTag: ULONG,
+    pub NumberOfLinks: ULONG,
+    pub DeviceType: ULONG,
+    pub DeviceCharacteristics: ULONG,
+    pub Reserved: ULONG,
+    pub VolumeSerialNumber: LARGE_INTEGER,
+    pub FileId128: FILE_ID_128,
+}
+
+/// `FILE_INFO_BY_NAME_CLASS` (`winbase.h`) — selector for
+/// `GetFileInformationByName`. Newtype-over-u32 like `FILE_INFORMATION_CLASS`.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct FILE_INFO_BY_NAME_CLASS(pub u32);
+impl FILE_INFO_BY_NAME_CLASS {
+    pub const FileStatBasicByNameInfo: Self = Self(3);
+}
+
+/// `GetFileInformationByName` (`winbase.h`) — by-name metadata query that
+/// skips the query-open filter-driver tax `GetFileAttributesW` pays. Exported
+/// from `api-ms-win-core-file-l2-1-4.dll` on Win11 ≥ 23H2 only, so it is
+/// resolved at runtime (`bun_sys::dlsym_with_handle!`) instead of `#[link]`,
+/// which would fail to load the binary on older Windows.
+pub type GetFileInformationByNameFn = unsafe extern "system" fn(
+    FileName: LPCWSTR,
+    FileInformationClass: FILE_INFO_BY_NAME_CLASS,
+    FileInfoBuffer: *mut c_void,
+    FileInfoBufferSize: ULONG,
+) -> BOOL;
+
+// `DEVICE_TYPE` values (`winioctl.h`) seen in
+// `FILE_STAT_BASIC_INFORMATION.DeviceType` for volume-backed paths.
+pub const FILE_DEVICE_CD_ROM: ULONG = 0x0002;
+pub const FILE_DEVICE_CD_ROM_FILE_SYSTEM: ULONG = 0x0003;
+pub const FILE_DEVICE_DISK: ULONG = 0x0007;
+pub const FILE_DEVICE_DISK_FILE_SYSTEM: ULONG = 0x0008;
+pub const FILE_DEVICE_NETWORK_FILE_SYSTEM: ULONG = 0x0014;
+pub const FILE_DEVICE_VIRTUAL_DISK: ULONG = 0x0024;
+pub const FILE_DEVICE_DVD: ULONG = 0x0033;
+
 /// `FILE_DIRECTORY_INFORMATION` (`ntifs.h`) — `NtQueryDirectoryFile` record.
 /// `FileName` is a flexible array; declared `[WCHAR; 1]` to match C layout
 /// (read past it via `FileNameLength`).

@@ -7163,7 +7163,7 @@ declare module "bun" {
   /**
    * A process created by {@link Bun.spawn}.
    *
-   * This type accepts 3 optional type parameters which correspond to the `stdio` array from the options object. Instead of specifying these, you should use one of the following utility types instead:
+   * The 3 optional type parameters correspond to the `stdio` array from the options object. Instead of specifying them, use one of these utility types:
    * - {@link ReadableSubprocess} (any, pipe, pipe)
    * - {@link WritableSubprocess} (pipe, any, any)
    * - {@link PipedSubprocess} (pipe, pipe, pipe)
@@ -7180,7 +7180,7 @@ declare module "bun" {
 
     /**
      * The terminal attached to this subprocess, if spawned with the `terminal` option.
-     * Returns `undefined` if no terminal was attached.
+     * `undefined` if no terminal was attached.
      *
      * When a terminal is attached, `stdin`, `stdout`, and `stderr` return `null`.
      * Use `terminal.write()` and the `data` callback instead.
@@ -7197,7 +7197,7 @@ declare module "bun" {
     readonly terminal: Terminal | undefined;
 
     /**
-     * Access extra file descriptors passed to the `stdio` option in the options object.
+     * Extra file descriptors passed to the `stdio` option.
      *
      * Entries beyond index 2 are `number` for `"pipe"` and `"socket-fd"` slots and,
      * on POSIX, for slots where a raw file descriptor was supplied (the same fd is
@@ -7209,9 +7209,9 @@ declare module "bun" {
     readonly stdio: [null, null, null, ...(number | null)[]];
 
     /**
-     * This returns the same value as {@link Subprocess.stdout}
+     * The same value as {@link Subprocess.stdout}
      *
-     * It exists for compatibility with {@link ReadableStream.pipeThrough}
+     * Exists for compatibility with {@link ReadableStream.pipeThrough}
      */
     readonly readable: SpawnOptions.ReadableToIO<Out>;
 
@@ -7228,52 +7228,52 @@ declare module "bun" {
     /**
      * The exit code of the process
      *
-     * The promise will resolve when the process exits
+     * The promise resolves when the process exits
      */
     readonly exited: Promise<number>;
 
     /**
      * Synchronously get the exit code of the process
      *
-     * If the process hasn't exited yet, this will return `null`
+     * `null` if the process hasn't exited yet
      */
     readonly exitCode: number | null;
 
     /**
      * Synchronously get the signal code of the process
      *
-     * If the process never sent a signal code, this will return `null`
+     * `null` if the process never sent a signal code
      *
      * To receive signal code changes, use the `onExit` callback.
      *
-     * If the signal code is unknown, it will return the original signal code
-     * number, but that case should essentially never happen.
+     * If the signal code is unknown, this is the original signal code
+     * number, but that case should never happen in practice.
      */
     readonly signalCode: NodeJS.Signals | null;
 
     /**
-     * Has the process exited?
+     * Whether the process has exited
      */
     readonly killed: boolean;
 
     /**
      * Kill the process
-     * @param exitCode The exitCode to send to the process
+     * @param exitCode Exit code or signal to send to the process
      */
     kill(exitCode?: number | NodeJS.Signals): void;
 
     /**
-     * This method will tell Bun to wait for this process to exit after you already
+     * Tell Bun to wait for this process to exit after you already
      * called `unref()`.
      *
-     * Before shutting down, Bun will wait for all subprocesses to exit by default
+     * By default, Bun waits for all subprocesses to exit before shutting down
      */
     ref(): void;
 
     /**
-     * Before shutting down, Bun will wait for all subprocesses to exit by default
+     * Tell Bun not to wait for this process to exit before shutting down.
      *
-     * This method will tell Bun to not wait for this process to exit before shutting down.
+     * By default, Bun waits for all subprocesses to exit before shutting down.
      */
     unref(): void;
 
@@ -7292,11 +7292,9 @@ declare module "bun" {
     disconnect(): void;
 
     /**
-     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     * Get the resource usage of the process, such as max RSS and CPU time
      *
-     * Only available after the process has exited
-     *
-     * If the process hasn't exited yet, this will return `undefined`
+     * Returns `undefined` until the process has exited
      */
     resourceUsage(): ResourceUsage | undefined;
   }
@@ -7304,7 +7302,7 @@ declare module "bun" {
   /**
    * A process created by {@link Bun.spawnSync}.
    *
-   * This type accepts 2 optional type parameters which correspond to the `stdout` and `stderr` options. Instead of specifying these, you should use one of the following utility types instead:
+   * The 2 optional type parameters correspond to the `stdout` and `stderr` options. Instead of specifying them, use one of these utility types:
    * - {@link ReadableSyncSubprocess} (pipe, pipe)
    * - {@link NullSyncSubprocess} (ignore, ignore)
    */
@@ -7317,7 +7315,7 @@ declare module "bun" {
     exitCode: number;
     success: boolean;
     /**
-     * Get the resource usage information of the process (max RSS, CPU time, etc)
+     * Resource usage of the process, such as max RSS and CPU time
      */
     resourceUsage: ResourceUsage;
 
@@ -7352,9 +7350,9 @@ declare module "bun" {
       /**
        * The command to run
        *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
        *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
        *
        * To check if the command exists before running it, use `Bun.which(bin)`.
        *
@@ -7386,9 +7384,9 @@ declare module "bun" {
     /**
      * The command to run
      *
-     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
      *
-     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
      *
      * To check if the command exists before running it, use `Bun.which(bin)`.
      *
@@ -7402,7 +7400,7 @@ declare module "bun" {
   ): Subprocess<In, Out, Err>;
 
   /**
-   * Spawn a new process
+   * Synchronously spawn a new process
    *
    * @category Process Management
    *
@@ -7424,9 +7422,9 @@ declare module "bun" {
       /**
        * The command to run
        *
-       * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+       * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
        *
-       * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+       * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
        *
        * To check if the command exists before running it, use `Bun.which(bin)`.
        *
@@ -7459,9 +7457,9 @@ declare module "bun" {
     /**
      * The command to run
      *
-     * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
+     * The first argument is resolved to an absolute executable path. It must be a file, not a directory.
      *
-     * If you explicitly set `PATH` in `env`, that `PATH` will be used to resolve the executable instead of the default `PATH`.
+     * If you explicitly set `PATH` in `env`, that `PATH` is used to resolve the executable instead of the default `PATH`.
      *
      * To check if the command exists before running it, use `Bun.which(bin)`.
      *
@@ -7528,7 +7526,7 @@ declare module "bun" {
    * ```
    */
   interface CronJob extends Disposable {
-    /** The cron expression string. */
+    /** The schedule expression this job was created with. */
     readonly cron: string;
     /** Cancel this cron job. The callback will not fire again. */
     stop(): CronJob;
@@ -7538,6 +7536,13 @@ declare module "bun" {
     unref(): CronJob;
   }
 
+  /**
+   * Schedule cron jobs.
+   *
+   * Call with a callback to run an in-process job, or with a module path and
+   * title to register an OS-level job. {@link Bun.cron.parse} previews the next
+   * fire time; {@link Bun.cron.remove} unregisters an OS-level job.
+   */
   const cron: {
     /**
      * Schedule an **in-process** cron job that calls a function on a schedule.
@@ -7802,11 +7807,11 @@ declare module "bun" {
     data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
     /**
      * Callback invoked when the PTY stream closes (EOF or read error).
-     * Note: exitCode is a PTY lifecycle status (0=clean EOF, 1=error), NOT the subprocess exit code.
-     * Use Subprocess.exited or onExit callback for actual process exit information.
+     * `exitCode` is a PTY lifecycle status (0 = clean EOF, 1 = error), NOT the subprocess exit code.
+     * Use {@link Subprocess.exited} or the `onExit` callback for the process exit information.
      * @param terminal The terminal instance
      * @param exitCode PTY lifecycle status (0 for EOF, 1 for error)
-     * @param signal Reserved for future signal reporting, currently null
+     * @param signal Always `null`; reserved for future signal reporting
      */
     exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
     /**
@@ -7817,7 +7822,7 @@ declare module "bun" {
   }
 
   /**
-   * A pseudo-terminal (PTY) that can be used to spawn interactive terminal programs.
+   * A pseudo-terminal (PTY) for spawning interactive terminal programs.
    *
    * @example
    * ```ts
@@ -7893,7 +7898,7 @@ declare module "bun" {
     /**
      * Terminal input flags (c_iflag from termios).
      * Controls input processing behavior like ICRNL, IXON, etc.
-     * Returns 0 if terminal is closed.
+     * Returns 0 if the terminal is closed.
      * Setting returns true on success, false on failure.
      */
     inputFlags: number;
@@ -7901,7 +7906,7 @@ declare module "bun" {
     /**
      * Terminal output flags (c_oflag from termios).
      * Controls output processing behavior like OPOST, ONLCR, etc.
-     * Returns 0 if terminal is closed.
+     * Returns 0 if the terminal is closed.
      * Setting returns true on success, false on failure.
      */
     outputFlags: number;
@@ -7909,7 +7914,7 @@ declare module "bun" {
     /**
      * Terminal local flags (c_lflag from termios).
      * Controls local processing like ICANON, ECHO, ISIG, etc.
-     * Returns 0 if terminal is closed.
+     * Returns 0 if the terminal is closed.
      * Setting returns true on success, false on failure.
      */
     localFlags: number;
@@ -7917,7 +7922,7 @@ declare module "bun" {
     /**
      * Terminal control flags (c_cflag from termios).
      * Controls hardware characteristics like CSIZE, PARENB, etc.
-     * Returns 0 if terminal is closed.
+     * Returns 0 if the terminal is closed.
      * Setting returns true on success, false on failure.
      */
     controlFlags: number;
@@ -7948,6 +7953,10 @@ declare module "bun" {
   //   },
   // ): number;
 
+  /**
+   * Resolve routes against a directory of files using Next.js-style (`pages`
+   * directory) conventions.
+   */
   class FileSystemRouter {
     /**
      * Create a new {@link FileSystemRouter}.
@@ -7964,19 +7973,11 @@ declare module "bun" {
      * ```
      * @param options The options to use when creating the router
      * @param options.dir The root directory containing the files to route
-     * @param options.style The style of router to use (only "nextjs" supported
-     * for now)
+     * @param options.style The style of router to use (only "nextjs" is supported)
      */
     constructor(options: {
       /**
        * The root directory containing the files to route
-       *
-       * There is no default value for this option.
-       *
-       * @example
-       *   ```ts
-       *   const router = new FileSystemRouter({
-       *   dir:
        */
       dir: string;
       style: "nextjs";
@@ -8048,7 +8049,7 @@ declare module "bun" {
   /**
    * Find the index of a newline character in potentially ill-formed UTF-8 text.
    *
-   * This is sort of like readline() except without the IO.
+   * Like `readline()`, but without the IO.
    */
   function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
 
@@ -8073,14 +8074,14 @@ declare module "bun" {
     absolute?: boolean;
 
     /**
-     * Indicates whether to traverse descendants of symbolic link directories.
+     * Whether to traverse descendants of symbolic link directories.
      *
      * @default false
      */
     followSymlinks?: boolean;
 
     /**
-     * Throw an error when symbolic link is broken
+     * Throw an error when a symbolic link is broken
      *
      * @default false
      */

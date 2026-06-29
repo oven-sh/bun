@@ -28,20 +28,6 @@ test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-net-connect-memleak.js [ FLAKY ] # same FinalizationRegistry-vs-setImmediate timing as its tls sibling above; fleet-wide since 2026-06-28 (oven-sh/bun#33044)
 
-# Verbatim node v26.3.0 test: server end()s a 2MB buffer then destroySoon();
-# client asserts bytesRead === 2MB on 'end'. On the macOS 14 aarch64 runner the
-# client's 'end' fires after exactly 2048000 bytes (3 x 16KB TLS records short)
-# every run; passes on macOS 26 aarch64, all darwin x64, all linux/windows, and
-# locally on debug. The PR adds nothing to the TLS read/write/shutdown path
-# (openssl.c diff is only the SNI getter; ServerHandlers and destroySoon are
-# untouched) - the connect-time read(0) scheduling change perturbs timing
-# enough to surface a pre-existing server-side spill-drain vs close race on
-# this specific kernel. The test already early-returns on Windows CI for the
-# same family of race. Quarantined as FLAKY on darwin aarch64 only so it still
-# runs and reports; follow-up: pin down the spill-drain ordering at usockets
-# ssl_close.
-[ DARWIN-AARCH64 ] test/js/node/test/parallel/test-tls-client-destroy-soon.js [ FLAKY ] # 'end' fires 3 TLS records short on macOS 14 aarch64 runner; pre-existing destroySoon spill-drain race
-
 # Vendored node v26.3.0 stream tests blocked on missing native subsystems (see PR #31826)
 test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/binding + js_stream (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)

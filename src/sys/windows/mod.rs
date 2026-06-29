@@ -3619,6 +3619,162 @@ pub enum GetFinalPathNameByHandleError {
     NameTooLong,
 }
 
+/// `\Device\<volume>` prefix → DOS drive letter (`C`), learned the first time
+/// a `VOLUME_NAME_DOS` query is denied. A lowbox (AppContainer) token cannot
+/// open the mount manager, so `VOLUME_NAME_DOS`/`VOLUME_NAME_GUID`,
+/// `QueryDosDevice` and `GetVolumeInformationW(root)` all fail inside one;
+/// the only volumes that can be named are those the process already holds a
+/// DOS spelling for: the working directory and the executable.
+static NT_DEVICE_TO_DRIVE: std::sync::OnceLock<Vec<(Vec<u16>, u16)>> = std::sync::OnceLock::new();
+
+fn final_name_raw(h: HANDLE, flags: DWORD, buf: &mut [u16]) -> Option<usize> {
+    // SAFETY: buf valid for buf.len().
+    let n =
+        unsafe { externs::GetFinalPathNameByHandleW(h, buf.as_mut_ptr(), buf.len() as u32, flags) }
+            as usize;
+    if n == 0 || n >= buf.len() { None } else { Some(n) }
+}
+
+fn eq_w_ascii_case_insensitive(a: &[u16], b: &[u16]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(&x, &y)| {
+            x == y || (x < 128 && y < 128 && (x as u8).eq_ignore_ascii_case(&(y as u8)))
+        })
+}
+
+/// Record `\Device\X → L:` when `dos` (`L:\a\b`) provably names the same
+/// directory as its own handle's NT path: the `VOLUME_NAME_NONE` tail must
+/// equal `dos` minus the drive, which rules out junction/subst indirection.
+fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
+    if dos.len() < 3
+        || dos[0] >= 128
+        || !(dos[0] as u8).is_ascii_alphabetic()
+        || dos[1] != u16::from(b':')
+    {
+        return;
+    }
+    let mut z = bun_paths::w_path_buffer_pool::get();
+    if dos.len() + 1 >= z.0.len() {
+        return;
+    }
+    z.0[..dos.len()].copy_from_slice(dos);
+    z.0[dos.len()] = 0;
+    // SAFETY: NUL written above; attribute-only open (no access requested).
+    let h = unsafe {
+        CreateFileW(
+            z.0.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            core::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            core::ptr::null_mut(),
+        )
+    };
+    if h == INVALID_HANDLE_VALUE {
+        return;
+    }
+    let mut nt = bun_paths::w_path_buffer_pool::get();
+    let mut none = bun_paths::w_path_buffer_pool::get();
+    let got = final_name_raw(
+        h,
+        win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
+        &mut nt.0[..],
+    )
+    .zip(final_name_raw(
+        h,
+        win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NONE,
+        &mut none.0[..],
+    ));
+    // SAFETY: `h` is the live handle opened above.
+    unsafe {
+        let _ = externs::CloseHandle(h);
+    }
+    let Some((nt_len, none_len)) = got else { return };
+    if none_len >= nt_len {
+        return;
+    }
+    let device_len = nt_len - none_len;
+    let (device, nt_tail) = nt.0[..nt_len].split_at(device_len);
+    if nt_tail != &none.0[..none_len] {
+        return;
+    }
+    if !eq_w_ascii_case_insensitive(&none.0[..none_len], &dos[2..]) {
+        return;
+    }
+    if map.iter().any(|(d, _)| d == device) {
+        return;
+    }
+    map.push((device.to_vec(), u16::from((dos[0] as u8).to_ascii_uppercase())));
+}
+
+/// `VOLUME_NAME_DOS` was denied (sandboxed token). Answer with
+/// `<drive>:<VOLUME_NAME_NT path minus its device prefix>` via the learned
+/// device map; degrade to the original error for volumes never seen under a
+/// DOS spelling.
+fn lowbox_dos_name_fallback(
+    hFile: HANDLE,
+    out_buffer: &mut [u16],
+) -> Result<&mut [u16], GetFinalPathNameByHandleError> {
+    let map = NT_DEVICE_TO_DRIVE.get_or_init(|| {
+        let mut map = Vec::new();
+        {
+            let mut cwd = bun_paths::w_path_buffer_pool::get();
+            let n = unsafe { kernel32::GetCurrentDirectoryW(cwd.0.len() as u32, cwd.0.as_mut_ptr()) }
+                as usize;
+            if n > 0 && n < cwd.0.len() {
+                learn_nt_device(&mut map, &cwd.0[..n]);
+            }
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            use std::os::windows::ffi::OsStrExt;
+            let exe: Vec<u16> = exe.into_os_string().encode_wide().collect();
+            if let Some(dir_len) = exe.iter().rposition(|&c| c == u16::from(b'\\')) {
+                if dir_len > 2 {
+                    learn_nt_device(&mut map, &exe[..dir_len]);
+                }
+            }
+        }
+        map
+    });
+    if !map.is_empty() {
+        let mut nt_buf = bun_paths::w_path_buffer_pool::get();
+        if let Some(nt_len) = final_name_raw(
+            hFile,
+            win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
+            &mut nt_buf.0[..],
+        ) {
+            let nt = &nt_buf.0[..nt_len];
+            for (device, letter) in map {
+                if nt.len() > device.len()
+                    && &nt[..device.len()] == &device[..]
+                    && nt[device.len()] == u16::from(b'\\')
+                {
+                    let rest = &nt[device.len()..];
+                    if 2 + rest.len() >= out_buffer.len() {
+                        return Err(GetFinalPathNameByHandleError::NameTooLong);
+                    }
+                    out_buffer[0] = *letter;
+                    out_buffer[1] = u16::from(b':');
+                    out_buffer[2..2 + rest.len()].copy_from_slice(rest);
+                    let total = 2 + rest.len();
+                    bun_sys::syslog!(
+                        "GetFinalPathNameByHandleW({:p}) = {} (NT device fallback)",
+                        hFile,
+                        bun_core::fmt::utf16(&out_buffer[..total])
+                    );
+                    return Ok(&mut out_buffer[..total]);
+                }
+            }
+        }
+    }
+    bun_sys::syslog!(
+        "GetFinalPathNameByHandleW({:p}) = denied (no NT device mapping)",
+        hFile
+    );
+    Err(GetFinalPathNameByHandleError::FileNotFound)
+}
+
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
     fmt: win32::GetFinalPathNameByHandleFormat,
@@ -3641,6 +3797,14 @@ pub fn GetFinalPathNameByHandle(
     if return_length == 0 {
         let err = GetLastError();
         bun_sys::syslog!("GetFinalPathNameByHandleW({:p}) = {:?}", hFile, err);
+        // An AppContainer (lowbox) token is denied the mount-manager lookup
+        // behind the DOS volume-name translation while the NT form still
+        // works; rebuild `X:\…` from the NT name and the learned device map.
+        if fmt.volume_name == win32::VolumeName::Dos
+            && err == u32::from(Win32Error::ACCESS_DENIED.0)
+        {
+            return lowbox_dos_name_fallback(hFile, out_buffer);
+        }
         return Err(GetFinalPathNameByHandleError::FileNotFound);
     }
 

@@ -864,6 +864,74 @@ describe("ServerWebSocket", () => {
       }));
     }
   });
+  // With the default publishToSelf: false, a ws.publish() from a socket that has never
+  // subscribed to anything must still deliver to other subscribers.
+  describe("publish() from a socket not subscribed to anything", () => {
+    const big = Buffer.alloc(20 * 1024, "x").toString();
+    const cases = [
+      ["publish", "publish", "small-text"],
+      ["publishText", "publishText", "small-text"],
+      ["publishBinary", "publishBinary", Buffer.from("small-binary")],
+      ["publish (>= cork buffer)", "publish", big],
+    ] as const;
+    for (const [label, method, payload] of cases) {
+      it.concurrent(label, async () => {
+        const subscribed = Promise.withResolvers<void>();
+        const received = Promise.withResolvers<string | ArrayBuffer>();
+        const published = Promise.withResolvers<number>();
+        let nextId = 0;
+        using server = serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req, { data: { id: nextId++ } })) return;
+            return new Response();
+          },
+          websocket: {
+            open(ws) {
+              if (ws.data.id === 0) {
+                ws.subscribe("chat");
+                subscribed.resolve();
+              } else {
+                expect(ws.isSubscribed("chat")).toBe(false);
+                // @ts-expect-error dynamic method dispatch
+                published.resolve(ws[method]("chat", payload));
+              }
+            },
+            message() {},
+          },
+        });
+        const url = `ws://${server.hostname}:${server.port}/`;
+        // A socket that errors or closes before the server's open() handler ran would
+        // otherwise leave one of the awaited slots pending until the test timeout.
+        const fail = (who: string) => (ev: Event) => {
+          const err = new Error(`${who} websocket ${ev.type}`);
+          subscribed.reject(err);
+          published.reject(err);
+          received.reject(err);
+        };
+        const sub = new WebSocket(url);
+        sub.binaryType = "arraybuffer";
+        sub.onmessage = e => received.resolve(e.data);
+        sub.onerror = sub.onclose = fail("subscriber");
+        await subscribed.promise;
+        expect(server.subscriberCount("chat")).toBe(1);
+        const pub = new WebSocket(url);
+        pub.onmessage = e => received.reject(new Error("publisher must not receive: " + e.data));
+        pub.onerror = pub.onclose = fail("publisher");
+
+        const ret = await published.promise;
+        expect(ret).toBe(Buffer.byteLength(payload));
+        const got = await received.promise;
+        if (typeof payload === "string") {
+          expect(got).toBe(payload);
+        } else {
+          expect(Buffer.from(got as ArrayBuffer)).toEqual(Buffer.from(payload));
+        }
+        sub.close();
+        pub.close();
+      });
+    }
+  });
   describe("ping()", () => {
     test("(no argument)", done => ({
       open(ws) {

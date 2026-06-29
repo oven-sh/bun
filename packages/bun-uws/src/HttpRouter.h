@@ -160,13 +160,13 @@ private:
     static bool urlNeedsNormalization(std::string_view url) {
         for (size_t i = 0; i < url.length(); i++) {
             char c = url[i];
-            if (c == '\\' || c == '#' || c == '?') {
+            if (c == '\\' || c == '#') {
                 return true;
             }
             /* Dot-segments can only start right after a '/'; dotfile segments (".well-known") are not dot-segments */
             if (c == '/' && i + 1 < url.length() && (url[i + 1] == '.' || isEncodedDotAt(url, i + 1))) {
                 size_t segmentEnd = i + 1;
-                while (segmentEnd < url.length() && url[segmentEnd] != '/' && url[segmentEnd] != '\\' && url[segmentEnd] != '?' && url[segmentEnd] != '#') {
+                while (segmentEnd < url.length() && url[segmentEnd] != '/' && url[segmentEnd] != '\\' && url[segmentEnd] != '#') {
                     segmentEnd++;
                 }
                 std::string_view segment = url.substr(i + 1, segmentEnd - i - 1);
@@ -179,8 +179,8 @@ private:
     }
 
     /* Handlers observe the URL-parser-normalized path (dot-segments and their "%2e" spellings
-     * resolved, "\" treated as "/", path ended by "?" or "#"), so routes must match that path,
-     * not the raw request-target spelling. Percent-decoding is intentionally not applied. */
+     * resolved, "\" treated as "/", "#" ending the path), so routes must match that path, not the
+     * raw spelling. Callers pass the target cut at the first "?". No percent-decoding is applied. */
     std::string_view normalizeUrl(std::string_view url) {
         /* Only origin-form targets are paths; "*" and CONNECT authority-forms match as-is */
         if (url.length() < 2 || url[0] != '/' || !urlNeedsNormalization(url)) {
@@ -193,7 +193,7 @@ private:
         for (size_t segmentStart = 1, i = 1;; i++) {
             bool atEnd = i >= url.length();
             bool isSeparator = !atEnd && (url[i] == '/' || url[i] == '\\');
-            bool endsPath = atEnd || url[i] == '?' || url[i] == '#';
+            bool endsPath = atEnd || url[i] == '#';
             if (!isSeparator && !endsPath) {
                 continue;
             }
@@ -216,6 +216,7 @@ private:
                     normalizedUrlBuffer += '/';
                 }
             } else {
+                /* Every segment, including empty ones, contributes exactly one '/'; the ".." pop relies on that */
                 normalizedUrlBuffer += '/';
                 normalizedUrlBuffer.append(segment);
             }

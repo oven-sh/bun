@@ -1049,18 +1049,23 @@ describe("request-target normalization before route matching", () => {
     { target: "/w\\..\\admin/x", route: "/admin/x", pathname: "/admin/x" },
     // the path ends at the fragment
     { target: "/admin/x#frag", route: "/admin/x", pathname: "/admin/x" },
-    // the path ends at the query, and dot-segments in the query do not affect matching
+    // the HTTP parser strips the query before routing, so dot-segments after "?" never matter
     { target: "/admin/x?query=1", route: "/admin/x", pathname: "/admin/x" },
     { target: "/admin/x?next=/w/../admin", route: "/admin/x", pathname: "/admin/x" },
     // normalization inside a subtree stays inside it
     { target: "/w/sub/../x", route: "/w/*", pathname: "/w/x" },
     { target: "/w/%2e/x", route: "/w/*", pathname: "/w/x" },
     { target: "/p/x/../y", route: "/p/:v", pathname: "/p/y", param: "y" },
+    // empty segments are preserved, and ".." pops the empty segment, not the one before it
+    { target: "/w//../admin/x", route: "/w/*", pathname: "/w/admin/x" },
+    { target: "//a/../b", route: "fallback", pathname: "//b" },
+    { target: "/w\\\\x", route: "/w/*", pathname: "/w//x" },
     // normalization never escapes the root
     { target: "/w/..", route: "fallback", pathname: "/" },
     { target: "/..", route: "fallback", pathname: "/" },
     // a trailing dot-segment keeps the trailing slash, which is a different path
     { target: "/admin/x/y/..", route: "fallback", pathname: "/admin/x/" },
+    { target: "/p/a/..", route: "fallback", pathname: "/p/" },
     // dotfile segments are not dot-segments
     { target: "/.well-known/x", route: "fallback", pathname: "/.well-known/x" },
     { target: "/w/.hidden", route: "/w/*", pathname: "/w/.hidden" },

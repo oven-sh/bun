@@ -533,7 +533,11 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         }
 
                         OutputColorFormat::Hsl => {
-                            let Some(hsl) = HSL::try_from_css_color(&result) else {
+                            // `resolve_missing` zeroes `none` components (NaN), like the
+                            // conversion to RGBA does for the other output formats.
+                            let Some(hsl) =
+                                HSL::try_from_css_color(&result).map(|hsl| hsl.resolve_missing())
+                            else {
                                 return Ok(JSValue::NULL);
                             };
 
@@ -546,7 +550,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             ));
                         }
                         OutputColorFormat::Lab => {
-                            let Some(lab) = LAB::try_from_css_color(&result) else {
+                            let Some(lab) =
+                                LAB::try_from_css_color(&result).map(|lab| lab.resolve_missing())
+                            else {
                                 return Ok(JSValue::NULL);
                             };
 

@@ -306,6 +306,13 @@ describe("hsl and lab output formats emit valid CSS", () => {
     expect(red).toStartWith("lab(");
     expect(color(red, "hex")).toBe("#ff0000");
   });
+
+  test("`none` components are resolved to 0, never NaN", () => {
+    expect(color("hsl(none 100% 50%)", "hsl")).toBe("hsl(0, 100%, 50%)");
+    expect(color("hsl(120 none 50%)", "hsl")).toBe("hsl(120, 0%, 50%)");
+    expect(color("lab(none 20 30)", "lab")).toBe("lab(0% 20 30)");
+    expect(color("lab(none none none)", "lab")).toBe("lab(0% 0 0)");
+  });
 });
 
 test("fuzz ansi256", () => {

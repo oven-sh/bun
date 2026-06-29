@@ -258,6 +258,7 @@ it.each(["code", "object"])(
       });
 
       var reloadCounter = 0;
+      var sawNewContents = false;
 
       async function onReload() {
         writeFileSync(target, "v1");
@@ -274,16 +275,23 @@ it.each(["code", "object"])(
           reloadCounter++;
           str = "";
 
-          if (reloadCounter === 4) {
+          expect(line).toContain(`[#!plugin] Reloaded: ${reloadCounter} `);
+          if (reloadCounter === 1) {
+            // The first evaluation must observe the plugin's output for the
+            // original contents (a native loader would export something else).
+            expect(line).toEndWith("value=v0");
+          } else if (line.endsWith("value=v1")) {
+            // `writeFileSync` truncates before it writes, so a reload can race
+            // with it and observe an empty file. Only require that some reload
+            // after the overwrite re-ran the plugin and saw the new contents.
+            sawNewContents = true;
+          }
+
+          if (reloadCounter >= 4 && sawNewContents) {
             runner.unref();
             runner.kill();
             break;
           }
-
-          expect(line).toContain(`[#!plugin] Reloaded: ${reloadCounter}`);
-          // The first evaluation sees the original contents; every reload after
-          // the overwrite must re-run the plugin and see the new contents.
-          expect(line).toEndWith(reloadCounter === 1 ? "value=v0" : "value=v1");
           any = true;
         }
 
@@ -291,6 +299,7 @@ it.each(["code", "object"])(
       }
 
       expect(reloadCounter).toBeGreaterThanOrEqual(4);
+      expect(sawNewContents).toBe(true);
     } finally {
       // @ts-ignore
       runner?.unref?.();

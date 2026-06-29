@@ -525,8 +525,8 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(518);
-  expect(parentLineNumber).toBe(523);
+  expect(lineNumber).toBe(520);
+  expect(parentLineNumber).toBe(525);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {
@@ -910,69 +910,55 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
 });
 
 test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const buffers = new Map();
-  using server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    socket: {
-      data(socket, chunk) {
-        const previous = buffers.get(socket) ?? Buffer.alloc(0);
-        const request = Buffer.concat([previous, chunk]);
-        buffers.set(socket, request);
-        const text = request.toString("latin1");
-        if (!text.includes("\r\n\r\n")) {
-          return;
-        }
-        const key = /^Sec-WebSocket-Key:\s*(.+?)\r\n/im.exec(text)?.[1];
-        if (!key) {
-          reject(new Error("missing Sec-WebSocket-Key header"));
-          return;
-        }
-        const accept = createHash("sha1")
-          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-          .digest("base64");
-        const response = Buffer.from(
-          "HTTP/1.1 101 Switching Protocols\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            `Sec-WebSocket-Accept: ${accept}\r\n` +
-            "\r\n",
-          "latin1",
-        );
-        socket.write(Buffer.concat([response, Buffer.from([0x81, 0x02, 0x68, 0x69])]));
-      },
-      error(socket, error) {
-        reject(error);
-      },
-    },
+  // Runs in its own process: which dispatch path delivers the message (and therefore
+  // which frames are on the stack under the listener) depends on prior event-loop state.
+  const src = [
+    `const { createHash } = require("node:crypto");`,
+    `const buffers = new Map();`,
+    `const server = Bun.listen({`,
+    `  hostname: "127.0.0.1",`,
+    `  port: 0,`,
+    `  socket: {`,
+    `    data(socket, chunk) {`,
+    `      const previous = buffers.get(socket) ?? Buffer.alloc(0);`,
+    `      const request = Buffer.concat([previous, chunk]);`,
+    `      buffers.set(socket, request);`,
+    `      const text = request.toString("latin1");`,
+    `      if (!text.includes("\\r\\n\\r\\n")) return;`,
+    `      const key = /^Sec-WebSocket-Key:\\s*(.+?)\\r\\n/im.exec(text)?.[1];`,
+    `      if (!key) { console.error("missing Sec-WebSocket-Key header"); process.exit(1); }`,
+    `      const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");`,
+    `      const response = "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n";`,
+    `      socket.write(Buffer.concat([Buffer.from(response, "latin1"), Buffer.from([0x81, 0x02, 0x68, 0x69])]));`,
+    `    },`,
+    `    error() { process.exit(1); },`,
+    `  },`,
+    `});`,
+    `const ws = new WebSocket("ws://127.0.0.1:" + server.port);`,
+    `ws.addEventListener("close", event => { console.error("closed " + event.code); process.exit(1); });`,
+    `ws.addEventListener("message", event => {`,
+    `  const previousPrepareStackTrace = Error.prepareStackTrace;`,
+    `  let callSites;`,
+    `  try {`,
+    `    Error.prepareStackTrace = (_error, stack) => stack;`,
+    `    const error = new Error();`,
+    `    Error.captureStackTrace(error);`,
+    `    callSites = error.stack;`,
+    `  } finally {`,
+    `    Error.prepareStackTrace = previousPrepareStackTrace;`,
+    `  }`,
+    `  console.log(event.data, callSites.filter(callSite => callSite.isNative()).length);`,
+    `  process.exit(0);`,
+    `});`,
+  ].join("\n");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
   });
-
-  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
-  try {
-    ws.addEventListener("error", () => reject(new Error("websocket errored")));
-    ws.addEventListener("close", event => reject(new Error(`websocket closed: ${event.code}`)));
-    ws.addEventListener("message", event => {
-      const previousPrepareStackTrace = Error.prepareStackTrace;
-      let callSites;
-      try {
-        Error.prepareStackTrace = (_error, stack) => stack;
-        const error = new Error();
-        Error.captureStackTrace(error);
-        callSites = error.stack;
-      } finally {
-        Error.prepareStackTrace = previousPrepareStackTrace;
-      }
-      resolve({
-        data: event.data,
-        nativeCallSites: callSites.filter(callSite => callSite.isNative()).length,
-      });
-    });
-
-    expect(await promise).toEqual({ data: "hi", nativeCallSites: 0 });
-  } finally {
-    ws.close();
-  }
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("hi 0");
+  expect(exitCode).toBe(0);
 });
 
 test("printing an error whose message getter calls Error.captureStackTrace on itself prints normally", async () => {

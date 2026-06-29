@@ -2399,8 +2399,8 @@ test_typedarray_info_byte_offset(const Napi::CallbackInfo &info) {
   napi_value arraybuffer = nullptr;
   size_t byte_offset = SIZE_MAX;
   NODE_API_CALL(env,
-                napi_get_typedarray_info(env, typedarray, &type, &length,
-                                         &data, &arraybuffer, &byte_offset));
+                napi_get_typedarray_info(env, typedarray, &type, &length, &data,
+                                         &arraybuffer, &byte_offset));
 
   void *arraybuffer_data = nullptr;
   size_t arraybuffer_byte_length = 0;
@@ -2408,9 +2408,9 @@ test_typedarray_info_byte_offset(const Napi::CallbackInfo &info) {
                 napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
                                           &arraybuffer_byte_length));
 
-  bool data_at_offset = static_cast<uint8_t *>(arraybuffer_data) +
-                            byte_offset ==
-                        static_cast<uint8_t *>(data);
+  bool data_at_offset =
+      static_cast<uint8_t *>(arraybuffer_data) + byte_offset ==
+      static_cast<uint8_t *>(data);
   printf("byte_offset=%zu length=%zu arraybuffer_byte_length=%zu "
          "data_is_arraybuffer_data_plus_byte_offset=%s\n",
          byte_offset, length, arraybuffer_byte_length,
@@ -2427,9 +2427,8 @@ test_dataview_info_byte_offset(const Napi::CallbackInfo &info) {
   void *data = nullptr;
   napi_value arraybuffer = nullptr;
   size_t byte_offset = SIZE_MAX;
-  NODE_API_CALL(env,
-                napi_get_dataview_info(env, dataview, &byte_length, &data,
-                                       &arraybuffer, &byte_offset));
+  NODE_API_CALL(env, napi_get_dataview_info(env, dataview, &byte_length, &data,
+                                            &arraybuffer, &byte_offset));
 
   void *arraybuffer_data = nullptr;
   size_t arraybuffer_byte_length = 0;
@@ -2437,9 +2436,9 @@ test_dataview_info_byte_offset(const Napi::CallbackInfo &info) {
                 napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
                                           &arraybuffer_byte_length));
 
-  bool data_at_offset = static_cast<uint8_t *>(arraybuffer_data) +
-                            byte_offset ==
-                        static_cast<uint8_t *>(data);
+  bool data_at_offset =
+      static_cast<uint8_t *>(arraybuffer_data) + byte_offset ==
+      static_cast<uint8_t *>(data);
   printf("byte_offset=%zu byte_length=%zu arraybuffer_byte_length=%zu "
          "data_is_arraybuffer_data_plus_byte_offset=%s\n",
          byte_offset, byte_length, arraybuffer_byte_length,
@@ -2464,8 +2463,7 @@ test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
 
     napi_value probe;
     void *probe_data = nullptr;
-    NODE_API_CALL(env,
-                  napi_create_arraybuffer(env, size, &probe_data, &probe));
+    NODE_API_CALL(env, napi_create_arraybuffer(env, size, &probe_data, &probe));
     const uint8_t *bytes = static_cast<const uint8_t *>(probe_data);
     bool all_zero = true;
     for (size_t j = 0; j < size; j++) {

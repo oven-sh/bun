@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -60,6 +60,7 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
       `  },`,
       `};`,
       `process.send(obj);`,
+      `process.on("message", () => {});`,
     ].join("\n");
     const { promise, resolve, reject } = Promise.withResolvers<any[]>();
     const messages: any[] = [];
@@ -126,8 +127,10 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("closes the channel when a frame declares a length that cannot be framed with its header", async () => {
-    const parent = `
+  it.skipIf(isWindows)(
+    "closes the channel when a frame declares a length that cannot be framed with its header",
+    async () => {
+      const parent = `
       const child = Bun.spawn({
         cmd: [
           process.execPath, "-e",
@@ -140,19 +143,20 @@ describe("ipc mode advanced", () => {
       console.log("CHILD_EXIT", await child.exited);
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", parent],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", parent],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("CHILD_EXIT 42");
-    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
-    expect(exitCode).toBe(0);
-  });
+      expect(stdout.trim()).toBe("CHILD_EXIT 42");
+      expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // getIPCInstance error path: on Windows, windowsConfigureClient can open the

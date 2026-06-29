@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { isWindows, tmpdirSync } from "harness";
+import { isLinux, isWindows, tmpdirSync } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -116,7 +116,12 @@ describe("fs.mkdirSync", () => {
     const pathname = path.join(tmpdir, nextdir());
 
     fs.mkdirSync(pathname, { mode: 0o1777 });
-    expect(fs.statSync(pathname).mode & 0o7777).toBe(0o1777 & ~process.umask());
+    const mode = fs.statSync(pathname).mode;
+    expect(mode & 0o777).toBe(0o777 & ~process.umask());
+    // macOS mkdir(2) does not honor the sticky bit in the mode argument.
+    if (isLinux) {
+      expect(mode & 0o7000).toBe(0o1000);
+    }
   });
 
   it("throws for invalid path types", () => {

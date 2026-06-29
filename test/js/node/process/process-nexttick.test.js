@@ -1041,16 +1041,17 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 // The onEachMicrotaskTick hook that hands control from the microtask queue to the nextTick
 // queue is one-shot: it uninstalls itself after the process's first process.nextTick call.
 // Every case below therefore needs a subprocess that has never called process.nextTick.
-describe("process.nextTick interleaving with the microtask queue", () => {
+describe.concurrent("process.nextTick interleaving with the microtask queue", () => {
   async function runFresh(kind, script) {
     using dir = tempDir("nexttick-order", { "index.js": script });
     await using proc = Bun.spawn({
       cmd: kind === "-e" ? [bunExe(), "-e", script] : [bunExe(), "index.js"],
       env: bunEnv,
       cwd: String(dir),
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { order: JSON.parse(stdout.trim() || "null"), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { order: JSON.parse(stdout.trim() || "null"), stderr, exitCode };
   }
 
   // Node drains the entire microtask queue, including microtasks those microtasks queue,
@@ -1063,13 +1064,17 @@ describe("process.nextTick interleaving with the microtask queue", () => {
        Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick1")); });
        Promise.resolve().then(() => { L.push("p2"); Promise.resolve().then(() => L.push("p2-nested")); });
        queueMicrotask(() => L.push("q3"));
-       setTimeout(() => {
+       setImmediate(() => {
          process.nextTick(() => L.push("tick2"));
          Promise.resolve().then(() => L.push("p4"));
-         setTimeout(() => console.log(JSON.stringify(L)), 1);
-       }, 1);`,
+         setImmediate(() => console.log(JSON.stringify(L)));
+       });`,
     );
-    expect(result).toEqual({ order: ["p1", "p2", "q3", "p2-nested", "tick1", "tick2", "p4"], exitCode: 0 });
+    expect(result).toEqual({
+      order: ["p1", "p2", "q3", "p2-nested", "tick1", "tick2", "p4"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // The script's own top-level code is a nextTick checkpoint boundary: nextTicks it queues run
@@ -1081,8 +1086,8 @@ describe("process.nextTick interleaving with the microtask queue", () => {
        process.nextTick(() => L.push("tick0"));
        Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick1")); });
        Promise.resolve().then(() => L.push("p2"));
-       setTimeout(() => console.log(JSON.stringify(L)), 1);`,
+       setImmediate(() => console.log(JSON.stringify(L)));`,
     );
-    expect(result).toEqual({ order: ["tick0", "p1", "p2", "tick1"], exitCode: 0 });
+    expect(result).toEqual({ order: ["tick0", "p1", "p2", "tick1"], stderr: "", exitCode: 0 });
   });
 });

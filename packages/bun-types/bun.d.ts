@@ -8098,7 +8098,7 @@ declare module "bun" {
   /**
    * Match files using [glob patterns](https://en.wikipedia.org/wiki/Glob_(programming)).
    *
-   * The supported pattern syntax for is:
+   * The supported pattern syntax is:
    *
    * - `?`
    *     Matches any single character.
@@ -8106,22 +8106,22 @@ declare module "bun" {
    *     Matches zero or more characters, except for path separators ('/' or '\').
    * - `**`
    *     Matches zero or more characters, including path separators.
-   *     Must match a complete path segment, i.e. followed by a path separator or
-   *     at the end of the pattern.
+   *     Must match a complete path segment (followed by a path separator or
+   *     at the end of the pattern).
    * - `[ab]`
    *     Matches one of the characters contained in the brackets.
-   *     Character ranges (e.g. "[a-z]") are also supported.
+   *     Character ranges like "[a-z]" are also supported.
    *     Use "[!ab]" or "[^ab]" to match any character *except* those contained
    *     in the brackets.
    * - `{a,b}`
    *     Match one of the patterns contained in the braces.
-   *     Any of the wildcards listed above can be used in the sub patterns.
+   *     The sub-patterns can use any of the other wildcards.
    *     Braces may be nested up to 10 levels deep.
    * - `!`
    *     Negates the result when at the start of the pattern.
    *     Multiple "!" characters negate the pattern multiple times.
    * - `\`
-   *     Used to escape any of the special characters above.
+   *     Escapes any of the special characters listed here.
    *
    * @example
    * ```js
@@ -8427,6 +8427,7 @@ declare module "bun" {
 
     /** Populated after the first awaited terminal; `-1` before. */
     readonly width: number;
+    /** Populated after the first awaited terminal; `-1` before. */
     readonly height: number;
   }
 
@@ -8497,7 +8498,7 @@ declare module "bun" {
      *   Auto-detects the binary in standard locations; override with
      *   `backend.path` or the `BUN_CHROME_PATH` environment variable.
      *
-     * The object form lets you pass extra launch flags. Chrome switches are
+     * The object form accepts extra launch flags. Chrome switches are
      * last-wins for duplicates, so `argv` can override the defaults.
      *
      * **Chrome is spawned once per process** — the first `new Bun.WebView()`
@@ -8625,7 +8626,7 @@ declare module "bun" {
       /**
        * Initial URL to navigate to. The navigation starts before the
        * constructor returns; `await view.navigate(otherUrl)` or any other
-       * operation will wait for it to complete first.
+       * operation waits for it to complete first.
        *
        * Equivalent to calling `view.navigate(url)` immediately after
        * construction.
@@ -8689,7 +8690,7 @@ declare module "bun" {
      * Pending promises on all views reject on the next event loop tick.
      *
      * Called automatically at process exit. Call manually to reclaim browser
-     * resources early — subsequent `new Bun.WebView()` calls will respawn.
+     * resources early — subsequent `new Bun.WebView()` calls respawn them.
      * Idempotent: calling when no subprocesses are alive is a no-op.
      */
     static closeAll(): void;
@@ -8968,7 +8969,7 @@ declare module "bun" {
 
   /**
    * Compression format for archive output.
-   * Currently only `"gzip"` is supported.
+   * Only `"gzip"` is supported.
    */
   type ArchiveCompression = "gzip";
 
@@ -8992,7 +8993,7 @@ declare module "bun" {
   interface ArchiveOptions {
     /**
      * Compression algorithm to use.
-     * Currently only "gzip" is supported.
+     * Only `"gzip"` is supported.
      * If not specified, no compression is applied.
      */
     compress?: ArchiveCompression;
@@ -9019,8 +9020,8 @@ declare module "bun" {
      * Patterns are matched against archive entry paths normalized to use forward slashes (`/`),
      * regardless of the host operating system. Always write patterns using `/` as the separator.
      *
-     * - Positive patterns: Only entries matching at least one pattern will be extracted.
-     * - Negative patterns (prefixed with `!`): Entries matching these patterns will be excluded.
+     * - Positive patterns: Only entries matching at least one pattern are extracted.
+     * - Negative patterns (prefixed with `!`): Entries matching these patterns are excluded.
      *   Negative patterns are applied after positive patterns.
      *
      * If not specified, all entries are extracted.

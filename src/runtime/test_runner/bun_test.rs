@@ -1699,7 +1699,15 @@ impl BaseScope {
                 ConcurrentMode::Inherit => parent_base.is_some_and(|p| p.concurrent),
             },
             mode: if let Some(p) = parent_base {
-                if p.mode != ScopeMode::Normal { p.mode } else { cfg.self_mode }
+                // A TodoRun suite only propagates Node's todo semantics onto children
+                // with no mode of their own: Node never runs an explicitly skipped body.
+                if p.mode == ScopeMode::TodoRun && cfg.self_mode != ScopeMode::Normal {
+                    cfg.self_mode
+                } else if p.mode != ScopeMode::Normal {
+                    p.mode
+                } else {
+                    cfg.self_mode
+                }
             } else {
                 cfg.self_mode
             },

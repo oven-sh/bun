@@ -34,6 +34,12 @@ test("todo that times out", { todo: true, timeout: 100 }, async () => {
   await new Promise(() => {});
 });
 
+// `skip` wins over `todo` in Node: the body must never execute.
+test("skip wins over todo", { todo: true, skip: true }, () => {
+  console.log("LOG:MUST-NOT-APPEAR-skip-and-todo");
+  assert.fail("a skipped body must never execute");
+});
+
 test("regular test still runs", () => {
   console.log("LOG:regular");
 });
@@ -41,6 +47,12 @@ test("regular test still runs", () => {
 describe.todo("todo suite (modifier)", () => {
   test("inside the modifier suite", () => {
     console.log("LOG:todo-suite-modifier");
+  });
+
+  // Node never runs an explicitly skipped body, even inside a todo suite.
+  test("skipped inside the todo suite", { skip: true }, () => {
+    console.log("LOG:MUST-NOT-APPEAR-skip-in-todo-suite");
+    assert.fail("a skipped body must never execute");
   });
 });
 

@@ -55,7 +55,8 @@ describe("node:test", () => {
 
   // Node runs todo bodies and reports the outcome as todo whether it passes or
   // fails; a failing todo never fails the run. The fixture logs one LOG: line
-  // per body that executed.
+  // per body that executed, and the LOG:MUST-NOT-APPEAR lines sit in bodies
+  // that must never run (skip wins over todo, including inside a todo suite).
   test("todo test bodies run and never fail the run", async () => {
     const { exitCode, stdout, stderr } = await runTests(["09-todo.js"]);
     expect({
@@ -75,7 +76,7 @@ describe("node:test", () => {
         "LOG:todo-suite-modifier",
         "LOG:todo-suite-option",
       ],
-      summary: { pass: 1, fail: 0, todo: 9 },
+      summary: { pass: 1, fail: 0, todo: 9, skip: 2 },
     });
   });
 
@@ -83,7 +84,7 @@ describe("node:test", () => {
     const { exitCode, stderr } = await runTests(["10-describe-concurrency.js"]);
     expect({ exitCode, summary: summarize(stderr) }).toEqual({
       exitCode: 0,
-      summary: { pass: 13, fail: 0, todo: 0 },
+      summary: { pass: 13, fail: 0, todo: 0, skip: 0 },
     });
   });
 
@@ -91,15 +92,28 @@ describe("node:test", () => {
     const { exitCode, stderr } = await runTests(["11-describe-concurrency-invalid.js"]);
     expect({ exitCode, summary: summarize(stderr) }).toEqual({
       exitCode: 0,
-      summary: { pass: 1, fail: 0, todo: 0 },
+      summary: { pass: 1, fail: 0, todo: 0, skip: 0 },
     });
+  });
+
+  // The bound function behind node:test's `test.todo` has an internal mode
+  // name; the error for using it outside `bun test` must still say `test.todo`.
+  test("todo outside the test runner names test.todo in its error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:test").todo("x", () => {});`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Cannot use test.todo outside of the test runner. Run "bun test" to run tests.');
+    expect(exitCode).not.toBe(0);
   });
 });
 
-/** Extracts the pass/fail/todo counts from a `bun test` summary. */
+/** Extracts the pass/fail/todo/skip counts from a `bun test` summary. */
 function summarize(stderr: string) {
   const count = (label: string) => Number(stderr.match(new RegExp(`(\\d+) ${label}\\n`))?.[1] ?? 0);
-  return { pass: count("pass"), fail: count("fail"), todo: count("todo") };
+  return { pass: count("pass"), fail: count("fail"), todo: count("todo"), skip: count("skip") };
 }
 
 async function runTests(filenames: string[]) {

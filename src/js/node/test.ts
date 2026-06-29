@@ -518,10 +518,10 @@ class TestContext {
     const { test } = bunTest();
     if (options.only) {
       test.only(name, fn);
-    } else if (options.todo) {
-      kTodoTest(name, fn, options);
     } else if (options.skip) {
       test.skip(name, fn);
+    } else if (options.todo) {
+      kTodoTest(name, fn, options);
     } else {
       test(name, fn);
     }
@@ -533,7 +533,10 @@ class TestContext {
     this.#checkNotInsideTest("describe");
 
     const { describe } = bunTest();
-    applyConcurrency(options.todo ? kTodoDescribe : describe, options.concurrency)(name, fn);
+    applyConcurrency(options.skip ? describe.skip : options.todo ? kTodoDescribe : describe, options.concurrency)(
+      name,
+      fn,
+    );
   }
 
   #checkNotInsideTest(fn: string) {
@@ -575,7 +578,11 @@ let ctx: TestContext | undefined = undefined;
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  applyConcurrency(options.todo ? kTodoDescribe : describe, options.concurrency)(name, fn);
+  // `skip` wins over `todo` like in Node (a skipped body must never execute).
+  applyConcurrency(options.skip ? describe.skip : options.todo ? kTodoDescribe : describe, options.concurrency)(
+    name,
+    fn,
+  );
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -601,10 +608,11 @@ function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   // Node's {only: true} is intentionally not routed to test.only() here:
   // in Node it is a no-op unless --test-only is passed, whereas bun:test's
   // test.only() unconditionally skips siblings.
-  if (options.todo) {
-    kTodoTest(name, fn, options);
-  } else if (options.skip) {
+  // `skip` wins over `todo` like in Node (a skipped body must never execute).
+  if (options.skip) {
     test.skip(name, fn, options);
+  } else if (options.todo) {
+    kTodoTest(name, fn, options);
   } else {
     test(name, fn, options);
   }

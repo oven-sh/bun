@@ -52,4 +52,10 @@ test.describe.skip("skipped describe", () => {
   });
 });
 
+test.describe("skipped describe (option)", { skip: true }, () => {
+  test("nested test", t => {
+    t.assert.fail("This test should be skipped");
+  });
+});
+
 test.describe.todo("todo describe");

@@ -137,6 +137,20 @@ describe("vm", () => {
     test("runInNewContext with DONT_CONTEXTIFY can still be frozen, matching Node", () => {
       expect(() => runInNewContext("Object.freeze(globalThis);", constants.DONT_CONTEXTIFY)).not.toThrow();
     });
+
+    // contextCodeGeneration must still gate eval in a reused DONT_CONTEXTIFY context.
+    test.each([constants.DONT_CONTEXTIFY, {}])(
+      "runInNewContext honors contextCodeGeneration.strings for context %#",
+      ctx => {
+        let caught: unknown;
+        try {
+          runInNewContext('eval("1+1")', ctx, { contextCodeGeneration: { strings: false } });
+        } catch (e) {
+          caught = e;
+        }
+        expect((caught as Error)?.name).toBe("EvalError");
+      },
+    );
   });
 
   describe("compileFunction()", () => {

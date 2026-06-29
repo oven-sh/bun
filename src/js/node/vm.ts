@@ -104,6 +104,16 @@ function runInThisContext(code, options) {
   return new Script(code, options).runInThisContext(options);
 }
 
+// runInNewContext names code generation via `contextCodeGeneration`, while
+// createContext reads `codeGeneration`; alias it so the created context (which
+// runInNewContext then reuses) honors the setting, matching Node.
+function getContextOptions(options) {
+  if (options == null || typeof options !== "object" || options.contextCodeGeneration === undefined) {
+    return options;
+  }
+  return { __proto__: null, ...options, codeGeneration: options.contextCodeGeneration };
+}
+
 function runInNewContext(code, context, options) {
   if (context !== undefined && (typeof context !== "object" || context === null)) {
     validateContext(context);
@@ -111,7 +121,7 @@ function runInNewContext(code, context, options) {
   if (typeof options === "string") {
     options = { filename: options };
   }
-  context = createContext(context, options);
+  context = createContext(context, getContextOptions(options));
   return createScript(code, options).runInNewContext(context, options);
 }
 

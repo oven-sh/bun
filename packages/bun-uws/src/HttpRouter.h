@@ -171,10 +171,9 @@ private:
         return false;
     }
 
-    /* Request handlers observe the path produced by the URL parser (dot-segments resolved,
-     * including their "%2e" spellings, "\" treated as "/", path ended by "?" or "#"), so routes
-     * must be matched against that same path, not against the raw request-target spelling.
-     * Percent-decoding is intentionally not performed. Returns url itself when nothing changes. */
+    /* Handlers observe the URL-parser-normalized path (dot-segments and their "%2e" spellings
+     * resolved, "\" treated as "/", path ended by "?" or "#"), so routes must match that path,
+     * not the raw request-target spelling. Percent-decoding is intentionally not applied. */
     std::string_view normalizeUrl(std::string_view url) {
         /* Only origin-form targets are paths; "*" and CONNECT authority-forms match as-is */
         if (url.length() < 2 || url[0] != '/' || !urlNeedsNormalization(url)) {

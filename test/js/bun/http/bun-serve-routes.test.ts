@@ -1049,6 +1049,9 @@ describe("request-target normalization before route matching", () => {
     { target: "/w\\..\\admin/x", route: "/admin/x", pathname: "/admin/x" },
     // the path ends at the fragment
     { target: "/admin/x#frag", route: "/admin/x", pathname: "/admin/x" },
+    // the path ends at the query, and dot-segments in the query do not affect matching
+    { target: "/admin/x?query=1", route: "/admin/x", pathname: "/admin/x" },
+    { target: "/admin/x?next=/w/../admin", route: "/admin/x", pathname: "/admin/x" },
     // normalization inside a subtree stays inside it
     { target: "/w/sub/../x", route: "/w/*", pathname: "/w/x" },
     { target: "/w/%2e/x", route: "/w/*", pathname: "/w/x" },

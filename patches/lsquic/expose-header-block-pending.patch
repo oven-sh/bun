@@ -1,0 +1,40 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -5316,6 +5316,18 @@
+ }
+ 
+ 
++/* Bun: a header block (interim 1xx or final) is still being sent when the
++ * send-headers state machine has not returned to SSHS_BEGIN. lsquic keeps a
++ * single sm_header_block slot, so a caller must not call
++ * lsquic_stream_send_headers() again until this returns 0 or the stashed
++ * block is overwritten. */
++int
++lsquic_stream_header_block_pending (const struct lsquic_stream *stream)
++{
++    return stream->sm_send_headers_state != SSHS_BEGIN;
++}
++
++
+ int
+ lsquic_stream_can_push (const struct lsquic_stream *stream)
+ {
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1833,6 +1833,16 @@
+ lsquic_stream_is_rejected (const lsquic_stream_t *s);
+ 
+ /**
++ * Returns true while a header block is still being sent on the stream (the
++ * send-headers state machine has not returned to its initial state).  Because
++ * lsquic stashes at most one pending header block, a caller that sends an
++ * interim (1xx) response followed by a final one must wait for this to return
++ * false before calling @ref lsquic_stream_send_headers() again.
++ */
++int
++lsquic_stream_header_block_pending (const lsquic_stream_t *s);
++
++/**
+  * Refuse pushed stream.  Call it from @ref on_new_stream.
+  *
+  * No need to call lsquic_stream_close() after this.  on_close will be called.

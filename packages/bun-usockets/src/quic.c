@@ -986,6 +986,14 @@ void us_quic_stream_shutdown(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_shutdown(s->stream, 1);
 }
 
+/* True while an earlier header block (e.g. an auto-sent 100-continue) is still
+ * being flushed. lsquic stashes one pending block, so us_quic_stream_send_headers()
+ * must not be called again until this returns 0. */
+int us_quic_stream_has_pending_headers(us_quic_stream_t *s) {
+    if (!s->stream) return 0;
+    return lsquic_stream_header_block_pending(s->stream);
+}
+
 /* lsquic_stream_write buffers until a full packet or shutdown; force the
  * partial buffer into a packet so the peer sees streamed bytes promptly. */
 void us_quic_stream_flush(us_quic_stream_t *s) {

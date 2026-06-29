@@ -139,6 +139,9 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
 /* Send a 1xx interim HEADERS frame (`:status` only); the final response
  * header block follows separately. */
 int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3);
+/* True while an earlier header block (e.g. a 100-continue) is still flushing;
+ * sending the next header block before it drains would clobber it. */
+int us_quic_stream_has_pending_headers(us_quic_stream_t *s);
 void us_quic_stream_shutdown(us_quic_stream_t *s);
 void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);

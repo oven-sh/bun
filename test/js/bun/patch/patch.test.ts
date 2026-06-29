@@ -1084,6 +1084,136 @@ describe("apply", () => {
       expect(await fs.readFile(join(pkgDir, "real.txt"), "utf8")).toBe("SAFE\n");
     });
   });
+
+  // A `..` component with a trailing NUL byte is not byte-equal to `..`, but the
+  // kernel reads each component as a NUL-terminated C string and resolves a real
+  // `..`. Run in a child process: the unfixed failure mode is a process abort.
+  describe.concurrent("rejects NUL bytes in patch paths", () => {
+    test("a `..` component hidden behind a NUL cannot escape the patch dir", async () => {
+      const root = tempDirWithFiles("patch-nul", {
+        "outside/.keep": "",
+        "pkg/a/b/.keep": "",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const NUL = String.fromCharCode(0);
+           const P = ".." + NUL + "1/.." + NUL + "2/.." + NUL + "3/outside/escaped.txt";
+           const patch = [
+             "diff --git a/" + P + " b/" + P,
+             "new file mode 100644",
+             "--- /dev/null",
+             "+++ b/" + P,
+             "@@ -0,0 +1,1 @@",
+             "+PWNED",
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(join(root, "pkg", "a", "b"))});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const escaped = await fs.access(join(root, "outside", "escaped.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ stdout: stdout.trim(), stderr, escaped, exitCode }).toEqual({
+        stdout: "caught: EINVAL",
+        stderr: "",
+        escaped: false,
+        exitCode: 0,
+      });
+    });
+
+    test("a NUL in the final component is rejected", async () => {
+      const root = tempDirWithFiles("patch-nul-base", { "pkg/.keep": "" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           import { readdirSync } from "node:fs";
+           const NUL = String.fromCharCode(0);
+           const dir = ${JSON.stringify(join(root, "pkg"))};
+           const P = "evil" + NUL + "name";
+           const patch = [
+             "diff --git a/" + P + " b/" + P,
+             "new file mode 100644",
+             "--- /dev/null",
+             "+++ b/" + P,
+             "@@ -0,0 +1,1 @@",
+             "+PWNED",
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, dir);
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }
+           console.log(JSON.stringify(readdirSync(dir).sort()));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ lines: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        lines: ["caught: EINVAL", '[".keep"]'],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // `O_RDONLY` on a FIFO without `O_NONBLOCK` blocks until a writer appears, so
+  // the target open must use `O_NONBLOCK` for the `!ISREG` check to ever run.
+  // Run in a child process: the unfixed failure mode is an indefinite hang.
+  describe.if(process.platform !== "win32")("non-regular patch targets", () => {
+    test("mode change on a FIFO is rejected instead of hanging", async () => {
+      const root = tempDirWithFiles("patch-fifo", { "pkg/.keep": "" });
+      const pkgDir = join(root, "pkg");
+      await $`mkfifo ${join(pkgDir, "pipe")}`;
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const patch = "diff --git a/pipe b/pipe\\nold mode 100644\\nnew mode 100755\\n";
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(pkgDir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "caught: EINVAL",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe("parse", () => {

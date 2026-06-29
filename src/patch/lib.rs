@@ -430,9 +430,10 @@ fn open_parent_beneath(
         if component.is_empty() || component == b"." {
             continue;
         }
-        // `is_safe_patch_path` already rejected `..`; refuse it here too so
-        // this helper cannot ascend regardless of its caller.
-        if component == b".." {
+        // `is_safe_patch_path` already rejected `..` and NUL bytes; refuse
+        // both here too so this helper cannot ascend regardless of its
+        // caller (a NUL makes the kernel see the component only up to it).
+        if component == b".." || component.contains(&0) {
             return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).with_path(path));
         }
         let component_z = ZBox::from_vec_with_nul(component.to_vec());
@@ -519,8 +520,15 @@ fn open_target_file(
     // the reparse-point check is the final-component guard there instead.
     #[cfg(windows)]
     reject_reparse_point(parent, base)?;
-    let nofollow = if cfg!(windows) { 0 } else { sys::O::NOFOLLOW };
-    let fd = sys::openat(parent, base, flags | nofollow, mode)?;
+    // `O_NONBLOCK` keeps a FIFO target from blocking this open until a writer
+    // appears, so the `!ISREG` rejection below can run; it has no effect on
+    // I/O to a regular file.
+    let posix_flags = if cfg!(windows) {
+        0
+    } else {
+        sys::O::NOFOLLOW | sys::O::NONBLOCK
+    };
+    let fd = sys::openat(parent, base, flags | posix_flags, mode)?;
     let stat = match sys::fstat(fd) {
         Ok(st) => st,
         Err(e) => {
@@ -1147,6 +1155,10 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !paths::is_absolute_loose(path)
+        // Components reach the kernel as NUL-terminated C strings, so an
+        // interior NUL would turn e.g. `"..\0x"` (which is not byte-equal to
+        // `..` below) back into a real `..` traversal.
+        && !path.contains(&0)
         && !path
             .split(|&c| c == b'/' || c == b'\\')
             .any(|part| part == b"..")

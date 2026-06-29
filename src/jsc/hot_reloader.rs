@@ -1200,8 +1200,8 @@ where
                             if let Some(dir_ent) = entries_option {
                                 // SAFETY: dir_ent points into rfs.entries (or a tombstoned
                                 // copy); both outlive this loop iteration.
-                                if let Fs::EntriesOption::Entries(dir_entries) =
-                                    unsafe { &*dir_ent }
+                                let dir_ent = unsafe { &*dir_ent };
+                                if let Fs::EntriesOption::Entries(dir_entries) = dir_ent
                                     && let Some(file_ent) = dir_entries.get(changed_name)
                                 {
                                     let ent = file_ent.entry();

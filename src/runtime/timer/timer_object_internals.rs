@@ -946,6 +946,19 @@ impl TimerObjectInternals {
             return Ok(this_value);
         }
 
+        // Node re-initializes the async resource when refresh() reactivates a timer whose
+        // callback already ran (lib/internal/timers.js `insertGuarded`), so the next fire
+        // observes the refreshing caller's AsyncLocalStorage context, not the creator's.
+        if self.get_destroyed() {
+            let callback =
+                JSTimeout::callback_get_cached(this_value).expect("TimeoutObject callback slot");
+            JSTimeout::callback_set_cached(
+                this_value,
+                global_object,
+                callback.recapture_async_context_if_needed(global_object),
+            );
+        }
+
         self.this_value
             .with_mut(|r| r.set_strong(this_value, global_object));
         self.reschedule(

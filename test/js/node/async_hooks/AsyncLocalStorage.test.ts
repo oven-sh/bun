@@ -124,6 +124,46 @@ describe("async context passes through", () => {
     expect(s.getStore()).toBe(undefined);
     expect(await promise).toBe("value");
   });
+  // Node re-initializes the async resource when refresh() reactivates a timer whose
+  // callback already ran, so later fires observe the refreshing caller's context.
+  test("setTimeout().refresh() after the callback ran", async () => {
+    const s = new AsyncLocalStorage<string>();
+    const seen: (string | null)[] = [];
+    let onFire!: () => void;
+    const fired = () => new Promise<void>(r => (onFire = r));
+
+    let t!: ReturnType<typeof setTimeout>;
+    const callback = () => {
+      seen.push(s.getStore() ?? null);
+      onFire();
+    };
+
+    let wait = fired();
+    s.run("creator", () => {
+      t = setTimeout(callback, 1);
+    });
+    // Refreshing a timer that has not fired yet does not re-bind it.
+    s.run("early", () => t.refresh());
+    await wait;
+
+    // The callback already ran, so refresh() re-captures the caller's context.
+    expect((t as any)._destroyed).toBe(true);
+    wait = fired();
+    s.run("refresher", () => t.refresh());
+    await wait;
+
+    // Outside of any context, refresh() drops the previously captured context.
+    wait = fired();
+    t.refresh();
+    await wait;
+
+    // And a later refresh() binds the (previously unbound) callback again.
+    wait = fired();
+    s.run("again", () => t.refresh());
+    await wait;
+
+    expect(seen).toEqual(["creator", "refresher", null, "again"]);
+  });
   test("setInterval", async () => {
     let resolve: (x: string[]) => void;
     const promise = new Promise<string[]>(r => (resolve = r));

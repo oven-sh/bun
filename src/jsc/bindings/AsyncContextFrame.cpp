@@ -96,6 +96,18 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
+// Discards any previously captured frame and snapshots the async context that
+// is active right now. Used by `Timeout.prototype.refresh()` when it
+// reactivates an already-fired timer, matching Node's `initAsyncResource`.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__recaptureAsyncContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callbackValue)
+{
+    JSValue callback = JSValue::decode(callbackValue);
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(callback)) {
+        callback = wrapper->callback.get();
+    }
+    return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, callback));
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                            \
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \

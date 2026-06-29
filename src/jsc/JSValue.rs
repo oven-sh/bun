@@ -1614,6 +1614,20 @@ impl JSValue {
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 
+    /// Like [`Self::with_async_context_if_needed`], but discards any frame `self`
+    /// already captured and snapshots the async context active *now*. Used by
+    /// `Timeout#refresh()` when it reactivates an already-fired timer.
+    #[inline]
+    pub fn recapture_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__recaptureAsyncContextIfNeeded(
+                global: &JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        AsyncContextFrame__recaptureAsyncContextIfNeeded(global, self)
+    }
+
     /// Protects a JSValue from garbage collection (refcounted). The is_cell
     /// check happens on the C++ side (bindings.cpp).
     #[inline]
